@@ -8,6 +8,9 @@ SOURCES_CC := $(CORE_DIR)/video.cc \
               $(CORE_DIR)/cpu.cc
 
 SOURCES_C := $(CORE_DIR)/main.c \
+             $(CORE_DIR)/cpu_backend.c \
+             $(CORE_DIR)/jsjit_backend.c \
+             $(CORE_DIR)/jsjit_bridge.c \
              $(CORE_DIR)/gba_memory.c \
              $(CORE_DIR)/savestate.c \
              $(CORE_DIR)/input.c \
@@ -43,5 +46,3 @@ ifeq ($(HAVE_DYNAREC), 1)
     SOURCES_ASM += $(CORE_DIR)/mips/mips_stub.S
   endif
 endif
-
-

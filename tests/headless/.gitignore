@@ -1,0 +1,7 @@
+headless_runner.o
+gpsp_libretro_emscripten.a
+gpsp_headless.js
+gpsp_headless.wasm
+gpsp_headless.js.mem
+capture.ppm
+capture.png

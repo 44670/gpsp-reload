@@ -1,0 +1,7 @@
+third_party/
+gpsp_dhry_libretro.so
+dhrystone.elf
+dhrystone.map
+dhrystone.gba
+dhrystone_runner
+dhrystone.objdump

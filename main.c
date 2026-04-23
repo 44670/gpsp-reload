@@ -18,6 +18,7 @@
  */
 
 #include "common.h"
+#include "cpu_backend.h"
 #include <ctype.h>
 
 timer_type timer[4];
@@ -111,10 +112,7 @@ void init_main(void)
   execute_cycles = 960;
   video_count = 960;
 
-#ifdef HAVE_DYNAREC
-  init_dynarec_caches();
-  init_emitter(gamepak_must_swap());
-#endif
+  cpu_backend_reset();
 }
 
 u32 function_cc update_gba(int remaining_cycles)
@@ -421,5 +419,4 @@ unsigned main_write_savestate(u8* dst)
 
   return (unsigned int)(dst - startp);
 }
-
 

@@ -8,6 +8,7 @@
 #include <libretro.h>
 
 #include "../common.h"
+#include "../cpu_backend.h"
 #include "../memmap.h"
 #include "libretro_core_options.h"
 
@@ -1277,16 +1278,7 @@ void retro_run(void)
    }
 
    /* This runs just a frame */
-   #ifdef HAVE_DYNAREC
-   if (dynarec_enable)
-      execute_arm_translate(execute_cycles);
-   else
-   #endif
-   {
-      /* Sticky bits only used in interpreter */
-      clear_gamepak_stickybits();
-      execute_arm(execute_cycles);
-   }
+   cpu_backend_execute(execute_cycles);
 
    if (rumble_cb) {
      // TODO: Add some user-option to select a rumble policy
