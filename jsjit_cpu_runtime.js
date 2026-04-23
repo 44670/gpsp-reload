@@ -1,8 +1,8 @@
 "use strict";
 
 const { createGpspJsJitBridge } = require("./jsjit_bridge_runtime.js");
-const { buildArmBlockExecutor } = require("./jsjit_arm_codegen.js");
-const { buildThumbBlockExecutor } = require("./jsjit_thumb_codegen.js");
+const { buildArmBlockExecutor, createArmBlockFactory } = require("./jsjit_arm_codegen.js");
+const { buildThumbBlockExecutor, createThumbBlockFactory } = require("./jsjit_thumb_codegen.js");
 const {
   REG_SP,
   REG_LR,
@@ -40,8 +40,6 @@ const {
 
 const MAX_ARM_BLOCK_INSTRUCTIONS = 48;
 const MAX_THUMB_BLOCK_INSTRUCTIONS = 64;
-const BLOCK_RESULT_CYCLES_MASK = 0x00ffffff;
-const BLOCK_RESULT_ALERT_SHIFT = 24;
 
 function createGpspJsJitRuntime(Module) {
   const bridge = createGpspJsJitBridge(Module);
@@ -54,6 +52,8 @@ function createGpspJsJitRuntime(Module) {
     regMode: bridge.regMode,
     armBlocks: new Map(),
     thumbBlocks: new Map(),
+    armBlockFactory: null,
+    thumbBlockFactory: null,
     cyclesRemaining: 0,
     pendingAlert: 0,
     maxArmBlockInstructions: MAX_ARM_BLOCK_INSTRUCTIONS,
@@ -78,6 +78,7 @@ function createGpspJsJitRuntime(Module) {
       this.thumbBlocks.clear();
       this.cyclesRemaining = 0;
       this.pendingAlert = 0;
+      bridge.takePendingAlert();
       this.stats.executions = 0;
       this.stats.fallbackExecutions = 0;
       this.stats.fallbackCycles = 0;
@@ -87,6 +88,50 @@ function createGpspJsJitRuntime(Module) {
     clearCaches() {
       this.armBlocks.clear();
       this.thumbBlocks.clear();
+      return this;
+    },
+
+    ensureBlockFactories() {
+      if (!this.armBlockFactory) {
+        this.armBlockFactory = createArmBlockFactory({
+          runtime: this,
+          read8: bridge.readMemory8,
+          read16: bridge.readMemory16,
+          read32: bridge.readMemory32,
+          write8: bridge.writeMemory8,
+          write16: bridge.writeMemory16,
+          write32: bridge.writeMemory32,
+          signExtend,
+          condPassed,
+          addWithCarry,
+          setNZ,
+          setNZC,
+          setNZCV,
+          shiftImm,
+          shiftReg,
+          ror32,
+        });
+      }
+      if (!this.thumbBlockFactory) {
+        this.thumbBlockFactory = createThumbBlockFactory({
+          runtime: this,
+          read8: bridge.readMemory8,
+          read16: bridge.readMemory16,
+          read32: bridge.readMemory32,
+          write8: bridge.writeMemory8,
+          write16: bridge.writeMemory16,
+          write32: bridge.writeMemory32,
+          signExtend,
+          condPassed,
+          addWithCarry,
+          setNZ,
+          setNZC,
+          setNZCV,
+          shiftImm,
+          shiftReg,
+          applyCpsr: this.applyCpsr.bind(this),
+        });
+      }
       return this;
     },
 
@@ -126,6 +171,7 @@ function createGpspJsJitRuntime(Module) {
       const heaps = bridge.getHeapViews();
       if (bridge.heapU8 !== heaps.HEAPU8 || bridge.heapU8.buffer !== heaps.HEAPU8.buffer) {
         this.refresh();
+        this.clearCaches();
       }
       return this;
     },
@@ -261,7 +307,7 @@ function createGpspJsJitRuntime(Module) {
     },
 
     processPendingAlert() {
-      const alert = this.pendingAlert >>> 0;
+      const alert = (this.pendingAlert | bridge.takePendingAlert()) >>> 0;
       if (alert === 0) {
         return;
       }
@@ -269,9 +315,6 @@ function createGpspJsJitRuntime(Module) {
       this.pendingAlert = 0;
       if (alert & CPU_ALERT_SMC) {
         this.clearCaches();
-      }
-      if (alert & CPU_ALERT_IRQ) {
-        bridge.checkAndRaiseInterrupts();
       }
     },
 
@@ -1475,45 +1518,12 @@ function createGpspJsJitRuntime(Module) {
     },
 
     buildBlockExecutor(block) {
+      this.ensureBlockFactories();
       if (block.thumb) {
-        return buildThumbBlockExecutor(block, {
-          runtime: this,
-          read8: bridge.readMemory8,
-          read16: bridge.readMemory16,
-          read32: bridge.readMemory32,
-          write8: bridge.writeMemory8,
-          write16: bridge.writeMemory16,
-          write32: bridge.writeMemory32,
-          signExtend,
-          condPassed,
-          addWithCarry,
-          setNZ,
-          setNZC,
-          setNZCV,
-          shiftImm,
-          shiftReg,
-          applyCpsr: this.applyCpsr.bind(this),
-        });
+        return buildThumbBlockExecutor(block, this.thumbBlockFactory);
       }
 
-      return buildArmBlockExecutor(block, {
-        runtime: this,
-        read8: bridge.readMemory8,
-        read16: bridge.readMemory16,
-        read32: bridge.readMemory32,
-        write8: bridge.writeMemory8,
-        write16: bridge.writeMemory16,
-        write32: bridge.writeMemory32,
-        signExtend,
-        condPassed,
-        addWithCarry,
-        setNZ,
-        setNZC,
-        setNZCV,
-        shiftImm,
-        shiftReg,
-        ror32,
-      });
+      return buildArmBlockExecutor(block, this.armBlockFactory);
     },
 
     compileArmBlock(entryPc) {
@@ -1601,12 +1611,12 @@ function createGpspJsJitRuntime(Module) {
       try {
         const block = this.getBlock(pc, thumb);
         const result = block.execute(this.regs) >>> 0;
-        this.cyclesRemaining -= result & BLOCK_RESULT_CYCLES_MASK;
-        this.pendingAlert |= (result >>> BLOCK_RESULT_ALERT_SHIFT) & 0xff;
+        this.cyclesRemaining -= result;
         if ((bridge.idleLoopTargetPc[0] >>> 0) === (this.regs[REG_PC] >>> 0) && this.cyclesRemaining > 0) {
           this.cyclesRemaining = 0;
         }
         this.processPendingAlert();
+        bridge.checkAndRaiseInterrupts();
         return 1;
       } catch (error) {
         throw error;

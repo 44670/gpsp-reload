@@ -38,6 +38,8 @@
 #define JSJIT_IWRAM_DATA_OFFSET (1024u * 32u)
 #define JSJIT_IWRAM_DATA_BYTES (1024u * 32u)
 
+static cpu_alert_type jsjit_pending_alert = CPU_ALERT_NONE;
+
 JSJIT_KEEPALIVE uintptr_t jsjit_bridge_reg_ptr(void)
 {
   return (uintptr_t)reg;
@@ -280,17 +282,30 @@ JSJIT_KEEPALIVE u32 jsjit_bridge_read_memory32(u32 address)
 
 JSJIT_KEEPALIVE u32 jsjit_bridge_write_memory8(u32 address, u32 value)
 {
-  return (u32)write_memory8(address, (u8)value);
+  const cpu_alert_type alert = write_memory8(address, (u8)value);
+  jsjit_pending_alert |= alert;
+  return (u32)alert;
 }
 
 JSJIT_KEEPALIVE u32 jsjit_bridge_write_memory16(u32 address, u32 value)
 {
-  return (u32)write_memory16(address, (u16)value);
+  const cpu_alert_type alert = write_memory16(address, (u16)value);
+  jsjit_pending_alert |= alert;
+  return (u32)alert;
 }
 
 JSJIT_KEEPALIVE u32 jsjit_bridge_write_memory32(u32 address, u32 value)
 {
-  return (u32)write_memory32(address, value);
+  const cpu_alert_type alert = write_memory32(address, value);
+  jsjit_pending_alert |= alert;
+  return (u32)alert;
+}
+
+JSJIT_KEEPALIVE u32 jsjit_bridge_take_pending_alert(void)
+{
+  const cpu_alert_type alert = jsjit_pending_alert;
+  jsjit_pending_alert = CPU_ALERT_NONE;
+  return (u32)alert;
 }
 
 JSJIT_KEEPALIVE u32 jsjit_bridge_update_gba(int remaining_cycles)

@@ -247,6 +247,7 @@ function createGpspJsJitBridge(Module) {
   bridge.writeMemory8 = bind("jsjit_bridge_write_memory8", "number", ["number", "number"]);
   bridge.writeMemory16 = bind("jsjit_bridge_write_memory16", "number", ["number", "number"]);
   bridge.writeMemory32 = bind("jsjit_bridge_write_memory32", "number", ["number", "number"]);
+  bridge.takePendingAlert = bind("jsjit_bridge_take_pending_alert", "number", []);
   bridge.updateGba = bind("jsjit_bridge_update_gba", "number", ["number"]);
   bridge.checkAndRaiseInterrupts = bind("jsjit_bridge_check_and_raise_interrupts", "number", []);
   bridge.flagInterrupt = bind("jsjit_bridge_flag_interrupt", "number", ["number"]);

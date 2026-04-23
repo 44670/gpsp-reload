@@ -14,14 +14,11 @@ const {
   CPU_ACTIVE,
   CPU_ALERT_HALT,
   CPU_ALERT_SMC,
-  CPU_ALERT_IRQ,
   THUMB_BIT,
   CPSR_MASKS,
   SPSR_MASKS,
   popcount16,
 } = require("./jsjit_common.js");
-
-const BLOCK_RESULT_CYCLES_MASK = 0x00ffffff;
 
 function createEmitterContext() {
   return {
@@ -35,13 +32,37 @@ function allocTemp(ctx, prefix) {
   return name;
 }
 
+function createArmBlockFactory(env) {
+  const runtime = env.runtime;
+  const read8 = env.read8;
+  const read16 = env.read16;
+  const read32 = env.read32;
+  const write8 = env.write8;
+  const write16 = env.write16;
+  const write32 = env.write32;
+  const signExtend = env.signExtend;
+  const condPassed = env.condPassed;
+  const addWithCarry = env.addWithCarry;
+  const setNZ = env.setNZ;
+  const setNZC = env.setNZC;
+  const setNZCV = env.setNZCV;
+  const shiftImm = env.shiftImm;
+  const shiftReg = env.shiftReg;
+  const ror32 = env.ror32;
+
+  return {
+    generateNewFunction(bodySource) {
+      return eval("(function executeBlock(state) {\n\"use strict\";\n" + bodySource + "\n})");
+    },
+  };
+}
+
 function pushReturn(lines) {
-  lines.push(`  return (((pendingAlert & 0xff) << 24) | (cyclesUsed & ${BLOCK_RESULT_CYCLES_MASK})) >>> 0;`);
+  lines.push("  return cyclesUsed;");
 }
 
 function pushCycleCharge(lines, tableName, addressExpr, wordSized) {
-  const idx = wordSized ? 1 : 0;
-  lines.push(`  if (((${addressExpr}) >>> 0) < 0x10000000) cyclesUsed = ((cyclesUsed + (${tableName}[(((((${addressExpr}) >>> 0) >>> 24) << 1) | ${idx})] >>> 0)) & ${BLOCK_RESULT_CYCLES_MASK}) >>> 0;`);
+  lines.push("  cyclesUsed += 1;");
 }
 
 function pushArmComplete(lines, { forceDispatch, skipSeq, checkAlert }) {
@@ -266,7 +287,6 @@ function emitArmDataProc(lines, ctx, pc, opcode) {
       lines.push(`  state[${REG_PC}] = ${result} >>> 0;`);
       if (setFlags) {
         lines.push("  runtime.restoreSpsrToCpsrNoIrq();");
-        lines.push(`  pendingAlert |= ${CPU_ALERT_IRQ};`);
         pushArmPcDispatch(lines, `(state[${REG_CPSR}] & ${THUMB_BIT}) !== 0`);
       } else {
         pushArmComplete(lines, { forceDispatch: true, skipSeq: false });
@@ -366,7 +386,6 @@ function emitArmPsr(lines, ctx, pc, opcode) {
       const mask = allocTemp(ctx, "psrMask");
       lines.push(`  const ${mask} = (((state[${CPU_MODE}] >>> 4) & 1) !== 0) ? ${privMask} : ${userMask};`);
       lines.push(`  runtime.applyCpsrNoIrq(((${source} & ${mask}) | (state[${REG_CPSR}] & (~(${mask}) >>> 0))) >>> 0);`);
-      lines.push(`  if ((${mask} & 0xff) !== 0) pendingAlert |= ${CPU_ALERT_IRQ};`);
     } else {
       lines.push(`  if ((state[${CPU_MODE}] >>> 0) !== ${MODE_USER} && (state[${CPU_MODE}] >>> 0) !== ${MODE_SYSTEM}) {`);
       lines.push(`    const psrSlot${ctx.tempId} = state[${CPU_MODE}] & 0x0f;`);
@@ -665,7 +684,6 @@ function emitArmBlockTransfer(lines, ctx, pc, opcode) {
     if (load && (regList & (1 << REG_PC)) !== 0) {
       if (sbit) {
         lines.push("  runtime.restoreSpsrToCpsrNoIrq();");
-        lines.push(`  pendingAlert |= ${CPU_ALERT_IRQ};`);
         pushArmPcDispatch(lines, `(state[${REG_CPSR}] & ${THUMB_BIT}) !== 0`);
       } else {
         pushArmComplete(lines, { forceDispatch: true, skipSeq: false });
@@ -723,30 +741,14 @@ function emitArmStep(lines, ctx, step) {
   throw new Error(`unsupported ARM opcode 0x${opcode.toString(16)} at 0x${pc.toString(16)}`);
 }
 
-function buildArmBlockExecutor(block, env) {
+function buildArmBlockExecutor(block, factory) {
+  const blockFactory =
+    factory && typeof factory.generateNewFunction === "function"
+      ? factory
+      : createArmBlockFactory(factory);
   const lines = [
-    "\"use strict\";",
-    "const runtime = env.runtime;",
-    "const read8 = env.read8;",
-    "const read16 = env.read16;",
-    "const read32 = env.read32;",
-    "const write8 = env.write8;",
-    "const write16 = env.write16;",
-    "const write32 = env.write32;",
-    "const signExtend = env.signExtend;",
-    "const condPassed = env.condPassed;",
-    "const addWithCarry = env.addWithCarry;",
-    "const setNZ = env.setNZ;",
-    "const setNZC = env.setNZC;",
-    "const setNZCV = env.setNZCV;",
-    "const shiftImm = env.shiftImm;",
-    "const shiftReg = env.shiftReg;",
-    "const ror32 = env.ror32;",
-    "return function executeBlock(state) {",
-    "  const wsSeq = runtime.bridge.wsCycSeq;",
-    "  const wsNseq = runtime.bridge.wsCycNseq;",
-    "  const regMode = runtime.regMode;",
-    "  const spsr = runtime.spsr;",
+    "const regMode = runtime.regMode;",
+    "const spsr = runtime.spsr;",
     "  let cyclesUsed = 0;",
     "  let pendingAlert = 0;",
   ];
@@ -757,10 +759,10 @@ function buildArmBlockExecutor(block, env) {
   }
 
   pushReturn(lines);
-  lines.push("};");
-  return new Function("env", lines.join("\n"))(env);
+  return blockFactory.generateNewFunction(lines.join("\n"));
 }
 
 module.exports = {
   buildArmBlockExecutor,
+  createArmBlockFactory,
 };

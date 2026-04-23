@@ -11,20 +11,16 @@ const {
   CPU_ACTIVE,
   CPU_ALERT_HALT,
   CPU_ALERT_SMC,
-  CPU_ALERT_IRQ,
   THUMB_BIT,
   popcount16,
 } = require("./jsjit_common.js");
 
-const BLOCK_RESULT_CYCLES_MASK = 0x00ffffff;
-
 function pushReturn(lines) {
-  lines.push(`  return (((pendingAlert & 0xff) << 24) | (cyclesUsed & ${BLOCK_RESULT_CYCLES_MASK})) >>> 0;`);
+  lines.push("  return cyclesUsed;");
 }
 
 function pushCycleCharge(lines, tableName, addressExpr, wordSized) {
-  const idx = wordSized ? 1 : 0;
-  lines.push(`  if (((${addressExpr}) >>> 0) < 0x10000000) cyclesUsed = ((cyclesUsed + (${tableName}[(((((${addressExpr}) >>> 0) >>> 24) << 1) | ${idx})] >>> 0)) & ${BLOCK_RESULT_CYCLES_MASK}) >>> 0;`);
+  lines.push("  cyclesUsed += 1;");
 }
 
 function pushThumbComplete(lines, { forceDispatch, skipSeq, checkAlert }) {
@@ -54,30 +50,39 @@ function allocTemp(ctx, prefix) {
   return name;
 }
 
-function buildThumbBlockExecutor(block, env) {
+function createThumbBlockFactory(env) {
+  const runtime = env.runtime;
+  const read8 = env.read8;
+  const read16 = env.read16;
+  const read32 = env.read32;
+  const write8 = env.write8;
+  const write16 = env.write16;
+  const write32 = env.write32;
+  const signExtend = env.signExtend;
+  const condPassed = env.condPassed;
+  const addWithCarry = env.addWithCarry;
+  const setNZ = env.setNZ;
+  const setNZC = env.setNZC;
+  const setNZCV = env.setNZCV;
+  const shiftImm = env.shiftImm;
+  const shiftReg = env.shiftReg;
+  const applyCpsr = env.applyCpsr;
+
+  return {
+    generateNewFunction(bodySource) {
+      return eval("(function executeBlock(state) {\n\"use strict\";\n" + bodySource + "\n})");
+    },
+  };
+}
+
+function buildThumbBlockExecutor(block, factory) {
+  const blockFactory =
+    factory && typeof factory.generateNewFunction === "function"
+      ? factory
+      : createThumbBlockFactory(factory);
   const lines = [
-    "\"use strict\";",
-    "const runtime = env.runtime;",
-    "const read8 = env.read8;",
-    "const read16 = env.read16;",
-    "const read32 = env.read32;",
-    "const write8 = env.write8;",
-    "const write16 = env.write16;",
-    "const write32 = env.write32;",
-    "const signExtend = env.signExtend;",
-    "const condPassed = env.condPassed;",
-    "const addWithCarry = env.addWithCarry;",
-    "const setNZ = env.setNZ;",
-    "const setNZC = env.setNZC;",
-    "const setNZCV = env.setNZCV;",
-    "const shiftImm = env.shiftImm;",
-    "const shiftReg = env.shiftReg;",
-    "const applyCpsr = env.applyCpsr;",
-    "return function executeBlock(state) {",
-    "  const wsSeq = runtime.bridge.wsCycSeq;",
-    "  const wsNseq = runtime.bridge.wsCycNseq;",
-    "  const regMode = runtime.regMode;",
-    "  const spsr = runtime.spsr;",
+    "const regMode = runtime.regMode;",
+    "const spsr = runtime.spsr;",
     "  let cyclesUsed = 0;",
     "  let pendingAlert = 0;",
   ];
@@ -88,8 +93,7 @@ function buildThumbBlockExecutor(block, env) {
   }
 
   pushReturn(lines);
-  lines.push("};");
-  return new Function("env", lines.join("\n"))(env);
+  return blockFactory.generateNewFunction(lines.join("\n"));
 }
 
 function emitThumbShift(lines, ctx, pc, opcode, shiftType) {
@@ -605,7 +609,7 @@ function emitThumbStep(lines, ctx, step) {
 module.exports = {
   allocTemp,
   buildThumbBlockExecutor,
-  BLOCK_RESULT_CYCLES_MASK,
+  createThumbBlockFactory,
   popcount16,
   pushCycleCharge,
   pushReturn,

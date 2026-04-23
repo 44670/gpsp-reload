@@ -77,6 +77,7 @@ u32 jsjit_bridge_read_memory32(u32 address);
 u32 jsjit_bridge_write_memory8(u32 address, u32 value);
 u32 jsjit_bridge_write_memory16(u32 address, u32 value);
 u32 jsjit_bridge_write_memory32(u32 address, u32 value);
+u32 jsjit_bridge_take_pending_alert(void);
 u32 jsjit_bridge_update_gba(int remaining_cycles);
 u32 jsjit_bridge_check_and_raise_interrupts(void);
 u32 jsjit_bridge_flag_interrupt(u32 irq_mask);
