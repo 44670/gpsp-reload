@@ -16,31 +16,30 @@ const {
   popcount16,
 } = require("./jsjit_common.js");
 
-const ALERT_MASK = (CPU_ALERT_HALT | CPU_ALERT_IRQ | CPU_ALERT_SMC) >>> 0;
+const BLOCK_RESULT_CYCLES_MASK = 0x00ffffff;
 
-function pushSyncAndReturn(lines, valueExpr) {
-  lines.push("  runtime.cyclesRemaining = cyclesRemaining | 0;");
-  lines.push("  runtime.pendingAlert = (runtime.pendingAlert | pendingAlert) >>> 0;");
-  lines.push(`  return ${valueExpr};`);
+function pushReturn(lines) {
+  lines.push(`  return (((pendingAlert & 0xff) << 24) | (cyclesUsed & ${BLOCK_RESULT_CYCLES_MASK})) >>> 0;`);
 }
 
 function pushCycleCharge(lines, tableName, addressExpr, wordSized) {
   const idx = wordSized ? 1 : 0;
-  lines.push(`  if (((${addressExpr}) >>> 0) < 0x10000000) cyclesRemaining -= ${tableName}[(((((${addressExpr}) >>> 0) >>> 24) << 1) | ${idx})] >>> 0;`);
+  lines.push(`  if (((${addressExpr}) >>> 0) < 0x10000000) cyclesUsed = ((cyclesUsed + (${tableName}[(((((${addressExpr}) >>> 0) >>> 24) << 1) | ${idx})] >>> 0)) & ${BLOCK_RESULT_CYCLES_MASK}) >>> 0;`);
 }
 
-function pushThumbComplete(lines, { forceDispatch, skipSeq }) {
+function pushThumbComplete(lines, { forceDispatch, skipSeq, checkAlert }) {
   if (!skipSeq) {
     pushCycleCharge(lines, "wsSeq", "state[15]", false);
   }
-  lines.push("  if ((idleLoopTargetPc[0] >>> 0) === (state[15] >>> 0) && cyclesRemaining > 0) cyclesRemaining = 0;");
   if (forceDispatch) {
-    pushSyncAndReturn(lines, "1");
+    pushReturn(lines);
     return;
   }
-  lines.push(`  if (cyclesRemaining <= 0 || (state[${CPU_HALT_STATE}] >>> 0) !== ${CPU_ACTIVE} || (pendingAlert & ${ALERT_MASK}) !== 0 || (state[${REG_CPSR}] & ${THUMB_BIT}) === 0) {`);
-  pushSyncAndReturn(lines, "1");
-  lines.push("  }");
+  if (checkAlert) {
+    lines.push("  if ((pendingAlert & 0xff) !== 0) {");
+    pushReturn(lines);
+    lines.push("  }");
+  }
 }
 
 function createEmitterContext() {
@@ -77,26 +76,18 @@ function buildThumbBlockExecutor(block, env) {
     "return function executeBlock(state) {",
     "  const wsSeq = runtime.bridge.wsCycSeq;",
     "  const wsNseq = runtime.bridge.wsCycNseq;",
-    "  const idleLoopTargetPc = runtime.bridge.idleLoopTargetPc;",
     "  const regMode = runtime.regMode;",
     "  const spsr = runtime.spsr;",
-    "  let cyclesRemaining = runtime.cyclesRemaining | 0;",
+    "  let cyclesUsed = 0;",
     "  let pendingAlert = 0;",
   ];
-
-  if (block.idle) {
-    lines.push("  if (cyclesRemaining > 0) cyclesRemaining = 0;");
-    pushSyncAndReturn(lines, "1");
-    lines.push("};");
-    return new Function("env", lines.join("\n"))(env);
-  }
 
   const ctx = createEmitterContext();
   for (const step of block.steps) {
     emitThumbStep(lines, ctx, step);
   }
 
-  pushSyncAndReturn(lines, "1");
+  pushReturn(lines);
   lines.push("};");
   return new Function("env", lines.join("\n"))(env);
 }
@@ -401,7 +392,7 @@ function emitThumbRegOffsetTransfer(lines, ctx, pc, opcode) {
   }
 
   lines.push(`  state[${REG_PC}] = ${nextPc} >>> 0;`);
-  pushThumbComplete(lines, { forceDispatch: false, skipSeq: false });
+  pushThumbComplete(lines, { forceDispatch: false, skipSeq: false, checkAlert: (top & 0xfe) <= 0x54 });
 }
 
 function emitThumbImmOffsetTransfer(lines, ctx, pc, opcode) {
@@ -439,7 +430,7 @@ function emitThumbImmOffsetTransfer(lines, ctx, pc, opcode) {
   }
 
   lines.push(`  state[${REG_PC}] = ${nextPc} >>> 0;`);
-  pushThumbComplete(lines, { forceDispatch: false, skipSeq: false });
+  pushThumbComplete(lines, { forceDispatch: false, skipSeq: false, checkAlert: top <= 0x87 && (top <= 0x67 || (top >= 0x70 && top <= 0x77) || (top >= 0x80 && top <= 0x87)) });
 }
 
 function emitThumbSpRelativeTransfer(lines, ctx, pc, opcode) {
@@ -457,7 +448,7 @@ function emitThumbSpRelativeTransfer(lines, ctx, pc, opcode) {
 
   pushCycleCharge(lines, "wsNseq", address, true);
   lines.push(`  state[${REG_PC}] = ${nextPc} >>> 0;`);
-  pushThumbComplete(lines, { forceDispatch: false, skipSeq: false });
+  pushThumbComplete(lines, { forceDispatch: false, skipSeq: false, checkAlert: top <= 0x97 });
 }
 
 function emitThumbBlockMem(lines, ctx, pc, load, rn, regList, preDec) {
@@ -612,12 +603,12 @@ function emitThumbStep(lines, ctx, step) {
 }
 
 module.exports = {
-  ALERT_MASK,
   allocTemp,
   buildThumbBlockExecutor,
+  BLOCK_RESULT_CYCLES_MASK,
   popcount16,
   pushCycleCharge,
-  pushSyncAndReturn,
+  pushReturn,
   pushThumbComplete,
   REG_BUS_VALUE,
   REG_CPSR,

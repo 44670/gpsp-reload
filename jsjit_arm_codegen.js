@@ -21,7 +21,7 @@ const {
   popcount16,
 } = require("./jsjit_common.js");
 
-const ALERT_MASK = (CPU_ALERT_HALT | CPU_ALERT_IRQ | CPU_ALERT_SMC) >>> 0;
+const BLOCK_RESULT_CYCLES_MASK = 0x00ffffff;
 
 function createEmitterContext() {
   return {
@@ -35,29 +35,28 @@ function allocTemp(ctx, prefix) {
   return name;
 }
 
-function pushSyncAndReturn(lines, valueExpr) {
-  lines.push("  runtime.cyclesRemaining = cyclesRemaining | 0;");
-  lines.push("  runtime.pendingAlert = (runtime.pendingAlert | pendingAlert) >>> 0;");
-  lines.push(`  return ${valueExpr};`);
+function pushReturn(lines) {
+  lines.push(`  return (((pendingAlert & 0xff) << 24) | (cyclesUsed & ${BLOCK_RESULT_CYCLES_MASK})) >>> 0;`);
 }
 
 function pushCycleCharge(lines, tableName, addressExpr, wordSized) {
   const idx = wordSized ? 1 : 0;
-  lines.push(`  if (((${addressExpr}) >>> 0) < 0x10000000) cyclesRemaining -= ${tableName}[(((((${addressExpr}) >>> 0) >>> 24) << 1) | ${idx})] >>> 0;`);
+  lines.push(`  if (((${addressExpr}) >>> 0) < 0x10000000) cyclesUsed = ((cyclesUsed + (${tableName}[(((((${addressExpr}) >>> 0) >>> 24) << 1) | ${idx})] >>> 0)) & ${BLOCK_RESULT_CYCLES_MASK}) >>> 0;`);
 }
 
-function pushArmComplete(lines, { forceDispatch, skipSeq }) {
+function pushArmComplete(lines, { forceDispatch, skipSeq, checkAlert }) {
   if (!skipSeq) {
     pushCycleCharge(lines, "wsSeq", "state[15]", true);
   }
-  lines.push("  if ((idleLoopTargetPc[0] >>> 0) === (state[15] >>> 0) && cyclesRemaining > 0) cyclesRemaining = 0;");
   if (forceDispatch) {
-    pushSyncAndReturn(lines, "1");
+    pushReturn(lines);
     return;
   }
-  lines.push(`  if (cyclesRemaining <= 0 || (state[${CPU_HALT_STATE}] >>> 0) !== ${CPU_ACTIVE} || (pendingAlert & ${ALERT_MASK}) !== 0 || (state[${REG_CPSR}] & ${THUMB_BIT}) !== 0) {`);
-  pushSyncAndReturn(lines, "1");
-  lines.push("  }");
+  if (checkAlert) {
+    lines.push("  if ((pendingAlert & 0xff) !== 0) {");
+    pushReturn(lines);
+    lines.push("  }");
+  }
 }
 
 function pushArmPcDispatch(lines, thumbExpr) {
@@ -67,7 +66,7 @@ function pushArmPcDispatch(lines, thumbExpr) {
   pushArmComplete(lines, { forceDispatch: true, skipSeq: false });
 }
 
-function withCondition(lines, cond, nextPc, emitBody) {
+function withCondition(lines, cond, nextPc, emitBody, terminateOnFalse = false) {
   if (cond === 0x0e) {
     emitBody();
     return;
@@ -77,7 +76,7 @@ function withCondition(lines, cond, nextPc, emitBody) {
   emitBody();
   lines.push("  } else {");
   lines.push(`    state[${REG_PC}] = ${nextPc} >>> 0;`);
-  pushArmComplete(lines, { forceDispatch: false, skipSeq: false });
+  pushArmComplete(lines, { forceDispatch: terminateOnFalse, skipSeq: false });
   lines.push("  }");
 }
 
@@ -266,11 +265,8 @@ function emitArmDataProc(lines, ctx, pc, opcode) {
     if (rd === REG_PC) {
       lines.push(`  state[${REG_PC}] = ${result} >>> 0;`);
       if (setFlags) {
-        lines.push("  runtime.cyclesRemaining = cyclesRemaining | 0;");
-        lines.push("  runtime.pendingAlert = (runtime.pendingAlert | pendingAlert) >>> 0;");
-        lines.push("  runtime.restoreSpsrToCpsr();");
-        lines.push("  cyclesRemaining = runtime.cyclesRemaining | 0;");
-        lines.push("  pendingAlert = runtime.pendingAlert >>> 0;");
+        lines.push("  runtime.restoreSpsrToCpsrNoIrq();");
+        lines.push(`  pendingAlert |= ${CPU_ALERT_IRQ};`);
         pushArmPcDispatch(lines, `(state[${REG_CPSR}] & ${THUMB_BIT}) !== 0`);
       } else {
         pushArmComplete(lines, { forceDispatch: true, skipSeq: false });
@@ -281,7 +277,7 @@ function emitArmDataProc(lines, ctx, pc, opcode) {
     lines.push(`  state[${rd}] = ${result} >>> 0;`);
     lines.push(`  state[${REG_PC}] = ${nextPc} >>> 0;`);
     pushArmComplete(lines, { forceDispatch: false, skipSeq: false });
-  });
+  }, rd === REG_PC && (op < 0x8 || op >= 0xc));
 }
 
 function emitArmBranch(lines, pc, opcode) {
@@ -300,7 +296,7 @@ function emitArmBranch(lines, pc, opcode) {
     lines.push(`  state[${REG_PC}] = ${target} >>> 0;`);
     pushCycleCharge(lines, "wsNseq", "state[15]", true);
     pushArmComplete(lines, { forceDispatch: true, skipSeq: false });
-  });
+  }, true);
 }
 
 function emitArmBx(lines, ctx, pc, opcode) {
@@ -320,7 +316,7 @@ function emitArmBx(lines, ctx, pc, opcode) {
     lines.push(`  state[${REG_PC}] = ${target} >>> 0;`);
     pushCycleCharge(lines, "wsNseq", target, true);
     pushArmComplete(lines, { forceDispatch: true, skipSeq: false });
-  });
+  }, true);
 }
 
 function emitArmSwi(lines, pc, opcode) {
@@ -332,9 +328,9 @@ function emitArmSwi(lines, pc, opcode) {
     lines.push(`  regMode[${((MODE_SUPERVISOR & 0x0f) * 7 + 6) >>> 0}] = ${nextPc} >>> 0;`);
     lines.push(`  spsr[${MODE_SUPERVISOR & 0x0f}] = state[${REG_CPSR}] >>> 0;`);
     lines.push(`  state[${REG_PC}] = 0x00000008;`);
-    lines.push(`  runtime.applyCpsr(((state[${REG_CPSR}] & ~0x3f) | 0x13 | 0x80) >>> 0, false);`);
+    lines.push(`  runtime.applyCpsrNoIrq(((state[${REG_CPSR}] & ~0x3f) | 0x13 | 0x80) >>> 0);`);
     pushArmComplete(lines, { forceDispatch: true, skipSeq: false });
-  });
+  }, true);
 }
 
 function emitArmPsr(lines, ctx, pc, opcode) {
@@ -369,7 +365,8 @@ function emitArmPsr(lines, ctx, pc, opcode) {
       const privMask = CPSR_MASKS[pfield][1] >>> 0;
       const mask = allocTemp(ctx, "psrMask");
       lines.push(`  const ${mask} = (((state[${CPU_MODE}] >>> 4) & 1) !== 0) ? ${privMask} : ${userMask};`);
-      lines.push(`  runtime.applyCpsr(((${source} & ${mask}) | (state[${REG_CPSR}] & (~(${mask}) >>> 0))) >>> 0, ((${mask} & 0xff) !== 0));`);
+      lines.push(`  runtime.applyCpsrNoIrq(((${source} & ${mask}) | (state[${REG_CPSR}] & (~(${mask}) >>> 0))) >>> 0);`);
+      lines.push(`  if ((${mask} & 0xff) !== 0) pendingAlert |= ${CPU_ALERT_IRQ};`);
     } else {
       lines.push(`  if ((state[${CPU_MODE}] >>> 0) !== ${MODE_USER} && (state[${CPU_MODE}] >>> 0) !== ${MODE_SYSTEM}) {`);
       lines.push(`    const psrSlot${ctx.tempId} = state[${CPU_MODE}] & 0x0f;`);
@@ -380,7 +377,7 @@ function emitArmPsr(lines, ctx, pc, opcode) {
 
     lines.push(`  state[${REG_PC}] = ${nextPc} >>> 0;`);
     pushArmComplete(lines, { forceDispatch: true, skipSeq: false });
-  });
+  }, true);
 }
 
 function emitArmMultiply(lines, ctx, pc, opcode) {
@@ -443,7 +440,7 @@ function emitArmMultiply(lines, ctx, pc, opcode) {
     }
     lines.push(`  state[${REG_PC}] = ${nextPc} >>> 0;`);
     pushArmComplete(lines, { forceDispatch: true, skipSeq: false });
-  });
+  }, true);
 }
 
 function emitArmSwap(lines, ctx, pc, opcode) {
@@ -472,7 +469,7 @@ function emitArmSwap(lines, ctx, pc, opcode) {
     lines.push(`  state[${rd}] = ${value} >>> 0;`);
     lines.push(`  state[${REG_PC}] = ${nextPc} >>> 0;`);
     pushArmComplete(lines, { forceDispatch: true, skipSeq: false });
-  });
+  }, true);
 }
 
 function emitArmHalfTransfer(lines, ctx, pc, opcode) {
@@ -539,7 +536,7 @@ function emitArmHalfTransfer(lines, ctx, pc, opcode) {
 
     lines.push(`  state[${REG_PC}] = ${nextPc} >>> 0;`);
     pushArmComplete(lines, { forceDispatch: true, skipSeq: false });
-  });
+  }, true);
 }
 
 function emitArmSingleTransfer(lines, ctx, pc, opcode) {
@@ -592,8 +589,8 @@ function emitArmSingleTransfer(lines, ctx, pc, opcode) {
     }
 
     lines.push(`  state[${REG_PC}] = ${nextPc} >>> 0;`);
-    pushArmComplete(lines, { forceDispatch: false, skipSeq: false });
-  });
+    pushArmComplete(lines, { forceDispatch: false, skipSeq: false, checkAlert: !load });
+  }, load && rd === REG_PC);
 }
 
 function emitArmBlockTransfer(lines, ctx, pc, opcode) {
@@ -667,7 +664,8 @@ function emitArmBlockTransfer(lines, ctx, pc, opcode) {
 
     if (load && (regList & (1 << REG_PC)) !== 0) {
       if (sbit) {
-        lines.push("  runtime.restoreSpsrToCpsr();");
+        lines.push("  runtime.restoreSpsrToCpsrNoIrq();");
+        lines.push(`  pendingAlert |= ${CPU_ALERT_IRQ};`);
         pushArmPcDispatch(lines, `(state[${REG_CPSR}] & ${THUMB_BIT}) !== 0`);
       } else {
         pushArmComplete(lines, { forceDispatch: true, skipSeq: false });
@@ -677,7 +675,7 @@ function emitArmBlockTransfer(lines, ctx, pc, opcode) {
 
     lines.push(`  state[${REG_PC}] = ${nextPc} >>> 0;`);
     pushArmComplete(lines, { forceDispatch: true, skipSeq: false });
-  });
+  }, true);
 }
 
 function isArmPsrOpcode(opcode) {
@@ -747,26 +745,18 @@ function buildArmBlockExecutor(block, env) {
     "return function executeBlock(state) {",
     "  const wsSeq = runtime.bridge.wsCycSeq;",
     "  const wsNseq = runtime.bridge.wsCycNseq;",
-    "  const idleLoopTargetPc = runtime.bridge.idleLoopTargetPc;",
     "  const regMode = runtime.regMode;",
     "  const spsr = runtime.spsr;",
-    "  let cyclesRemaining = runtime.cyclesRemaining | 0;",
+    "  let cyclesUsed = 0;",
     "  let pendingAlert = 0;",
   ];
-
-  if (block.idle) {
-    lines.push("  if (cyclesRemaining > 0) cyclesRemaining = 0;");
-    pushSyncAndReturn(lines, "1");
-    lines.push("};");
-    return new Function("env", lines.join("\n"))(env);
-  }
 
   const ctx = createEmitterContext();
   for (const step of block.steps) {
     emitArmStep(lines, ctx, step);
   }
 
-  pushSyncAndReturn(lines, "1");
+  pushReturn(lines);
   lines.push("};");
   return new Function("env", lines.join("\n"))(env);
 }

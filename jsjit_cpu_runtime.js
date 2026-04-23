@@ -40,6 +40,8 @@ const {
 
 const MAX_ARM_BLOCK_INSTRUCTIONS = 48;
 const MAX_THUMB_BLOCK_INSTRUCTIONS = 64;
+const BLOCK_RESULT_CYCLES_MASK = 0x00ffffff;
+const BLOCK_RESULT_ALERT_SHIFT = 24;
 
 function createGpspJsJitRuntime(Module) {
   const bridge = createGpspJsJitBridge(Module);
@@ -273,7 +275,7 @@ function createGpspJsJitRuntime(Module) {
       }
     },
 
-    applyCpsr(value, checkInterrupts) {
+    applyCpsrNoIrq(value) {
       const next = value >>> 0;
       this.regs[REG_CPSR] = next;
 
@@ -281,18 +283,27 @@ function createGpspJsJitRuntime(Module) {
       if (newMode !== this.regs[CPU_MODE] && newMode !== 0x16) {
         this.setCpuMode(newMode);
       }
+    },
+
+    applyCpsr(value, checkInterrupts) {
+      this.applyCpsrNoIrq(value);
 
       if (checkInterrupts) {
-        bridge.checkAndRaiseInterrupts();
+        this.pendingAlert |= CPU_ALERT_IRQ;
       }
     },
 
-    restoreSpsrToCpsr() {
+    restoreSpsrToCpsrNoIrq() {
       const mode = this.regs[CPU_MODE] >>> 0;
       if (mode === MODE_USER || mode === MODE_SYSTEM) {
         return;
       }
-      this.applyCpsr(this.spsr[mode & 0x0f] >>> 0, true);
+      this.applyCpsrNoIrq(this.spsr[mode & 0x0f] >>> 0);
+    },
+
+    restoreSpsrToCpsr() {
+      this.restoreSpsrToCpsrNoIrq();
+      this.pendingAlert |= CPU_ALERT_IRQ;
     },
 
     readArmReg(regIndex, pc, kind) {
@@ -1410,6 +1421,10 @@ function createGpspJsJitRuntime(Module) {
       return rd === REG_PC && (op < 0x8 || op >= 0xc);
     },
 
+    armLoadWritesPc(opcode) {
+      return ((opcode & 0x0c100000) === 0x04100000) && (((opcode >>> 12) & 0xf) === REG_PC);
+    },
+
     shouldTerminateArmOpcode(opcode, nextPc) {
       if ((opcode & 0x0ffffff0) === 0x012fff10) {
         return true;
@@ -1421,6 +1436,9 @@ function createGpspJsJitRuntime(Module) {
         return true;
       }
       if ((opcode & 0x0e000000) === 0x08000000) {
+        return true;
+      }
+      if (this.armLoadWritesPc(opcode)) {
         return true;
       }
       if ((opcode & 0x0c000000) === 0x00000000) {
@@ -1582,9 +1600,14 @@ function createGpspJsJitRuntime(Module) {
       const thumb = (this.regs[REG_CPSR] & THUMB_BIT) !== 0;
       try {
         const block = this.getBlock(pc, thumb);
-        const ret = block.execute(this.regs);
+        const result = block.execute(this.regs) >>> 0;
+        this.cyclesRemaining -= result & BLOCK_RESULT_CYCLES_MASK;
+        this.pendingAlert |= (result >>> BLOCK_RESULT_ALERT_SHIFT) & 0xff;
+        if ((bridge.idleLoopTargetPc[0] >>> 0) === (this.regs[REG_PC] >>> 0) && this.cyclesRemaining > 0) {
+          this.cyclesRemaining = 0;
+        }
         this.processPendingAlert();
-        return ret;
+        return 1;
       } catch (error) {
         throw error;
       }
