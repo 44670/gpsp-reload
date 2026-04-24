@@ -17,10 +17,14 @@
 
 #define block_prologue_size XTENSA_BLOCK_LITERAL_BYTES
 
-void xtensa_emit_block_prologue(u8 **translation_ptr, u8 **literal_base);
+void xtensa_emit_block_prologue(u8 **translation_ptr, u8 **literal_base,
+                                u8 **literal_cursor);
 void xtensa_emit_block_finalize(u8 *literal_base, u8 **translation_ptr,
                                 u32 block_start_pc, u32 block_end_pc,
                                 bool thumb_mode);
+bool xtensa_emit_native_arm_data_proc(u8 **translation_ptr, u8 *literal_base,
+                                      u8 **literal_cursor, u32 opcode,
+                                      u32 pc, u32 cycles);
 u32 execute_arm_translate(u32 cycles);
 u32 execute_arm_translate_internal(u32 cycles, void *regptr);
 u32 xtensa_jit_register_arm_instruction(u32 opcode, u32 pc, bool ram_region);
@@ -39,7 +43,8 @@ u32 xtensa_jit_get_unsupported_opcodes(void);
 u32 xtensa_jit_get_thumb_blocks(void);
 
 #define generate_block_extra_vars()                                           \
-  u8 *xtensa_block_literal_base = NULL
+  u8 *xtensa_block_literal_base = NULL;                                       \
+  u8 *xtensa_block_literal_ptr = NULL
 
 #define generate_block_extra_vars_arm()                                       \
   generate_block_extra_vars()
@@ -48,7 +53,8 @@ u32 xtensa_jit_get_thumb_blocks(void);
   generate_block_extra_vars()
 
 #define generate_block_prologue()                                             \
-  xtensa_emit_block_prologue(&translation_ptr, &xtensa_block_literal_base)
+  xtensa_emit_block_prologue(&translation_ptr, &xtensa_block_literal_base,    \
+                             &xtensa_block_literal_ptr)
 
 #define generate_cycle_update()                                               \
   do                                                                          \
@@ -85,6 +91,7 @@ u32 xtensa_jit_get_thumb_blocks(void);
     xtensa_emit_native_arm_instruction(&translation_ptr,                      \
                                        xtensa_block_literal_base,             \
                                        xtensa_insn_index);                    \
+    cycle_count = 0;                                                          \
   } while (0)
 
 #define xtensa_emit_current_thumb_instruction()                               \
@@ -95,6 +102,23 @@ u32 xtensa_jit_get_thumb_blocks(void);
     xtensa_emit_native_arm_instruction(&translation_ptr,                      \
                                        xtensa_block_literal_base,             \
                                        xtensa_insn_index);                    \
+    cycle_count = 0;                                                          \
+  } while (0)
+
+#define xtensa_emit_arm_data_proc_or_helper()                                 \
+  do                                                                          \
+  {                                                                           \
+    if (xtensa_emit_native_arm_data_proc(&translation_ptr,                    \
+                                         xtensa_block_literal_base,           \
+                                         &xtensa_block_literal_ptr, opcode,   \
+                                         pc, cycle_count))                    \
+    {                                                                         \
+      cycle_count = 0;                                                        \
+    }                                                                         \
+    else                                                                      \
+    {                                                                         \
+      xtensa_emit_current_arm_instruction();                                  \
+    }                                                                         \
   } while (0)
 
 #define arm_conditional_block_header()                                        \
@@ -117,19 +141,19 @@ u32 xtensa_jit_get_thumb_blocks(void);
 #define arm_data_proc(...)                                                    \
   do                                                                          \
   {                                                                           \
-    xtensa_emit_current_arm_instruction();                                    \
+    xtensa_emit_arm_data_proc_or_helper();                                    \
   } while (0)
 
 #define arm_data_proc_test(...)                                               \
   do                                                                          \
   {                                                                           \
-    xtensa_emit_current_arm_instruction();                                    \
+    xtensa_emit_arm_data_proc_or_helper();                                    \
   } while (0)
 
 #define arm_data_proc_unary(...)                                              \
   do                                                                          \
   {                                                                           \
-    xtensa_emit_current_arm_instruction();                                    \
+    xtensa_emit_arm_data_proc_or_helper();                                    \
   } while (0)
 
 #define arm_multiply(...)                                                     \

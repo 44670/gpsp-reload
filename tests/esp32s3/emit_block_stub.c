@@ -8,7 +8,7 @@
 enum
 {
   IMAGE_BASE = 0x3F400000U,
-  IMAGE_SIZE = 64U,
+  IMAGE_SIZE = 512U,
   ARM_HELPER = 0x40001000U,
   THUMB_HELPER = 0x40002000U,
   TEST_INSN_INDEX = 7U
@@ -32,6 +32,8 @@ static int emit_block_image(uint8_t *image, size_t image_size, int thumb_mode,
 
   xtensa_store_u32(literal_base + 0, thumb_mode ? THUMB_HELPER : ARM_HELPER);
   xtensa_store_u32(literal_base + 4, 0);
+  xtensa_store_u32(literal_base + 8, 0);
+  xtensa_store_u32(literal_base + 12, 0);
 
   *total_size = (size_t)(translation_ptr - image);
   *code_offset = (size_t)((literal_base + XTENSA_BLOCK_LITERAL_BYTES) - image);

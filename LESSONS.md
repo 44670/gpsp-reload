@@ -33,3 +33,13 @@
   every block and still produce wrong display state.
 - Make every test output parseable summary lines with backend, counters, frame
   count, framebuffer hash, and failure reason.
+- Current ESP32-S3 JIT is a correctness scaffold: emitted Xtensa blocks enter
+  backend-local ARM/Thumb helpers, not full native ARM-to-Xtensa lowering yet.
+- Keep the helper path until native lowering proves parity. It is useful for
+  isolating scheduler/cache/control-flow bugs from opcode lowering bugs.
+- The 16-instruction Xtensa block cap is a workaround, not a final design.
+  Remove it only after long generated blocks and branch patching are solid.
+- External branch patching cannot be treated as optional. If patching is no-op,
+  pretranslation can mutate caches behind active blocks and create bad frames.
+- A correct PNG in QEMU is stronger evidence than counters alone; always inspect
+  the actual frame when debugging display failures.

@@ -4,7 +4,8 @@
 #include <stdint.h>
 #include <string.h>
 
-#define XTENSA_BLOCK_LITERAL_BYTES 8
+#define XTENSA_BLOCK_FIXED_LITERAL_BYTES 16
+#define XTENSA_BLOCK_LITERAL_BYTES 256
 
 typedef struct xtensa_jit_block_meta
 {
@@ -80,6 +81,61 @@ static inline void xtensa_emit_movi(uint8_t **ptr, uint32_t reg_num,
   xtensa_emit_u8(ptr, (uint8_t)((reg_num << 4) | 0x02));
   xtensa_emit_u8(ptr, (uint8_t)(0xA0 | ((imm >> 8) & 0x0F)));
   xtensa_emit_u8(ptr, (uint8_t)(imm & 0xFF));
+}
+
+static inline void xtensa_emit_l32i(uint8_t **ptr, uint32_t dst,
+                                    uint32_t base, uint32_t offset)
+{
+  xtensa_emit_u8(ptr, (uint8_t)((dst << 4) | 0x02));
+  xtensa_emit_u8(ptr, (uint8_t)(0x20 | base));
+  xtensa_emit_u8(ptr, (uint8_t)(offset >> 2));
+}
+
+static inline void xtensa_emit_s32i(uint8_t **ptr, uint32_t src,
+                                    uint32_t base, uint32_t offset)
+{
+  xtensa_emit_u8(ptr, (uint8_t)((src << 4) | 0x02));
+  xtensa_emit_u8(ptr, (uint8_t)(0x60 | base));
+  xtensa_emit_u8(ptr, (uint8_t)(offset >> 2));
+}
+
+static inline void xtensa_emit_add_n(uint8_t **ptr, uint32_t dst,
+                                     uint32_t src_a, uint32_t src_b)
+{
+  xtensa_emit_u16(ptr, (uint16_t)((dst << 12) | (src_a << 8) |
+                                  (src_b << 4) | 0x0A));
+}
+
+static inline void xtensa_emit_sub(uint8_t **ptr, uint32_t dst,
+                                   uint32_t src_a, uint32_t src_b)
+{
+  xtensa_emit_u8(ptr, (uint8_t)(src_b << 4));
+  xtensa_emit_u8(ptr, (uint8_t)((dst << 4) | src_a));
+  xtensa_emit_u8(ptr, 0xC0);
+}
+
+static inline void xtensa_emit_and(uint8_t **ptr, uint32_t dst,
+                                   uint32_t src_a, uint32_t src_b)
+{
+  xtensa_emit_u8(ptr, (uint8_t)(src_b << 4));
+  xtensa_emit_u8(ptr, (uint8_t)((dst << 4) | src_a));
+  xtensa_emit_u8(ptr, 0x10);
+}
+
+static inline void xtensa_emit_or(uint8_t **ptr, uint32_t dst,
+                                  uint32_t src_a, uint32_t src_b)
+{
+  xtensa_emit_u8(ptr, (uint8_t)(src_b << 4));
+  xtensa_emit_u8(ptr, (uint8_t)((dst << 4) | src_a));
+  xtensa_emit_u8(ptr, 0x20);
+}
+
+static inline void xtensa_emit_xor(uint8_t **ptr, uint32_t dst,
+                                   uint32_t src_a, uint32_t src_b)
+{
+  xtensa_emit_u8(ptr, (uint8_t)(src_b << 4));
+  xtensa_emit_u8(ptr, (uint8_t)((dst << 4) | src_a));
+  xtensa_emit_u8(ptr, 0x30);
 }
 
 static inline void xtensa_emit_movi_u15(uint8_t **ptr, uint32_t reg_num,

@@ -20,5 +20,9 @@ build*
 __pycache__
 
 emit_block_stub
+emit_native_arm_block
+xtensa_codegen_tests
+tests/esp32s3/out/
 
 *.png
+

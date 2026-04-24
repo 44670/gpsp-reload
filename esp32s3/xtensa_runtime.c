@@ -10,6 +10,7 @@
 
 #include "common.h"
 #include "esp32s3/xtensa_emit.h"
+#include "esp32s3/xtensa_native_emit.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -59,6 +60,7 @@ static u32 xtensa_compiled_rom_arm_insn_watermark;
 static u32 xtensa_compiled_rom_thumb_insn_watermark;
 static u32 xtensa_compiled_ram_arm_insn_count;
 static u32 xtensa_compiled_ram_thumb_insn_count;
+static u32 xtensa_native_arm_insn_count;
 static u32 xtensa_helper_arm_insns_executed;
 static u32 xtensa_helper_thumb_insns_executed;
 static u32 xtensa_pc_guard_mismatches;
@@ -2066,12 +2068,32 @@ u32 xtensa_jit_exec_compiled_thumb(u32 insn_index)
   return 0;
 }
 
-void xtensa_emit_block_prologue(u8 **translation_ptr, u8 **literal_base)
+bool xtensa_emit_native_arm_data_proc(u8 **translation_ptr, u8 *literal_base,
+                                      u8 **literal_cursor, u32 opcode,
+                                      u32 pc, u32 cycles)
+{
+  if (!xtensa_emit_native_arm_data_proc_body(translation_ptr, literal_base,
+                                             literal_cursor, opcode, pc,
+                                             cycles))
+    return false;
+
+  xtensa_native_arm_insn_count++;
+  return true;
+}
+
+void xtensa_emit_block_prologue(u8 **translation_ptr, u8 **literal_base,
+                                u8 **literal_cursor)
 {
   *translation_ptr = xtensa_align_ptr(*translation_ptr);
   *literal_base = *translation_ptr;
-  xtensa_store_u32(*literal_base + 0, (u32)(uintptr_t)xtensa_jit_exec_compiled_arm);
-  xtensa_store_u32(*literal_base + 4, 0);
+  xtensa_store_u32(*literal_base + XTENSA_LITERAL_HELPER,
+                   (u32)(uintptr_t)xtensa_jit_exec_compiled_arm);
+  xtensa_store_u32(*literal_base + XTENSA_LITERAL_REG_BASE,
+                   (u32)(uintptr_t)&reg[0]);
+  xtensa_store_u32(*literal_base + XTENSA_LITERAL_CYCLES,
+                   (u32)(uintptr_t)&xtensa_cycles_remaining);
+  xtensa_store_u32(*literal_base + 12, 0);
+  *literal_cursor = *literal_base + XTENSA_BLOCK_FIXED_LITERAL_BYTES;
   *translation_ptr += block_prologue_size;
   xtensa_emit_native_block_prologue(translation_ptr);
 }
@@ -2084,7 +2106,7 @@ void xtensa_emit_block_finalize(u8 *literal_base, u8 **translation_ptr,
   (void)block_start_pc;
   (void)block_end_pc;
 
-  xtensa_store_u32(literal_base + 0,
+  xtensa_store_u32(literal_base + XTENSA_LITERAL_HELPER,
                    (u32)(uintptr_t)(thumb_mode ?
                      xtensa_jit_exec_compiled_thumb :
                      xtensa_jit_exec_compiled_arm));
@@ -2110,6 +2132,7 @@ void init_emitter(bool must_swap)
   xtensa_compiled_rom_thumb_insn_watermark = 0;
   xtensa_compiled_ram_arm_insn_count = 0;
   xtensa_compiled_ram_thumb_insn_count = 0;
+  xtensa_native_arm_insn_count = 0;
   xtensa_helper_arm_insns_executed = 0;
   xtensa_helper_thumb_insns_executed = 0;
   xtensa_pc_guard_mismatches = 0;
@@ -2208,7 +2231,9 @@ u32 xtensa_jit_get_blocks_executed(void)
 
 u32 xtensa_jit_get_compiled_arm_instructions(void)
 {
-  return xtensa_compiled_rom_arm_insn_count + xtensa_compiled_ram_arm_insn_count;
+  return xtensa_compiled_rom_arm_insn_count +
+         xtensa_compiled_ram_arm_insn_count +
+         xtensa_native_arm_insn_count;
 }
 
 u32 xtensa_jit_get_compiled_thumb_instructions(void)
