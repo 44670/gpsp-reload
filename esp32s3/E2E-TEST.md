@@ -11,6 +11,10 @@ Verified on this repo state with ESP-IDF `v6.0` on 2026-04-24:
 - the dynarec run now executes through the ESP32-S3 backend's own ARM block
   interpreter with zero generic `execute_arm()` fallback
 - `GPSP_TEST_BACKEND=interp` also passes, which is the control reference
+- QEMU frame capture can write PNG artifacts through
+  `tests/esp32s3/qemu_capture_png.py`
+- `goodBoyAdv.gba` now reaches the same 60-frame title-screen framebuffer hash
+  through dynarec and interpreter in QEMU
 
 Required one-time host setup:
 
@@ -33,12 +37,14 @@ Verified commands:
 
 Host-side emission verifier:
 
-- build and disassemble ARM block stub on a 32-bit host build:
+- build and disassemble ARM block stub on the host:
   `make -C tests/esp32s3 disasm-arm`
-- build and disassemble Thumb block stub on a 32-bit host build:
+- build and disassemble Thumb block stub on the host:
   `make -C tests/esp32s3 disasm-thumb`
-- the local verifier now uses `gcc -m32`, so pointer-sized metadata issues show
-  up in a 32-bit host environment before running QEMU
+- optionally force a 32-bit pointer host check with:
+  `make -C tests/esp32s3 clean disasm-arm CC="gcc -m32"`
+- the local verifier no longer forces `gcc -m32` by default because ESP32-S3
+  QEMU now validates the real Xtensa target path
 - this uses Espressif's `xtensa-esp32s3-elf-objdump` on a raw emitted binary blob,
   so it checks the backend's actual emitted instruction bytes without needing to
   boot QEMU first
@@ -65,6 +71,41 @@ backend=interp frames=30 video_frames=30 magic=0x44524859 status=0 iterations=20
 jit blocks_emitted=1 blocks_executed=0 generic_fallbacks=0 unsupported=0 thumb_blocks=0
 result=PASS backend=interp
 ```
+
+Frame PNG capture workflow:
+
+- dynarec:
+  `tests/esp32s3/qemu_capture_png.py --rom /path/to/game.gba --backend dynarec --frames 60 --build-dir build-v6.0-esp32s3-capture-dynarec --output tests/esp32s3/out/game-dynarec-f60.png`
+- interpreter reference:
+  `tests/esp32s3/qemu_capture_png.py --rom /path/to/game.gba --backend interp --frames 60 --build-dir build-v6.0-esp32s3-capture-interp --output tests/esp32s3/out/game-interp-f60.png`
+- by default the helper elides the raw UART base64 framebuffer payload and only
+  writes the decoded PNG; pass `--show-frame-dump` when debugging the UART
+  payload itself
+- pass `--expect-fb-hash 0x...` to make QEMU return a failing result on hash
+  mismatch; the helper still writes the PNG before returning the failure
+
+Serial debugger workflow:
+
+- interactive QEMU UART debugger:
+  `tests/esp32s3/qemu_serial_debug.py --rom /path/to/game.gba --backend dynarec --build-dir build-v6.0-esp32s3-debug`
+- repeatable command batch:
+  `tests/esp32s3/qemu_serial_debug.py --rom /path/to/game.gba --backend dynarec --build-dir build-v6.0-esp32s3-debug --cmd "bp 0x08003220 0x140" --cmd "run 120" --cmd regs --cmd io --cmd quit`
+- useful commands include `status`, `regs`, `jit`, `io`, `op`, `mem A L`,
+  `watchio A L`, `tracepc A L N`, `bp A L`, `breakio A L`, `stepi N`,
+  `run N`, `fb`, and `png`
+- `bp` stops before executing a matching ARM/Thumb PC; `breakio` stops after
+  the instruction that writes the matching IO byte range; both work in
+  interpreter and ESP32-S3 dynarec debug runs
+- `cont` continues CPU execution without forcing libretro video/audio callbacks;
+  use `run` when the debugger operation must also produce frontend frames
+
+Current `goodBoyAdv.gba` 60-frame artifacts:
+
+- dynarec:
+  `tests/esp32s3/out/goodboy-dynarec-now.png`, hash `0x10ce4667`, title screen
+- interpreter:
+  `tests/esp32s3/out/goodboy-interp-f60.png`, hash `0x10ce4667`, title screen
+- latest dynarec run reports zero generic fallbacks and zero unsupported opcodes
 
 Important current limitation:
 

@@ -1,6 +1,6 @@
 ROOT := ../..
 CC ?= gcc
-CFLAGS ?= -m32 -O2 -std=c99 -Wall -Wextra -pedantic
+CFLAGS ?= -O2 -std=c99 -Wall -Wextra -pedantic
 XTENSA_OBJDUMP ?= xtensa-esp32s3-elf-objdump
 XTENSA_STUB_START ?= 8
 XTENSA_STUB_STOP ?= 0x1c

@@ -620,9 +620,11 @@ void retro_init(void)
    {
 #ifdef MALLOC_CAP_EXEC
       rom_translation_cache = (u8 *)heap_caps_malloc(
-            ROM_TRANSLATION_CACHE_SIZE, MALLOC_CAP_EXEC);
+            ROM_TRANSLATION_CACHE_SIZE + TRANSLATION_CACHE_LIMIT_THRESHOLD,
+            MALLOC_CAP_EXEC);
       ram_translation_cache = (u8 *)heap_caps_malloc(
-            RAM_TRANSLATION_CACHE_SIZE, MALLOC_CAP_EXEC);
+            RAM_TRANSLATION_CACHE_SIZE + TRANSLATION_CACHE_LIMIT_THRESHOLD,
+            MALLOC_CAP_EXEC);
 
       if (!rom_translation_cache || !ram_translation_cache)
       {

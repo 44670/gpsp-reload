@@ -10,42 +10,32 @@ enum
   IMAGE_BASE = 0x3F400000U,
   IMAGE_SIZE = 64U,
   ARM_HELPER = 0x40001000U,
-  THUMB_HELPER = 0x40002000U
+  THUMB_HELPER = 0x40002000U,
+  TEST_INSN_INDEX = 7U
 };
 
 static int emit_block_image(uint8_t *image, size_t image_size, int thumb_mode,
                             size_t *total_size, size_t *code_offset,
-                            size_t *meta_offset)
+                            size_t *literal_offset)
 {
   uint8_t *literal_base;
   uint8_t *translation_ptr;
-  uint8_t *meta_ptr;
-  xtensa_jit_block_meta meta;
 
   memset(image, 0, image_size);
 
   literal_base = xtensa_align_ptr(image);
   translation_ptr = literal_base + XTENSA_BLOCK_LITERAL_BYTES;
-  xtensa_emit_block_stub(&translation_ptr);
-
-  translation_ptr = xtensa_align_ptr(translation_ptr);
-  meta_ptr = translation_ptr;
-
-  if ((size_t)(meta_ptr - image) + sizeof(meta) > image_size)
-    return -1;
-
-  meta.start_pc = thumb_mode ? 0x08000101U : 0x08000100U;
-  meta.end_pc = thumb_mode ? 0x08000121U : 0x08000120U;
-  meta.thumb = (uint32_t)thumb_mode;
-  memcpy(meta_ptr, &meta, sizeof(meta));
-  translation_ptr += sizeof(meta);
+  xtensa_emit_native_block_prologue(&translation_ptr);
+  xtensa_emit_native_arm_instruction(&translation_ptr, literal_base,
+                                     TEST_INSN_INDEX);
+  xtensa_emit_retw_n(&translation_ptr);
 
   xtensa_store_u32(literal_base + 0, thumb_mode ? THUMB_HELPER : ARM_HELPER);
-  xtensa_store_u32(literal_base + 4, IMAGE_BASE + (uint32_t)(meta_ptr - image));
+  xtensa_store_u32(literal_base + 4, 0);
 
   *total_size = (size_t)(translation_ptr - image);
   *code_offset = (size_t)((literal_base + XTENSA_BLOCK_LITERAL_BYTES) - image);
-  *meta_offset = (size_t)(meta_ptr - image);
+  *literal_offset = (size_t)(literal_base - image);
   return 0;
 }
 
@@ -55,7 +45,7 @@ int main(int argc, char **argv)
   uint8_t image[IMAGE_SIZE];
   size_t total_size;
   size_t code_offset;
-  size_t meta_offset;
+  size_t literal_offset;
   int thumb_mode;
 
   if (argc != 3)
@@ -75,7 +65,7 @@ int main(int argc, char **argv)
   }
 
   if (emit_block_image(image, sizeof(image), thumb_mode,
-                       &total_size, &code_offset, &meta_offset) != 0)
+                       &total_size, &code_offset, &literal_offset) != 0)
   {
     fprintf(stderr, "failed to emit test block\n");
     return 1;
@@ -97,10 +87,10 @@ int main(int argc, char **argv)
 
   fclose(fp);
 
-  printf("emitted %s block: total=%zu code_offset=0x%zx meta_offset=0x%zx helper=0x%08x meta_addr=0x%08x\n",
-         argv[1], total_size, code_offset, meta_offset,
+  printf("emitted %s block: total=%zu code_offset=0x%zx literal_offset=0x%zx helper=0x%08x insn_index=%u\n",
+         argv[1], total_size, code_offset, literal_offset,
          thumb_mode ? THUMB_HELPER : ARM_HELPER,
-         (unsigned)(IMAGE_BASE + meta_offset));
+         (unsigned)TEST_INSN_INDEX);
 
   return 0;
 }

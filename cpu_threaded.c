@@ -2893,6 +2893,12 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
 #define MAX_BLOCK_SIZE   1024   // 2/4KiB blocks max
 #define MAX_EXITS          32   // This covers 99% blocks
 
+#if defined(XTENSA_ARCH)
+#define HOST_MAX_BLOCK_SIZE 16
+#else
+#define HOST_MAX_BLOCK_SIZE MAX_BLOCK_SIZE
+#endif
+
 block_data_type block_data[MAX_BLOCK_SIZE];
 block_exit_type block_exits[MAX_EXITS];
 
@@ -2986,7 +2992,7 @@ block_exit_type block_exits[MAX_EXITS];
                                                                               \
     block_data[block_data_position].update_cycles = 0;                        \
     block_data_position++;                                                    \
-    if((block_data_position == MAX_BLOCK_SIZE) ||                             \
+    if((block_data_position == HOST_MAX_BLOCK_SIZE) ||                        \
      (block_end_pc == 0x3007FF0) || (block_end_pc == 0x203FFFF0))             \
     {                                                                         \
       break;                                                                  \
@@ -3052,6 +3058,14 @@ bool translate_block_arm(u32 pc, bool ram_region)
     translation_cache_limit =
      rom_translation_cache + ROM_TRANSLATION_CACHE_SIZE -
      TRANSLATION_CACHE_LIMIT_THRESHOLD;
+  }
+
+  if(translation_ptr > translation_cache_limit) {
+    if (ram_region)
+      flush_translation_cache_ram();
+    else
+      flush_translation_cache_rom();
+    return false;
   }
 
   generate_block_prologue();
@@ -3133,6 +3147,14 @@ bool translate_block_arm(u32 pc, bool ram_region)
      in the unlikely case that block was too big (and not finalized) */
   generate_translation_gate(arm);
 
+  if(translation_ptr > translation_cache_limit) {
+    if (ram_region)
+      flush_translation_cache_ram();
+    else
+      flush_translation_cache_rom();
+    return false;
+  }
+
   for(i = 0; i < block_exit_position; i++)
   {
     branch_target = block_exits[i].branch_target;
@@ -3163,6 +3185,10 @@ bool translate_block_arm(u32 pc, bool ram_region)
   else
     rom_translation_ptr = translation_ptr;
 
+#if defined(XTENSA_ARCH)
+  (void)external_block_exits;
+  (void)external_block_exit_position;
+#else
   for(i = 0; i < external_block_exit_position; i++)
   {
     branch_target = external_block_exits[i].branch_target;
@@ -3175,6 +3201,7 @@ bool translate_block_arm(u32 pc, bool ram_region)
     generate_branch_patch_unconditional(
       external_block_exits[i].branch_source, translation_target);
   }
+#endif
   return true;
 }
 
@@ -3215,6 +3242,14 @@ bool translate_block_thumb(u32 pc, bool ram_region)
     translation_ptr = rom_translation_ptr;
     translation_cache_limit = &rom_translation_cache[
        ROM_TRANSLATION_CACHE_SIZE - TRANSLATION_CACHE_LIMIT_THRESHOLD];
+  }
+
+  if(translation_ptr > translation_cache_limit) {
+    if (ram_region)
+      flush_translation_cache_ram();
+    else
+      flush_translation_cache_rom();
+    return false;
   }
 
   generate_block_prologue();
@@ -3290,6 +3325,14 @@ bool translate_block_thumb(u32 pc, bool ram_region)
      in the unlikely case that block was too big (and not finalized) */
   generate_translation_gate(thumb);
 
+  if(translation_ptr > translation_cache_limit) {
+    if (ram_region)
+      flush_translation_cache_ram();
+    else
+      flush_translation_cache_rom();
+    return false;
+  }
+
   for(i = 0; i < block_exit_position; i++)
   {
     branch_target = block_exits[i].branch_target;
@@ -3320,6 +3363,10 @@ bool translate_block_thumb(u32 pc, bool ram_region)
   else
     rom_translation_ptr = translation_ptr;
 
+#if defined(XTENSA_ARCH)
+  (void)external_block_exits;
+  (void)external_block_exit_position;
+#else
   for(i = 0; i < external_block_exit_position; i++)
   {
     branch_target = external_block_exits[i].branch_target;
@@ -3332,6 +3379,7 @@ bool translate_block_thumb(u32 pc, bool ram_region)
     generate_branch_patch_unconditional(
       external_block_exits[i].branch_source, translation_target);
   }
+#endif
   return true;
 }
 
@@ -3381,6 +3429,9 @@ void flush_translation_cache_ram(void)
   ewram_code_min = ~0U;
   ewram_code_max =  0U;
   ram_block_tag = INITIAL_TOP_TAG;
+#if defined(XTENSA_ARCH)
+  xtensa_jit_flush_ram_cache();
+#endif
 }
 
 void flush_translation_cache_rom(void)
@@ -3390,6 +3441,9 @@ void flush_translation_cache_rom(void)
   rom_translation_ptr      = &rom_translation_cache[rom_cache_watermark];
 
   memset(rom_branch_hash, 0, sizeof(rom_branch_hash));
+#if defined(XTENSA_ARCH)
+  xtensa_jit_flush_rom_cache();
+#endif
 }
 
 void init_dynarec_caches(void)

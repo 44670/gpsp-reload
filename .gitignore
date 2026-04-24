@@ -16,3 +16,9 @@ refs
 build*
 
 *.objdump
+
+__pycache__
+
+emit_block_stub
+
+*.png

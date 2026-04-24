@@ -20,6 +20,9 @@
 extern "C" {
 #include "common.h"
   #include "cpu_instrument.h"
+  void gpsp_debug_trace_cpu(u32 pc, u32 opcode, u32 thumb);
+  bool gpsp_debug_cpu_should_break(u32 pc, u32 opcode, u32 thumb);
+  bool gpsp_debug_cpu_stop_requested(void);
 }
 
 const u8 bit_count[256] =
@@ -1509,6 +1512,12 @@ arm_loop:
        check_pc_region();
        reg[REG_PC] &= ~0x03;
        opcode = readaddress32(pc_address_block, (reg[REG_PC] & 0x7FFF));
+       gpsp_debug_trace_cpu(reg[REG_PC], opcode, 0);
+       if (gpsp_debug_cpu_should_break(reg[REG_PC], opcode, 0))
+       {
+          collapse_flags();
+          return;
+       }
        condition = opcode >> 28;
 
        switch(condition)
@@ -3046,6 +3055,12 @@ skip_instruction:
 
        if (reg[REG_PC] == idle_loop_target_pc && cycles_remaining > 0) cycles_remaining = 0;
 
+       if (gpsp_debug_cpu_stop_requested())
+       {
+         collapse_flags();
+         return;
+       }
+
        if (cpu_alert & (CPU_ALERT_HALT | CPU_ALERT_IRQ))
          goto alert;
 
@@ -3074,6 +3089,12 @@ thumb_loop:
        check_pc_region();
        reg[REG_PC] &= ~0x01;
        opcode = readaddress16(pc_address_block, (reg[REG_PC] & 0x7FFF));
+       gpsp_debug_trace_cpu(reg[REG_PC], opcode, 1);
+       if (gpsp_debug_cpu_should_break(reg[REG_PC], opcode, 1))
+       {
+          collapse_flags();
+          return;
+       }
 
        #ifdef TRACE_INSTRUCTIONS
        interp_trace_instruction(reg[REG_PC], 0);
@@ -3526,8 +3547,14 @@ thumb_loop:
 
        if (reg[REG_PC] == idle_loop_target_pc && cycles_remaining > 0) cycles_remaining = 0;
 
+       if (gpsp_debug_cpu_stop_requested())
+       {
+         collapse_flags();
+         return;
+       }
+
        if (cpu_alert & (CPU_ALERT_HALT | CPU_ALERT_IRQ))
-          goto alert;
+         goto alert;
 
     } while(cycles_remaining > 0);
 

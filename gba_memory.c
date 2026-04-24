@@ -815,10 +815,40 @@ static inline s32 signext28(u32 value)
   return ret >> 4;
 }
 
+void __attribute__((weak)) gpsp_debug_trace_iowrite(u32 address, u32 bits,
+                                                    u32 value)
+{
+  (void)address;
+  (void)bits;
+  (void)value;
+}
+
+void __attribute__((weak)) gpsp_debug_trace_cpu(u32 pc, u32 opcode, u32 thumb)
+{
+  (void)pc;
+  (void)opcode;
+  (void)thumb;
+}
+
+bool __attribute__((weak)) gpsp_debug_cpu_should_break(u32 pc, u32 opcode,
+                                                       u32 thumb)
+{
+  (void)pc;
+  (void)opcode;
+  (void)thumb;
+  return false;
+}
+
+bool __attribute__((weak)) gpsp_debug_cpu_stop_requested(void)
+{
+  return false;
+}
+
 cpu_alert_type function_cc write_io_register16(u32 address, u32 value)
 {
   uint32_t ioreg = ((address & 0xffffff) >> 1);
   value &= 0xffff;
+  gpsp_debug_trace_iowrite(0x04000000 | ((ioreg << 1) & 0x3FE), 16, value);
   switch(ioreg)
   {
     case REG_DISPCNT:
