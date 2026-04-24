@@ -10,3 +10,9 @@ pandora/linux
 tools/generate_cc_lut
 
 .codex
+
+refs
+
+build*
+
+*.objdump

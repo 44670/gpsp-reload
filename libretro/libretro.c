@@ -15,6 +15,11 @@
 #include "../gba_memory.h"
 #include "../gba_cc_lut.h"
 
+#if defined(XTENSA_ARCH) && defined(HAVE_DYNAREC) && defined(ESP_PLATFORM)
+#include <esp_heap_caps.h>
+static int translation_caches_inited = 0;
+#endif
+
 #if defined(VITA) && defined(HAVE_DYNAREC)
 #include <psp2/kernel/sysmem.h>
 static int translation_caches_inited = 0;
@@ -610,6 +615,35 @@ void retro_init(void)
       sceKernelOpenVMDomain();
       translation_caches_inited = 1;
     }
+  #elif defined(XTENSA_ARCH) && defined(ESP_PLATFORM)
+   if (!translation_caches_inited)
+   {
+#ifdef MALLOC_CAP_EXEC
+      rom_translation_cache = (u8 *)heap_caps_malloc(
+            ROM_TRANSLATION_CACHE_SIZE, MALLOC_CAP_EXEC);
+      ram_translation_cache = (u8 *)heap_caps_malloc(
+            RAM_TRANSLATION_CACHE_SIZE, MALLOC_CAP_EXEC);
+
+      if (!rom_translation_cache || !ram_translation_cache)
+      {
+         error_msg("Could not allocate executable translation caches.");
+         if (rom_translation_cache)
+            free(rom_translation_cache);
+         if (ram_translation_cache)
+            free(ram_translation_cache);
+         rom_translation_cache = NULL;
+         ram_translation_cache = NULL;
+         return;
+      }
+
+      rom_translation_ptr = rom_translation_cache;
+      ram_translation_ptr = ram_translation_cache;
+      translation_caches_inited = 1;
+#else
+      error_msg("MALLOC_CAP_EXEC is unavailable; disable memory protection or dynarec.");
+      return;
+#endif
+   }
   #endif
 #endif
 
@@ -678,6 +712,16 @@ void retro_deinit(void)
     if(translation_caches_inited){
         translation_caches_inited = 0;
     }
+#endif
+#if defined(XTENSA_ARCH) && defined(HAVE_DYNAREC) && defined(ESP_PLATFORM)
+   if (translation_caches_inited)
+   {
+      free(rom_translation_cache);
+      free(ram_translation_cache);
+      rom_translation_cache = NULL;
+      ram_translation_cache = NULL;
+      translation_caches_inited = 0;
+   }
 #endif
 
 #ifdef _3DS
@@ -1085,8 +1129,12 @@ static void set_memory_descriptors(void)
 
 bool retro_load_game(const struct retro_game_info* info)
 {
+   const char *rom_path = NULL;
+
    if (!info)
       return false;
+
+   rom_path = info->path;
 
    check_variables(true);
    set_input_descriptors();
@@ -1098,7 +1146,11 @@ bool retro_load_game(const struct retro_game_info* info)
    if (!environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt))
       info_msg("RGB565 is not supported.");
 
-   extract_directory(main_path, info->path, sizeof(main_path));
+   if (rom_path)
+      extract_directory(main_path, rom_path, sizeof(main_path));
+   else
+      strncpy(main_path, ".", sizeof(main_path));
+   main_path[sizeof(main_path) - 1] = '\0';
 
    if (environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &dir) && dir)
       strcpy(filename_bios, dir);
@@ -1132,7 +1184,7 @@ bool retro_load_game(const struct retro_game_info* info)
    }
 
    memset(gamepak_backup, 0xff, sizeof(gamepak_backup));
-   if (load_gamepak(info, info->path, rtc_mode, rumble_mode, serial_setting) != 0)
+   if (load_gamepak(info, rom_path, rtc_mode, rumble_mode, serial_setting) != 0)
    {
       error_msg("Could not load the game file.");
       return false;

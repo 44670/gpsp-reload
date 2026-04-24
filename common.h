@@ -86,6 +86,13 @@
     (((value & 0x1F) << 11) | ((value & 0x03E0) << 1) | ((value >> 10) & 0x1F))
 #endif
 
+#if defined(XTENSA_ARCH) && defined(ESP_PLATFORM)
+  #include "esp_attr.h"
+  #define GPSP_EXT_RAM_BSS EXT_RAM_BSS_ATTR
+#else
+  #define GPSP_EXT_RAM_BSS
+#endif
+
 #define GBA_SCREEN_WIDTH  (240)
 #define GBA_SCREEN_HEIGHT (160)
 #define GBA_SCREEN_PITCH  (240)

@@ -32,7 +32,7 @@
 u8 *last_rom_translation_ptr = NULL;
 u8 *last_ram_translation_ptr = NULL;
 
-#if defined(MMAP_JIT_CACHE)
+#if defined(MMAP_JIT_CACHE) || defined(XTENSA_ARCH)
 u8* rom_translation_cache;
 u8* ram_translation_cache;
 u8 *rom_translation_ptr;
@@ -75,7 +75,7 @@ typedef struct
   u32 next_entry;
 } hashhdr_type;
 
-u32 rom_branch_hash[ROM_BRANCH_HASH_SIZE];
+GPSP_EXT_RAM_BSS u32 rom_branch_hash[ROM_BRANCH_HASH_SIZE];
 
 typedef struct
 {
@@ -214,6 +214,8 @@ typedef struct
 /* Include the right emitter headers */
 #if defined(MIPS_ARCH)
   #include "mips/mips_emit.h"
+#elif defined(XTENSA_ARCH)
+  #include "esp32s3/xtensa_emit.h"
 #elif defined(ARM_ARCH)
   #include "arm/arm_emit.h"
 #elif defined(ARM64_ARCH)
@@ -237,6 +239,10 @@ typedef struct
 #elif defined(VITA)
   void platform_cache_sync(void *baseaddr, void *endptr) {
     sceKernelSyncVMDomain(sceBlock, baseaddr, ((char*)endptr) - ((char*)baseaddr) + 64);
+  }
+#elif defined(XTENSA_ARCH)
+  void platform_cache_sync(void *baseaddr, void *endptr) {
+    __builtin___clear_cache(baseaddr, endptr);
   }
 #elif defined(_3DS)
   #include "3ds/3ds_utils.h"
@@ -3412,4 +3418,3 @@ void flush_dynarec_caches(void)
   iwram_code_max = 0x8000;
   flush_translation_cache_ram();
 }
-

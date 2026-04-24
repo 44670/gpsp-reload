@@ -35,7 +35,8 @@ startup:
     b 3b
 
 4:
-    bl c_start
+    ldr r0, =c_start
+    bx r0
 5:
     b 5b
 

@@ -140,6 +140,9 @@ bool translate_block_thumb(u32 pc, bool ram_region);
 #if defined(MMAP_JIT_CACHE)
 extern u8* rom_translation_cache;
 extern u8* ram_translation_cache;
+#elif defined(XTENSA_ARCH)
+extern u8* rom_translation_cache;
+extern u8* ram_translation_cache;
 #elif defined(_3DS)
 #define rom_translation_cache ((u8*)0x02000000 - ROM_TRANSLATION_CACHE_SIZE)
 #define ram_translation_cache (rom_translation_cache - RAM_TRANSLATION_CACHE_SIZE)

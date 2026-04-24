@@ -18,7 +18,7 @@
  */
 
 extern "C" {
-  #include "common.h"
+#include "common.h"
   #include "cpu_instrument.h"
 }
 
@@ -1442,7 +1442,7 @@ cpu_alert_type flag_interrupt(irq_type irq_raised)
   return check_interrupt();
 }
 
-#ifndef HAVE_DYNAREC
+#if !defined(HAVE_DYNAREC) || defined(XTENSA_ARCH)
 
 // When switching modes set spsr[new_mode] to cpsr. Modifying PC as the
 // target of a data proc instruction will set cpsr to spsr[cpu_mode].
@@ -1454,9 +1454,9 @@ u8 *memory_map_read [8 * 1024];
 u16 oam_ram[512];
 u16 palette_ram[512];
 u16 palette_ram_converted[512];
-u8 ewram[1024 * 256 * 2];
-u8 iwram[1024 * 32 * 2];
-u8 vram[1024 * 96];
+GPSP_EXT_RAM_BSS u8 ewram[1024 * 256 * 2];
+GPSP_EXT_RAM_BSS u8 iwram[1024 * 32 * 2];
+GPSP_EXT_RAM_BSS u8 vram[1024 * 96];
 u16 io_registers[512];
 #endif
 
@@ -3609,5 +3609,3 @@ unsigned cpu_write_savestate(u8 *dst)
   bson_finish_document(dst, wbptr);
   return (unsigned int)(dst - startp);
 }
-
-

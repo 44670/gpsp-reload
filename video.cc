@@ -957,7 +957,7 @@ static const u8 obj_dim_table[3][4][2] = {
   { {8, 16}, {8, 32}, {16, 32}, {32, 64} }
 };
 
-static u8 obj_priority_list[5][160][128];
+GPSP_EXT_RAM_BSS static u8 obj_priority_list[5][160][128];
 static u8 obj_priority_count[5][160];
 static u8 obj_alpha_count[160];
 
@@ -2335,5 +2335,4 @@ void update_scanline(void)
     }
   }
 }
-
 

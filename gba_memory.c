@@ -20,6 +20,10 @@
 #include "common.h"
 #include "streams/file_stream.h"
 
+#ifdef ESP_PLATFORM
+#include "esp_heap_caps.h"
+#endif
+
 /* Sound */
 #define gbc_sound_tone_control_low(channel, regn)                             \
 {                                                                             \
@@ -340,7 +344,7 @@ const u32 def_seq_cycles[16][2] =
 u8 bios_rom[1024 * 16];
 
 // Up to 128kb, store SRAM, flash ROM, or EEPROM here.
-u8 gamepak_backup[1024 * 128];
+GPSP_EXT_RAM_BSS u8 gamepak_backup[1024 * 128];
 
 u32 dma_bus_val;
 dma_transfer_type dma[4];
@@ -354,6 +358,10 @@ u32 gamepak_buffer_count;   /* Value between 1 and 32 */
 u32 gamepak_size;           /* Size of the ROM in bytes */
 // We allocate in 1MB chunks.
 const unsigned gamepak_buffer_blocksize = 1024*1024;
+
+#if defined(XTENSA_ARCH) && defined(ESP_PLATFORM)
+GPSP_EXT_RAM_BSS static u8 xtensa_gamepak_buffer_fallback[1024 * 1024];
+#endif
 
 // LRU queue with the loaded blocks and what they map to
 struct {
@@ -375,6 +383,7 @@ u32 gamepak_sticky_bit[1024/32];
 // pages from, so there's no slowdown with opening and closing the file
 // a lot.
 RFILE *gamepak_file_large = NULL;
+static const u8 *gamepak_mem_large = NULL;
 
 // Writes to these respective locations should trigger an update
 // so the related subsystem may react to it.
@@ -2192,8 +2201,16 @@ u8 *load_gamepak_page(u32 physical_index)
   // Fill in the entry
   gamepak_blk_queue[entry].phy_rom = physical_index;
 
-  filestream_seek(gamepak_file_large, physical_index * (32 * 1024), SEEK_SET);
-  filestream_read(gamepak_file_large, swap_location, (32 * 1024));
+  if (gamepak_mem_large)
+  {
+    const u8 *src = gamepak_mem_large + physical_index * (32 * 1024);
+    memcpy(swap_location, src, 32 * 1024);
+  }
+  else
+  {
+    filestream_seek(gamepak_file_large, physical_index * (32 * 1024), SEEK_SET);
+    filestream_read(gamepak_file_large, swap_location, (32 * 1024));
+  }
 
   // Map it to the read handlers now
   map_rom_entry(read, physical_index, swap_location, gamepak_size >> 15);
@@ -2213,10 +2230,20 @@ void init_gamepak_buffer(void)
   while (gamepak_buffer_count < ROM_BUFFER_SIZE)
   {
     void *ptr = malloc(gamepak_buffer_blocksize);
+#ifdef ESP_PLATFORM
+    if (!ptr)
+      ptr = heap_caps_malloc(gamepak_buffer_blocksize,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#endif
     if (!ptr)
       break;
     gamepak_buffers[gamepak_buffer_count++] = (u8*)ptr;
   }
+
+#if defined(XTENSA_ARCH) && defined(ESP_PLATFORM)
+  if (gamepak_buffer_count == 0)
+    gamepak_buffers[gamepak_buffer_count++] = xtensa_gamepak_buffer_fallback;
+#endif
 
   // Initialize the memory map structure
   for (i = 0; i < 1024; i++)
@@ -2306,6 +2333,7 @@ void memory_term(void)
     filestream_close(gamepak_file_large);
     gamepak_file_large = NULL;
   }
+  gamepak_mem_large = NULL;
 
   while (gamepak_buffer_count)
   {
@@ -2496,6 +2524,7 @@ unsigned memory_write_savestate(u8 *dst)
 static s32 load_gamepak_raw(const char *name)
 {
   unsigned i, j;
+  gamepak_mem_large = NULL;
   gamepak_file_large = filestream_open(name, RETRO_VFS_FILE_ACCESS_READ,
                                        RETRO_VFS_FILE_ACCESS_HINT_NONE);
   if(gamepak_file_large)
@@ -2535,12 +2564,67 @@ static s32 load_gamepak_raw(const char *name)
   return -1;
 }
 
+static s32 load_gamepak_raw_memory(const struct retro_game_info *info)
+{
+  unsigned i, j;
+  const u8 *rom_data = (const u8 *)info->data;
+
+  if (!rom_data || info->size == 0)
+    return -1;
+
+  if (gamepak_buffer_count == 0 || !gamepak_buffers[0])
+    return -1;
+
+  gamepak_mem_large = rom_data;
+  gamepak_size = (u32)((info->size + 0x7FFF) & ~0x7FFF);
+
+  {
+    u32 buf_blocks = (gamepak_size + gamepak_buffer_blocksize - 1) / gamepak_buffer_blocksize;
+    u32 rom_blocks = gamepak_size >> 15;
+    u32 ldblks = buf_blocks < gamepak_buffer_count ? buf_blocks : gamepak_buffer_count;
+
+    map_null(read, 0x8000000, 0xD000000);
+
+    for (i = 0; i < ldblks; i++)
+    {
+      const u8 *src = rom_data + i * gamepak_buffer_blocksize;
+      const size_t remaining = (size_t)info->size > i * gamepak_buffer_blocksize ?
+        (size_t)info->size - i * gamepak_buffer_blocksize : 0;
+      const size_t chunk_size = remaining < gamepak_buffer_blocksize ?
+        remaining : gamepak_buffer_blocksize;
+
+      memcpy(gamepak_buffers[i], src, chunk_size);
+      if (chunk_size < gamepak_buffer_blocksize)
+        memset(gamepak_buffers[i] + chunk_size, 0, gamepak_buffer_blocksize - chunk_size);
+
+      for (j = 0; j < 32 && i * 32 + j < rom_blocks; j++)
+      {
+        u32 phyn = i * 32 + j;
+        u8 *blkptr = &gamepak_buffers[i][32 * 1024 * j];
+        u32 entry = evict_gamepak_page();
+        gamepak_blk_queue[entry].phy_rom = phyn;
+        map_rom_entry(read, phyn, blkptr, rom_blocks);
+      }
+    }
+  }
+
+  return 0;
+}
+
 u32 load_gamepak(const struct retro_game_info* info, const char *name,
                  int force_rtc, int force_rumble, int force_serial)
 {
    char game_code[5] = {0,0,0,0,0};
 
-   if (load_gamepak_raw(name))
+   if (gamepak_buffer_count == 0 || !gamepak_buffers[0])
+      return -1;
+
+   if (info && info->data && info->size > 0)
+   {
+      if (load_gamepak_raw_memory(info))
+         return -1;
+   }
+   else if (load_gamepak_raw(name))
       return -1;
 
    // Buffer 0 always has the first 1MB chunk of the ROM
@@ -2578,5 +2662,3 @@ s32 load_bios(char *name)
   filestream_close(fd);
   return 0;
 }
-
-
