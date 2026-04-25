@@ -2,10 +2,19 @@
 
 ## Current Phase: CoreS3 SE Playable Firmware And Experimental JIT
 
-- `tests/esp32s3/idf-app` now defaults to `GPSP_TEST_MODE=play` and
+- `esp32s3/` is now the active ESP-IDF firmware app. Build from that directory
+  with `idf.py -B build/ ...` for CoreS3 SE hardware and
+  `idf.py -B build-qemu/ -D USE_QEMU=1 ...` for QEMU. Do not build the
+  firmware through `tests/esp32s3/idf-app`.
+- `esp32s3/` now defaults to `GPSP_TEST_MODE=play` and
   `GPSP_TEST_BACKEND=dynarec`. This is the real firmware path: it runs
   `retro_run()` continuously instead of stopping after the old test-frame
   budget.
+- Build switches:
+  - `USE_QEMU=1`: QEMU build path; disables CoreS3 SE LCD init by default and
+    keeps QEMU flash helpers using `esp32s3/build-qemu/`.
+  - `USE_DEBUG=1`: enables the USB Serial/JTAG debugger path and the expensive
+    CPU/IO trace hooks. `GPSP_TEST_MODE=debug` requires this switch.
 - `GPSP_TEST_MODE` is still available for harness workflows:
   - `play`: endless CoreS3 SE firmware loop.
   - `dhrystone`: finite dhrystone ROM regression.
@@ -24,15 +33,15 @@
   hardware bring-up target, not stable emulation yet. The build now compiles
   `cpu_threaded.c`, `esp32s3/xtensa_runtime.c`, and defines `HAVE_DYNAREC`
   when `GPSP_TEST_BACKEND=dynarec`.
-- Use only the ESP-IDF `build/` directory for ESP32-S3 build, QEMU, capture,
-  and debugger workflows.
+- Use only `esp32s3/build/` for CoreS3 SE hardware builds and
+  `esp32s3/build-qemu/` for QEMU, capture, and QEMU debugger workflows.
 - Preserve static PSRAM storage for ESP32-S3-owned emulator buffers:
   framebuffer, post-process framebuffer, previous-frame mix buffer, audio
   sample buffer, QEMU frame capture, and the 1 MB gamepak fallback window.
 - ROM data lives in the raw SPI flash `gamepak` data partition and is mapped
   with `esp_partition_mmap()`. The partition is just the `.gba` byte stream:
   no app embedding, no metadata/header wrapper, and no sidecar metadata
-  partition. Use `tests/esp32s3/idf-app/flash_gba.sh` to write it.
+  partition. Use `esp32s3/flash_gba.sh` to write it.
 - Bring up direct CoreS3 SE board drivers without M5 library dependencies,
   following `/home/john/work/CardPuterADV/esp-walkie-talkie`.
 - CoreS3 SE display output is now ported as `esp32s3/cores3se_lcd.c`:
@@ -44,11 +53,11 @@
   mapped to GBA controls through a small on-screen or touch-region scheme.
 - Add CoreS3 SE audio after video/input: ES7210 mic ADC, AW88298 speaker amp,
   and I2S pins MCLK GPIO0, BCLK GPIO34, WS GPIO33, DOUT GPIO13, DIN GPIO14.
-- Run `idf.py -B build/ build` after each firmware slice. For QEMU, patch a
-  flash image with `flash_gba.sh --image ...` or use the helper scripts, which
-  do that before launching QEMU. QEMU must use `--qemu-extra-args="-m 8M"` so
-  PSRAM matches CoreS3 SE and leaves data-mmap space for the raw `gamepak`
-  flash partition.
+- Run `idf.py -B build/ build` after each hardware firmware slice. For QEMU,
+  use `idf.py -B build-qemu/ -D USE_QEMU=1 ...`, then patch a flash image with
+  `flash_gba.sh --image build-qemu/qemu_flash_gba.bin ...` or use the helper
+  scripts. QEMU must use `--qemu-extra-args="-m 8M"` so PSRAM matches CoreS3
+  SE and leaves data-mmap space for the raw `gamepak` flash partition.
 
 ## Experimental Dynarec Work
 

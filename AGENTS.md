@@ -8,23 +8,35 @@
 - Host-specific code emission lives in backend headers such as `mips/mips_emit.h`, `arm/arm_emit.h`, and `arm/arm64_emit.h`.
 - Host-specific entry/exit stubs live in files such as `mips/mips_stub.S` and `arm/arm_stub.S`.
 - There is also an experimental JS backend (`jsjit_*`), but the ESP32-S3 target should not grow new JS work.
-- Current ESP32-S3 phase is an interpreter-only CoreS3 SE port. The Xtensa dynarec work is parked until board bring-up, static storage, flash ROM mapping, display, input, and audio are stable.
+- Current ESP32-S3 phase is CoreS3 SE playable firmware with experimental Xtensa JIT enabled by default.
 
 ## Current ESP32-S3 Phase
 
 - Target board: M5Stack CoreS3 SE.
-- Active firmware baseline: interpreter only.
-- `tests/esp32s3/idf-app` defaults and forces `GPSP_TEST_BACKEND=interp`.
-- The ESP32-S3 IDF app does not define `HAVE_DYNAREC` in this phase.
-- The ESP32-S3 IDF app does not compile `cpu_threaded.c` or `esp32s3/xtensa_runtime.c` in this phase.
+- Active firmware app: `esp32s3/`.
+- Build and flash from `esp32s3/`. Use `idf.py -B build/ ...` for CoreS3 SE
+  hardware and `idf.py -B build-qemu/ -D USE_QEMU=1 ...` for QEMU. Do not use
+  `tests/esp32s3/idf-app` for current firmware builds.
+- Active firmware defaults to `GPSP_TEST_MODE=play` and
+  `GPSP_TEST_BACKEND=dynarec`.
+- The ESP32-S3 IDF app defines `HAVE_DYNAREC` and compiles
+  `cpu_threaded.c` plus `esp32s3/xtensa_runtime.c` when
+  `GPSP_TEST_BACKEND=dynarec`.
+- Use `USE_QEMU=1` for ESP-IDF QEMU builds. This disables CoreS3 SE LCD init
+  by default and keeps QEMU artifacts under `esp32s3/build-qemu/`.
+- Use `USE_DEBUG=1` for the USB Serial/JTAG debugger and CPU/IO trace hooks.
+  `GPSP_TEST_MODE=debug` requires `USE_DEBUG=1`; normal play builds should
+  leave it off to avoid per-instruction debug overhead.
 - Keep `XTENSA_ARCH` for ESP32-S3 static PSRAM placement and board-specific memory paths.
-- Use `build/` for ESP-IDF builds and QEMU runs. Do not introduce custom build directories.
+- Use `esp32s3/build/` for hardware ESP-IDF builds and `esp32s3/build-qemu/`
+  for QEMU runs. Do not introduce any other ESP32-S3 firmware build
+  directories.
 - ESP32-S3-owned emulator buffers should be static PSRAM where practical, not dynamic heap allocations.
 - `.gba` data is not embedded in the app image. The ESP32-S3 app maps the raw
   SPI flash `gamepak` data partition with `esp_partition_mmap()`. The
   partition contents are just the `.gba` bytes, with no metadata/header
   wrapper and no sidecar metadata partition. Use
-  `tests/esp32s3/idf-app/flash_gba.sh` to write a `.gba` there before
+  `esp32s3/flash_gba.sh` to write a `.gba` there before
   hardware runs; QEMU helper scripts patch a QEMU flash image the same way
   before launch.
 - CoreS3 SE LCD hardware init is now in `esp32s3/cores3se_lcd.c` and is wired to the ESP32-S3 test app video callback. QEMU has no AW9523 device, so the LCD path logs a soft init failure there and the emulator keeps running.
@@ -75,8 +87,9 @@
 
 ## ESP32-S3 Current Architecture And Status
 
-- The active ESP32-S3 firmware target is interpreter-only.
-- The parked Xtensa dynarec has a simple state-backed execution model. Guest ARM registers remain in the compact CPU/JIT state block. Do not add a guest register cache before revalidating the backend.
+- The active ESP32-S3 firmware target is playable CoreS3 SE firmware under
+  `esp32s3/`, with experimental dynarec enabled by default.
+- The current Xtensa dynarec has a simple state-backed execution model. Guest ARM registers remain in the compact CPU/JIT state block. Do not add a guest register cache before revalidating the backend.
 - `esp32s3/psram_static.c` and `esp32s3/psram_static.h` own ESP32-S3 static PSRAM buffers.
 - In interpreter-only builds, `esp32s3/psram_static.c` provides static video/audio buffers while JIT cache storage and PSRAM executable helpers are compiled only under `HAVE_DYNAREC`.
 - ESP32-S3-owned runtime buffers should be static PSRAM, not dynamic heap allocations:
@@ -89,13 +102,16 @@
   - current 1 MB gamepak paging fallback window
 - JIT cache writes use the PSRAM DBUS/data alias when dynarec is enabled. JIT execution dispatch converts block entry data pointers to the derived IBUS/instruction alias.
 - `platform_cache_sync()` on ESP32-S3 must sync both aliases: write back the data range, then invalidate the aligned instruction range for the exec alias. Use the data alias to derive cache-line alignment when IDF's public line-size helper does not recognize the IBUS alias directly.
-- Static JIT cache startup validation is parked with dynarec and should not run in interpreter-only builds.
+- Static JIT cache startup validation should run only in dynarec builds.
 - JIT cache sizes are intentionally capped for the 8 MB CoreS3 SE PSRAM target:
   - ROM JIT cache `<= 2 MB`
   - RAM JIT cache `<= 384 KB`
 - Current native lowering in the parked backend includes simple no-flag ARM data-processing forms. Unsupported forms route through helper-backed execution.
-- The parked backend previously passed host Xtensa codegen tests and ESP-IDF QEMU dhrystone dynarec smoke tests with the PSRAM alias validation/self-test enabled, but that is no longer the active port baseline.
-- The current active QEMU smoke line is `result=PASS backend=interp`.
+- The backend previously passed host Xtensa codegen tests and ESP-IDF QEMU
+  dhrystone dynarec smoke tests with the PSRAM alias validation/self-test
+  enabled. Current firmware default is `GPSP_TEST_BACKEND=dynarec`; use
+  `GPSP_TEST_BACKEND=interp` only when isolating interpreter or board-driver
+  issues.
 - ESP32-S3 QEMU runs must pass `--qemu-extra-args="-m 8M"` so QEMU models
   the CoreS3 SE PSRAM size. The Espressif QEMU default reports 32 MB PSRAM,
   which can consume the external data virtual range and break SPI flash
@@ -200,7 +216,9 @@
 
 Use rg (ripgrep) if needed.
 
-Use `build/` for ESP-IDF builds and QEMU runs. Do not introduce custom build directories such as `build-v6.0-esp32s3`.
+Use `esp32s3/build/` for hardware ESP-IDF builds and `esp32s3/build-qemu/` for
+QEMU runs. Do not introduce custom build directories such as
+`build-v6.0-esp32s3`.
 
 ~/esp-idf
 ~/work/CardPuterADV/esp-walkie-talkie

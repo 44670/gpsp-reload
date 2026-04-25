@@ -10,8 +10,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-IDF_APP = ROOT / "tests" / "esp32s3" / "idf-app"
-BUILD_DIR = "build"
+IDF_APP = ROOT / "esp32s3"
+BUILD_DIR = "build-qemu"
 QEMU_EXTRA_ARGS = "-m 8M"
 
 
@@ -32,6 +32,8 @@ def run_idf(args, action, stdin_data=None):
     command = [
         "idf.py",
         "-B", BUILD_DIR,
+        "-D", "USE_QEMU=1",
+        "-D", "USE_DEBUG=1",
         "-D", f"GPSP_TEST_BACKEND={args.backend}",
         "-D", "GPSP_TEST_MODE=debug",
         "-D", "GPSP_TEST_DUMP_FRAME=1",

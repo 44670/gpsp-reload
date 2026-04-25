@@ -1,0 +1,171 @@
+set(GPSP_ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
+set(GPSP_COMMON "${GPSP_ROOT}/libretro/libretro-common")
+
+if(NOT DEFINED USE_QEMU OR USE_QEMU STREQUAL "")
+    set(USE_QEMU 0)
+endif()
+
+if(NOT DEFINED USE_DEBUG OR USE_DEBUG STREQUAL "")
+    set(USE_DEBUG 0)
+endif()
+
+if(NOT DEFINED GPSP_TEST_MODE OR GPSP_TEST_MODE STREQUAL "")
+    if(USE_DEBUG)
+        set(GPSP_TEST_MODE "debug")
+    else()
+        set(GPSP_TEST_MODE "play")
+    endif()
+endif()
+
+if(NOT DEFINED GPSP_TEST_FRAMES OR GPSP_TEST_FRAMES STREQUAL "")
+    set(GPSP_TEST_FRAMES "300")
+endif()
+
+if(NOT DEFINED GPSP_TEST_EXPECT_FB_HASH OR GPSP_TEST_EXPECT_FB_HASH STREQUAL "")
+    set(GPSP_TEST_EXPECT_FB_HASH "0")
+endif()
+
+if(NOT DEFINED GPSP_TEST_DUMP_FRAME OR GPSP_TEST_DUMP_FRAME STREQUAL "")
+    set(GPSP_TEST_DUMP_FRAME "0")
+endif()
+
+if(GPSP_CORES3SE_LCD)
+    set(GPSP_CORES3SE_LCD_VALUE 1)
+else()
+    set(GPSP_CORES3SE_LCD_VALUE 0)
+endif()
+
+if(USE_QEMU)
+    set(USE_QEMU_VALUE 1)
+else()
+    set(USE_QEMU_VALUE 0)
+endif()
+
+if(USE_DEBUG)
+    set(USE_DEBUG_VALUE 1)
+else()
+    set(USE_DEBUG_VALUE 0)
+endif()
+
+if(NOT DEFINED GPSP_TEST_BACKEND OR GPSP_TEST_BACKEND STREQUAL "")
+    set(GPSP_TEST_BACKEND "dynarec")
+endif()
+
+if(NOT GPSP_TEST_BACKEND STREQUAL "interp" AND
+   NOT GPSP_TEST_BACKEND STREQUAL "dynarec")
+    message(FATAL_ERROR
+        "GPSP_TEST_BACKEND must be 'interp' or 'dynarec', got '${GPSP_TEST_BACKEND}'")
+endif()
+
+if(NOT GPSP_TEST_MODE STREQUAL "play" AND
+   NOT GPSP_TEST_MODE STREQUAL "dhrystone" AND
+   NOT GPSP_TEST_MODE STREQUAL "frames" AND
+   NOT GPSP_TEST_MODE STREQUAL "debug")
+    message(FATAL_ERROR
+        "GPSP_TEST_MODE must be 'play', 'dhrystone', 'frames', or 'debug', got '${GPSP_TEST_MODE}'")
+endif()
+
+if(GPSP_TEST_MODE STREQUAL "debug" AND NOT USE_DEBUG)
+    message(FATAL_ERROR
+        "GPSP_TEST_MODE=debug requires -D USE_DEBUG=1")
+endif()
+
+set(GPSP_SOURCES
+    "${GPSP_ROOT}/bios_data.S"
+    "${GPSP_ROOT}/main.c"
+    "${GPSP_ROOT}/cpu_backend.c"
+    "${GPSP_ROOT}/jsjit_backend.c"
+    "${GPSP_ROOT}/gba_memory.c"
+    "${GPSP_ROOT}/savestate.c"
+    "${GPSP_ROOT}/input.c"
+    "${GPSP_ROOT}/sound.c"
+    "${GPSP_ROOT}/cheats.c"
+    "${GPSP_ROOT}/memmap.c"
+    "${GPSP_ROOT}/serial.c"
+    "${GPSP_ROOT}/gbp.c"
+    "${GPSP_ROOT}/rfu.c"
+    "${GPSP_ROOT}/serial_proto.c"
+    "${GPSP_ROOT}/libretro/libretro.c"
+    "${GPSP_ROOT}/gba_cc_lut.c"
+    "${GPSP_ROOT}/esp32s3/cores3se_lcd.c"
+    "${GPSP_ROOT}/esp32s3/psram_static.c"
+    "${GPSP_ROOT}/video.cc"
+    "${GPSP_ROOT}/cpu.cc"
+    "${GPSP_COMMON}/compat/compat_posix_string.c"
+    "${GPSP_COMMON}/compat/compat_strl.c"
+    "${GPSP_COMMON}/compat/fopen_utf8.c"
+    "${GPSP_COMMON}/encodings/encoding_utf.c"
+    "${GPSP_COMMON}/file/file_path.c"
+    "${GPSP_COMMON}/file/file_path_io.c"
+    "${GPSP_COMMON}/streams/file_stream.c"
+    "${GPSP_COMMON}/string/stdstring.c"
+    "${GPSP_COMMON}/time/rtime.c"
+    "${GPSP_COMMON}/vfs/vfs_implementation.c"
+    "app_main.c"
+)
+
+if(GPSP_TEST_BACKEND STREQUAL "dynarec")
+    list(APPEND GPSP_SOURCES
+        "${GPSP_ROOT}/cpu_threaded.c"
+        "${GPSP_ROOT}/esp32s3/xtensa_runtime.c"
+    )
+endif()
+
+idf_component_register(
+    SRCS ${GPSP_SOURCES}
+    REQUIRES
+      esp_partition
+      esp_driver_gpio
+      esp_driver_i2c
+      esp_driver_spi
+      esp_lcd
+      esp_mm
+      esp_psram
+    INCLUDE_DIRS
+      "."
+      "${GPSP_ROOT}"
+      "${GPSP_ROOT}/tests/dhrystone"
+      "${GPSP_ROOT}/libretro"
+      "${GPSP_COMMON}/include"
+)
+
+target_compile_definitions(${COMPONENT_LIB} PRIVATE
+    XTENSA_ARCH
+    HAVE_STRINGS_H
+    HAVE_STDINT_H
+    HAVE_INTTYPES_H
+    __LIBRETRO__
+    INLINE=inline
+    NDEBUG=1
+    FRONTEND_SUPPORTS_RGB565
+    SMALL_TRANSLATION_CACHE
+    ROM_BUFFER_SIZE=1
+    GPSP_TEST_BACKEND=\"${GPSP_TEST_BACKEND}\"
+    GPSP_TEST_MODE=\"${GPSP_TEST_MODE}\"
+    GPSP_TEST_FRAMES=${GPSP_TEST_FRAMES}
+    GPSP_TEST_EXPECT_FB_HASH=${GPSP_TEST_EXPECT_FB_HASH}
+    GPSP_TEST_DUMP_FRAME=${GPSP_TEST_DUMP_FRAME}
+    GPSP_CORES3SE_LCD=${GPSP_CORES3SE_LCD_VALUE}
+    USE_QEMU=${USE_QEMU_VALUE}
+    USE_DEBUG=${USE_DEBUG_VALUE}
+)
+
+if(GPSP_TEST_BACKEND STREQUAL "dynarec")
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE
+        HAVE_DYNAREC
+    )
+endif()
+
+target_compile_options(${COMPONENT_LIB} PRIVATE
+    -Wno-error
+    -Wno-unused-variable
+    -Wno-unused-label
+    -Wno-unused-parameter
+)
+
+target_compile_options(${COMPONENT_LIB} PRIVATE
+    $<$<COMPILE_LANGUAGE:ASM>:-Wa,-I,${GPSP_ROOT}>
+)
+
+target_compile_options(${COMPONENT_LIB} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
+target_compile_options(${COMPONENT_LIB} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)

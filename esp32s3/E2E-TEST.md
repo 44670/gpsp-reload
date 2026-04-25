@@ -6,24 +6,23 @@ Verified on this repo state with ESP-IDF `v6.0` on 2026-04-25:
 
 - `tests/dhrystone/Makefile` builds both `dhrystone_arm.gba` and
   `dhrystone_thumb.gba`
-- `tests/esp32s3/idf-app` boots in Espressif QEMU for `esp32s3`
-- the active CoreS3 SE baseline is interpreter-only
+- `esp32s3/` boots in Espressif QEMU for `esp32s3`
+- the active CoreS3 SE firmware defaults to playable dynarec mode
 - `.gba` data is no longer embedded in the app image. The app maps the raw
   `gamepak` SPI flash partition with `esp_partition_mmap()`. The partition is
   the `.gba` byte stream directly; there is no metadata/header wrapper and no
   sidecar metadata partition.
-- `GPSP_TEST_BACKEND=interp` passes Dhrystone in QEMU after
+- `GPSP_TEST_BACKEND=interp` passed Dhrystone in QEMU after
   `flash_gba.sh --image ...` patches the QEMU flash image
-- the IDF app does not define `HAVE_DYNAREC` or compile `cpu_threaded.c` /
-  `esp32s3/xtensa_runtime.c` in this phase
+- `GPSP_TEST_BACKEND=dynarec` defines `HAVE_DYNAREC` and compiles
+  `cpu_threaded.c` / `esp32s3/xtensa_runtime.c`
 - CoreS3 SE LCD init/output is compiled in by default through
   `GPSP_CORES3SE_LCD=1`
 - QEMU has no AW9523/AXP2101/LCD hardware, so LCD init logs a soft failure
   there and the CPU smoke test continues
 - QEMU frame capture can write PNG artifacts through
   `tests/esp32s3/qemu_capture_png.py`
-- previous dynarec results are historical only; dynarec is parked until the
-  interpreter-only CoreS3 SE board port is stable
+- QEMU builds use `esp32s3/build-qemu/`; hardware builds use `esp32s3/build/`
 
 Required one-time host setup:
 
@@ -35,14 +34,14 @@ Required one-time host setup:
 
 Verified commands:
 
-- interpreter build:
-  `idf.py -B build/ build`
+- hardware build:
+  `cd esp32s3 && idf.py -B build/ build`
 - patch a QEMU flash image with a raw `.gba`:
-  `tests/esp32s3/idf-app/flash_gba.sh --image tests/esp32s3/idf-app/build/qemu_flash_gba.bin tests/dhrystone/dhrystone_arm.gba`
+  `esp32s3/flash_gba.sh --image esp32s3/build-qemu/qemu_flash_gba.bin tests/dhrystone/dhrystone_arm.gba`
 - interpreter QEMU run:
-  `idf.py -B build/ qemu --flash-file build/qemu_flash_gba.bin --qemu-extra-args="-m 8M"`
+  `cd esp32s3 && idf.py -B build-qemu/ -D USE_QEMU=1 -D GPSP_TEST_BACKEND=interp qemu --flash-file build-qemu/qemu_flash_gba.bin --qemu-extra-args="-m 8M"`
 - interpreter QEMU run without probing CoreS3 SE LCD hardware:
-  `idf.py -B build/ -D GPSP_CORES3SE_LCD=0 qemu --flash-file build/qemu_flash_gba.bin --qemu-extra-args="-m 8M"`
+  `cd esp32s3 && idf.py -B build-qemu/ -D USE_QEMU=1 -D GPSP_TEST_BACKEND=interp qemu --flash-file build-qemu/qemu_flash_gba.bin --qemu-extra-args="-m 8M"`
 
 The `-m 8M` QEMU override is required for this target. Espressif QEMU's
 default ESP32-S3 machine reports 32 MB PSRAM; that can consume the external
