@@ -22,11 +22,12 @@ $(TOOL): emit_block_stub.c $(ROOT)/esp32s3/xtensa_codegen.h
 	$(CC) $(CFLAGS) -I$(ROOT) $< -o $@
 
 $(NATIVE_TOOL): emit_native_arm_block.c $(ROOT)/esp32s3/xtensa_codegen.h \
-	$(ROOT)/esp32s3/xtensa_native_emit.h
+	$(ROOT)/esp32s3/xtensa_native_emit.h $(ROOT)/esp32s3/xtensa_state.h
 	$(CC) $(CFLAGS) -I$(ROOT) $< -o $@
 
 $(TEST): xtensa_codegen_tests.c $(ROOT)/esp32s3/xtensa_codegen.h \
-	$(ROOT)/esp32s3/xtensa_native_emit.h
+	$(ROOT)/esp32s3/xtensa_hle.h \
+	$(ROOT)/esp32s3/xtensa_native_emit.h $(ROOT)/esp32s3/xtensa_state.h
 	$(CC) $(CFLAGS) -I$(ROOT) $< -o $@
 
 $(OUT_DIR):

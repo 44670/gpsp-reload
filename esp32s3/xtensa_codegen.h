@@ -7,6 +7,14 @@
 #define XTENSA_BLOCK_FIXED_LITERAL_BYTES 16
 #define XTENSA_BLOCK_LITERAL_BYTES 256
 
+enum
+{
+  XTENSA_LITERAL_HELPER = 0,
+  XTENSA_LITERAL_STATE = 4,
+  XTENSA_LITERAL_RESERVED0 = 8,
+  XTENSA_LITERAL_RESERVED1 = 12
+};
+
 typedef struct xtensa_jit_block_meta
 {
   uint32_t start_pc;
@@ -138,6 +146,16 @@ static inline void xtensa_emit_xor(uint8_t **ptr, uint32_t dst,
   xtensa_emit_u8(ptr, 0x30);
 }
 
+static inline void xtensa_emit_extui(uint8_t **ptr, uint32_t dst,
+                                     uint32_t src, uint32_t pos,
+                                     uint32_t width)
+{
+  xtensa_emit_u8(ptr, (uint8_t)(src << 4));
+  xtensa_emit_u8(ptr, (uint8_t)((dst << 4) | (pos & 0x0F)));
+  xtensa_emit_u8(ptr, (uint8_t)((((width - 1) & 0x0F) << 4) |
+                                0x04 | ((pos >> 4) & 0x01)));
+}
+
 static inline void xtensa_emit_movi_u15(uint8_t **ptr, uint32_t reg_num,
                                         uint32_t imm)
 {
@@ -171,11 +189,22 @@ static inline void xtensa_emit_mov_n_a10_a3(uint8_t **ptr)
   xtensa_emit_u16(ptr, 0x03AD);
 }
 
-static inline void xtensa_emit_callx8_a2(uint8_t **ptr)
+static inline void xtensa_emit_mov_n(uint8_t **ptr, uint32_t dst,
+                                     uint32_t src)
+{
+  xtensa_emit_u16(ptr, (uint16_t)((src << 8) | (dst << 4) | 0x0D));
+}
+
+static inline void xtensa_emit_callx8(uint8_t **ptr, uint32_t reg_num)
 {
   xtensa_emit_u8(ptr, 0xE0);
-  xtensa_emit_u8(ptr, 0x02);
+  xtensa_emit_u8(ptr, (uint8_t)reg_num);
   xtensa_emit_u8(ptr, 0x00);
+}
+
+static inline void xtensa_emit_callx8_a2(uint8_t **ptr)
+{
+  xtensa_emit_callx8(ptr, 2);
 }
 
 static inline void xtensa_emit_beqz_a10_skip_retw(uint8_t **ptr)
@@ -206,18 +235,22 @@ static inline void xtensa_emit_block_stub(uint8_t **ptr)
   xtensa_emit_retw_n(ptr);
 }
 
-static inline void xtensa_emit_native_block_prologue(uint8_t **ptr)
+static inline void xtensa_emit_native_block_prologue(uint8_t **ptr,
+                                                    const uint8_t *literal_base)
 {
   xtensa_emit_entry_sp_32(ptr);
+  /* a2 is the fixed CPU/JIT state base for the whole translated block. */
+  xtensa_emit_l32r_literal(ptr, 2, literal_base + XTENSA_LITERAL_STATE);
 }
 
 static inline void xtensa_emit_native_arm_instruction(uint8_t **ptr,
                                                      const uint8_t *literal_base,
                                                      uint32_t insn_index)
 {
-  xtensa_emit_l32r_literal(ptr, 2, literal_base);
-  xtensa_emit_movi_u15(ptr, 10, insn_index);
-  xtensa_emit_callx8_a2(ptr);
+  xtensa_emit_l32r_literal(ptr, 4, literal_base + XTENSA_LITERAL_HELPER);
+  xtensa_emit_mov_n(ptr, 10, 2);
+  xtensa_emit_movi_u15(ptr, 11, insn_index);
+  xtensa_emit_callx8(ptr, 4);
   xtensa_emit_beqz_a10_skip_retw(ptr);
   xtensa_emit_retw_n(ptr);
 }

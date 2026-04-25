@@ -11,6 +11,7 @@ enum
   IMAGE_SIZE = 512U,
   ARM_HELPER = 0x40001000U,
   THUMB_HELPER = 0x40002000U,
+  STATE_BASE = 0x3FC90000U,
   TEST_INSN_INDEX = 7U
 };
 
@@ -25,15 +26,16 @@ static int emit_block_image(uint8_t *image, size_t image_size, int thumb_mode,
 
   literal_base = xtensa_align_ptr(image);
   translation_ptr = literal_base + XTENSA_BLOCK_LITERAL_BYTES;
-  xtensa_emit_native_block_prologue(&translation_ptr);
+  xtensa_emit_native_block_prologue(&translation_ptr, literal_base);
   xtensa_emit_native_arm_instruction(&translation_ptr, literal_base,
                                      TEST_INSN_INDEX);
   xtensa_emit_retw_n(&translation_ptr);
 
-  xtensa_store_u32(literal_base + 0, thumb_mode ? THUMB_HELPER : ARM_HELPER);
-  xtensa_store_u32(literal_base + 4, 0);
-  xtensa_store_u32(literal_base + 8, 0);
-  xtensa_store_u32(literal_base + 12, 0);
+  xtensa_store_u32(literal_base + XTENSA_LITERAL_HELPER,
+                   thumb_mode ? THUMB_HELPER : ARM_HELPER);
+  xtensa_store_u32(literal_base + XTENSA_LITERAL_STATE, STATE_BASE);
+  xtensa_store_u32(literal_base + XTENSA_LITERAL_RESERVED0, 0);
+  xtensa_store_u32(literal_base + XTENSA_LITERAL_RESERVED1, 0);
 
   *total_size = (size_t)(translation_ptr - image);
   *code_offset = (size_t)((literal_base + XTENSA_BLOCK_LITERAL_BYTES) - image);

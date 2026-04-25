@@ -5,22 +5,15 @@
 #include <stdint.h>
 
 #include "esp32s3/xtensa_codegen.h"
+#include "esp32s3/xtensa_state.h"
 
 enum
 {
-  XTENSA_LITERAL_HELPER = 0,
-  XTENSA_LITERAL_REG_BASE = 4,
-  XTENSA_LITERAL_CYCLES = 8
-};
-
-enum
-{
-  XTENSA_A_HELPER = 2,
-  XTENSA_A_REG_BASE = 2,
-  XTENSA_A_CYCLES_PTR = 3,
+  XTENSA_A_STATE = 2,
   XTENSA_A_DST = 4,
   XTENSA_A_RHS = 5,
-  XTENSA_A_TMP = 6
+  XTENSA_A_TMP = 6,
+  XTENSA_A_TMP2 = 7
 };
 
 enum
@@ -34,6 +27,11 @@ static inline uint32_t xtensa_native_ror32(uint32_t value, uint32_t shift)
   if (shift == 0)
     return value;
   return (value >> shift) | (value << (32 - shift));
+}
+
+static inline uint32_t xtensa_native_arm_reg_offset(uint32_t reg_num)
+{
+  return OFF_R0 + (reg_num * sizeof(uint32_t));
 }
 
 static inline bool xtensa_native_literal_pool_has(uint8_t *literal_base,
@@ -63,15 +61,15 @@ static inline void xtensa_native_emit_load_literal_u32(
 }
 
 static inline void xtensa_native_emit_arm_cycle_update(
-  uint8_t **translation_ptr, uint8_t *literal_base, uint8_t **literal_cursor,
-  uint32_t cycles)
+  uint8_t **translation_ptr, uint8_t **literal_cursor, uint32_t cycles)
 {
+  (void)literal_cursor;
+
   if (cycles == 0)
     return;
 
-  xtensa_emit_l32r_literal(translation_ptr, XTENSA_A_CYCLES_PTR,
-                           literal_base + XTENSA_LITERAL_CYCLES);
-  xtensa_emit_l32i(translation_ptr, XTENSA_A_TMP, XTENSA_A_CYCLES_PTR, 0);
+  xtensa_emit_l32i(translation_ptr, XTENSA_A_TMP, XTENSA_A_STATE,
+                   OFF_JIT_CYCLES);
 
   if (cycles <= 128)
   {
@@ -86,7 +84,15 @@ static inline void xtensa_native_emit_arm_cycle_update(
                     XTENSA_A_RHS);
   }
 
-  xtensa_emit_s32i(translation_ptr, XTENSA_A_TMP, XTENSA_A_CYCLES_PTR, 0);
+  xtensa_emit_s32i(translation_ptr, XTENSA_A_TMP, XTENSA_A_STATE,
+                   OFF_JIT_CYCLES);
+}
+
+static inline void xtensa_native_emit_load_c_flag(uint8_t **translation_ptr)
+{
+  /* ARM C is CPSR bit 29; ADC/SBC/RSC need it as a 0/1 addend. */
+  xtensa_emit_l32i(translation_ptr, XTENSA_A_TMP, XTENSA_A_STATE, OFF_CPSR);
+  xtensa_emit_extui(translation_ptr, XTENSA_A_TMP, XTENSA_A_TMP, 29, 1);
 }
 
 static inline bool xtensa_emit_native_arm_data_proc_body(
@@ -113,6 +119,9 @@ static inline bool xtensa_emit_native_arm_data_proc_body(
     case 0x02:
     case 0x03:
     case 0x04:
+    case 0x05:
+    case 0x06:
+    case 0x07:
     case 0x0C:
     case 0x0D:
     case 0x0E:
@@ -145,13 +154,9 @@ static inline bool xtensa_emit_native_arm_data_proc_body(
                                       literal_words))
     return false;
 
-  /* First native tier keeps ARM state memory-backed until stubs map regs. */
-  xtensa_emit_l32r_literal(translation_ptr, XTENSA_A_REG_BASE,
-                           literal_base + XTENSA_LITERAL_REG_BASE);
-
   if (!unary)
-    xtensa_emit_l32i(translation_ptr, XTENSA_A_DST, XTENSA_A_REG_BASE,
-                     rn * sizeof(uint32_t));
+    xtensa_emit_l32i(translation_ptr, XTENSA_A_DST, XTENSA_A_STATE,
+                     xtensa_native_arm_reg_offset(rn));
 
   if (immediate)
   {
@@ -162,7 +167,7 @@ static inline bool xtensa_emit_native_arm_data_proc_body(
   else
   {
     xtensa_emit_l32i(translation_ptr, unary ? XTENSA_A_DST : XTENSA_A_RHS,
-                     XTENSA_A_REG_BASE, rm * sizeof(uint32_t));
+                     XTENSA_A_STATE, xtensa_native_arm_reg_offset(rm));
   }
 
   switch (op)
@@ -192,6 +197,36 @@ static inline bool xtensa_emit_native_arm_data_proc_body(
                         XTENSA_A_RHS);
       break;
 
+    case 0x05:
+      xtensa_native_emit_load_c_flag(translation_ptr);
+      xtensa_emit_add_n(translation_ptr, XTENSA_A_DST, XTENSA_A_DST,
+                        XTENSA_A_RHS);
+      xtensa_emit_add_n(translation_ptr, XTENSA_A_DST, XTENSA_A_DST,
+                        XTENSA_A_TMP);
+      break;
+
+    case 0x06:
+      xtensa_native_emit_load_c_flag(translation_ptr);
+      xtensa_emit_movi(translation_ptr, XTENSA_A_TMP2, (uint32_t)-1);
+      xtensa_emit_xor(translation_ptr, XTENSA_A_RHS, XTENSA_A_RHS,
+                      XTENSA_A_TMP2);
+      xtensa_emit_add_n(translation_ptr, XTENSA_A_DST, XTENSA_A_DST,
+                        XTENSA_A_RHS);
+      xtensa_emit_add_n(translation_ptr, XTENSA_A_DST, XTENSA_A_DST,
+                        XTENSA_A_TMP);
+      break;
+
+    case 0x07:
+      xtensa_native_emit_load_c_flag(translation_ptr);
+      xtensa_emit_movi(translation_ptr, XTENSA_A_TMP2, (uint32_t)-1);
+      xtensa_emit_xor(translation_ptr, XTENSA_A_DST, XTENSA_A_DST,
+                      XTENSA_A_TMP2);
+      xtensa_emit_add_n(translation_ptr, XTENSA_A_DST, XTENSA_A_RHS,
+                        XTENSA_A_DST);
+      xtensa_emit_add_n(translation_ptr, XTENSA_A_DST, XTENSA_A_DST,
+                        XTENSA_A_TMP);
+      break;
+
     case 0x0C:
       xtensa_emit_or(translation_ptr, XTENSA_A_DST, XTENSA_A_DST,
                      XTENSA_A_RHS);
@@ -215,14 +250,12 @@ static inline bool xtensa_emit_native_arm_data_proc_body(
       break;
   }
 
-  xtensa_emit_s32i(translation_ptr, XTENSA_A_DST, XTENSA_A_REG_BASE,
-                   rd * sizeof(uint32_t));
+  xtensa_emit_s32i(translation_ptr, XTENSA_A_DST, XTENSA_A_STATE,
+                   xtensa_native_arm_reg_offset(rd));
   xtensa_native_emit_load_literal_u32(translation_ptr, XTENSA_A_TMP,
                                       literal_cursor, pc + 4);
-  xtensa_emit_s32i(translation_ptr, XTENSA_A_TMP, XTENSA_A_REG_BASE,
-                   XTENSA_ARM_REG_PC * sizeof(uint32_t));
-  xtensa_native_emit_arm_cycle_update(translation_ptr, literal_base,
-                                      literal_cursor, cycles);
+  xtensa_emit_s32i(translation_ptr, XTENSA_A_TMP, XTENSA_A_STATE, OFF_PC);
+  xtensa_native_emit_arm_cycle_update(translation_ptr, literal_cursor, cycles);
   return true;
 }
 

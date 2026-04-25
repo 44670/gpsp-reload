@@ -9,8 +9,7 @@ enum
 {
   IMAGE_SIZE = 768U,
   ARM_HELPER = 0x40001000U,
-  REG_BASE = 0x3FC90000U,
-  CYCLES_PTR = 0x3FC91000U
+  STATE_BASE = 0x3FC90000U
 };
 
 typedef struct arm_sample
@@ -26,7 +25,9 @@ static const arm_sample samples[] =
   {"add r4, r4, r5",       0xE0844005U, 0x08000100U, 1},
   {"mov r1, #0x80000000",  0xE3A01102U, 0x08000104U, 1},
   {"sub r6, r6, r7",       0xE0466007U, 0x08000108U, 2},
-  {"orr r8, r8, r9",       0xE1888009U, 0x0800010CU, 1}
+  {"orr r8, r8, r9",       0xE1888009U, 0x0800010CU, 1},
+  {"adc r2, r2, r3",       0xE0A22003U, 0x08000110U, 1},
+  {"sbc r4, r4, #1",       0xE2C44001U, 0x08000114U, 1}
 };
 
 static int write_file(const char *path, const uint8_t *data, size_t size)
@@ -66,11 +67,11 @@ static int emit_native_arm_block(const char *path)
   translation_ptr = literal_base + XTENSA_BLOCK_LITERAL_BYTES;
 
   xtensa_store_u32(literal_base + XTENSA_LITERAL_HELPER, ARM_HELPER);
-  xtensa_store_u32(literal_base + XTENSA_LITERAL_REG_BASE, REG_BASE);
-  xtensa_store_u32(literal_base + XTENSA_LITERAL_CYCLES, CYCLES_PTR);
-  xtensa_store_u32(literal_base + 12, 0);
+  xtensa_store_u32(literal_base + XTENSA_LITERAL_STATE, STATE_BASE);
+  xtensa_store_u32(literal_base + XTENSA_LITERAL_RESERVED0, 0);
+  xtensa_store_u32(literal_base + XTENSA_LITERAL_RESERVED1, 0);
 
-  xtensa_emit_native_block_prologue(&translation_ptr);
+  xtensa_emit_native_block_prologue(&translation_ptr, literal_base);
 
   printf("literal_base=0x%zx code_start=0x%zx\n",
          (size_t)(literal_base - image),

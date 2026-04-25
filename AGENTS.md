@@ -52,6 +52,67 @@
   - direct and indirect branch exits
   - scheduler return on cycle exhaustion or alerts
 
+## ESP32-S3 Xtensa ABI Direction
+
+- ESP32-S3 uses Xtensa with a windowed ABI: instructions only address `a0..a15` at once, even though the core has more physical window backing registers.
+- Generated JIT code must not assume it can freely allocate all physical Xtensa registers. Treat the visible register budget as:
+  - `a0`: call/return linkage, reserved
+  - `a1`: stack pointer, reserved
+  - `a2..a15`: usable inside generated code
+- Keep one Xtensa register permanently pointing at compact CPU/JIT state. This is the Xtensa equivalent of MIPS `reg_base`.
+- Use this fixed CPU/JIT state layout for the first state-backed backend:
+  - `OFF_R0 = 0x00`: guest `r0`
+  - `OFF_R1 = 0x04`: guest `r1`
+  - `OFF_R2 = 0x08`: guest `r2`
+  - `OFF_R3 = 0x0C`: guest `r3`
+  - `OFF_R4 = 0x10`: guest `r4`
+  - `OFF_R5 = 0x14`: guest `r5`
+  - `OFF_R6 = 0x18`: guest `r6`
+  - `OFF_R7 = 0x1C`: guest `r7`
+  - `OFF_R8 = 0x20`: guest `r8`
+  - `OFF_R9 = 0x24`: guest `r9`
+  - `OFF_R10 = 0x28`: guest `r10`
+  - `OFF_R11 = 0x2C`: guest `r11`
+  - `OFF_R12 = 0x30`: guest `r12`
+  - `OFF_R13 = 0x34`: guest `r13` / SP
+  - `OFF_R14 = 0x38`: guest `r14` / LR
+  - `OFF_R15 = OFF_PC = 0x3C`: guest `r15` / PC
+  - `OFF_CPSR = 0x40`: guest CPSR
+  - `OFF_CPU_MODE = 0x44`: guest CPU mode
+  - `OFF_CPU_HALT_STATE = 0x48`: CPU halt state
+  - `OFF_BUS_VALUE = 0x4C`: bus value
+  - `OFF_N_FLAG = 0x50`: dynarec N flag scratch
+  - `OFF_Z_FLAG = 0x54`: dynarec Z flag scratch
+  - `OFF_C_FLAG = 0x58`: dynarec C flag scratch
+  - `OFF_V_FLAG = 0x5C`: dynarec V flag scratch
+  - `OFF_SLEEP_CYCLES = 0x60`: sleep cycles
+  - `OFF_OAM_UPDATED = 0x64`: OAM updated flag
+  - `OFF_SAVE0 = 0x68`: mirrored `REG_SAVE`
+  - `OFF_SAVE1 = 0x6C`: mirrored `REG_SAVE2`
+  - `OFF_SAVE2 = 0x70`: mirrored `REG_SAVE3`
+  - `OFF_SAVE3 = 0x74`: mirrored `REG_SAVE4`
+  - `OFF_SAVE4 = 0x78`: mirrored `REG_SAVE5`
+  - `OFF_SAVE5 = 0x7C`: mirrored `REG_SAVE6`
+  - `OFF_SPSR = 0x80`: `spsr[0]`
+  - `OFF_SPSR_END = 0x98`: one-past `spsr[5]`
+  - `OFF_REG_MODE = 0x98`: `reg_mode[0][0]`
+  - `OFF_REG_MODE_END = 0x15C`: one-past `reg_mode[6][6]`
+  - `OFF_JIT_CYCLES = 0x15C`: signed JIT cycle counter
+  - `OFF_JIT_ALERT = 0x160`: JIT CPU alert bits
+  - `OFF_EXIT_REASON = 0x164`: block exit reason or backend status
+  - `OFF_STATE_SIZE = 0x168`: end of fixed state header
+- The first `0x80` bytes intentionally mirror `reg[0..31]` from `cpu.h`. Do not insert JIT-only fields before `0x80`; append them after the mirrored CPU/dynarec state.
+- Use the state pointer for all guest register access. Keep the first Xtensa backend simple: guest registers stay in CPU/JIT state, and generated code uses `l32i`/`s32i` with fixed offsets for each guest register.
+- Keep ordinary backend scratch in Xtensa registers, not in the CPU/JIT state block. Use memory scratch only for values that must survive helper calls, scheduler/update paths, exits, or debug inspection.
+- Do not add a guest register cache yet. Correct block execution, exits, helper calls, scheduler boundaries, cache sync, and invalidation matter more than reducing state loads/stores in the first native backend milestone.
+- Because helper calls can rotate or clobber the visible register window, do not keep guest register values live across C helper calls. Reload guest values from CPU/JIT state after helper/update paths as needed.
+- A practical first mapping is:
+  - `a2`: CPU/JIT state base pointer
+  - `a3`: cycle counter, if kept live
+  - `a4..a15`: scratch temps for emitted operations, address calculations, PC/CPSR work, and helper setup
+- A later optimization pass may add a register cache, but it must be a separate step after the simple state-backed JIT is correct and covered by tests.
+- Cache sync after emitting executable Xtensa code remains mandatory.
+
 ## Practical Rule For Future Agents
 
 - When in doubt, read `cpu_threaded.c` first. It defines the dynarec contract.
@@ -77,4 +138,3 @@ No M5 lib deps, like ~/work/CardPuterADV/esp-walkie-talkie, write drivers by you
 Also use qemu to test jit headlessly:
 
 https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-guides/tools/qemu.html
-
