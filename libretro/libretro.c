@@ -641,7 +641,7 @@ void retro_init(void)
       if (!esp32s3_static_buffers_init_translation_caches(
             &rom_translation_cache, &ram_translation_cache))
       {
-         error_msg("ESP32-S3 static translation caches are not page-aligned.");
+         error_msg(esp32s3_static_buffers_last_error());
          rom_translation_cache = NULL;
          ram_translation_cache = NULL;
          return;

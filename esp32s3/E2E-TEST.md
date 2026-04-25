@@ -2,19 +2,28 @@
 
 ## Current Status
 
-Verified on this repo state with ESP-IDF `v6.0` on 2026-04-24:
+Verified on this repo state with ESP-IDF `v6.0` on 2026-04-25:
 
 - `tests/dhrystone/Makefile` builds both `dhrystone_arm.gba` and
   `dhrystone_thumb.gba`
 - `tests/esp32s3/idf-app` boots in Espressif QEMU for `esp32s3`
-- `GPSP_TEST_BACKEND=dynarec` passes the embedded Dhrystone ROM in QEMU
-- the dynarec run now executes through the ESP32-S3 backend's own ARM block
-  interpreter with zero generic `execute_arm()` fallback
-- `GPSP_TEST_BACKEND=interp` also passes, which is the control reference
+- the active CoreS3 SE baseline is interpreter-only
+- `.gba` data is no longer embedded in the app image. The app maps the raw
+  `gamepak` SPI flash partition with `esp_partition_mmap()`. The partition is
+  the `.gba` byte stream directly; there is no metadata/header wrapper and no
+  sidecar metadata partition.
+- `GPSP_TEST_BACKEND=interp` passes Dhrystone in QEMU after
+  `flash_gba.sh --image ...` patches the QEMU flash image
+- the IDF app does not define `HAVE_DYNAREC` or compile `cpu_threaded.c` /
+  `esp32s3/xtensa_runtime.c` in this phase
+- CoreS3 SE LCD init/output is compiled in by default through
+  `GPSP_CORES3SE_LCD=1`
+- QEMU has no AW9523/AXP2101/LCD hardware, so LCD init logs a soft failure
+  there and the CPU smoke test continues
 - QEMU frame capture can write PNG artifacts through
   `tests/esp32s3/qemu_capture_png.py`
-- `goodBoyAdv.gba` now reaches the same 60-frame title-screen framebuffer hash
-  through dynarec and interpreter in QEMU
+- previous dynarec results are historical only; dynarec is parked until the
+  interpreter-only CoreS3 SE board port is stable
 
 Required one-time host setup:
 
@@ -26,14 +35,19 @@ Required one-time host setup:
 
 Verified commands:
 
-- dynarec build:
-  `idf.py -D GPSP_TEST_BACKEND=dynarec build`
-- dynarec run:
-  `idf.py qemu monitor`
-- interp build:
-  `idf.py -D GPSP_TEST_BACKEND=interp build`
-- interp run:
-  `idf.py qemu monitor`
+- interpreter build:
+  `idf.py -B build/ build`
+- patch a QEMU flash image with a raw `.gba`:
+  `tests/esp32s3/idf-app/flash_gba.sh --image tests/esp32s3/idf-app/build/qemu_flash_gba.bin tests/dhrystone/dhrystone_arm.gba`
+- interpreter QEMU run:
+  `idf.py -B build/ qemu --flash-file build/qemu_flash_gba.bin --qemu-extra-args="-m 8M"`
+- interpreter QEMU run without probing CoreS3 SE LCD hardware:
+  `idf.py -B build/ -D GPSP_CORES3SE_LCD=0 qemu --flash-file build/qemu_flash_gba.bin --qemu-extra-args="-m 8M"`
+
+The `-m 8M` QEMU override is required for this target. Espressif QEMU's
+default ESP32-S3 machine reports 32 MB PSRAM; that can consume the external
+data virtual address range before `esp_partition_mmap()` maps the raw
+`gamepak` flash partition. CoreS3 SE has 8 MB PSRAM.
 
 Host-side emission verifier:
 
@@ -64,20 +78,15 @@ retw.n
 Verified UART pass lines:
 
 ```text
-backend=dynarec frames=30 video_frames=30 magic=0x44524859 status=0 iterations=2000 int_glob=5 bool_glob=1 ch1=A ch2=B arr1_8=7 arr2_8_7=2010 ptr=17 next=18
-jit blocks_emitted=318 blocks_executed=80861 generic_fallbacks=0 unsupported=0 thumb_blocks=0
-result=PASS backend=dynarec
 backend=interp frames=30 video_frames=30 magic=0x44524859 status=0 iterations=2000 int_glob=5 bool_glob=1 ch1=A ch2=B arr1_8=7 arr2_8_7=2010 ptr=17 next=18
-jit blocks_emitted=1 blocks_executed=0 generic_fallbacks=0 unsupported=0 thumb_blocks=0
+jit blocks_emitted=0 blocks_executed=0 generic_fallbacks=0 unsupported=0 thumb_blocks=0
 result=PASS backend=interp
 ```
 
 Frame PNG capture workflow:
 
-- dynarec:
-  `tests/esp32s3/qemu_capture_png.py --rom /path/to/game.gba --backend dynarec --frames 60 --build-dir build-v6.0-esp32s3-capture-dynarec --output tests/esp32s3/out/game-dynarec-f60.png`
 - interpreter reference:
-  `tests/esp32s3/qemu_capture_png.py --rom /path/to/game.gba --backend interp --frames 60 --build-dir build-v6.0-esp32s3-capture-interp --output tests/esp32s3/out/game-interp-f60.png`
+  `tests/esp32s3/qemu_capture_png.py --rom /path/to/game.gba --frames 60 --output tests/esp32s3/out/game-interp-f60.png`
 - by default the helper elides the raw UART base64 framebuffer payload and only
   writes the decoded PNG; pass `--show-frame-dump` when debugging the UART
   payload itself
@@ -87,42 +96,49 @@ Frame PNG capture workflow:
 Serial debugger workflow:
 
 - interactive QEMU UART debugger:
-  `tests/esp32s3/qemu_serial_debug.py --rom /path/to/game.gba --backend dynarec --build-dir build-v6.0-esp32s3-debug`
+  `tests/esp32s3/qemu_serial_debug.py --rom /path/to/game.gba`
 - repeatable command batch:
-  `tests/esp32s3/qemu_serial_debug.py --rom /path/to/game.gba --backend dynarec --build-dir build-v6.0-esp32s3-debug --cmd "bp 0x08003220 0x140" --cmd "run 120" --cmd regs --cmd io --cmd quit`
+  `tests/esp32s3/qemu_serial_debug.py --rom /path/to/game.gba --cmd "bp 0x08003220 0x140" --cmd "run 120" --cmd regs --cmd io --cmd quit`
 - useful commands include `status`, `regs`, `jit`, `io`, `op`, `mem A L`,
   `watchio A L`, `tracepc A L N`, `bp A L`, `breakio A L`, `stepi N`,
   `run N`, `fb`, and `png`
 - `bp` stops before executing a matching ARM/Thumb PC; `breakio` stops after
-  the instruction that writes the matching IO byte range; both work in
-  interpreter and ESP32-S3 dynarec debug runs
+  the instruction that writes the matching IO byte range in interpreter debug
+  runs
 - `cont` continues CPU execution without forcing libretro video/audio callbacks;
   use `run` when the debugger operation must also produce frontend frames
 
-Current `goodBoyAdv.gba` 60-frame artifacts:
+Historical `goodBoyAdv.gba` 60-frame artifacts from before dynarec was parked:
 
 - dynarec:
   `tests/esp32s3/out/goodboy-dynarec-now.png`, hash `0x10ce4667`, title screen
 - interpreter:
   `tests/esp32s3/out/goodboy-interp-f60.png`, hash `0x10ce4667`, title screen
-- latest dynarec run reports zero generic fallbacks and zero unsupported opcodes
+- latest dynarec run reported zero generic fallbacks and zero unsupported
+  opcodes before the interpreter-only pivot
 
 Important current limitation:
 
-- the generic interpreter fallback is no longer on the Dhrystone execution path
-- block bodies currently execute through a backend-local ARM block interpreter
-  entered from emitted Xtensa stubs, not yet through full per-instruction native
+- the active ESP32-S3 port is intentionally the gpSP interpreter
+- dynarec coverage in this file is historical and should not be treated as the
+  current port baseline
+- the next active implementation step is CoreS3 SE board bring-up, not more
   Xtensa lowering
-- that means Dhrystone is now covered end to end by the ESP32-S3 backend
-  contract, but the next optimization step is still real native ARM-to-Xtensa
-  lowering in `xtensa_emit.h`
 
 ## Purpose
 
-This file defines how the future ESP32-S3 native dynarec backend is validated
-end to end.
+This file defines how the ESP32-S3 firmware path is validated end to end.
+During the CoreS3 SE interpreter phase, it is an interpreter smoke and frame
+test plan. When dynarec resumes, it also covers the native backend.
 
-The target is not just "Xtensa code executes". The target is:
+The active interpreter target is:
+
+- gpSP boots and runs under ESP-IDF on ESP32-S3 QEMU
+- static PSRAM runtime buffers are linked and usable
+- frontend video/audio/input callbacks remain stable
+- frame hashes and debugger output are reproducible
+
+When dynarec resumes, the target also includes:
 
 - gpSP still obeys the existing `cpu_threaded.c` contract
 - translated blocks preserve guest-visible CPU behavior
@@ -218,9 +234,9 @@ The important unsupported or not-real-hardware areas include:
 - ULP
 - GPIO matrix and IOMUX
 
-That is acceptable for this backend. The ESP32-S3 dynarec is primarily a CPU,
-memory, cache, and scheduler problem. QEMU is therefore good enough for most
-early and mid-stage backend validation.
+That is acceptable for CPU/core validation. QEMU is good enough for interpreter
+smoke tests and most future dynarec backend validation, but it is not enough for
+CoreS3 SE display, touch, audio, or real storage timing.
 
 QEMU is not enough for:
 
@@ -259,7 +275,7 @@ The ESP32-S3 E2E path should reuse the same ROMs and the same notion of
 
 ## Required Build Modes
 
-The backend should be tested in at least these modes.
+The active interpreter phase should be tested in these modes.
 
 ### Host reference modes
 
@@ -271,14 +287,18 @@ These are used only as correctness references.
 ### ESP32-S3 modes
 
 - ESP32-S3 interpreter build in QEMU
+- ESP32-S3 interpreter build on CoreS3 SE hardware
+
+When dynarec resumes, add:
+
 - ESP32-S3 dynarec build in QEMU
-- ESP32-S3 dynarec build on hardware
+- ESP32-S3 dynarec build on CoreS3 SE hardware
 
 The interpreter build on ESP32-S3 matters because it separates:
 
 - generic porting bugs
 - platform integration bugs
-- dynarec backend bugs
+- future dynarec backend bugs
 
 Do not debug all three at once.
 
@@ -414,7 +434,9 @@ This stage should happen before trying to boot a full game.
 
 Goal:
 
-- compare ESP32-S3 dynarec output against interpreter output on fixed assets
+- compare ESP32-S3 output against host interpreter output on fixed assets
+- when dynarec resumes, compare ESP32-S3 dynarec output against ESP32-S3
+  interpreter output on the same assets
 
 Required initial ROM:
 
@@ -433,7 +455,8 @@ What to compare:
 
 Pass condition:
 
-- dynarec and interpreter agree on all fixed signatures
+- ESP32-S3 interpreter and host interpreter agree on all fixed signatures
+- after dynarec resumes, dynarec and interpreter agree on all fixed signatures
 
 Small performance differences are acceptable here. Semantic differences are not.
 
@@ -603,7 +626,7 @@ This makes it possible to compare:
 When a test fails, debug in this order:
 
 1. Reproduce in ESP32-S3 interpreter mode.
-2. Reproduce in dynarec mode with the smallest possible ROM.
+2. If dynarec is enabled, reproduce in dynarec mode with the smallest possible ROM.
 3. Enable block and exit counters.
 4. Run under `idf.py qemu --qemu-extra-args="-d in_asm,cpu" monitor`.
 5. Use `idf.py qemu gdb` to inspect stub state, register mapping, and emitted

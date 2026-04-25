@@ -1,10 +1,6 @@
 set(GPSP_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../..")
 set(GPSP_COMMON "${GPSP_ROOT}/libretro/libretro-common")
 
-if(NOT DEFINED GPSP_TEST_ROM OR GPSP_TEST_ROM STREQUAL "")
-    set(GPSP_TEST_ROM "${GPSP_ROOT}/tests/dhrystone/dhrystone_arm.gba")
-endif()
-
 if(NOT DEFINED GPSP_TEST_MODE OR GPSP_TEST_MODE STREQUAL "")
     set(GPSP_TEST_MODE "dhrystone")
 endif()
@@ -21,12 +17,17 @@ if(NOT DEFINED GPSP_TEST_DUMP_FRAME OR GPSP_TEST_DUMP_FRAME STREQUAL "")
     set(GPSP_TEST_DUMP_FRAME "0")
 endif()
 
-if(NOT EXISTS "${GPSP_TEST_ROM}")
-    message(FATAL_ERROR "GPSP_TEST_ROM does not exist: ${GPSP_TEST_ROM}")
+if(GPSP_CORES3SE_LCD)
+    set(GPSP_CORES3SE_LCD_VALUE 1)
+else()
+    set(GPSP_CORES3SE_LCD_VALUE 0)
 endif()
 
-set(GPSP_TEST_ROM_EMBED "${CMAKE_CURRENT_BINARY_DIR}/test_rom.gba")
-configure_file("${GPSP_TEST_ROM}" "${GPSP_TEST_ROM_EMBED}" COPYONLY)
+if(NOT DEFINED GPSP_TEST_BACKEND OR NOT GPSP_TEST_BACKEND STREQUAL "interp")
+    message(STATUS
+        "Forcing ESP32-S3 backend to interp for the CoreS3 SE interpreter-only baseline")
+    set(GPSP_TEST_BACKEND "interp" CACHE STRING "gpSP backend for ESP32-S3 test app" FORCE)
+endif()
 
 set(GPSP_SOURCES
     "${GPSP_ROOT}/bios_data.S"
@@ -45,9 +46,8 @@ set(GPSP_SOURCES
     "${GPSP_ROOT}/serial_proto.c"
     "${GPSP_ROOT}/libretro/libretro.c"
     "${GPSP_ROOT}/gba_cc_lut.c"
-    "${GPSP_ROOT}/cpu_threaded.c"
+    "${GPSP_ROOT}/esp32s3/cores3se_lcd.c"
     "${GPSP_ROOT}/esp32s3/psram_static.c"
-    "${GPSP_ROOT}/esp32s3/xtensa_runtime.c"
     "${GPSP_ROOT}/video.cc"
     "${GPSP_ROOT}/cpu.cc"
     "${GPSP_COMMON}/compat/compat_posix_string.c"
@@ -65,8 +65,14 @@ set(GPSP_SOURCES
 
 idf_component_register(
     SRCS ${GPSP_SOURCES}
-    EMBED_FILES "${GPSP_TEST_ROM_EMBED}"
-    REQUIRES esp_mm esp_psram
+    REQUIRES
+      esp_partition
+      esp_driver_gpio
+      esp_driver_i2c
+      esp_driver_spi
+      esp_lcd
+      esp_mm
+      esp_psram
     INCLUDE_DIRS
       "."
       "${GPSP_ROOT}"
@@ -76,7 +82,6 @@ idf_component_register(
 )
 
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
-    HAVE_DYNAREC
     XTENSA_ARCH
     HAVE_STRINGS_H
     HAVE_STDINT_H
@@ -85,15 +90,13 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     INLINE=inline
     NDEBUG=1
     FRONTEND_SUPPORTS_RGB565
-    # Keep the ESP32-S3 QEMU test fast; production should use SMALL_TRANSLATION_CACHE.
-    ROM_TRANSLATION_CACHE_SIZE=8192
-    RAM_TRANSLATION_CACHE_SIZE=24576
     ROM_BUFFER_SIZE=1
     GPSP_TEST_BACKEND=\"${GPSP_TEST_BACKEND}\"
     GPSP_TEST_MODE=\"${GPSP_TEST_MODE}\"
     GPSP_TEST_FRAMES=${GPSP_TEST_FRAMES}
     GPSP_TEST_EXPECT_FB_HASH=${GPSP_TEST_EXPECT_FB_HASH}
     GPSP_TEST_DUMP_FRAME=${GPSP_TEST_DUMP_FRAME}
+    GPSP_CORES3SE_LCD=${GPSP_CORES3SE_LCD_VALUE}
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE

@@ -7,7 +7,27 @@
 - The native dynarec frontend is in `cpu_threaded.c`.
 - Host-specific code emission lives in backend headers such as `mips/mips_emit.h`, `arm/arm_emit.h`, and `arm/arm64_emit.h`.
 - Host-specific entry/exit stubs live in files such as `mips/mips_stub.S` and `arm/arm_stub.S`.
-- There is also an experimental JS backend (`jsjit_*`), but the next task is a native ESP32-S3 backend, not more JS work.
+- There is also an experimental JS backend (`jsjit_*`), but the ESP32-S3 target should not grow new JS work.
+- Current ESP32-S3 phase is an interpreter-only CoreS3 SE port. The Xtensa dynarec work is parked until board bring-up, static storage, flash ROM mapping, display, input, and audio are stable.
+
+## Current ESP32-S3 Phase
+
+- Target board: M5Stack CoreS3 SE.
+- Active firmware baseline: interpreter only.
+- `tests/esp32s3/idf-app` defaults and forces `GPSP_TEST_BACKEND=interp`.
+- The ESP32-S3 IDF app does not define `HAVE_DYNAREC` in this phase.
+- The ESP32-S3 IDF app does not compile `cpu_threaded.c` or `esp32s3/xtensa_runtime.c` in this phase.
+- Keep `XTENSA_ARCH` for ESP32-S3 static PSRAM placement and board-specific memory paths.
+- Use `build/` for ESP-IDF builds and QEMU runs. Do not introduce custom build directories.
+- ESP32-S3-owned emulator buffers should be static PSRAM where practical, not dynamic heap allocations.
+- `.gba` data is not embedded in the app image. The ESP32-S3 app maps the raw
+  SPI flash `gamepak` data partition with `esp_partition_mmap()`. The
+  partition contents are just the `.gba` bytes, with no metadata/header
+  wrapper and no sidecar metadata partition. Use
+  `tests/esp32s3/idf-app/flash_gba.sh` to write a `.gba` there before
+  hardware runs; QEMU helper scripts patch a QEMU flash image the same way
+  before launch.
+- CoreS3 SE LCD hardware init is now in `esp32s3/cores3se_lcd.c` and is wired to the ESP32-S3 test app video callback. QEMU has no AW9523 device, so the LCD path logs a soft init failure there and the emulator keeps running.
 
 ## How The Existing Dynarec Works
 
@@ -33,8 +53,9 @@
 
 ## ESP32-S3 Backend Direction
 
-- Treat the ESP32-S3 backend as a new native dynarec backend, structurally similar to MIPS/ARM, not as a port of the JS backend.
-- First priority is preserving the gpSP backend contract:
+- Current first priority is a correct CoreS3 SE interpreter port with direct board drivers and static storage.
+- When dynarec resumes, treat the ESP32-S3 backend as a new native dynarec backend, structurally similar to MIPS/ARM, not as a port of the JS backend.
+- Dynarec priority remains preserving the gpSP backend contract:
   - same guest-visible CPU semantics
   - same scheduler/update boundaries
   - same idle-loop and translation-gate behavior
@@ -54,30 +75,58 @@
 
 ## ESP32-S3 Current Architecture And Status
 
-- The active ESP32-S3 backend is a native Xtensa dynarec with a simple state-backed execution model.
-- Guest ARM registers remain in the compact CPU/JIT state block. Do not add a guest register cache yet.
-- Current generated-code storage is owned by `esp32s3/psram_static.c` and declared in `esp32s3/psram_static.h`.
+- The active ESP32-S3 firmware target is interpreter-only.
+- The parked Xtensa dynarec has a simple state-backed execution model. Guest ARM registers remain in the compact CPU/JIT state block. Do not add a guest register cache before revalidating the backend.
+- `esp32s3/psram_static.c` and `esp32s3/psram_static.h` own ESP32-S3 static PSRAM buffers.
+- In interpreter-only builds, `esp32s3/psram_static.c` provides static video/audio buffers while JIT cache storage and PSRAM executable helpers are compiled only under `HAVE_DYNAREC`.
 - ESP32-S3-owned runtime buffers should be static PSRAM, not dynamic heap allocations:
-  - ROM and RAM JIT caches
+  - ROM and RAM JIT caches, when dynarec is re-enabled
   - main video buffer
   - post-process video buffer
   - previous-frame mix buffer
   - audio sample buffer
   - QEMU/test frame-capture buffer
   - current 1 MB gamepak paging fallback window
-- JIT cache writes use the PSRAM DBUS/data alias. JIT execution dispatch converts block entry data pointers to the derived IBUS/instruction alias.
-- `platform_cache_sync()` on ESP32-S3 must sync both aliases: write back the data range, then invalidate the aligned instruction range for the exec alias.
+- JIT cache writes use the PSRAM DBUS/data alias when dynarec is enabled. JIT execution dispatch converts block entry data pointers to the derived IBUS/instruction alias.
+- `platform_cache_sync()` on ESP32-S3 must sync both aliases: write back the data range, then invalidate the aligned instruction range for the exec alias. Use the data alias to derive cache-line alignment when IDF's public line-size helper does not recognize the IBUS alias directly.
+- Static JIT cache startup validation is parked with dynarec and should not run in interpreter-only builds.
 - JIT cache sizes are intentionally capped for the 8 MB CoreS3 SE PSRAM target:
   - ROM JIT cache `<= 2 MB`
   - RAM JIT cache `<= 384 KB`
-- Current native lowering includes simple no-flag ARM data-processing forms. Unsupported forms still route through helper-backed execution.
-- The backend has passed host Xtensa codegen tests and ESP-IDF QEMU dhrystone dynarec smoke tests, but PSRAM executable-cache trust still requires real hardware validation.
-- Still pending before treating PSRAM JIT as stable:
-  - page-by-page validation that static JIT cache pages map to PSRAM
+- Current native lowering in the parked backend includes simple no-flag ARM data-processing forms. Unsupported forms route through helper-backed execution.
+- The parked backend previously passed host Xtensa codegen tests and ESP-IDF QEMU dhrystone dynarec smoke tests with the PSRAM alias validation/self-test enabled, but that is no longer the active port baseline.
+- The current active QEMU smoke line is `result=PASS backend=interp`.
+- ESP32-S3 QEMU runs must pass `--qemu-extra-args="-m 8M"` so QEMU models
+  the CoreS3 SE PSRAM size. The Espressif QEMU default reports 32 MB PSRAM,
+  which can consume the external data virtual range and break SPI flash
+  partition mmap.
+- Still pending before treating PSRAM JIT as stable after dynarec resumes:
   - manual ESP32-S3 MMU register fallback if the derived IBUS alias is not enough on hardware
-  - startup PSRAM executable self-test that verifies first execution and rewrite/backpatch visibility
+  - CoreS3 SE hardware run proving the startup PSRAM executable self-test and long dynarec execution
   - fuller frontend split where lookup returns exec aliases and all writes/patches use data aliases
-  - ROM flash partition / SPI mmap path so the 1 MB PSRAM fallback window is not the final ROM data story
+  - hardware validation of the raw `gamepak` flash partition / SPI mmap ROM path
+
+## CoreS3 SE Hardware Direction
+
+- Use `/home/john/work/CardPuterADV/esp-walkie-talkie` as the local CoreS3 SE direct-driver reference.
+- `/home/john/CoreS3SE/refs` was not present in this workspace when checked; prefer the walkie-talkie CoreS3 SE implementation unless that path appears later.
+- Do not add M5 library dependencies. Follow the reference style and write board drivers directly against ESP-IDF.
+- CoreS3 SE display reference:
+  - 320x240 RGB565 framebuffer
+  - LCD SPI host `SPI3_HOST`
+  - SCLK GPIO36, MOSI GPIO37, DC GPIO35, CS GPIO3
+  - pixel clock 40 MHz in the reference
+  - gpSP currently centers the 240x160 RGB565 frame in the 320x240 framebuffer
+- CoreS3 SE I2C reference:
+  - I2C SCL GPIO11, SDA GPIO12, 400 kHz
+  - AW9523 at `0x58`
+  - AXP2101 at `0x34`
+  - FT6336 touch at `0x38`, INT GPIO21
+- CoreS3 SE audio reference:
+  - I2S MCLK GPIO0, BCLK GPIO34, WS GPIO33, DOUT GPIO13, DIN GPIO14
+  - ES7210 mic ADC at `0x40`
+  - AW88298 speaker amp at `0x36`
+  - AW9523 controls speaker/bus/boost/LCD reset lines
 
 ## ESP32-S3 Xtensa ABI Direction
 
@@ -164,6 +213,6 @@ PSRAM: 8MB
 Flash as partition, spi mmap, 8MB
 No M5 lib deps, like ~/work/CardPuterADV/esp-walkie-talkie, write drivers by yourself.
 
-Also use qemu to test jit headlessly:
+JIT is parked while the interpreter-only CoreS3 SE port comes up. Use QEMU to test the active firmware headlessly:
 
 https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-guides/tools/qemu.html

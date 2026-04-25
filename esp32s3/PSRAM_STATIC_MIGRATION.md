@@ -11,6 +11,18 @@ This report is intentionally written before implementation. It defines the
 migration shape and the correctness checks needed before the backend should
 execute translated blocks from PSRAM.
 
+## Current Status: Interpreter-Only Baseline
+
+As of 2026-04-25, the active CoreS3 SE port is interpreter-only. The ESP32-S3
+IDF app defaults and forces `GPSP_TEST_BACKEND=interp`, does not define
+`HAVE_DYNAREC`, and does not compile `cpu_threaded.c` or
+`esp32s3/xtensa_runtime.c`.
+
+The static PSRAM migration still applies to emulator-owned runtime buffers.
+`esp32s3/psram_static.c` remains in the IDF app for framebuffer/audio storage,
+but JIT cache declarations, PSRAM executable alias helpers, and the executable
+self-test are compiled only when `HAVE_DYNAREC` is re-enabled later.
+
 ## Target Constraints
 
 - Target board: M5Stack CoreS3 SE / ESP32-S3.
@@ -23,9 +35,10 @@ execute translated blocks from PSRAM.
   through an instruction view.
 - Cache synchronization after emission and after backpatching remains mandatory.
 
-## Pre-Migration State
+## Historical Pre-Migration State
 
-The ESP32-S3 dynarec cache allocation is currently dynamic:
+Before the static-buffer work, the ESP32-S3 dynarec cache allocation was
+dynamic:
 
 - `libretro/libretro.c` allocates `rom_translation_cache` and
   `ram_translation_cache` with `heap_caps_malloc(..., MALLOC_CAP_EXEC)`.
@@ -287,51 +300,88 @@ First migration pass implemented:
 - Changed ESP32-S3 `platform_cache_sync()` to route JIT ranges through a
   data-cache writeback plus instruction-cache invalidation path using the
   derived exec alias.
+- Added startup page validation for both ROM and RAM static JIT caches. Each
+  page must resolve to PSRAM through the DBUS data alias and the derived IBUS
+  exec alias, and both aliases must resolve to the same physical PSRAM page.
+- Added a startup PSRAM executable self-test that emits a tiny Xtensa function
+  into the ROM JIT cache through the data alias, syncs it, executes it through
+  the exec alias, rewrites it with a different return value, and executes it
+  again to prove rewrite/backpatch visibility.
+- Adjusted cache-line alignment for instruction invalidation to derive the
+  line size from the data alias when IDF's public helper does not classify the
+  derived IBUS alias as external RAM.
 - Updated the IDF test app component dependencies/default config for static
   external BSS and cache sync support.
+- Added libretro log callback support to the ESP32-S3 test app so startup
+  validation failures are visible in QEMU logs.
+- Cleaned ESP32-S3 test-app `printf` format warnings from the debug helpers.
+- Parked the ESP32-S3 dynarec for the CoreS3 SE baseline:
+  - `tests/esp32s3/idf-app` now forces `GPSP_TEST_BACKEND=interp`.
+  - The IDF app no longer defines `HAVE_DYNAREC`.
+  - The IDF app no longer compiles `cpu_threaded.c` or
+    `esp32s3/xtensa_runtime.c`.
+  - JIT-only static PSRAM code in `esp32s3/psram_static.c` is guarded behind
+    `HAVE_DYNAREC`.
+  - QEMU capture/debug helper scripts default to `--backend interp` and use the
+    fixed ESP-IDF `build/` directory.
+- Added `esp32s3/cores3se_lcd.c` / `.h` for CoreS3 SE hardware init and LCD
+  output. The LCD framebuffer is static PSRAM; SPI DMA uses a small static
+  internal strip buffer.
+- Moved ESP32-S3 ROM input out of the app image. The IDF app maps the raw
+  `gamepak` SPI flash data partition with `esp_partition_mmap()`, and
+  `tests/esp32s3/idf-app/flash_gba.sh` writes the selected `.gba` bytes there
+  directly. There is no metadata/header wrapper and no sidecar metadata
+  partition.
 
 Still pending:
 
-- Page-by-page validation that each static JIT cache page maps to PSRAM.
+- CoreS3 SE hardware validation of the LCD path.
+- CoreS3 SE input and audio board drivers using direct ESP-IDF code.
+- CoreS3 SE hardware validation of the raw `gamepak` partition mmap ROM path.
 - Manual MMU register setup for IBUS aliases if the derived alias is not enough
-  on hardware.
-- Startup PSRAM executable self-test with first-run and rewrite visibility
-  checks.
+  on hardware, after dynarec resumes.
+- CoreS3 SE hardware validation of the startup PSRAM executable self-test and
+  longer dynarec runs, after dynarec resumes.
 - Full frontend split where lookup APIs return exec aliases and patch/write
-  APIs always use data aliases.
-- ROM flash partition / SPI mmap path, so the 1 MB fallback window is not the
-  final CoreS3 SE ROM data story.
+  APIs always use data aliases, after dynarec resumes.
 
 ## Verification Status
 
-Current pass:
+Current interpreter-only pass:
 
-- `make -C tests/esp32s3 all test` passes.
-- `idf.py -B build-v6.0-esp32s3 build` passes.
-- `idf.py -B build-v6.0-esp32s3 qemu` reaches
-  `result=PASS backend=dynarec` for the dhrystone test.
-- QEMU no longer reports the earlier `esp_cache_msync()` M2C unaligned error;
-  instruction invalidation now aligns the exec-alias range to the instruction
-  cache line before calling `esp_cache_msync()`.
+- `idf.py -B build/ build` passes.
+- `idf.py -B build/ qemu --flash-file build/qemu_flash_gba.bin
+  --qemu-extra-args="-m 8M"` reaches `result=PASS backend=interp` for the raw
+  `gamepak` flash partition path.
+- The `-m 8M` QEMU override is required to model CoreS3 SE PSRAM size and keep
+  flash data-mmap space available.
+- The QEMU pass line includes all JIT counters as zero, confirming the active
+  smoke test is not executing the parked dynarec path.
+- The existing libretro-common VFS stub linker warnings remain.
 
 Remaining verification must be done on real ESP32-S3/CoreS3 SE hardware before
-the PSRAM executable-cache path is treated as stable.
+the interpreter board port or the parked PSRAM executable-cache path is treated
+as stable.
 
 ## Migration Order
 
-1. Add static ESP32-S3 PSRAM buffer declarations and compile-time size checks.
-2. Replace ESP32-S3 dynamic JIT allocation with static PSRAM data buffers and
-   dispatch through the derived exec alias.
-3. Add DBUS-to-IBUS alias helpers and page validation.
-4. Add the PSRAM executable self-test.
-5. Route block entry returns through exec aliases while keeping writes on data
-   aliases.
-6. Update ESP32-S3 cache sync for data/writeback plus instruction/invalidate.
-7. Convert video/audio/test capture buffers to static PSRAM.
-8. Move ROM loading to flash mmap or a fixed static window so 32 MB dynamic ROM
+1. Keep the active ESP32-S3 IDF app interpreter-only while CoreS3 SE board
+   support comes up.
+2. Keep video/audio/test capture and gamepak fallback buffers static in PSRAM.
+3. Move ROM loading to flash mmap or a fixed static window so 32 MB dynamic ROM
    buffering is not part of the CoreS3 SE path.
-9. Treat PSRAM JIT as experimental until a successful hardware self-test.
-10. Run unit tests, QEMU frame tests, longer QEMU captures, then hardware
+4. Add static ESP32-S3 PSRAM buffer declarations and compile-time size checks
+   for JIT only when dynarec resumes.
+5. Replace ESP32-S3 dynamic JIT allocation with static PSRAM data buffers and
+   dispatch through the derived exec alias.
+6. Add DBUS-to-IBUS alias helpers and page validation.
+7. Add the PSRAM executable self-test.
+8. Route block entry returns through exec aliases while keeping writes on data
+   aliases.
+9. Update ESP32-S3 cache sync for data/writeback plus instruction/invalidate.
+10. Treat PSRAM JIT as experimental until a successful CoreS3 SE hardware
+   self-test and longer hardware dynarec run.
+11. Run unit tests, QEMU frame tests, longer QEMU captures, then hardware
     gameplay tests.
 
 ## Risks

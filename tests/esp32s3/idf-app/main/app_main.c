@@ -1,12 +1,14 @@
 #include <stdbool.h>
 #include <ctype.h>
 #include <inttypes.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "esp_log.h"
+#include "esp_partition.h"
 
 #include <libretro.h>
 
@@ -18,6 +20,11 @@
 
 #include "../../../dhrystone/dhry_result.h"
 
+#if GPSP_CORES3SE_LCD
+#include "esp32s3/cores3se_lcd.h"
+#endif
+
+#if defined(HAVE_DYNAREC)
 uint32_t xtensa_jit_get_blocks_emitted(void);
 uint32_t xtensa_jit_get_blocks_executed(void);
 uint32_t xtensa_jit_get_compiled_arm_instructions(void);
@@ -28,6 +35,7 @@ uint32_t xtensa_jit_get_interpreter_blocks_executed(void);
 uint32_t xtensa_jit_get_generic_fallbacks(void);
 uint32_t xtensa_jit_get_unsupported_opcodes(void);
 uint32_t xtensa_jit_get_thumb_blocks(void);
+#endif
 
 #define DEBUG_MAX_PC_BREAKPOINTS 8
 
@@ -39,8 +47,9 @@ uint32_t xtensa_jit_get_thumb_blocks(void);
 #define GPSP_TEST_DUMP_FRAME 0
 #endif
 
-extern const uint8_t test_rom_gba_start[] asm("_binary_test_rom_gba_start");
-extern const uint8_t test_rom_gba_end[] asm("_binary_test_rom_gba_end");
+#define U32_ARG(value) ((uint32_t)(value))
+
+#define GPSP_GAMEPAK_PARTITION "gamepak"
 
 static const char *TAG = "gpsp-esp32s3";
 static const char *g_base_dir = ".";
@@ -50,6 +59,7 @@ static uint8_t *g_frame_capture;
 static size_t g_frame_capture_size;
 static unsigned g_frame_width;
 static unsigned g_frame_height;
+static bool g_lcd_ready;
 static bool g_debug_io_trace_enabled;
 static u32 g_debug_io_trace_start;
 static u32 g_debug_io_trace_end;
@@ -57,6 +67,10 @@ static bool g_debug_pc_trace_enabled;
 static u32 g_debug_pc_trace_start;
 static u32 g_debug_pc_trace_end;
 static u32 g_debug_pc_trace_remaining;
+static const void *g_rom_mmap_data;
+static size_t g_rom_mmap_size;
+static esp_partition_mmap_handle_t g_rom_mmap_handle;
+static bool g_rom_mapped;
 
 #define ESP32S3_FRAME_CAPTURE_CAPACITY \
   (GBA_SCREEN_WIDTH * GBA_SCREEN_HEIGHT * sizeof(uint16_t))
@@ -127,10 +141,20 @@ typedef struct jit_counters
 static bool frame_capture_enabled(void);
 static u32 debug_parse_u32(const char *text, u32 fallback);
 
+static void test_log_cb(enum retro_log_level level, const char *fmt, ...)
+{
+  va_list args;
+
+  (void)level;
+  va_start(args, fmt);
+  vprintf(fmt, args);
+  va_end(args);
+}
+
 static const char *lookup_variable(const char *key)
 {
   if (strcmp(key, "gpsp_drc") == 0)
-    return strcmp(GPSP_TEST_BACKEND, "dynarec") == 0 ? "enabled" : "disabled";
+    return "disabled";
   if (strcmp(key, "gpsp_bios") == 0)
     return "builtin";
   if (strcmp(key, "gpsp_boot_mode") == 0)
@@ -156,6 +180,10 @@ static bool env_cb(unsigned cmd, void *data)
 {
   switch (cmd)
   {
+    case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
+      ((struct retro_log_callback *)data)->log = test_log_cb;
+      return true;
+
     case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
       return true;
 
@@ -239,6 +267,11 @@ static void video_cb(const void *data, unsigned width, unsigned height, size_t p
         g_frame_height = height;
       }
     }
+
+#if GPSP_CORES3SE_LCD
+    if (g_lcd_ready)
+      (void)esp32s3_cores3se_lcd_present_rgb565(data, width, height, pitch);
+#endif
   }
 
   g_video_frames++;
@@ -298,6 +331,8 @@ static bool frame_capture_enabled(void)
 
 static void collect_jit_counters(jit_counters_t *counters)
 {
+  memset(counters, 0, sizeof(*counters));
+#if defined(HAVE_DYNAREC)
   counters->blocks_emitted = xtensa_jit_get_blocks_emitted();
   counters->blocks_executed = xtensa_jit_get_blocks_executed();
   counters->compiled_arm_instructions =
@@ -313,6 +348,7 @@ static void collect_jit_counters(jit_counters_t *counters)
   counters->generic_fallbacks = xtensa_jit_get_generic_fallbacks();
   counters->unsupported_opcodes = xtensa_jit_get_unsupported_opcodes();
   counters->thumb_blocks = xtensa_jit_get_thumb_blocks();
+#endif
 }
 
 static void print_jit_counters(const jit_counters_t *counters)
@@ -407,13 +443,15 @@ static void debug_print_stop(void)
          " thumb=%" PRIu32 " opcode=0x%08" PRIx32
          " cpsr=0x%08" PRIx32,
          g_debug_stop_hit ? 1u : 0u,
-         debug_stop_reason_name(g_debug_stop_reason), g_debug_stop_pc,
-         g_debug_stop_thumb, g_debug_stop_opcode, reg[REG_CPSR]);
+         debug_stop_reason_name(g_debug_stop_reason), U32_ARG(g_debug_stop_pc),
+         U32_ARG(g_debug_stop_thumb), U32_ARG(g_debug_stop_opcode),
+         U32_ARG(reg[REG_CPSR]));
 
   if (g_debug_stop_reason == DEBUG_STOP_BREAKIO)
   {
     printf(" addr=0x%08" PRIx32 " bits=%" PRIu32 " value=0x%08" PRIx32,
-           g_debug_stop_address, g_debug_stop_bits, g_debug_stop_value);
+           U32_ARG(g_debug_stop_address), U32_ARG(g_debug_stop_bits),
+           U32_ARG(g_debug_stop_value));
   }
 
   putchar('\n');
@@ -426,10 +464,11 @@ static void debug_print_status(void)
          " cpu_mode=0x%02" PRIx32 " thumb=%" PRIu32
          " halt=%" PRIu32 " execute_cycles=%" PRIu32
          " sleep_cycles=0x%08" PRIx32 " fb_hash=0x%08" PRIx32 "\n",
-         GPSP_TEST_BACKEND, GPSP_TEST_MODE, frame_counter, g_video_frames,
-         reg[REG_PC], reg[REG_CPSR], reg[CPU_MODE],
-         (reg[REG_CPSR] >> 5) & 1u, reg[CPU_HALT_STATE], execute_cycles,
-         reg[REG_SLEEP_CYCLES], g_frame_hash);
+         GPSP_TEST_BACKEND, GPSP_TEST_MODE, U32_ARG(frame_counter),
+         g_video_frames, U32_ARG(reg[REG_PC]), U32_ARG(reg[REG_CPSR]),
+         U32_ARG(reg[CPU_MODE]), U32_ARG((reg[REG_CPSR] >> 5) & 1u),
+         U32_ARG(reg[CPU_HALT_STATE]), U32_ARG(execute_cycles),
+         U32_ARG(reg[REG_SLEEP_CYCLES]), U32_ARG(g_frame_hash));
 }
 
 static void debug_print_regs(void)
@@ -440,14 +479,14 @@ static void debug_print_regs(void)
   {
     printf("dbg regs r%02u=0x%08" PRIx32 " r%02u=0x%08" PRIx32
            " r%02u=0x%08" PRIx32 " r%02u=0x%08" PRIx32 "\n",
-           i, reg[i], i + 1, reg[i + 1], i + 2, reg[i + 2],
-           i + 3, reg[i + 3]);
+           i, U32_ARG(reg[i]), i + 1, U32_ARG(reg[i + 1]),
+           i + 2, U32_ARG(reg[i + 2]), i + 3, U32_ARG(reg[i + 3]));
   }
 
   printf("dbg regs cpsr=0x%08" PRIx32 " mode=0x%02" PRIx32
          " halt=%" PRIu32 " bus=0x%08" PRIx32 "\n",
-         reg[REG_CPSR], reg[CPU_MODE], reg[CPU_HALT_STATE],
-         reg[REG_BUS_VALUE]);
+         U32_ARG(reg[REG_CPSR]), U32_ARG(reg[CPU_MODE]),
+         U32_ARG(reg[CPU_HALT_STATE]), U32_ARG(reg[REG_BUS_VALUE]));
 }
 
 static void debug_print_io(void)
@@ -472,7 +511,8 @@ void gpsp_debug_trace_iowrite(u32 address, u32 bits, u32 value)
   {
     printf("dbg iowrite pc=0x%08" PRIx32 " cpsr=0x%08" PRIx32
            " addr=0x%08" PRIx32 " bits=%" PRIu32 " value=0x%08" PRIx32 "\n",
-           reg[REG_PC], reg[REG_CPSR], address, bits, value);
+           U32_ARG(reg[REG_PC]), U32_ARG(reg[REG_CPSR]),
+           U32_ARG(address), U32_ARG(bits), U32_ARG(value));
   }
 
   if (g_debug_io_break_enabled &&
@@ -509,9 +549,11 @@ void gpsp_debug_trace_cpu(u32 pc, u32 opcode, u32 thumb)
          " r9=0x%08" PRIx32 " r10=0x%08" PRIx32 " r11=0x%08" PRIx32
          " r12=0x%08" PRIx32 " sp=0x%08" PRIx32
          " lr=0x%08" PRIx32 "\n",
-         thumb ? "thumb" : "arm", pc, opcode, reg[REG_CPSR],
-         reg[0], reg[1], reg[2], reg[3], reg[8], reg[9], reg[10], reg[11],
-         reg[12], reg[REG_SP], reg[REG_LR]);
+         thumb ? "thumb" : "arm", U32_ARG(pc), U32_ARG(opcode),
+         U32_ARG(reg[REG_CPSR]), U32_ARG(reg[0]), U32_ARG(reg[1]),
+         U32_ARG(reg[2]), U32_ARG(reg[3]), U32_ARG(reg[8]),
+         U32_ARG(reg[9]), U32_ARG(reg[10]), U32_ARG(reg[11]),
+         U32_ARG(reg[12]), U32_ARG(reg[REG_SP]), U32_ARG(reg[REG_LR]));
 
   if (g_debug_pc_trace_remaining != 0)
   {
@@ -529,7 +571,8 @@ void gpsp_debug_dump_recent_cpu_trace(void)
   u32 start = (g_debug_recent_trace_pos + DEBUG_RECENT_TRACE_SIZE -
                g_debug_recent_trace_count) % DEBUG_RECENT_TRACE_SIZE;
 
-  printf("dbg recent count=%" PRIu32 "\n", g_debug_recent_trace_count);
+  printf("dbg recent count=%" PRIu32 "\n",
+         U32_ARG(g_debug_recent_trace_count));
   for (u32 i = 0; i < g_debug_recent_trace_count; i++)
   {
     const debug_recent_trace_entry_t *entry =
@@ -542,11 +585,14 @@ void gpsp_debug_dump_recent_cpu_trace(void)
            " r10=0x%08" PRIx32 " r11=0x%08" PRIx32
            " r12=0x%08" PRIx32 " sp=0x%08" PRIx32
            " lr=0x%08" PRIx32 "\n",
-           i, entry->thumb ? "thumb" : "arm", entry->pc, entry->opcode,
-           entry->cpsr, entry->regs[0], entry->regs[1], entry->regs[2],
-           entry->regs[3], entry->regs[8], entry->regs[9], entry->regs[10],
-           entry->regs[11], entry->regs[12], entry->regs[REG_SP],
-           entry->regs[REG_LR]);
+           U32_ARG(i), entry->thumb ? "thumb" : "arm", U32_ARG(entry->pc),
+           U32_ARG(entry->opcode), U32_ARG(entry->cpsr),
+           U32_ARG(entry->regs[0]), U32_ARG(entry->regs[1]),
+           U32_ARG(entry->regs[2]), U32_ARG(entry->regs[3]),
+           U32_ARG(entry->regs[8]), U32_ARG(entry->regs[9]),
+           U32_ARG(entry->regs[10]), U32_ARG(entry->regs[11]),
+           U32_ARG(entry->regs[12]), U32_ARG(entry->regs[REG_SP]),
+           U32_ARG(entry->regs[REG_LR]));
   }
 }
 
@@ -561,7 +607,7 @@ bool gpsp_debug_cpu_should_break(u32 pc, u32 opcode, u32 thumb)
   if (breakpoint_index >= 0)
   {
     printf("dbg breakpc hit index=%d pc=0x%08" PRIx32 "\n",
-           breakpoint_index, pc);
+           breakpoint_index, U32_ARG(pc));
     debug_note_cpu_stop(DEBUG_STOP_BREAKPC, pc, opcode, thumb);
     return true;
   }
@@ -592,13 +638,13 @@ static void debug_print_current_opcode(void)
   {
     u32 pc = reg[REG_PC] & ~1u;
     printf("dbg op thumb pc=0x%08" PRIx32 " opcode=0x%04" PRIx32 "\n",
-           pc, read_memory16(pc) & 0xFFFFu);
+           U32_ARG(pc), U32_ARG(read_memory16(pc) & 0xFFFFu));
   }
   else
   {
     u32 pc = reg[REG_PC] & ~3u;
     printf("dbg op arm pc=0x%08" PRIx32 " opcode=0x%08" PRIx32 "\n",
-           pc, read_memory32(pc));
+           U32_ARG(pc), U32_ARG(read_memory32(pc)));
   }
 }
 
@@ -609,14 +655,15 @@ static void debug_dump_memory(u32 address, u32 length)
   if (length > 512)
     length = 512;
 
-  printf("dbg mem addr=0x%08" PRIx32 " len=%" PRIu32 "\n", address, length);
+  printf("dbg mem addr=0x%08" PRIx32 " len=%" PRIu32 "\n",
+         U32_ARG(address), U32_ARG(length));
 
   for (offset = 0; offset < length; offset++)
   {
     if ((offset & 0x0F) == 0)
-      printf("0x%08" PRIx32 ":", address + offset);
+      printf("0x%08" PRIx32 ":", U32_ARG(address + offset));
 
-    printf(" %02" PRIx32, read_memory8(address + offset) & 0xFFu);
+    printf(" %02" PRIx32, U32_ARG(read_memory8(address + offset) & 0xFFu));
 
     if ((offset & 0x0F) == 0x0F || offset + 1 == length)
       putchar('\n');
@@ -643,7 +690,8 @@ static void debug_print_breakpoints(void)
 
     any = true;
     printf("dbg bp index=%u start=0x%08" PRIx32 " end=0x%08" PRIx32 "\n",
-           i, g_debug_pc_breakpoints[i].start, g_debug_pc_breakpoints[i].end);
+           i, U32_ARG(g_debug_pc_breakpoints[i].start),
+           U32_ARG(g_debug_pc_breakpoints[i].end));
   }
 
   if (!any)
@@ -652,7 +700,7 @@ static void debug_print_breakpoints(void)
   if (g_debug_io_break_enabled)
   {
     printf("dbg breakio start=0x%08" PRIx32 " end=0x%08" PRIx32 "\n",
-           g_debug_io_break_start, g_debug_io_break_end);
+           U32_ARG(g_debug_io_break_start), U32_ARG(g_debug_io_break_end));
   }
   else
   {
@@ -673,7 +721,8 @@ static void debug_add_pc_breakpoint(u32 start, u32 length)
     g_debug_pc_breakpoints[i].start = start;
     g_debug_pc_breakpoints[i].end = start + (length ? length - 1 : 0);
     printf("dbg bp index=%u start=0x%08" PRIx32 " end=0x%08" PRIx32 "\n",
-           i, g_debug_pc_breakpoints[i].start, g_debug_pc_breakpoints[i].end);
+           i, U32_ARG(g_debug_pc_breakpoints[i].start),
+           U32_ARG(g_debug_pc_breakpoints[i].end));
     return;
   }
 
@@ -953,7 +1002,7 @@ static bool debug_handle_command(char *line)
       g_debug_io_trace_end = start + (length ? length - 1 : 0);
       g_debug_io_trace_enabled = true;
       printf("dbg watchio start=0x%08" PRIx32 " end=0x%08" PRIx32 "\n",
-             g_debug_io_trace_start, g_debug_io_trace_end);
+             U32_ARG(g_debug_io_trace_start), U32_ARG(g_debug_io_trace_end));
     }
   }
   else if (strcmp(command, "breakio") == 0)
@@ -974,7 +1023,7 @@ static bool debug_handle_command(char *line)
       g_debug_io_break_end = start + (length ? length - 1 : 0);
       g_debug_io_break_enabled = true;
       printf("dbg breakio start=0x%08" PRIx32 " end=0x%08" PRIx32 "\n",
-             g_debug_io_break_start, g_debug_io_break_end);
+             U32_ARG(g_debug_io_break_start), U32_ARG(g_debug_io_break_end));
     }
   }
   else if (strcmp(command, "tracepc") == 0)
@@ -998,8 +1047,8 @@ static bool debug_handle_command(char *line)
       g_debug_pc_trace_enabled = true;
       printf("dbg tracepc start=0x%08" PRIx32 " end=0x%08" PRIx32
              " remaining=%" PRIu32 "\n",
-             g_debug_pc_trace_start, g_debug_pc_trace_end,
-             g_debug_pc_trace_remaining);
+             U32_ARG(g_debug_pc_trace_start), U32_ARG(g_debug_pc_trace_end),
+             U32_ARG(g_debug_pc_trace_remaining));
     }
   }
   else if (strcmp(command, "fb") == 0)
@@ -1024,12 +1073,70 @@ static bool debug_handle_command(char *line)
   return true;
 }
 
+static bool map_gamepak_partition(struct retro_game_info *info)
+{
+  const esp_partition_t *partition;
+  esp_err_t err;
+
+  if (!info)
+    return false;
+
+  if (g_rom_mapped)
+  {
+    info->data = g_rom_mmap_data;
+    info->size = g_rom_mmap_size;
+    return true;
+  }
+
+  partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
+                                       ESP_PARTITION_SUBTYPE_ANY,
+                                       GPSP_GAMEPAK_PARTITION);
+  if (!partition)
+  {
+    ESP_LOGE(TAG, "ROM partition '%s' not found", GPSP_GAMEPAK_PARTITION);
+    return false;
+  }
+
+  err = esp_partition_mmap(partition, 0, partition->size,
+                           ESP_PARTITION_MMAP_DATA, &g_rom_mmap_data,
+                           &g_rom_mmap_handle);
+  if (err != ESP_OK)
+  {
+    ESP_LOGE(TAG, "mmap ROM partition '%s': %s", GPSP_GAMEPAK_PARTITION,
+             esp_err_to_name(err));
+    return false;
+  }
+
+  g_rom_mmap_size = partition->size;
+  g_rom_mapped = true;
+  info->data = g_rom_mmap_data;
+  info->size = g_rom_mmap_size;
+
+  ESP_LOGI(TAG, "mapped ROM partition '%s': flash=0x%08" PRIx32
+                " size=%zu",
+           GPSP_GAMEPAK_PARTITION, U32_ARG(partition->address),
+           g_rom_mmap_size);
+  return true;
+}
+
+static void unmap_gamepak_partition(void)
+{
+  if (!g_rom_mapped)
+    return;
+
+  esp_partition_munmap(g_rom_mmap_handle);
+  g_rom_mmap_data = NULL;
+  g_rom_mmap_size = 0;
+  g_rom_mmap_handle = 0;
+  g_rom_mapped = false;
+}
+
 static void run_debugger(void)
 {
   char line[128];
 
-  printf("dbg ready backend=%s rom_bytes=%u\n", GPSP_TEST_BACKEND,
-         (unsigned)(test_rom_gba_end - test_rom_gba_start));
+  printf("dbg ready backend=%s rom_bytes=%zu\n", GPSP_TEST_BACKEND,
+         g_rom_mmap_size);
   debug_print_help();
   debug_print_status();
 
@@ -1080,24 +1187,20 @@ static int run_test(void)
   unsigned max_frames = GPSP_TEST_FRAMES;
   unsigned frame;
   unsigned frames_run = 0;
-  uint32_t jit_blocks_emitted;
-  uint32_t jit_blocks_executed;
-  uint32_t jit_compiled_arm_instructions;
-  uint32_t jit_compiled_thumb_instructions;
-  uint32_t jit_helper_arm_instructions;
-  uint32_t jit_helper_thumb_instructions;
-  uint32_t jit_interpreter_blocks_executed;
-  uint32_t jit_generic_fallbacks;
-  uint32_t jit_unsupported_opcodes;
-  uint32_t jit_thumb_blocks;
+  jit_counters_t jit_counters;
 
   memset(&info, 0, sizeof(info));
-  info.data = test_rom_gba_start;
-  info.size = (size_t)(test_rom_gba_end - test_rom_gba_start);
   g_video_frames = 0;
   g_frame_hash = 2166136261u;
   g_frame_width = 0;
   g_frame_height = 0;
+
+  if (!map_gamepak_partition(&info))
+    return 1;
+
+#if GPSP_CORES3SE_LCD
+  g_lcd_ready = esp32s3_cores3se_lcd_init();
+#endif
 
   retro_set_environment(env_cb);
   retro_set_video_refresh(video_cb);
@@ -1111,6 +1214,7 @@ static int run_test(void)
   {
     ESP_LOGE(TAG, "retro_load_game failed");
     retro_deinit();
+    unmap_gamepak_partition();
     return 1;
   }
 
@@ -1119,6 +1223,7 @@ static int run_test(void)
     run_debugger();
     retro_unload_game();
     retro_deinit();
+    unmap_gamepak_partition();
     printf("result=PASS backend=%s mode=debug\n", GPSP_TEST_BACKEND);
     return 0;
   }
@@ -1130,6 +1235,7 @@ static int run_test(void)
     ESP_LOGE(TAG, "system RAM mapping unavailable");
     retro_unload_game();
     retro_deinit();
+    unmap_gamepak_partition();
     return 1;
   }
 
@@ -1156,35 +1262,14 @@ static int run_test(void)
          result->arr_1_8, result->arr_2_8_7, result->ptr_int_comp,
          result->next_ptr_int_comp);
 
-  jit_blocks_emitted = xtensa_jit_get_blocks_emitted();
-  jit_blocks_executed = xtensa_jit_get_blocks_executed();
-  jit_compiled_arm_instructions = xtensa_jit_get_compiled_arm_instructions();
-  jit_compiled_thumb_instructions = xtensa_jit_get_compiled_thumb_instructions();
-  jit_helper_arm_instructions =
-    xtensa_jit_get_helper_arm_instructions_executed();
-  jit_helper_thumb_instructions =
-    xtensa_jit_get_helper_thumb_instructions_executed();
-  jit_interpreter_blocks_executed = xtensa_jit_get_interpreter_blocks_executed();
-  jit_generic_fallbacks = xtensa_jit_get_generic_fallbacks();
-  jit_unsupported_opcodes = xtensa_jit_get_unsupported_opcodes();
-  jit_thumb_blocks = xtensa_jit_get_thumb_blocks();
-
-  printf("jit blocks_emitted=%" PRIu32 " blocks_executed=%" PRIu32
-         " arm_insns_emitted=%" PRIu32 " thumb_insns_emitted=%" PRIu32
-         " helper_arm_insns=%" PRIu32 " helper_thumb_insns=%" PRIu32
-         " interp_blocks=%" PRIu32
-         " generic_fallbacks=%" PRIu32 " unsupported=%" PRIu32
-         " thumb_blocks=%" PRIu32 "\n",
-         jit_blocks_emitted, jit_blocks_executed, jit_compiled_arm_instructions,
-         jit_compiled_thumb_instructions, jit_helper_arm_instructions,
-         jit_helper_thumb_instructions,
-         jit_interpreter_blocks_executed, jit_generic_fallbacks,
-         jit_unsupported_opcodes, jit_thumb_blocks);
+  collect_jit_counters(&jit_counters);
+  print_jit_counters(&jit_counters);
 
   dump_framebuffer_base64();
 
   retro_unload_game();
   retro_deinit();
+  unmap_gamepak_partition();
 
   if (strcmp(GPSP_TEST_MODE, "dhrystone") == 0 &&
       (result->magic != DHRY_RESULT_MAGIC ||
@@ -1206,30 +1291,37 @@ static int run_test(void)
   {
     printf("result=FAIL backend=%s fb_hash=0x%08" PRIx32
            " expected=0x%08x\n",
-           GPSP_TEST_BACKEND, g_frame_hash, GPSP_TEST_EXPECT_FB_HASH);
+           GPSP_TEST_BACKEND, U32_ARG(g_frame_hash), GPSP_TEST_EXPECT_FB_HASH);
     return 1;
   }
 
+#if defined(HAVE_DYNAREC)
   if (strcmp(GPSP_TEST_BACKEND, "dynarec") == 0)
   {
-    if (jit_blocks_executed == 0 ||
-        (jit_compiled_arm_instructions + jit_compiled_thumb_instructions) == 0 ||
-        jit_interpreter_blocks_executed != 0 || jit_generic_fallbacks != 0 ||
-        jit_unsupported_opcodes != 0 ||
-        (strcmp(GPSP_TEST_MODE, "dhrystone") == 0 && jit_thumb_blocks != 0))
+    if (jit_counters.blocks_executed == 0 ||
+        (jit_counters.compiled_arm_instructions +
+         jit_counters.compiled_thumb_instructions) == 0 ||
+        jit_counters.interpreter_blocks_executed != 0 ||
+        jit_counters.generic_fallbacks != 0 ||
+        jit_counters.unsupported_opcodes != 0 ||
+        (strcmp(GPSP_TEST_MODE, "dhrystone") == 0 &&
+         jit_counters.thumb_blocks != 0))
     {
       printf("result=FAIL backend=%s jit_blocks=%" PRIu32
              " arm_insns=%" PRIu32 " thumb_insns=%" PRIu32
              " interp_blocks=%" PRIu32
              " fallbacks=%" PRIu32 " unsupported=%" PRIu32
              " thumb=%" PRIu32 "\n",
-             GPSP_TEST_BACKEND, jit_blocks_executed,
-             jit_compiled_arm_instructions, jit_compiled_thumb_instructions,
-             jit_interpreter_blocks_executed,
-             jit_generic_fallbacks, jit_unsupported_opcodes, jit_thumb_blocks);
+             GPSP_TEST_BACKEND, jit_counters.blocks_executed,
+             jit_counters.compiled_arm_instructions,
+             jit_counters.compiled_thumb_instructions,
+             jit_counters.interpreter_blocks_executed,
+             jit_counters.generic_fallbacks, jit_counters.unsupported_opcodes,
+             jit_counters.thumb_blocks);
       return 1;
     }
   }
+#endif
 
   printf("result=PASS backend=%s\n", GPSP_TEST_BACKEND);
   return 0;

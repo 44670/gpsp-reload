@@ -11,19 +11,37 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 IDF_APP = ROOT / "tests" / "esp32s3" / "idf-app"
+BUILD_DIR = "build"
+QEMU_EXTRA_ARGS = "-m 8M"
+
+
+def qemu_flash_image():
+    return IDF_APP / BUILD_DIR / "qemu_flash_gba.bin"
+
+
+def flash_gba_image(args):
+    subprocess.check_call([
+        str(IDF_APP / "flash_gba.sh"),
+        "--image", str(qemu_flash_image()),
+        str(Path(args.rom).expanduser()),
+    ], cwd=ROOT)
 
 
 def run_idf(args, action, stdin_data=None):
     idf_path = Path(args.idf_path).expanduser()
     command = [
         "idf.py",
-        "-B", args.build_dir,
+        "-B", BUILD_DIR,
         "-D", f"GPSP_TEST_BACKEND={args.backend}",
         "-D", "GPSP_TEST_MODE=debug",
-        "-D", f"GPSP_TEST_ROM={args.rom}",
         "-D", "GPSP_TEST_DUMP_FRAME=1",
         action,
     ]
+    if action == "qemu":
+        command.extend([
+            "--flash-file", str(qemu_flash_image()),
+            "--qemu-extra-args", QEMU_EXTRA_ARGS,
+        ])
     shell_command = (
         f"source {shlex.quote(str(idf_path / 'export.sh'))} >/dev/null 2>&1 && " +
         " ".join(shlex.quote(part) for part in command)
@@ -89,9 +107,9 @@ def main():
     parser = argparse.ArgumentParser(
         description="Build and run the ESP32-S3 serial debugger in QEMU."
     )
-    parser.add_argument("--rom", required=True, help="GBA ROM path to embed")
-    parser.add_argument("--backend", default="dynarec", choices=("dynarec", "interp"))
-    parser.add_argument("--build-dir", default="build-v6.0-esp32s3-debug")
+    parser.add_argument("--rom", required=True,
+                        help="GBA ROM path to flash into the gamepak partition")
+    parser.add_argument("--backend", default="interp", choices=("interp",))
     parser.add_argument("--idf-path", default="~/esp-idf")
     parser.add_argument("--no-build", action="store_true")
     parser.add_argument("--cmd", action="append", default=[],
@@ -106,6 +124,7 @@ def main():
         rc = run_idf(args, "build")
         if rc != 0:
             raise SystemExit(rc)
+    flash_gba_image(args)
 
     stdin_data = None
     if args.script or args.cmd:

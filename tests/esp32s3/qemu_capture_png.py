@@ -16,6 +16,20 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 IDF_APP = ROOT / "tests" / "esp32s3" / "idf-app"
+BUILD_DIR = "build"
+QEMU_EXTRA_ARGS = "-m 8M"
+
+
+def qemu_flash_image():
+    return IDF_APP / BUILD_DIR / "qemu_flash_gba.bin"
+
+
+def flash_gba_image(args):
+    subprocess.check_call([
+        str(IDF_APP / "flash_gba.sh"),
+        "--image", str(qemu_flash_image()),
+        str(Path(args.rom).expanduser()),
+    ], cwd=ROOT)
 
 
 def png_chunk(kind, payload):
@@ -58,15 +72,19 @@ def run_idf(args, action):
     idf_path = Path(args.idf_path).expanduser()
     command = [
         "idf.py",
-        "-B", args.build_dir,
+        "-B", BUILD_DIR,
         "-D", f"GPSP_TEST_BACKEND={args.backend}",
         "-D", "GPSP_TEST_MODE=frames",
         "-D", f"GPSP_TEST_FRAMES={args.frames}",
-        "-D", f"GPSP_TEST_ROM={args.rom}",
         "-D", f"GPSP_TEST_EXPECT_FB_HASH={args.expect_fb_hash}",
         "-D", "GPSP_TEST_DUMP_FRAME=1",
         action,
     ]
+    if action == "qemu":
+        command.extend([
+            "--flash-file", str(qemu_flash_image()),
+            "--qemu-extra-args", QEMU_EXTRA_ARGS,
+        ])
     shell_command = (
         f"source {shlex.quote(str(idf_path / 'export.sh'))} >/dev/null 2>&1 && " +
         " ".join(shlex.quote(part) for part in command)
@@ -193,13 +211,13 @@ def main():
     parser = argparse.ArgumentParser(
         description="Run the ESP32-S3 QEMU frame test and write the last frame as PNG."
     )
-    parser.add_argument("--rom", required=True, help="GBA ROM path to embed")
+    parser.add_argument("--rom", required=True,
+                        help="GBA ROM path to flash into the gamepak partition")
     parser.add_argument("--output", default=str(ROOT / "tests/esp32s3/out/qemu_frame.png"))
-    parser.add_argument("--backend", default="dynarec", choices=("dynarec", "interp"))
+    parser.add_argument("--backend", default="interp", choices=("interp",))
     parser.add_argument("--frames", type=int, default=60)
     parser.add_argument("--expect-fb-hash", default="0",
                         help="expected framebuffer hash, e.g. 0x10ce4667")
-    parser.add_argument("--build-dir", default="build-v6.0-esp32s3-capture")
     parser.add_argument("--idf-path", default="~/esp-idf")
     parser.add_argument("--no-build", action="store_true")
     parser.add_argument("--timeout", type=float, default=180.0,
@@ -210,6 +228,7 @@ def main():
 
     if not args.no_build:
         wait_build(args)
+    flash_gba_image(args)
     run_qemu_capture(args)
 
 
