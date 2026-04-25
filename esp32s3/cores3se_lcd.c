@@ -374,6 +374,11 @@ static bool lcd_tx_param(int cmd, const void *data, size_t size, const char *wha
                       what);
 }
 
+static bool lcd_wait_idle(const char *what)
+{
+  return lcd_tx_param(-1, NULL, 0, what);
+}
+
 static bool lcd_set_window(unsigned x, unsigned y, unsigned width, unsigned height)
 {
   uint16_t x1 = (uint16_t)x;
@@ -429,9 +434,12 @@ static bool flush_framebuffer(void)
     {
       return false;
     }
+
+    if (!lcd_wait_idle("wait LCD strip idle"))
+      return false;
   }
 
-  return lcd_tx_param(-1, NULL, 0, "wait LCD idle");
+  return true;
 }
 
 static void fill_rect(unsigned x, unsigned y, unsigned width, unsigned height,

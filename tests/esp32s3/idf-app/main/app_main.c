@@ -9,6 +9,8 @@
 
 #include "esp_log.h"
 #include "esp_partition.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #include <libretro.h>
 
@@ -48,8 +50,13 @@ uint32_t xtensa_jit_get_thumb_blocks(void);
 #endif
 
 #define U32_ARG(value) ((uint32_t)(value))
+#define GPSP_STRINGIFY_INNER(value) #value
+#define GPSP_STRINGIFY(value) GPSP_STRINGIFY_INNER(value)
 
 #define GPSP_GAMEPAK_PARTITION "gamepak"
+#define GPSP_PLAY_FRAMESKIP_INTERVAL 1
+#define GPSP_PLAY_STATUS_PERIOD_MS 2000
+#define GPSP_PLAY_STATUS_STACK_WORDS 2048
 
 static const char *TAG = "gpsp-esp32s3";
 static const char *g_base_dir = ".";
@@ -71,6 +78,13 @@ static const void *g_rom_mmap_data;
 static size_t g_rom_mmap_size;
 static esp_partition_mmap_handle_t g_rom_mmap_handle;
 static bool g_rom_mapped;
+static volatile bool g_play_status_enabled;
+static volatile bool g_play_in_retro_run;
+static volatile uint32_t g_play_loop_count;
+static const char * volatile g_play_stage = "boot";
+static TaskHandle_t g_play_status_task_handle;
+static StaticTask_t g_play_status_task_buffer;
+static StackType_t g_play_status_task_stack[GPSP_PLAY_STATUS_STACK_WORDS];
 
 #define ESP32S3_FRAME_CAPTURE_CAPACITY \
   (GBA_SCREEN_WIDTH * GBA_SCREEN_HEIGHT * sizeof(uint16_t))
@@ -141,6 +155,57 @@ typedef struct jit_counters
 static bool frame_capture_enabled(void);
 static u32 debug_parse_u32(const char *text, u32 fallback);
 
+static void print_play_status(const char *source)
+{
+  printf("play status source=%s backend=%s stage=%s loops=%" PRIu32
+         " in_run=%u frames=%" PRIu32 " video_frames=%u"
+         " fb_hash=0x%08" PRIx32 " pc=0x%08" PRIx32 "\n",
+         source, GPSP_TEST_BACKEND, (const char *)g_play_stage,
+         U32_ARG(g_play_loop_count), g_play_in_retro_run ? 1u : 0u,
+         U32_ARG(frame_counter), (unsigned)g_video_frames,
+         U32_ARG(g_frame_hash), U32_ARG(reg[REG_PC]));
+  fflush(stdout);
+}
+
+static void play_status_task(void *arg)
+{
+  (void)arg;
+
+  print_play_status("task_start");
+
+  while (g_play_status_enabled)
+  {
+    vTaskDelay(pdMS_TO_TICKS(GPSP_PLAY_STATUS_PERIOD_MS));
+    if (g_play_status_enabled)
+      print_play_status("task");
+  }
+
+  g_play_status_task_handle = NULL;
+  vTaskDelete(NULL);
+}
+
+static void start_play_status_task(void)
+{
+  if (strcmp(GPSP_TEST_MODE, "play") != 0 || g_play_status_task_handle)
+    return;
+
+  g_play_status_enabled = true;
+  g_play_status_task_handle =
+    xTaskCreateStatic(play_status_task, "gpsp_play_stat",
+                      GPSP_PLAY_STATUS_STACK_WORDS, NULL,
+                      tskIDLE_PRIORITY + 2,
+                      g_play_status_task_stack,
+                      &g_play_status_task_buffer);
+
+  if (!g_play_status_task_handle)
+    ESP_LOGE(TAG, "create play status task failed");
+}
+
+static void stop_play_status_task(void)
+{
+  g_play_status_enabled = false;
+}
+
 static void test_log_cb(enum retro_log_level level, const char *fmt, ...)
 {
   va_list args;
@@ -154,13 +219,16 @@ static void test_log_cb(enum retro_log_level level, const char *fmt, ...)
 static const char *lookup_variable(const char *key)
 {
   if (strcmp(key, "gpsp_drc") == 0)
-    return "disabled";
+    return strcmp(GPSP_TEST_BACKEND, "dynarec") == 0 ? "enabled" : "disabled";
   if (strcmp(key, "gpsp_bios") == 0)
     return "builtin";
   if (strcmp(key, "gpsp_boot_mode") == 0)
     return "game";
   if (strcmp(key, "gpsp_frameskip") == 0)
-    return "disabled";
+    return strcmp(GPSP_TEST_MODE, "play") == 0 ? "fixed_interval" : "disabled";
+  if (strcmp(key, "gpsp_frameskip_interval") == 0)
+    return strcmp(GPSP_TEST_MODE, "play") == 0 ?
+      GPSP_STRINGIFY(GPSP_PLAY_FRAMESKIP_INTERVAL) : "0";
   if (strcmp(key, "gpsp_color_correction") == 0)
     return "disabled";
   if (strcmp(key, "gpsp_frame_mixing") == 0)
@@ -221,58 +289,59 @@ static bool env_cb(unsigned cmd, void *data)
 static void video_cb(const void *data, unsigned width, unsigned height, size_t pitch)
 {
   const uint8_t *pixels = (const uint8_t *)data;
+  size_t row_bytes;
   unsigned y;
 
-  if (pixels)
+  if (!pixels)
+    return;
+
+  row_bytes = (size_t)width * 2;
+
+  for (y = 0; y < height; y++)
   {
-    size_t row_bytes = (size_t)width * 2;
-
-    for (y = 0; y < height; y++)
+    size_t x;
+    const uint8_t *row = pixels + ((size_t)y * pitch);
+    for (x = 0; x < row_bytes; x++)
     {
-      size_t x;
-      const uint8_t *row = pixels + ((size_t)y * pitch);
-      for (x = 0; x < row_bytes; x++)
+      g_frame_hash ^= row[x];
+      g_frame_hash *= 16777619u;
+    }
+  }
+
+  if (frame_capture_enabled())
+  {
+    size_t frame_size = row_bytes * height;
+
+    if (frame_size != g_frame_capture_size)
+    {
+      if (frame_size <= sizeof(g_frame_capture_storage))
       {
-        g_frame_hash ^= row[x];
-        g_frame_hash *= 16777619u;
+        g_frame_capture = g_frame_capture_storage;
+        g_frame_capture_size = frame_size;
+      }
+      else
+      {
+        g_frame_capture = NULL;
+        g_frame_capture_size = 0;
       }
     }
 
-    if (frame_capture_enabled())
+    if (g_frame_capture)
     {
-      size_t frame_size = row_bytes * height;
-
-      if (frame_size != g_frame_capture_size)
+      for (y = 0; y < height; y++)
       {
-        if (frame_size <= sizeof(g_frame_capture_storage))
-        {
-          g_frame_capture = g_frame_capture_storage;
-          g_frame_capture_size = frame_size;
-        }
-        else
-        {
-          g_frame_capture = NULL;
-          g_frame_capture_size = 0;
-        }
+        memcpy(g_frame_capture + ((size_t)y * row_bytes),
+               pixels + ((size_t)y * pitch), row_bytes);
       }
-
-      if (g_frame_capture)
-      {
-        for (y = 0; y < height; y++)
-        {
-          memcpy(g_frame_capture + ((size_t)y * row_bytes),
-                 pixels + ((size_t)y * pitch), row_bytes);
-        }
-        g_frame_width = width;
-        g_frame_height = height;
-      }
+      g_frame_width = width;
+      g_frame_height = height;
     }
+  }
 
 #if GPSP_CORES3SE_LCD
-    if (g_lcd_ready)
-      (void)esp32s3_cores3se_lcd_present_rgb565(data, width, height, pitch);
+  if (g_lcd_ready)
+    (void)esp32s3_cores3se_lcd_present_rgb565(data, width, height, pitch);
 #endif
-  }
 
   g_video_frames++;
 }
@@ -1153,6 +1222,26 @@ static void run_debugger(void)
   }
 }
 
+static void run_play_loop(void)
+{
+  printf("play ready backend=%s rom_bytes=%zu\n", GPSP_TEST_BACKEND,
+         g_rom_mmap_size);
+  fflush(stdout);
+  print_play_status("ready");
+
+  while (1)
+  {
+    g_play_stage = "retro_run";
+    g_play_in_retro_run = true;
+    retro_run();
+    g_play_in_retro_run = false;
+    g_play_loop_count++;
+
+    g_play_stage = "yield";
+    vTaskDelay(1);
+  }
+}
+
 static void audio_cb(int16_t left, int16_t right)
 {
   (void)left;
@@ -1194,14 +1283,23 @@ static int run_test(void)
   g_frame_hash = 2166136261u;
   g_frame_width = 0;
   g_frame_height = 0;
+  g_play_in_retro_run = false;
+  g_play_loop_count = 0;
+  g_play_stage = "map_gamepak";
+  start_play_status_task();
 
   if (!map_gamepak_partition(&info))
+  {
+    stop_play_status_task();
     return 1;
+  }
 
 #if GPSP_CORES3SE_LCD
+  g_play_stage = "lcd_init";
   g_lcd_ready = esp32s3_cores3se_lcd_init();
 #endif
 
+  g_play_stage = "retro_init";
   retro_set_environment(env_cb);
   retro_set_video_refresh(video_cb);
   retro_set_audio_sample(audio_cb);
@@ -1210,9 +1308,11 @@ static int run_test(void)
   retro_set_input_state(input_state_cb);
   retro_init();
 
+  g_play_stage = "retro_load_game";
   if (!retro_load_game(&info))
   {
     ESP_LOGE(TAG, "retro_load_game failed");
+    stop_play_status_task();
     retro_deinit();
     unmap_gamepak_partition();
     return 1;
@@ -1220,6 +1320,7 @@ static int run_test(void)
 
   if (strcmp(GPSP_TEST_MODE, "debug") == 0)
   {
+    stop_play_status_task();
     run_debugger();
     retro_unload_game();
     retro_deinit();
@@ -1228,6 +1329,14 @@ static int run_test(void)
     return 0;
   }
 
+  if (strcmp(GPSP_TEST_MODE, "play") == 0)
+  {
+    g_play_stage = "ready";
+    run_play_loop();
+    return 0;
+  }
+
+  stop_play_status_task();
   system_ram = (const uint8_t *)retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
   system_ram_size = retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM);
   if (!system_ram || system_ram_size < sizeof(dhry_result_t))
