@@ -267,11 +267,11 @@ Expected implementation areas:
   - Update cache flush and sync routines for dual aliases.
   - Keep ROM/RAM cache split and RAM invalidation behavior unchanged.
 
-- `tests/esp32s3/idf-app/main/app_main.c`
+- `esp32s3/main/app_main.c`
   - Replace dynamic frame capture with fixed static PSRAM storage.
   - Keep QEMU capture behavior unchanged from the caller's perspective.
 
-- `tests/esp32s3/idf-app/sdkconfig.defaults`
+- `esp32s3/sdkconfig.defaults`
   - Require PSRAM and external BSS.
   - Keep any PSRAM XIP options disabled unless a later test proves they are
     needed. The JIT path should not depend on `CONFIG_SPIRAM_XIP_FROM_PSRAM`.
@@ -315,21 +315,20 @@ First migration pass implemented:
 - Added libretro log callback support to the ESP32-S3 test app so startup
   validation failures are visible in QEMU logs.
 - Cleaned ESP32-S3 test-app `printf` format warnings from the debug helpers.
-- Parked the ESP32-S3 dynarec for the CoreS3 SE baseline:
-  - `tests/esp32s3/idf-app` now forces `GPSP_TEST_BACKEND=interp`.
-  - The IDF app no longer defines `HAVE_DYNAREC`.
-  - The IDF app no longer compiles `cpu_threaded.c` or
+- Re-enabled the ESP32-S3 dynarec as an experimental hardware bring-up target:
+  - `esp32s3/` defaults to `GPSP_TEST_BACKEND=dynarec`.
+  - Dynarec builds define `HAVE_DYNAREC` and compile `cpu_threaded.c` plus
     `esp32s3/xtensa_runtime.c`.
   - JIT-only static PSRAM code in `esp32s3/psram_static.c` is guarded behind
     `HAVE_DYNAREC`.
-  - QEMU capture/debug helper scripts default to `--backend interp` and use the
-    fixed ESP-IDF `build/` directory.
+  - QEMU capture/debug helper scripts use `USE_QEMU=1` and the fixed ESP-IDF
+    `build-qemu/` directory.
 - Added `esp32s3/cores3se_lcd.c` / `.h` for CoreS3 SE hardware init and LCD
   output. The LCD framebuffer is static PSRAM; SPI DMA uses a small static
   internal strip buffer.
 - Moved ESP32-S3 ROM input out of the app image. The IDF app maps the raw
   `gamepak` SPI flash data partition with `esp_partition_mmap()`, and
-  `tests/esp32s3/idf-app/flash_gba.sh` writes the selected `.gba` bytes there
+  `esp32s3/flash_gba.sh` writes the selected `.gba` bytes there
   directly. There is no metadata/header wrapper and no sidecar metadata
   partition.
 
@@ -347,16 +346,16 @@ Still pending:
 
 ## Verification Status
 
-Current interpreter-only pass:
+Current ESP32-S3 firmware pass:
 
-- `idf.py -B build/ build` passes.
-- `idf.py -B build/ qemu --flash-file build/qemu_flash_gba.bin
-  --qemu-extra-args="-m 8M"` reaches `result=PASS backend=interp` for the raw
-  `gamepak` flash partition path.
+- Hardware builds use `esp32s3/build/`.
+- QEMU builds use `esp32s3/build-qemu/` with `USE_QEMU=1`.
+- `idf.py -B build/ build` passes from `esp32s3/` for hardware firmware.
+- `idf.py -B build-qemu/ -D USE_QEMU=1 ... qemu --flash-file
+  build-qemu/qemu_flash_gba.bin --qemu-extra-args="-m 8M"` is the current QEMU
+  shape for the raw `gamepak` flash partition path.
 - The `-m 8M` QEMU override is required to model CoreS3 SE PSRAM size and keep
   flash data-mmap space available.
-- The QEMU pass line includes all JIT counters as zero, confirming the active
-  smoke test is not executing the parked dynarec path.
 - The existing libretro-common VFS stub linker warnings remain.
 
 Remaining verification must be done on real ESP32-S3/CoreS3 SE hardware before
