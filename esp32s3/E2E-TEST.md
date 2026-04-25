@@ -12,10 +12,8 @@ Verified on this repo state with ESP-IDF `v6.0` on 2026-04-25:
   `gamepak` SPI flash partition with `esp_partition_mmap()`. The partition is
   the `.gba` byte stream directly; there is no metadata/header wrapper and no
   sidecar metadata partition.
-- `GPSP_TEST_BACKEND=interp` passed Dhrystone in QEMU after
-  `flash_gba.sh --image ...` patches the QEMU flash image
-- `GPSP_TEST_BACKEND=dynarec` defines `HAVE_DYNAREC` and compiles
-  `cpu_threaded.c` / `esp32s3/xtensa_runtime.c`
+- the active ESP32-S3 app has no backend/mode CMake knobs; it always defines
+  `HAVE_DYNAREC` and compiles `cpu_threaded.c` / `esp32s3/xtensa_runtime.c`
 - CoreS3 SE LCD init/output is compiled in by default through
   `GPSP_CORES3SE_LCD=1`
 - QEMU has no AW9523/AXP2101/LCD hardware, so LCD init logs a soft failure
@@ -38,10 +36,10 @@ Verified commands:
   `cd esp32s3 && idf.py -B build/ build`
 - patch a QEMU flash image with a raw `.gba`:
   `esp32s3/flash_gba.sh --image esp32s3/build-qemu/qemu_flash_gba.bin tests/dhrystone/dhrystone_arm.gba`
-- interpreter QEMU run:
-  `cd esp32s3 && idf.py -B build-qemu/ -D USE_QEMU=1 -D GPSP_TEST_BACKEND=interp qemu --flash-file build-qemu/qemu_flash_gba.bin --qemu-extra-args="-m 8M"`
-- interpreter QEMU run without probing CoreS3 SE LCD hardware:
-  `cd esp32s3 && idf.py -B build-qemu/ -D USE_QEMU=1 -D GPSP_TEST_BACKEND=interp qemu --flash-file build-qemu/qemu_flash_gba.bin --qemu-extra-args="-m 8M"`
+- QEMU frame-harness run:
+  `cd esp32s3 && idf.py -B build-qemu/ -D USE_QEMU=1 -D USE_DEBUG=0 qemu --flash-file build-qemu/qemu_flash_gba.bin --qemu-extra-args="-m 8M"`
+- QEMU debugger run:
+  `cd esp32s3 && idf.py -B build-qemu/ -D USE_QEMU=1 -D USE_DEBUG=1 qemu --flash-file build-qemu/qemu_flash_gba.bin --qemu-extra-args="-m 8M"`
 
 The `-m 8M` QEMU override is required for this target. Espressif QEMU's
 default ESP32-S3 machine reports 32 MB PSRAM; that can consume the external

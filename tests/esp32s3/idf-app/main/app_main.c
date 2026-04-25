@@ -49,6 +49,20 @@ uint32_t xtensa_jit_get_thumb_blocks(void);
 #define GPSP_TEST_DUMP_FRAME 0
 #endif
 
+#ifndef USE_DEBUG
+#define USE_DEBUG 0
+#endif
+
+#define ESP32S3_BACKEND_NAME "dynarec"
+#define ESP32S3_RUN_MODE_PLAY 0
+#define ESP32S3_RUN_MODE_FRAMES 1
+#define ESP32S3_RUN_MODE_DEBUG 2
+#define ESP32S3_RUN_MODE_DHRYSTONE 3
+
+#ifndef ESP32S3_RUN_MODE
+#define ESP32S3_RUN_MODE ESP32S3_RUN_MODE_PLAY
+#endif
+
 #define U32_ARG(value) ((uint32_t)(value))
 #define GPSP_STRINGIFY_INNER(value) #value
 #define GPSP_STRINGIFY(value) GPSP_STRINGIFY_INNER(value)
@@ -155,12 +169,49 @@ typedef struct jit_counters
 static bool frame_capture_enabled(void);
 static u32 debug_parse_u32(const char *text, u32 fallback);
 
+static bool run_mode_is_play(void)
+{
+  return ESP32S3_RUN_MODE == ESP32S3_RUN_MODE_PLAY;
+}
+
+static bool run_mode_is_frames(void)
+{
+  return ESP32S3_RUN_MODE == ESP32S3_RUN_MODE_FRAMES;
+}
+
+static bool run_mode_is_debug(void)
+{
+  return ESP32S3_RUN_MODE == ESP32S3_RUN_MODE_DEBUG;
+}
+
+static bool run_mode_is_dhrystone(void)
+{
+  return ESP32S3_RUN_MODE == ESP32S3_RUN_MODE_DHRYSTONE;
+}
+
+static const char *run_mode_name(void)
+{
+  switch (ESP32S3_RUN_MODE)
+  {
+    case ESP32S3_RUN_MODE_PLAY:
+      return "play";
+    case ESP32S3_RUN_MODE_FRAMES:
+      return "frames";
+    case ESP32S3_RUN_MODE_DEBUG:
+      return "debug";
+    case ESP32S3_RUN_MODE_DHRYSTONE:
+      return "dhrystone";
+    default:
+      return "unknown";
+  }
+}
+
 static void print_play_status(const char *source)
 {
   printf("play status source=%s backend=%s stage=%s loops=%" PRIu32
          " in_run=%u frames=%" PRIu32 " video_frames=%u"
          " fb_hash=0x%08" PRIx32 " pc=0x%08" PRIx32 "\n",
-         source, GPSP_TEST_BACKEND, (const char *)g_play_stage,
+         source, ESP32S3_BACKEND_NAME, (const char *)g_play_stage,
          U32_ARG(g_play_loop_count), g_play_in_retro_run ? 1u : 0u,
          U32_ARG(frame_counter), (unsigned)g_video_frames,
          U32_ARG(g_frame_hash), U32_ARG(reg[REG_PC]));
@@ -186,7 +237,7 @@ static void play_status_task(void *arg)
 
 static void start_play_status_task(void)
 {
-  if (strcmp(GPSP_TEST_MODE, "play") != 0 || g_play_status_task_handle)
+  if (!run_mode_is_play() || g_play_status_task_handle)
     return;
 
   g_play_status_enabled = true;
@@ -219,16 +270,16 @@ static void test_log_cb(enum retro_log_level level, const char *fmt, ...)
 static const char *lookup_variable(const char *key)
 {
   if (strcmp(key, "gpsp_drc") == 0)
-    return strcmp(GPSP_TEST_BACKEND, "dynarec") == 0 ? "enabled" : "disabled";
+    return "enabled";
   if (strcmp(key, "gpsp_bios") == 0)
     return "builtin";
   if (strcmp(key, "gpsp_boot_mode") == 0)
     return "game";
   if (strcmp(key, "gpsp_frameskip") == 0)
-    return strcmp(GPSP_TEST_MODE, "play") == 0 ? "fixed_interval" : "disabled";
+    return run_mode_is_play() ? "fixed_interval" : "disabled";
   if (strcmp(key, "gpsp_frameskip_interval") == 0)
-    return strcmp(GPSP_TEST_MODE, "play") == 0 ?
-      GPSP_STRINGIFY(GPSP_PLAY_FRAMESKIP_INTERVAL) : "0";
+    return run_mode_is_play() ? GPSP_STRINGIFY(GPSP_PLAY_FRAMESKIP_INTERVAL) :
+      "0";
   if (strcmp(key, "gpsp_color_correction") == 0)
     return "disabled";
   if (strcmp(key, "gpsp_frame_mixing") == 0)
@@ -395,7 +446,7 @@ static void dump_framebuffer_base64(void)
 
 static bool frame_capture_enabled(void)
 {
-  return GPSP_TEST_DUMP_FRAME || strcmp(GPSP_TEST_MODE, "debug") == 0;
+  return GPSP_TEST_DUMP_FRAME || run_mode_is_debug();
 }
 
 static void collect_jit_counters(jit_counters_t *counters)
@@ -533,7 +584,7 @@ static void debug_print_status(void)
          " cpu_mode=0x%02" PRIx32 " thumb=%" PRIu32
          " halt=%" PRIu32 " execute_cycles=%" PRIu32
          " sleep_cycles=0x%08" PRIx32 " fb_hash=0x%08" PRIx32 "\n",
-         GPSP_TEST_BACKEND, GPSP_TEST_MODE, U32_ARG(frame_counter),
+         ESP32S3_BACKEND_NAME, run_mode_name(), U32_ARG(frame_counter),
          g_video_frames, U32_ARG(reg[REG_PC]), U32_ARG(reg[REG_CPSR]),
          U32_ARG(reg[CPU_MODE]), U32_ARG((reg[REG_CPSR] >> 5) & 1u),
          U32_ARG(reg[CPU_HALT_STATE]), U32_ARG(execute_cycles),
@@ -572,6 +623,7 @@ static void debug_print_io(void)
          read_ioreg(REG_WAITCNT), read_ioreg(REG_P1), read_ioreg(REG_P1CNT));
 }
 
+#if USE_DEBUG
 void gpsp_debug_trace_iowrite(u32 address, u32 bits, u32 value)
 {
   if (g_debug_io_trace_enabled &&
@@ -700,6 +752,7 @@ bool gpsp_debug_cpu_stop_requested(void)
 {
   return g_debug_stop_hit;
 }
+#endif
 
 static void debug_print_current_opcode(void)
 {
@@ -1204,7 +1257,7 @@ static void run_debugger(void)
 {
   char line[128];
 
-  printf("dbg ready backend=%s rom_bytes=%zu\n", GPSP_TEST_BACKEND,
+  printf("dbg ready backend=%s rom_bytes=%zu\n", ESP32S3_BACKEND_NAME,
          g_rom_mmap_size);
   debug_print_help();
   debug_print_status();
@@ -1224,7 +1277,7 @@ static void run_debugger(void)
 
 static void run_play_loop(void)
 {
-  printf("play ready backend=%s rom_bytes=%zu\n", GPSP_TEST_BACKEND,
+  printf("play ready backend=%s rom_bytes=%zu\n", ESP32S3_BACKEND_NAME,
          g_rom_mmap_size);
   fflush(stdout);
   print_play_status("ready");
@@ -1318,18 +1371,18 @@ static int run_test(void)
     return 1;
   }
 
-  if (strcmp(GPSP_TEST_MODE, "debug") == 0)
+  if (run_mode_is_debug())
   {
     stop_play_status_task();
     run_debugger();
     retro_unload_game();
     retro_deinit();
     unmap_gamepak_partition();
-    printf("result=PASS backend=%s mode=debug\n", GPSP_TEST_BACKEND);
+    printf("result=PASS backend=%s mode=debug\n", ESP32S3_BACKEND_NAME);
     return 0;
   }
 
-  if (strcmp(GPSP_TEST_MODE, "play") == 0)
+  if (run_mode_is_play())
   {
     g_play_stage = "ready";
     run_play_loop();
@@ -1353,8 +1406,7 @@ static int run_test(void)
   {
     retro_run();
     frames_run++;
-    if (strcmp(GPSP_TEST_MODE, "dhrystone") == 0 &&
-        result->magic == DHRY_RESULT_MAGIC)
+    if (run_mode_is_dhrystone() && result->magic == DHRY_RESULT_MAGIC)
       break;
   }
 
@@ -1364,7 +1416,7 @@ static int run_test(void)
          " iterations=%" PRIu32 " int_glob=%" PRId32 " bool_glob=%" PRId32
          " ch1=%c ch2=%c arr1_8=%" PRId32 " arr2_8_7=%" PRId32
          " ptr=%" PRId32 " next=%" PRId32 "\n",
-         GPSP_TEST_BACKEND, GPSP_TEST_MODE, frames_run, g_video_frames,
+         ESP32S3_BACKEND_NAME, run_mode_name(), frames_run, g_video_frames,
          g_frame_hash, result->magic, result->status, result->iterations,
          result->int_glob, result->bool_glob, (char)result->ch_1_glob,
          (char)result->ch_2_glob,
@@ -1380,48 +1432,47 @@ static int run_test(void)
   retro_deinit();
   unmap_gamepak_partition();
 
-  if (strcmp(GPSP_TEST_MODE, "dhrystone") == 0 &&
+  if (run_mode_is_dhrystone() &&
       (result->magic != DHRY_RESULT_MAGIC ||
        result->status != DHRY_STATUS_PASS))
   {
-    printf("result=FAIL backend=%s\n", GPSP_TEST_BACKEND);
+    printf("result=FAIL backend=%s\n", ESP32S3_BACKEND_NAME);
     return 1;
   }
 
-  if (strcmp(GPSP_TEST_MODE, "frames") == 0 && g_video_frames == 0)
+  if (run_mode_is_frames() && g_video_frames == 0)
   {
-    printf("result=FAIL backend=%s no_video_frames\n", GPSP_TEST_BACKEND);
+    printf("result=FAIL backend=%s no_video_frames\n", ESP32S3_BACKEND_NAME);
     return 1;
   }
 
-  if (strcmp(GPSP_TEST_MODE, "frames") == 0 &&
-      GPSP_TEST_EXPECT_FB_HASH != 0 &&
+  if (run_mode_is_frames() && GPSP_TEST_EXPECT_FB_HASH != 0 &&
       g_frame_hash != GPSP_TEST_EXPECT_FB_HASH)
   {
     printf("result=FAIL backend=%s fb_hash=0x%08" PRIx32
            " expected=0x%08x\n",
-           GPSP_TEST_BACKEND, U32_ARG(g_frame_hash), GPSP_TEST_EXPECT_FB_HASH);
+           ESP32S3_BACKEND_NAME, U32_ARG(g_frame_hash),
+           GPSP_TEST_EXPECT_FB_HASH);
     return 1;
   }
 
 #if defined(HAVE_DYNAREC)
-  if (strcmp(GPSP_TEST_BACKEND, "dynarec") == 0)
   {
+    bool allow_interp_blocks = run_mode_is_debug();
     if (jit_counters.blocks_executed == 0 ||
         (jit_counters.compiled_arm_instructions +
          jit_counters.compiled_thumb_instructions) == 0 ||
-        jit_counters.interpreter_blocks_executed != 0 ||
+        (!allow_interp_blocks && jit_counters.interpreter_blocks_executed != 0) ||
         jit_counters.generic_fallbacks != 0 ||
         jit_counters.unsupported_opcodes != 0 ||
-        (strcmp(GPSP_TEST_MODE, "dhrystone") == 0 &&
-         jit_counters.thumb_blocks != 0))
+        (run_mode_is_dhrystone() && jit_counters.thumb_blocks != 0))
     {
       printf("result=FAIL backend=%s jit_blocks=%" PRIu32
              " arm_insns=%" PRIu32 " thumb_insns=%" PRIu32
              " interp_blocks=%" PRIu32
              " fallbacks=%" PRIu32 " unsupported=%" PRIu32
              " thumb=%" PRIu32 "\n",
-             GPSP_TEST_BACKEND, jit_counters.blocks_executed,
+             ESP32S3_BACKEND_NAME, jit_counters.blocks_executed,
              jit_counters.compiled_arm_instructions,
              jit_counters.compiled_thumb_instructions,
              jit_counters.interpreter_blocks_executed,
@@ -1432,7 +1483,7 @@ static int run_test(void)
   }
 #endif
 
-  printf("result=PASS backend=%s\n", GPSP_TEST_BACKEND);
+  printf("result=PASS backend=%s\n", ESP32S3_BACKEND_NAME);
   return 0;
 }
 

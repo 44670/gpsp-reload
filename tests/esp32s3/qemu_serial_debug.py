@@ -34,8 +34,6 @@ def run_idf(args, action, stdin_data=None):
         "-B", BUILD_DIR,
         "-D", "USE_QEMU=1",
         "-D", "USE_DEBUG=1",
-        "-D", f"GPSP_TEST_BACKEND={args.backend}",
-        "-D", "GPSP_TEST_MODE=debug",
         "-D", "GPSP_TEST_DUMP_FRAME=1",
         action,
     ]
@@ -111,7 +109,6 @@ def main():
     )
     parser.add_argument("--rom", required=True,
                         help="GBA ROM path to flash into the gamepak partition")
-    parser.add_argument("--backend", default="interp", choices=("interp",))
     parser.add_argument("--idf-path", default="~/esp-idf")
     parser.add_argument("--no-build", action="store_true")
     parser.add_argument("--cmd", action="append", default=[],

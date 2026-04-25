@@ -6,20 +6,15 @@
   with `idf.py -B build/ ...` for CoreS3 SE hardware and
   `idf.py -B build-qemu/ -D USE_QEMU=1 ...` for QEMU. Do not build the
   firmware through `tests/esp32s3/idf-app`.
-- `esp32s3/` now defaults to `GPSP_TEST_MODE=play` and
-  `GPSP_TEST_BACKEND=dynarec`. This is the real firmware path: it runs
-  `retro_run()` continuously instead of stopping after the old test-frame
-  budget.
+- `esp32s3/` has no backend/mode CMake knobs. CoreS3 SE hardware builds are
+  fixed to dynarec and run `retro_run()` continuously instead of stopping after
+  the old test-frame budget.
 - Build switches:
   - `USE_QEMU=1`: QEMU build path; disables CoreS3 SE LCD init by default and
-    keeps QEMU flash helpers using `esp32s3/build-qemu/`.
+    keeps QEMU flash helpers using `esp32s3/build-qemu/`. QEMU defaults to the
+    finite frame harness.
   - `USE_DEBUG=1`: enables the USB Serial/JTAG debugger path and the expensive
-    CPU/IO trace hooks. `GPSP_TEST_MODE=debug` requires this switch.
-- `GPSP_TEST_MODE` is still available for harness workflows:
-  - `play`: endless CoreS3 SE firmware loop.
-  - `dhrystone`: finite dhrystone ROM regression.
-  - `frames`: finite QEMU framebuffer capture/regression.
-  - `debug`: UART command debugger.
+    CPU/IO trace hooks. QEMU debug helpers use this switch.
 - Play mode uses fixed interval frameskip `1`: every other frame is skipped.
   On skipped frames gpSP bypasses scanline rendering through `skip_next_frame`,
   and the ESP32-S3 frontend does not update the LCD.
@@ -32,7 +27,7 @@
 - Experimental ESP32-S3 JIT is being turned back on first. Treat it as a
   hardware bring-up target, not stable emulation yet. The build now compiles
   `cpu_threaded.c`, `esp32s3/xtensa_runtime.c`, and defines `HAVE_DYNAREC`
-  when `GPSP_TEST_BACKEND=dynarec`.
+  unconditionally for the active ESP32-S3 app.
 - Use only `esp32s3/build/` for CoreS3 SE hardware builds and
   `esp32s3/build-qemu/` for QEMU, capture, and QEMU debugger workflows.
 - Preserve static PSRAM storage for ESP32-S3-owned emulator buffers:

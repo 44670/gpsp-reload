@@ -1,10 +1,6 @@
 set(GPSP_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../..")
 set(GPSP_COMMON "${GPSP_ROOT}/libretro/libretro-common")
 
-if(NOT DEFINED GPSP_TEST_MODE OR GPSP_TEST_MODE STREQUAL "")
-    set(GPSP_TEST_MODE "play")
-endif()
-
 if(NOT DEFINED GPSP_TEST_FRAMES OR GPSP_TEST_FRAMES STREQUAL "")
     set(GPSP_TEST_FRAMES "300")
 endif()
@@ -21,16 +17,6 @@ if(GPSP_CORES3SE_LCD)
     set(GPSP_CORES3SE_LCD_VALUE 1)
 else()
     set(GPSP_CORES3SE_LCD_VALUE 0)
-endif()
-
-if(NOT DEFINED GPSP_TEST_BACKEND OR GPSP_TEST_BACKEND STREQUAL "")
-    set(GPSP_TEST_BACKEND "dynarec")
-endif()
-
-if(NOT GPSP_TEST_BACKEND STREQUAL "interp" AND
-   NOT GPSP_TEST_BACKEND STREQUAL "dynarec")
-    message(FATAL_ERROR
-        "GPSP_TEST_BACKEND must be 'interp' or 'dynarec', got '${GPSP_TEST_BACKEND}'")
 endif()
 
 set(GPSP_SOURCES
@@ -67,12 +53,10 @@ set(GPSP_SOURCES
     "app_main.c"
 )
 
-if(GPSP_TEST_BACKEND STREQUAL "dynarec")
-    list(APPEND GPSP_SOURCES
-        "${GPSP_ROOT}/cpu_threaded.c"
-        "${GPSP_ROOT}/esp32s3/xtensa_runtime.c"
-    )
-endif()
+list(APPEND GPSP_SOURCES
+    "${GPSP_ROOT}/cpu_threaded.c"
+    "${GPSP_ROOT}/esp32s3/xtensa_runtime.c"
+)
 
 idf_component_register(
     SRCS ${GPSP_SOURCES}
@@ -103,19 +87,12 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     FRONTEND_SUPPORTS_RGB565
     SMALL_TRANSLATION_CACHE
     ROM_BUFFER_SIZE=1
-    GPSP_TEST_BACKEND=\"${GPSP_TEST_BACKEND}\"
-    GPSP_TEST_MODE=\"${GPSP_TEST_MODE}\"
+    HAVE_DYNAREC
     GPSP_TEST_FRAMES=${GPSP_TEST_FRAMES}
     GPSP_TEST_EXPECT_FB_HASH=${GPSP_TEST_EXPECT_FB_HASH}
     GPSP_TEST_DUMP_FRAME=${GPSP_TEST_DUMP_FRAME}
     GPSP_CORES3SE_LCD=${GPSP_CORES3SE_LCD_VALUE}
 )
-
-if(GPSP_TEST_BACKEND STREQUAL "dynarec")
-    target_compile_definitions(${COMPONENT_LIB} PRIVATE
-        HAVE_DYNAREC
-    )
-endif()
 
 target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-error

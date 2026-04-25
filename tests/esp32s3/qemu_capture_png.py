@@ -74,8 +74,7 @@ def run_idf(args, action):
         "idf.py",
         "-B", BUILD_DIR,
         "-D", "USE_QEMU=1",
-        "-D", f"GPSP_TEST_BACKEND={args.backend}",
-        "-D", "GPSP_TEST_MODE=frames",
+        "-D", "USE_DEBUG=0",
         "-D", f"GPSP_TEST_FRAMES={args.frames}",
         "-D", f"GPSP_TEST_EXPECT_FB_HASH={args.expect_fb_hash}",
         "-D", "GPSP_TEST_DUMP_FRAME=1",
@@ -215,7 +214,6 @@ def main():
     parser.add_argument("--rom", required=True,
                         help="GBA ROM path to flash into the gamepak partition")
     parser.add_argument("--output", default=str(ROOT / "tests/esp32s3/out/qemu_frame.png"))
-    parser.add_argument("--backend", default="interp", choices=("interp",))
     parser.add_argument("--frames", type=int, default=60)
     parser.add_argument("--expect-fb-hash", default="0",
                         help="expected framebuffer hash, e.g. 0x10ce4667")

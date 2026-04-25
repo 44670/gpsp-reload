@@ -17,16 +17,16 @@
 - Build and flash from `esp32s3/`. Use `idf.py -B build/ ...` for CoreS3 SE
   hardware and `idf.py -B build-qemu/ -D USE_QEMU=1 ...` for QEMU. Do not use
   `tests/esp32s3/idf-app` for current firmware builds.
-- Active firmware defaults to `GPSP_TEST_MODE=play` and
-  `GPSP_TEST_BACKEND=dynarec`.
-- The ESP32-S3 IDF app defines `HAVE_DYNAREC` and compiles
-  `cpu_threaded.c` plus `esp32s3/xtensa_runtime.c` when
-  `GPSP_TEST_BACKEND=dynarec`.
+- Active firmware has no backend/mode CMake knobs. Non-QEMU builds are fixed
+  to playable dynarec firmware.
+- The ESP32-S3 IDF app always defines `HAVE_DYNAREC` and compiles
+  `cpu_threaded.c` plus `esp32s3/xtensa_runtime.c`.
 - Use `USE_QEMU=1` for ESP-IDF QEMU builds. This disables CoreS3 SE LCD init
-  by default and keeps QEMU artifacts under `esp32s3/build-qemu/`.
+  by default, uses the finite frame harness, and keeps QEMU artifacts under
+  `esp32s3/build-qemu/`.
 - Use `USE_DEBUG=1` for the USB Serial/JTAG debugger and CPU/IO trace hooks.
-  `GPSP_TEST_MODE=debug` requires `USE_DEBUG=1`; normal play builds should
-  leave it off to avoid per-instruction debug overhead.
+  Normal play builds should leave it off to avoid per-instruction debug
+  overhead.
 - Keep `XTENSA_ARCH` for ESP32-S3 static PSRAM placement and board-specific memory paths.
 - Use `esp32s3/build/` for hardware ESP-IDF builds and `esp32s3/build-qemu/`
   for QEMU runs. Do not introduce any other ESP32-S3 firmware build
@@ -109,9 +109,8 @@
 - Current native lowering in the parked backend includes simple no-flag ARM data-processing forms. Unsupported forms route through helper-backed execution.
 - The backend previously passed host Xtensa codegen tests and ESP-IDF QEMU
   dhrystone dynarec smoke tests with the PSRAM alias validation/self-test
-  enabled. Current firmware default is `GPSP_TEST_BACKEND=dynarec`; use
-  `GPSP_TEST_BACKEND=interp` only when isolating interpreter or board-driver
-  issues.
+  enabled. Current firmware is fixed to dynarec; interpreter isolation now
+  requires a deliberate code change, not a CMake backend switch.
 - ESP32-S3 QEMU runs must pass `--qemu-extra-args="-m 8M"` so QEMU models
   the CoreS3 SE PSRAM size. The Espressif QEMU default reports 32 MB PSRAM,
   which can consume the external data virtual range and break SPI flash

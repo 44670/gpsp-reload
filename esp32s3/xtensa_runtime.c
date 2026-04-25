@@ -20,13 +20,19 @@
 #include <stdint.h>
 #include <string.h>
 
+#ifndef USE_DEBUG
+#define USE_DEBUG 0
+#endif
+
 typedef u8 *(*xtensa_jit_block_fn)(void);
 
 extern u32 rom_cache_watermark;
+#if USE_DEBUG
 void gpsp_debug_trace_cpu(u32 pc, u32 opcode, u32 thumb);
 bool gpsp_debug_cpu_should_break(u32 pc, u32 opcode, u32 thumb);
 bool gpsp_debug_cpu_stop_requested(void);
 void gpsp_debug_dump_recent_cpu_trace(void);
+#endif
 
 enum
 {
@@ -1855,12 +1861,14 @@ static bool xtensa_run_arm_block(const xtensa_jit_block_meta *meta)
 
     reg[REG_PC] &= ~0x03;
     opcode = xtensa_fetch_arm_opcode(reg[REG_PC]);
+#if USE_DEBUG
     gpsp_debug_trace_cpu(reg[REG_PC], opcode, 0);
     if (gpsp_debug_cpu_should_break(reg[REG_PC], opcode, 0))
     {
       xtensa_collapse_flags(&flags);
       return true;
     }
+#endif
 
     if (!xtensa_exec_arm_instruction(meta, opcode, &flags,
                                      &xtensa_cycles_remaining,
@@ -1875,11 +1883,13 @@ static bool xtensa_run_arm_block(const xtensa_jit_block_meta *meta)
     if (reg[REG_PC] == idle_loop_target_pc && xtensa_cycles_remaining > 0)
       xtensa_cycles_remaining = 0;
 
+#if USE_DEBUG
     if (gpsp_debug_cpu_stop_requested())
     {
       xtensa_collapse_flags(&flags);
       return true;
     }
+#endif
 
     if (xtensa_cpu_alert & (CPU_ALERT_HALT | CPU_ALERT_IRQ))
       break;
@@ -2014,9 +2024,11 @@ static u32 xtensa_jit_exec_compiled_arm_global(u32 insn_index)
   expected_pc = insn->pc + 4;
   reg[REG_PC] = insn->pc & ~0x03;
   xtensa_helper_arm_insns_executed++;
+#if USE_DEBUG
   gpsp_debug_trace_cpu(insn->pc, insn->opcode, 0);
   if (gpsp_debug_cpu_should_break(insn->pc, insn->opcode, 0))
     return 1;
+#endif
 
   xtensa_extract_flags(&flags);
   if (!xtensa_exec_arm_instruction(NULL, insn->opcode, &flags,
@@ -2033,11 +2045,13 @@ static u32 xtensa_jit_exec_compiled_arm_global(u32 insn_index)
   if (reg[REG_PC] == idle_loop_target_pc && xtensa_cycles_remaining > 0)
     xtensa_cycles_remaining = 0;
 
+#if USE_DEBUG
   if (gpsp_debug_cpu_stop_requested())
   {
     xtensa_collapse_flags(&flags);
     return 1;
   }
+#endif
 
   xtensa_collapse_flags(&flags);
 
@@ -2104,9 +2118,11 @@ static u32 xtensa_jit_exec_compiled_thumb_global(u32 insn_index)
   expected_pc = insn->pc + 2;
   reg[REG_PC] = insn->pc & ~1u;
   xtensa_helper_thumb_insns_executed++;
+#if USE_DEBUG
   gpsp_debug_trace_cpu(insn->pc, insn->opcode, 1);
   if (gpsp_debug_cpu_should_break(insn->pc, insn->opcode, 1))
     return 1;
+#endif
 
   xtensa_extract_flags(&flags);
   if (!xtensa_exec_thumb_instruction(insn->opcode, &flags,
@@ -2123,11 +2139,13 @@ static u32 xtensa_jit_exec_compiled_thumb_global(u32 insn_index)
   if (reg[REG_PC] == idle_loop_target_pc && xtensa_cycles_remaining > 0)
     xtensa_cycles_remaining = 0;
 
+#if USE_DEBUG
   if (gpsp_debug_cpu_stop_requested())
   {
     xtensa_collapse_flags(&flags);
     return 1;
   }
+#endif
 
   xtensa_collapse_flags(&flags);
 
@@ -2260,8 +2278,10 @@ u32 execute_arm_translate_internal(u32 cycles, void *regptr)
 
     while (xtensa_cycles_remaining > 0)
     {
+#if USE_DEBUG
       if (gpsp_debug_cpu_stop_requested())
         return 0;
+#endif
 
       if (reg[REG_PC] == cheat_master_hook)
         process_cheats();
@@ -2287,7 +2307,9 @@ u32 execute_arm_translate_internal(u32 cycles, void *regptr)
         xtensa_generic_fallbacks++;
         printf("xtensa invalid block entry pc=%08x cpsr=%08x cycles=%d\n",
                reg[REG_PC], reg[REG_CPSR], xtensa_cycles_remaining);
+#if USE_DEBUG
         gpsp_debug_dump_recent_cpu_trace();
+#endif
         return 0;
       }
 
@@ -2296,8 +2318,10 @@ u32 execute_arm_translate_internal(u32 cycles, void *regptr)
       (void)entry();
       xtensa_state_sync_to_globals(&xtensa_state);
 
+#if USE_DEBUG
       if (gpsp_debug_cpu_stop_requested())
         return 0;
+#endif
 
       if (xtensa_generic_fallbacks != 0)
         return 0;

@@ -20,6 +20,10 @@
 #include "common.h"
 #include "streams/file_stream.h"
 
+#ifndef USE_DEBUG
+#define USE_DEBUG 0
+#endif
+
 #if defined(ESP_PLATFORM) && !defined(XTENSA_ARCH)
 #include "esp_heap_caps.h"
 #endif
@@ -815,6 +819,7 @@ static inline s32 signext28(u32 value)
   return ret >> 4;
 }
 
+#if USE_DEBUG
 void __attribute__((weak)) gpsp_debug_trace_iowrite(u32 address, u32 bits,
                                                     u32 value)
 {
@@ -843,12 +848,15 @@ bool __attribute__((weak)) gpsp_debug_cpu_stop_requested(void)
 {
   return false;
 }
+#endif
 
 cpu_alert_type function_cc write_io_register16(u32 address, u32 value)
 {
   uint32_t ioreg = ((address & 0xffffff) >> 1);
   value &= 0xffff;
+#if USE_DEBUG
   gpsp_debug_trace_iowrite(0x04000000 | ((ioreg << 1) & 0x3FE), 16, value);
+#endif
   switch(ioreg)
   {
     case REG_DISPCNT:

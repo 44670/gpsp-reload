@@ -9,14 +9,6 @@ if(NOT DEFINED USE_DEBUG OR USE_DEBUG STREQUAL "")
     set(USE_DEBUG 0)
 endif()
 
-if(NOT DEFINED GPSP_TEST_MODE OR GPSP_TEST_MODE STREQUAL "")
-    if(USE_DEBUG)
-        set(GPSP_TEST_MODE "debug")
-    else()
-        set(GPSP_TEST_MODE "play")
-    endif()
-endif()
-
 if(NOT DEFINED GPSP_TEST_FRAMES OR GPSP_TEST_FRAMES STREQUAL "")
     set(GPSP_TEST_FRAMES "300")
 endif()
@@ -45,29 +37,6 @@ if(USE_DEBUG)
     set(USE_DEBUG_VALUE 1)
 else()
     set(USE_DEBUG_VALUE 0)
-endif()
-
-if(NOT DEFINED GPSP_TEST_BACKEND OR GPSP_TEST_BACKEND STREQUAL "")
-    set(GPSP_TEST_BACKEND "dynarec")
-endif()
-
-if(NOT GPSP_TEST_BACKEND STREQUAL "interp" AND
-   NOT GPSP_TEST_BACKEND STREQUAL "dynarec")
-    message(FATAL_ERROR
-        "GPSP_TEST_BACKEND must be 'interp' or 'dynarec', got '${GPSP_TEST_BACKEND}'")
-endif()
-
-if(NOT GPSP_TEST_MODE STREQUAL "play" AND
-   NOT GPSP_TEST_MODE STREQUAL "dhrystone" AND
-   NOT GPSP_TEST_MODE STREQUAL "frames" AND
-   NOT GPSP_TEST_MODE STREQUAL "debug")
-    message(FATAL_ERROR
-        "GPSP_TEST_MODE must be 'play', 'dhrystone', 'frames', or 'debug', got '${GPSP_TEST_MODE}'")
-endif()
-
-if(GPSP_TEST_MODE STREQUAL "debug" AND NOT USE_DEBUG)
-    message(FATAL_ERROR
-        "GPSP_TEST_MODE=debug requires -D USE_DEBUG=1")
 endif()
 
 set(GPSP_SOURCES
@@ -104,12 +73,10 @@ set(GPSP_SOURCES
     "app_main.c"
 )
 
-if(GPSP_TEST_BACKEND STREQUAL "dynarec")
-    list(APPEND GPSP_SOURCES
-        "${GPSP_ROOT}/cpu_threaded.c"
-        "${GPSP_ROOT}/esp32s3/xtensa_runtime.c"
-    )
-endif()
+list(APPEND GPSP_SOURCES
+    "${GPSP_ROOT}/cpu_threaded.c"
+    "${GPSP_ROOT}/esp32s3/xtensa_runtime.c"
+)
 
 idf_component_register(
     SRCS ${GPSP_SOURCES}
@@ -140,8 +107,7 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     FRONTEND_SUPPORTS_RGB565
     SMALL_TRANSLATION_CACHE
     ROM_BUFFER_SIZE=1
-    GPSP_TEST_BACKEND=\"${GPSP_TEST_BACKEND}\"
-    GPSP_TEST_MODE=\"${GPSP_TEST_MODE}\"
+    HAVE_DYNAREC
     GPSP_TEST_FRAMES=${GPSP_TEST_FRAMES}
     GPSP_TEST_EXPECT_FB_HASH=${GPSP_TEST_EXPECT_FB_HASH}
     GPSP_TEST_DUMP_FRAME=${GPSP_TEST_DUMP_FRAME}
@@ -149,12 +115,6 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     USE_QEMU=${USE_QEMU_VALUE}
     USE_DEBUG=${USE_DEBUG_VALUE}
 )
-
-if(GPSP_TEST_BACKEND STREQUAL "dynarec")
-    target_compile_definitions(${COMPONENT_LIB} PRIVATE
-        HAVE_DYNAREC
-    )
-endif()
 
 target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-error

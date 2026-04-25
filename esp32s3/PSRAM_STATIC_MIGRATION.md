@@ -11,17 +11,16 @@ This report is intentionally written before implementation. It defines the
 migration shape and the correctness checks needed before the backend should
 execute translated blocks from PSRAM.
 
-## Current Status: Interpreter-Only Baseline
+## Current Status: Playable Dynarec Baseline
 
-As of 2026-04-25, the active CoreS3 SE port is interpreter-only. The ESP32-S3
-IDF app defaults and forces `GPSP_TEST_BACKEND=interp`, does not define
-`HAVE_DYNAREC`, and does not compile `cpu_threaded.c` or
+As of 2026-04-26, the active CoreS3 SE port is playable firmware with the
+experimental Xtensa dynarec enabled. The ESP32-S3 IDF app has no backend/mode
+CMake knobs; it always defines `HAVE_DYNAREC` and compiles `cpu_threaded.c` and
 `esp32s3/xtensa_runtime.c`.
 
 The static PSRAM migration still applies to emulator-owned runtime buffers.
-`esp32s3/psram_static.c` remains in the IDF app for framebuffer/audio storage,
-but JIT cache declarations, PSRAM executable alias helpers, and the executable
-self-test are compiled only when `HAVE_DYNAREC` is re-enabled later.
+`esp32s3/psram_static.c` owns framebuffer/audio storage and the static JIT
+cache storage used by the dynarec path.
 
 ## Target Constraints
 
@@ -316,9 +315,9 @@ First migration pass implemented:
   validation failures are visible in QEMU logs.
 - Cleaned ESP32-S3 test-app `printf` format warnings from the debug helpers.
 - Re-enabled the ESP32-S3 dynarec as an experimental hardware bring-up target:
-  - `esp32s3/` defaults to `GPSP_TEST_BACKEND=dynarec`.
-  - Dynarec builds define `HAVE_DYNAREC` and compile `cpu_threaded.c` plus
-    `esp32s3/xtensa_runtime.c`.
+  - `esp32s3/` is fixed to dynarec for the active firmware app.
+  - The app defines `HAVE_DYNAREC` and compiles `cpu_threaded.c` plus
+    `esp32s3/xtensa_runtime.c` unconditionally.
   - JIT-only static PSRAM code in `esp32s3/psram_static.c` is guarded behind
     `HAVE_DYNAREC`.
   - QEMU capture/debug helper scripts use `USE_QEMU=1` and the fixed ESP-IDF
