@@ -52,6 +52,33 @@
   - direct and indirect branch exits
   - scheduler return on cycle exhaustion or alerts
 
+## ESP32-S3 Current Architecture And Status
+
+- The active ESP32-S3 backend is a native Xtensa dynarec with a simple state-backed execution model.
+- Guest ARM registers remain in the compact CPU/JIT state block. Do not add a guest register cache yet.
+- Current generated-code storage is owned by `esp32s3/psram_static.c` and declared in `esp32s3/psram_static.h`.
+- ESP32-S3-owned runtime buffers should be static PSRAM, not dynamic heap allocations:
+  - ROM and RAM JIT caches
+  - main video buffer
+  - post-process video buffer
+  - previous-frame mix buffer
+  - audio sample buffer
+  - QEMU/test frame-capture buffer
+  - current 1 MB gamepak paging fallback window
+- JIT cache writes use the PSRAM DBUS/data alias. JIT execution dispatch converts block entry data pointers to the derived IBUS/instruction alias.
+- `platform_cache_sync()` on ESP32-S3 must sync both aliases: write back the data range, then invalidate the aligned instruction range for the exec alias.
+- JIT cache sizes are intentionally capped for the 8 MB CoreS3 SE PSRAM target:
+  - ROM JIT cache `<= 2 MB`
+  - RAM JIT cache `<= 384 KB`
+- Current native lowering includes simple no-flag ARM data-processing forms. Unsupported forms still route through helper-backed execution.
+- The backend has passed host Xtensa codegen tests and ESP-IDF QEMU dhrystone dynarec smoke tests, but PSRAM executable-cache trust still requires real hardware validation.
+- Still pending before treating PSRAM JIT as stable:
+  - page-by-page validation that static JIT cache pages map to PSRAM
+  - manual ESP32-S3 MMU register fallback if the derived IBUS alias is not enough on hardware
+  - startup PSRAM executable self-test that verifies first execution and rewrite/backpatch visibility
+  - fuller frontend split where lookup returns exec aliases and all writes/patches use data aliases
+  - ROM flash partition / SPI mmap path so the 1 MB PSRAM fallback window is not the final ROM data story
+
 ## ESP32-S3 Xtensa ABI Direction
 
 - ESP32-S3 uses Xtensa with a windowed ABI: instructions only address `a0..a15` at once, even though the core has more physical window backing registers.
@@ -123,6 +150,8 @@
 ## References
 
 Use rg (ripgrep) if needed.
+
+Use `build/` for ESP-IDF builds and QEMU runs. Do not introduce custom build directories such as `build-v6.0-esp32s3`.
 
 ~/esp-idf
 ~/work/CardPuterADV/esp-walkie-talkie

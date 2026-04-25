@@ -20,7 +20,7 @@
 #include "common.h"
 #include "streams/file_stream.h"
 
-#ifdef ESP_PLATFORM
+#if defined(ESP_PLATFORM) && !defined(XTENSA_ARCH)
 #include "esp_heap_caps.h"
 #endif
 
@@ -353,7 +353,7 @@ dma_transfer_type dma[4];
 // mapping system. We will try to allocate 32 of them to allow loading
 // ROMs up to 32MB, but we might fail on memory constrained systems.
 
-u8 *gamepak_buffers[32];    /* Pointers to malloc'ed blocks */
+u8 *gamepak_buffers[32];    /* Pointers to ROM paging blocks */
 u32 gamepak_buffer_count;   /* Value between 1 and 32 */
 u32 gamepak_size;           /* Size of the ROM in bytes */
 // We allocate in 1MB chunks.
@@ -2255,6 +2255,10 @@ u8 *load_gamepak_page(u32 physical_index)
 void init_gamepak_buffer(void)
 {
   unsigned i;
+#if defined(XTENSA_ARCH) && defined(ESP_PLATFORM)
+  gamepak_buffer_count = 1;
+  gamepak_buffers[0] = xtensa_gamepak_buffer_fallback;
+#else
   // Try to allocate up to 32 blocks of 1MB each
   gamepak_buffer_count = 0;
   while (gamepak_buffer_count < ROM_BUFFER_SIZE)
@@ -2269,10 +2273,6 @@ void init_gamepak_buffer(void)
       break;
     gamepak_buffers[gamepak_buffer_count++] = (u8*)ptr;
   }
-
-#if defined(XTENSA_ARCH) && defined(ESP_PLATFORM)
-  if (gamepak_buffer_count == 0)
-    gamepak_buffers[gamepak_buffer_count++] = xtensa_gamepak_buffer_fallback;
 #endif
 
   // Initialize the memory map structure
@@ -2365,10 +2365,15 @@ void memory_term(void)
   }
   gamepak_mem_large = NULL;
 
+#if defined(XTENSA_ARCH) && defined(ESP_PLATFORM)
+  gamepak_buffers[0] = NULL;
+  gamepak_buffer_count = 0;
+#else
   while (gamepak_buffer_count)
   {
     free(gamepak_buffers[--gamepak_buffer_count]);
   }
+#endif
 }
 
 bool memory_check_savestate(const u8 *src)

@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "esp32s3/xtensa_state.h"
+
 #define XTENSA_BLOCK_FIXED_LITERAL_BYTES 16
 #define XTENSA_BLOCK_LITERAL_BYTES 256
 
@@ -13,6 +15,12 @@ enum
   XTENSA_LITERAL_STATE = 4,
   XTENSA_LITERAL_RESERVED0 = 8,
   XTENSA_LITERAL_RESERVED1 = 12
+};
+
+enum
+{
+  XTENSA_NATIVE_A_STATE = 2,
+  XTENSA_NATIVE_A_PC = 3
 };
 
 typedef struct xtensa_jit_block_meta
@@ -240,7 +248,9 @@ static inline void xtensa_emit_native_block_prologue(uint8_t **ptr,
 {
   xtensa_emit_entry_sp_32(ptr);
   /* a2 is the fixed CPU/JIT state base for the whole translated block. */
-  xtensa_emit_l32r_literal(ptr, 2, literal_base + XTENSA_LITERAL_STATE);
+  xtensa_emit_l32r_literal(ptr, XTENSA_NATIVE_A_STATE,
+                           literal_base + XTENSA_LITERAL_STATE);
+  xtensa_emit_l32i(ptr, XTENSA_NATIVE_A_PC, XTENSA_NATIVE_A_STATE, OFF_PC);
 }
 
 static inline void xtensa_emit_native_arm_instruction(uint8_t **ptr,
@@ -248,11 +258,13 @@ static inline void xtensa_emit_native_arm_instruction(uint8_t **ptr,
                                                      uint32_t insn_index)
 {
   xtensa_emit_l32r_literal(ptr, 4, literal_base + XTENSA_LITERAL_HELPER);
-  xtensa_emit_mov_n(ptr, 10, 2);
+  xtensa_emit_s32i(ptr, XTENSA_NATIVE_A_PC, XTENSA_NATIVE_A_STATE, OFF_PC);
+  xtensa_emit_mov_n(ptr, 10, XTENSA_NATIVE_A_STATE);
   xtensa_emit_movi_u15(ptr, 11, insn_index);
   xtensa_emit_callx8(ptr, 4);
   xtensa_emit_beqz_a10_skip_retw(ptr);
   xtensa_emit_retw_n(ptr);
+  xtensa_emit_l32i(ptr, XTENSA_NATIVE_A_PC, XTENSA_NATIVE_A_STATE, OFF_PC);
 }
 
 #endif

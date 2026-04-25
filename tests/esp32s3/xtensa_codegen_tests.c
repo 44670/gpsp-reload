@@ -205,12 +205,15 @@ static void test_helper_stub_layout(void)
   {
     0x36, 0x41, 0x00,
     0x21, 0xC0, 0xFF,
-    0x41, 0xBE, 0xFF,
+    0x32, 0x22, 0x0F,
+    0x41, 0xBD, 0xFF,
+    0x32, 0x62, 0x0F,
     0xAD, 0x02,
     0xB2, 0xA0, 0x07,
     0xE0, 0x04, 0x00,
     0x16, 0x1A, 0x00,
     0x1D, 0xF0,
+    0x32, 0x22, 0x0F,
     0x1D, 0xF0
   };
 
@@ -240,8 +243,7 @@ static void test_native_arm_add_register(void)
     0x52, 0x22, 0x05,
     0x5A, 0x44,
     0x42, 0x62, 0x04,
-    0x61, 0xC1, 0xFF,
-    0x62, 0x62, 0x0F,
+    0x32, 0xC3, 0x04,
     0x62, 0x22, 0x57,
     0x62, 0xC6, 0xFD,
     0x62, 0x62, 0x57
@@ -257,9 +259,8 @@ static void test_native_arm_add_register(void)
   expect_bytes("native ADD r4,r4,r5 bytes", code, (size_t)(ptr - code),
                expected, sizeof(expected));
   expect_size("native ADD literal cursor",
-              (size_t)(literal_cursor - literal_base), 20);
-  expect_u32("native ADD pc literal", load_u32_le(literal_base + 16),
-             0x08000104);
+              (size_t)(literal_cursor - literal_base),
+              XTENSA_BLOCK_FIXED_LITERAL_BYTES);
   expect_false("native ADD does not call helper",
                contains_bytes(code, (size_t)(ptr - code),
                               callx8_a4, sizeof(callx8_a4)));
@@ -282,12 +283,10 @@ static void test_native_arm_immediate_literal(void)
 
   expect_true("native MOV r1,#0x80000000 accepted", emitted);
   expect_size("native MOV immediate literal cursor",
-              (size_t)(literal_cursor - literal_base), 24);
+              (size_t)(literal_cursor - literal_base), 20);
   expect_u32("native MOV immediate literal", load_u32_le(literal_base + 16),
              0x80000000);
-  expect_u32("native MOV pc literal", load_u32_le(literal_base + 20),
-             0x08000204);
-  expect_size("native MOV no cycle update length", (size_t)(ptr - code), 12);
+  expect_size("native MOV no cycle update length", (size_t)(ptr - code), 9);
 }
 
 static void test_native_arm_carry_ops(void)
@@ -315,9 +314,8 @@ static void test_native_arm_carry_ops(void)
                contains_bytes(code, (size_t)(ptr - code),
                               callx8_a4, sizeof(callx8_a4)));
   expect_size("native ADC literal cursor",
-              (size_t)(literal_cursor - literal_base), 20);
-  expect_u32("native ADC pc literal", load_u32_le(literal_base + 16),
-             0x08000404);
+              (size_t)(literal_cursor - literal_base),
+              XTENSA_BLOCK_FIXED_LITERAL_BYTES);
 
   literal_cursor = literal_base + XTENSA_BLOCK_FIXED_LITERAL_BYTES;
   ptr = code;
@@ -332,11 +330,9 @@ static void test_native_arm_carry_ops(void)
               contains_bytes(code, (size_t)(ptr - code),
                              extui_cpsr_c, sizeof(extui_cpsr_c)));
   expect_size("native SBC literal cursor",
-              (size_t)(literal_cursor - literal_base), 24);
+              (size_t)(literal_cursor - literal_base), 20);
   expect_u32("native SBC immediate literal", load_u32_le(literal_base + 16),
              1);
-  expect_u32("native SBC pc literal", load_u32_le(literal_base + 20),
-             0x08000408);
 }
 
 static void expect_rejected_opcode(const char *name, uint32_t opcode)

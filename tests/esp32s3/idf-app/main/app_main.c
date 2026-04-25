@@ -6,7 +6,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "esp_heap_caps.h"
 #include "esp_log.h"
 
 #include <libretro.h>
@@ -58,6 +57,12 @@ static bool g_debug_pc_trace_enabled;
 static u32 g_debug_pc_trace_start;
 static u32 g_debug_pc_trace_end;
 static u32 g_debug_pc_trace_remaining;
+
+#define ESP32S3_FRAME_CAPTURE_CAPACITY \
+  (GBA_SCREEN_WIDTH * GBA_SCREEN_HEIGHT * sizeof(uint16_t))
+
+static GPSP_EXT_RAM_BSS uint8_t
+  g_frame_capture_storage[ESP32S3_FRAME_CAPTURE_CAPACITY];
 
 #define DEBUG_RECENT_TRACE_SIZE 64
 
@@ -211,15 +216,16 @@ static void video_cb(const void *data, unsigned width, unsigned height, size_t p
 
       if (frame_size != g_frame_capture_size)
       {
-        if (g_frame_capture)
-          free(g_frame_capture);
-
-        g_frame_capture = (uint8_t *)heap_caps_malloc(
-          frame_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (!g_frame_capture)
-          g_frame_capture = (uint8_t *)malloc(frame_size);
-
-        g_frame_capture_size = g_frame_capture ? frame_size : 0;
+        if (frame_size <= sizeof(g_frame_capture_storage))
+        {
+          g_frame_capture = g_frame_capture_storage;
+          g_frame_capture_size = frame_size;
+        }
+        else
+        {
+          g_frame_capture = NULL;
+          g_frame_capture_size = 0;
+        }
       }
 
       if (g_frame_capture)

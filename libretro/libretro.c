@@ -15,8 +15,12 @@
 #include "../gba_memory.h"
 #include "../gba_cc_lut.h"
 
-#if defined(XTENSA_ARCH) && defined(HAVE_DYNAREC) && defined(ESP_PLATFORM)
-#include <esp_heap_caps.h>
+#if defined(XTENSA_ARCH) && defined(ESP_PLATFORM)
+#include "esp32s3/psram_static.h"
+#define GPSP_ESP32S3_STATIC_BUFFERS 1
+#endif
+
+#if defined(GPSP_ESP32S3_STATIC_BUFFERS) && defined(HAVE_DYNAREC)
 static int translation_caches_inited = 0;
 #endif
 
@@ -311,7 +315,9 @@ static void init_post_processing(void)
    if (!gba_processed_pixels &&
        (post_process_cc || post_process_mix))
    {
-#ifdef _3DS
+#if defined(GPSP_ESP32S3_STATIC_BUFFERS)
+      gba_processed_pixels = esp32s3_static_processed_pixels();
+#elif defined(_3DS)
       gba_processed_pixels = (u16*)linearMemAlign(GBA_SCREEN_BUFFER_SIZE, 128);
 #else
       gba_processed_pixels = (u16*)malloc(GBA_SCREEN_BUFFER_SIZE);
@@ -327,7 +333,11 @@ static void init_post_processing(void)
    if (!gba_screen_pixels_prev &&
        post_process_mix)
    {
+#if defined(GPSP_ESP32S3_STATIC_BUFFERS)
+      gba_screen_pixels_prev = esp32s3_static_previous_pixels();
+#else
       gba_screen_pixels_prev = (u16*)malloc(GBA_SCREEN_BUFFER_SIZE);
+#endif
 
       if (!gba_screen_pixels_prev)
          return;
@@ -562,7 +572,17 @@ void retro_init(void)
    audio_samples_per_frame   = (float)(GBA_SOUND_FREQUENCY) / (float)(GBA_FPS);
    audio_samples_accumulator = 0.0f;
    audio_sample_buffer_size  = ((u32)audio_samples_per_frame + 1) * 2;
+#if defined(GPSP_ESP32S3_STATIC_BUFFERS)
+   audio_sample_buffer       = esp32s3_static_audio_sample_buffer(
+         audio_sample_buffer_size * sizeof(s16));
+   if (!audio_sample_buffer)
+   {
+      error_msg("ESP32-S3 static audio buffer is too small.");
+      return;
+   }
+#else
    audio_sample_buffer       = (s16*)malloc(audio_sample_buffer_size * sizeof(s16));
+#endif
 
 #if defined(HAVE_DYNAREC)
   #if defined(MMAP_JIT_CACHE)
@@ -618,21 +638,10 @@ void retro_init(void)
   #elif defined(XTENSA_ARCH) && defined(ESP_PLATFORM)
    if (!translation_caches_inited)
    {
-#ifdef MALLOC_CAP_EXEC
-      rom_translation_cache = (u8 *)heap_caps_malloc(
-            ROM_TRANSLATION_CACHE_SIZE + TRANSLATION_CACHE_LIMIT_THRESHOLD,
-            MALLOC_CAP_EXEC);
-      ram_translation_cache = (u8 *)heap_caps_malloc(
-            RAM_TRANSLATION_CACHE_SIZE + TRANSLATION_CACHE_LIMIT_THRESHOLD,
-            MALLOC_CAP_EXEC);
-
-      if (!rom_translation_cache || !ram_translation_cache)
+      if (!esp32s3_static_buffers_init_translation_caches(
+            &rom_translation_cache, &ram_translation_cache))
       {
-         error_msg("Could not allocate executable translation caches.");
-         if (rom_translation_cache)
-            free(rom_translation_cache);
-         if (ram_translation_cache)
-            free(ram_translation_cache);
+         error_msg("ESP32-S3 static translation caches are not page-aligned.");
          rom_translation_cache = NULL;
          ram_translation_cache = NULL;
          return;
@@ -641,10 +650,6 @@ void retro_init(void)
       rom_translation_ptr = rom_translation_cache;
       ram_translation_ptr = ram_translation_cache;
       translation_caches_inited = 1;
-#else
-      error_msg("MALLOC_CAP_EXEC is unavailable; disable memory protection or dynarec.");
-      return;
-#endif
    }
   #endif
 #endif
@@ -653,7 +658,9 @@ void retro_init(void)
    init_sound();
 
    if(!gba_screen_pixels)
-#ifdef _3DS
+#if defined(GPSP_ESP32S3_STATIC_BUFFERS)
+      gba_screen_pixels = esp32s3_static_screen_pixels();
+#elif defined(_3DS)
       gba_screen_pixels = (uint16_t*)linearMemAlign(GBA_SCREEN_BUFFER_SIZE, 128);
 #else
       gba_screen_pixels = (uint16_t*)malloc(GBA_SCREEN_BUFFER_SIZE);
@@ -718,15 +725,15 @@ void retro_deinit(void)
 #if defined(XTENSA_ARCH) && defined(HAVE_DYNAREC) && defined(ESP_PLATFORM)
    if (translation_caches_inited)
    {
-      free(rom_translation_cache);
-      free(ram_translation_cache);
       rom_translation_cache = NULL;
       ram_translation_cache = NULL;
       translation_caches_inited = 0;
    }
 #endif
 
-#ifdef _3DS
+#if defined(GPSP_ESP32S3_STATIC_BUFFERS)
+   /* Static PSRAM buffers persist for the process lifetime. */
+#elif defined(_3DS)
    linearFree(gba_screen_pixels);
    if (gba_processed_pixels)
       linearFree(gba_processed_pixels);
@@ -735,8 +742,10 @@ void retro_deinit(void)
    if (gba_processed_pixels)
       free(gba_processed_pixels);
 #endif
+#if !defined(GPSP_ESP32S3_STATIC_BUFFERS)
    if (gba_screen_pixels_prev)
       free(gba_screen_pixels_prev);
+#endif
 
    gba_screen_pixels      = NULL;
    gba_processed_pixels   = NULL;
@@ -745,8 +754,10 @@ void retro_deinit(void)
    post_process_cc        = false;
    post_process_mix       = false;
 
+#if !defined(GPSP_ESP32S3_STATIC_BUFFERS)
    if (audio_sample_buffer)
       free(audio_sample_buffer);
+#endif
 
    audio_sample_buffer       = NULL;
    audio_samples_per_frame   = 0.0f;

@@ -241,8 +241,15 @@ typedef struct
     sceKernelSyncVMDomain(sceBlock, baseaddr, ((char*)endptr) - ((char*)baseaddr) + 64);
   }
 #elif defined(XTENSA_ARCH)
+  #if defined(ESP_PLATFORM)
+  #include "esp32s3/psram_static.h"
+  #endif
   void platform_cache_sync(void *baseaddr, void *endptr) {
+  #if defined(ESP_PLATFORM)
+    esp32s3_jit_cache_sync(baseaddr, endptr);
+  #else
     __builtin___clear_cache(baseaddr, endptr);
+  #endif
   }
 #elif defined(_3DS)
   #include "3ds/3ds_utils.h"

@@ -12,6 +12,7 @@
 #include "esp32s3/xtensa_emit.h"
 #include "esp32s3/xtensa_hle.h"
 #include "esp32s3/xtensa_native_emit.h"
+#include "esp32s3/psram_static.h"
 #include "esp32s3/xtensa_state.h"
 
 #include <stdbool.h>
@@ -2194,6 +2195,7 @@ void xtensa_emit_block_finalize(u8 *literal_base, u8 **translation_ptr,
                      xtensa_jit_exec_compiled_thumb :
                      xtensa_jit_exec_compiled_arm));
 
+  xtensa_native_emit_spill_pc(&ptr);
   xtensa_emit_retw_n(&ptr);
   ptr = xtensa_align_ptr(ptr);
   *translation_ptr = ptr;
@@ -2232,6 +2234,7 @@ void init_emitter(bool must_swap)
 u32 execute_arm_translate_internal(u32 cycles, void *regptr)
 {
   xtensa_jit_block_fn entry;
+  u8 *entry_data;
   u32 update_ret;
 
   (void)regptr;
@@ -2265,20 +2268,20 @@ u32 execute_arm_translate_internal(u32 cycles, void *regptr)
 
       if (reg[REG_CPSR] & 0x20)
       {
-        entry = (xtensa_jit_block_fn)block_lookup_address_thumb(reg[REG_PC] & ~1u);
+        entry_data = block_lookup_address_thumb(reg[REG_PC] & ~1u);
         xtensa_thumb_blocks++;
       }
       else
       {
-        entry = (xtensa_jit_block_fn)block_lookup_address_arm(reg[REG_PC] & ~0x03);
+        entry_data = block_lookup_address_arm(reg[REG_PC] & ~0x03);
       }
-      if (!entry)
+      if (!entry_data)
       {
         xtensa_generic_fallbacks++;
         return 0;
       }
 
-      if ((u8 *)entry == XTENSA_INVALID_BLOCK_ENTRY)
+      if (entry_data == XTENSA_INVALID_BLOCK_ENTRY)
       {
         xtensa_unsupported_opcodes++;
         xtensa_generic_fallbacks++;
@@ -2288,6 +2291,7 @@ u32 execute_arm_translate_internal(u32 cycles, void *regptr)
         return 0;
       }
 
+      entry = (xtensa_jit_block_fn)esp32s3_jit_data_to_exec(entry_data);
       xtensa_blocks_executed++;
       (void)entry();
       xtensa_state_sync_to_globals(&xtensa_state);

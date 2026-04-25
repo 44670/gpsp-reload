@@ -46,6 +46,7 @@ set(GPSP_SOURCES
     "${GPSP_ROOT}/libretro/libretro.c"
     "${GPSP_ROOT}/gba_cc_lut.c"
     "${GPSP_ROOT}/cpu_threaded.c"
+    "${GPSP_ROOT}/esp32s3/psram_static.c"
     "${GPSP_ROOT}/esp32s3/xtensa_runtime.c"
     "${GPSP_ROOT}/video.cc"
     "${GPSP_ROOT}/cpu.cc"
@@ -65,7 +66,7 @@ set(GPSP_SOURCES
 idf_component_register(
     SRCS ${GPSP_SOURCES}
     EMBED_FILES "${GPSP_TEST_ROM_EMBED}"
-    REQUIRES esp_psram
+    REQUIRES esp_mm esp_psram
     INCLUDE_DIRS
       "."
       "${GPSP_ROOT}"
@@ -84,7 +85,7 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     INLINE=inline
     NDEBUG=1
     FRONTEND_SUPPORTS_RGB565
-    # Keep the ESP32-S3 QEMU test within executable-capable internal RAM.
+    # Keep the ESP32-S3 QEMU test fast; production should use SMALL_TRANSLATION_CACHE.
     ROM_TRANSLATION_CACHE_SIZE=8192
     RAM_TRANSLATION_CACHE_SIZE=24576
     ROM_BUFFER_SIZE=1

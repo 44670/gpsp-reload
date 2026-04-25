@@ -9,7 +9,8 @@
 
 enum
 {
-  XTENSA_A_STATE = 2,
+  XTENSA_A_STATE = XTENSA_NATIVE_A_STATE,
+  XTENSA_A_PC = XTENSA_NATIVE_A_PC,
   XTENSA_A_DST = 4,
   XTENSA_A_RHS = 5,
   XTENSA_A_TMP = 6,
@@ -88,6 +89,16 @@ static inline void xtensa_native_emit_arm_cycle_update(
                    OFF_JIT_CYCLES);
 }
 
+static inline void xtensa_native_emit_spill_pc(uint8_t **translation_ptr)
+{
+  xtensa_emit_s32i(translation_ptr, XTENSA_A_PC, XTENSA_A_STATE, OFF_PC);
+}
+
+static inline void xtensa_native_emit_advance_arm_pc(uint8_t **translation_ptr)
+{
+  xtensa_emit_addi(translation_ptr, XTENSA_A_PC, XTENSA_A_PC, 4);
+}
+
 static inline void xtensa_native_emit_load_c_flag(uint8_t **translation_ptr)
 {
   /* ARM C is CPSR bit 29; ADC/SBC/RSC need it as a 0/1 addend. */
@@ -106,7 +117,9 @@ static inline bool xtensa_emit_native_arm_data_proc_body(
   bool unary = (op == 0x0D) || (op == 0x0F);
   bool immediate = (opcode & (1u << 25)) != 0;
   uint32_t rhs_imm = 0;
-  uint32_t literal_words = 1;
+  uint32_t literal_words = 0;
+
+  (void)pc;
 
   if ((opcode >> 28) != 0x0E || (opcode & (1u << 20)) ||
       rd == XTENSA_ARM_REG_PC)
@@ -252,9 +265,7 @@ static inline bool xtensa_emit_native_arm_data_proc_body(
 
   xtensa_emit_s32i(translation_ptr, XTENSA_A_DST, XTENSA_A_STATE,
                    xtensa_native_arm_reg_offset(rd));
-  xtensa_native_emit_load_literal_u32(translation_ptr, XTENSA_A_TMP,
-                                      literal_cursor, pc + 4);
-  xtensa_emit_s32i(translation_ptr, XTENSA_A_TMP, XTENSA_A_STATE, OFF_PC);
+  xtensa_native_emit_advance_arm_pc(translation_ptr);
   xtensa_native_emit_arm_cycle_update(translation_ptr, literal_cursor, cycles);
   return true;
 }

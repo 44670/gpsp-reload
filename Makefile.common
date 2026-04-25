@@ -45,6 +45,7 @@ ifeq ($(HAVE_DYNAREC), 1)
   else ifeq ($(CPU_ARCH), mips)
     SOURCES_ASM += $(CORE_DIR)/mips/mips_stub.S
   else ifeq ($(CPU_ARCH), xtensa)
+    SOURCES_C += $(CORE_DIR)/esp32s3/psram_static.c
     SOURCES_C += $(CORE_DIR)/esp32s3/xtensa_runtime.c
   endif
 endif
