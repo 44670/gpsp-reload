@@ -9,6 +9,10 @@ if(NOT DEFINED USE_DEBUG OR USE_DEBUG STREQUAL "")
     set(USE_DEBUG 0)
 endif()
 
+if(NOT DEFINED USE_DYNAREC OR USE_DYNAREC STREQUAL "")
+    set(USE_DYNAREC 1)
+endif()
+
 if(NOT DEFINED GPSP_TEST_FRAMES OR GPSP_TEST_FRAMES STREQUAL "")
     set(GPSP_TEST_FRAMES "300")
 endif()
@@ -37,6 +41,12 @@ if(USE_DEBUG)
     set(USE_DEBUG_VALUE 1)
 else()
     set(USE_DEBUG_VALUE 0)
+endif()
+
+if(USE_DYNAREC)
+    set(USE_DYNAREC_VALUE 1)
+else()
+    set(USE_DYNAREC_VALUE 0)
 endif()
 
 set(GPSP_SOURCES
@@ -73,10 +83,12 @@ set(GPSP_SOURCES
     "app_main.c"
 )
 
-list(APPEND GPSP_SOURCES
-    "${GPSP_ROOT}/cpu_threaded.c"
-    "${GPSP_ROOT}/esp32s3/xtensa_runtime.c"
-)
+if(USE_DYNAREC)
+    list(APPEND GPSP_SOURCES
+        "${GPSP_ROOT}/cpu_threaded.c"
+        "${GPSP_ROOT}/esp32s3/xtensa_runtime.c"
+    )
+endif()
 
 idf_component_register(
     SRCS ${GPSP_SOURCES}
@@ -107,14 +119,18 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     FRONTEND_SUPPORTS_RGB565
     SMALL_TRANSLATION_CACHE
     ROM_BUFFER_SIZE=1
-    HAVE_DYNAREC
     GPSP_TEST_FRAMES=${GPSP_TEST_FRAMES}
     GPSP_TEST_EXPECT_FB_HASH=${GPSP_TEST_EXPECT_FB_HASH}
     GPSP_TEST_DUMP_FRAME=${GPSP_TEST_DUMP_FRAME}
     GPSP_CORES3SE_LCD=${GPSP_CORES3SE_LCD_VALUE}
     USE_QEMU=${USE_QEMU_VALUE}
     USE_DEBUG=${USE_DEBUG_VALUE}
+    USE_DYNAREC=${USE_DYNAREC_VALUE}
 )
+
+if(USE_DYNAREC)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE HAVE_DYNAREC)
+endif()
 
 target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-error

@@ -57,7 +57,11 @@ uint32_t xtensa_jit_get_thumb_blocks(void);
 #define USE_DEBUG 0
 #endif
 
+#if defined(HAVE_DYNAREC)
 #define ESP32S3_BACKEND_NAME "dynarec"
+#else
+#define ESP32S3_BACKEND_NAME "interp"
+#endif
 #define ESP32S3_RUN_MODE_PLAY 0
 #define ESP32S3_RUN_MODE_FRAMES 1
 #define ESP32S3_RUN_MODE_DEBUG 2

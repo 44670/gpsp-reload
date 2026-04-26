@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 
 set(USE_QEMU "0" CACHE BOOL "Build for ESP-IDF QEMU instead of CoreS3 SE hardware")
 set(USE_DEBUG "0" CACHE BOOL "Enable ESP32-S3 debugger and instruction trace hooks")
+set(USE_DYNAREC "1" CACHE BOOL "Enable ESP32-S3 native dynarec")
 set(GPSP_TEST_FRAMES "300" CACHE STRING "Number of frames to run in frames mode")
 set(GPSP_TEST_EXPECT_FB_HASH "0" CACHE STRING "Expected FNV-1a framebuffer stream hash, or 0 to skip")
 set(GPSP_TEST_DUMP_FRAME "0" CACHE STRING "Emit the last RGB565 frame over USB Serial/JTAG for host PNG capture")

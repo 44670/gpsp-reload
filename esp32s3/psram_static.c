@@ -88,12 +88,7 @@ static GPSP_EXT_RAM_BSS u8
   __attribute__((aligned(ESP32S3_JIT_CACHE_ALIGNMENT)));
 #endif
 
-static GPSP_EXT_RAM_BSS u16
-  esp32s3_screen_pixels_storage[ESP32S3_SCREEN_PIXEL_COUNT];
-static GPSP_EXT_RAM_BSS u16
-  esp32s3_processed_pixels_storage[ESP32S3_SCREEN_PIXEL_COUNT];
-static GPSP_EXT_RAM_BSS u16
-  esp32s3_previous_pixels_storage[ESP32S3_SCREEN_PIXEL_COUNT];
+static u16 esp32s3_screen_pixels_storage[ESP32S3_SCREEN_PIXEL_COUNT];
 static GPSP_EXT_RAM_BSS s16
   esp32s3_audio_sample_buffer_storage[ESP32S3_STATIC_AUDIO_SAMPLES];
 
@@ -329,12 +324,12 @@ u16 *esp32s3_static_screen_pixels(void)
 
 u16 *esp32s3_static_processed_pixels(void)
 {
-  return esp32s3_processed_pixels_storage;
+  return NULL;
 }
 
 u16 *esp32s3_static_previous_pixels(void)
 {
-  return esp32s3_previous_pixels_storage;
+  return NULL;
 }
 
 s16 *esp32s3_static_audio_sample_buffer(size_t required_bytes)
