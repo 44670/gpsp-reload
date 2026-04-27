@@ -104,7 +104,7 @@ PARTITION_BIN="$BUILD_DIR/partition_table/partition-table.bin"
 . "$IDF_PATH/export.sh" >/dev/null
 
 if [ -n "$FLASH_IMAGE" ]; then
-  (cd "$APP_DIR" && idf.py -B build-qemu/ -D USE_QEMU=1 partition-table >/dev/null)
+  (cd "$APP_DIR" && idf.py -B build-qemu/ -D USE_QEMU=1 build >/dev/null)
 else
   (cd "$APP_DIR" && idf.py -B build/ partition-table >/dev/null)
 fi

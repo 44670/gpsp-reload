@@ -10,7 +10,7 @@
 
 #include "esp32s3/cores3se_lcd.h"
 
-#include <string.h>
+#include <stdint.h>
 
 #include "common.h"
 
@@ -27,7 +27,8 @@
 
 #define CORES3SE_LCD_WIDTH 320
 #define CORES3SE_LCD_HEIGHT 240
-#define CORES3SE_LCD_STRIP_ROWS 8
+#define CORES3SE_GBA_WINDOW_X ((CORES3SE_LCD_WIDTH - GBA_SCREEN_WIDTH) / 2)
+#define CORES3SE_GBA_WINDOW_Y ((CORES3SE_LCD_HEIGHT - GBA_SCREEN_HEIGHT) / 2)
 
 #define CORES3SE_I2C_SPEED_HZ 400000u
 #define CORES3SE_I2C_TIMEOUT_MS 1000
@@ -108,25 +109,6 @@ static i2c_master_dev_handle_t s_aw9523_dev;
 static i2c_master_dev_handle_t s_axp2101_dev;
 static esp_lcd_panel_io_handle_t s_lcd_io;
 static bool s_lcd_ready;
-static unsigned s_last_width;
-static unsigned s_last_height;
-
-static GPSP_EXT_RAM_BSS uint16_t
-  s_lcd_framebuffer[CORES3SE_LCD_WIDTH * CORES3SE_LCD_HEIGHT];
-static DMA_ATTR uint16_t
-  s_lcd_strip[CORES3SE_LCD_WIDTH * CORES3SE_LCD_STRIP_ROWS];
-
-static uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b)
-{
-  return (uint16_t)((r >> 3) << 11) |
-         (uint16_t)((g >> 2) << 5) |
-         (uint16_t)(b >> 3);
-}
-
-static uint16_t lcd_wire_rgb565(uint16_t color)
-{
-  return (uint16_t)((color << 8) | (color >> 8));
-}
 
 static bool log_if_error(esp_err_t err, const char *what)
 {
@@ -398,81 +380,60 @@ static bool lcd_set_window(unsigned x, unsigned y, unsigned width, unsigned heig
                       "set LCD row");
 }
 
-static bool flush_framebuffer(void)
-{
-  unsigned y;
-
-  if (!s_lcd_io)
-    return false;
-
-  for (y = 0; y < CORES3SE_LCD_HEIGHT; y += CORES3SE_LCD_STRIP_ROWS)
-  {
-    unsigned rows = CORES3SE_LCD_HEIGHT - y;
-    unsigned row;
-
-    if (rows > CORES3SE_LCD_STRIP_ROWS)
-      rows = CORES3SE_LCD_STRIP_ROWS;
-
-    for (row = 0; row < rows; row++)
-    {
-      const uint16_t *src =
-        &s_lcd_framebuffer[(y + row) * CORES3SE_LCD_WIDTH];
-      uint16_t *dst = &s_lcd_strip[row * CORES3SE_LCD_WIDTH];
-      unsigned col;
-
-      for (col = 0; col < CORES3SE_LCD_WIDTH; col++)
-        dst[col] = lcd_wire_rgb565(src[col]);
-    }
-
-    if (!lcd_set_window(0, y, CORES3SE_LCD_WIDTH, rows))
-      return false;
-
-    if (!log_if_error(esp_lcd_panel_io_tx_color(
-                        s_lcd_io, LCD_CMD_RAMWR, s_lcd_strip,
-                        rows * CORES3SE_LCD_WIDTH * sizeof(s_lcd_strip[0])),
-                      "flush LCD framebuffer"))
-    {
-      return false;
-    }
-
-    if (!lcd_wait_idle("wait LCD strip idle"))
-      return false;
-  }
-
-  return true;
-}
-
-static void fill_rect(unsigned x, unsigned y, unsigned width, unsigned height,
-                      uint16_t color)
+static void lcd_swap_rgb565_bytes(uint16_t *pixels, unsigned width,
+                                  unsigned height, size_t pitch)
 {
   unsigned row;
 
-  if (x >= CORES3SE_LCD_WIDTH || y >= CORES3SE_LCD_HEIGHT)
-    return;
-  if (width > CORES3SE_LCD_WIDTH - x)
-    width = CORES3SE_LCD_WIDTH - x;
-  if (height > CORES3SE_LCD_HEIGHT - y)
-    height = CORES3SE_LCD_HEIGHT - y;
-
-  for (row = y; row < y + height; row++)
+  for (row = 0; row < height; row++)
   {
-    uint16_t *dst = &s_lcd_framebuffer[row * CORES3SE_LCD_WIDTH + x];
-    unsigned col;
+    uint16_t *line = (uint16_t *)((uint8_t *)pixels + ((size_t)row * pitch));
+    unsigned col = 0;
 
-    for (col = 0; col < width; col++)
-      dst[col] = color;
+    if ((((uintptr_t)line) & 3u) == 0)
+    {
+      uint32_t *pair = (uint32_t *)line;
+      unsigned pairs = width / 2;
+      unsigned i;
+
+      for (i = 0; i < pairs; i++)
+      {
+        uint32_t value = pair[i];
+        pair[i] = ((value & 0x00FF00FFu) << 8) |
+                  ((value & 0xFF00FF00u) >> 8);
+      }
+      col = pairs * 2;
+    }
+
+    for (; col < width; col++)
+    {
+      uint16_t value = line[col];
+      line[col] = (uint16_t)((value << 8) | (value >> 8));
+    }
   }
 }
 
-static bool draw_boot_pattern(void)
+static bool lcd_write_gba_window_inplace(uint16_t *pixels)
 {
-  fill_rect(0, 0, CORES3SE_LCD_WIDTH, CORES3SE_LCD_HEIGHT / 3,
-            rgb565(255, 104, 56));
-  fill_rect(0, CORES3SE_LCD_HEIGHT / 3, CORES3SE_LCD_WIDTH,
-            CORES3SE_LCD_HEIGHT / 3, rgb565(246, 199, 70));
-  fill_rect(0, (CORES3SE_LCD_HEIGHT * 2) / 3, CORES3SE_LCD_WIDTH,
-            CORES3SE_LCD_HEIGHT / 3, rgb565(58, 163, 243));
-  return flush_framebuffer();
+  bool ok;
+
+  if (!lcd_set_window(CORES3SE_GBA_WINDOW_X, CORES3SE_GBA_WINDOW_Y,
+                      GBA_SCREEN_WIDTH, GBA_SCREEN_HEIGHT))
+    return false;
+
+  lcd_swap_rgb565_bytes(pixels, GBA_SCREEN_WIDTH, GBA_SCREEN_HEIGHT,
+                        GBA_SCREEN_PITCH * sizeof(uint16_t));
+
+  ok = log_if_error(esp_lcd_panel_io_tx_color(
+                      s_lcd_io, LCD_CMD_RAMWR, pixels,
+                      GBA_SCREEN_WIDTH * GBA_SCREEN_HEIGHT *
+                        sizeof(uint16_t)),
+                    "write LCD GBA window") &&
+       lcd_wait_idle("wait LCD GBA window idle");
+
+  lcd_swap_rgb565_bytes(pixels, GBA_SCREEN_WIDTH, GBA_SCREEN_HEIGHT,
+                        GBA_SCREEN_PITCH * sizeof(uint16_t));
+  return ok;
 }
 
 static bool init_lcd(void)
@@ -491,7 +452,7 @@ static bool init_lcd(void)
   bus_cfg.quadwp_io_num = -1;
   bus_cfg.quadhd_io_num = -1;
   bus_cfg.max_transfer_sz =
-    CORES3SE_LCD_WIDTH * CORES3SE_LCD_STRIP_ROWS * sizeof(s_lcd_strip[0]);
+    GBA_SCREEN_WIDTH * GBA_SCREEN_HEIGHT * sizeof(uint16_t);
   if (!log_if_error(spi_bus_initialize(CORES3SE_LCD_HOST, &bus_cfg,
                                        SPI_DMA_CH_AUTO),
                     "init LCD SPI"))
@@ -560,7 +521,7 @@ static bool init_lcd(void)
   }
 
   vTaskDelay(pdMS_TO_TICKS(20));
-  return draw_boot_pattern();
+  return true;
 }
 
 bool esp32s3_cores3se_lcd_init(void)
@@ -589,40 +550,16 @@ bool esp32s3_cores3se_lcd_present_rgb565(const void *pixels,
                                           unsigned height,
                                           size_t pitch)
 {
-  const uint8_t *src = (const uint8_t *)pixels;
-  unsigned copy_width;
-  unsigned copy_height;
-  unsigned x_offset;
-  unsigned y_offset;
-  unsigned row;
+  uint16_t *mutable_pixels = (uint16_t *)pixels;
 
-  if (!s_lcd_ready || !src || width == 0 || height == 0 ||
+  if (!s_lcd_ready || !mutable_pixels || width == 0 || height == 0 ||
       pitch < (size_t)width * sizeof(uint16_t))
     return false;
 
-  copy_width = width;
-  copy_height = height;
-  if (copy_width > CORES3SE_LCD_WIDTH)
-    copy_width = CORES3SE_LCD_WIDTH;
-  if (copy_height > CORES3SE_LCD_HEIGHT)
-    copy_height = CORES3SE_LCD_HEIGHT;
+  if (width != GBA_SCREEN_WIDTH || height != GBA_SCREEN_HEIGHT ||
+      pitch != GBA_SCREEN_PITCH * sizeof(uint16_t) ||
+      (((uintptr_t)mutable_pixels) & 1u) != 0)
+    return false;
 
-  x_offset = (CORES3SE_LCD_WIDTH - copy_width) / 2;
-  y_offset = (CORES3SE_LCD_HEIGHT - copy_height) / 2;
-
-  if (s_last_width != copy_width || s_last_height != copy_height)
-  {
-    memset(s_lcd_framebuffer, 0, sizeof(s_lcd_framebuffer));
-    s_last_width = copy_width;
-    s_last_height = copy_height;
-  }
-
-  for (row = 0; row < copy_height; row++)
-  {
-    memcpy(&s_lcd_framebuffer[(y_offset + row) * CORES3SE_LCD_WIDTH +
-                              x_offset],
-           src + (row * pitch), copy_width * sizeof(uint16_t));
-  }
-
-  return flush_framebuffer();
+  return lcd_write_gba_window_inplace(mutable_pixels);
 }

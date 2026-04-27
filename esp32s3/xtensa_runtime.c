@@ -16,12 +16,17 @@
 #include "esp32s3/xtensa_state.h"
 
 #include <stdbool.h>
+#include <inttypes.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
 #ifndef USE_DEBUG
 #define USE_DEBUG 0
+#endif
+
+#ifndef GPSP_DISABLE_INTERP
+#define GPSP_DISABLE_INTERP 0
 #endif
 
 typedef u8 *(*xtensa_jit_block_fn)(void);
@@ -74,6 +79,7 @@ static u32 xtensa_native_arm_insn_count;
 static u32 xtensa_helper_arm_insns_executed;
 static u32 xtensa_helper_thumb_insns_executed;
 static u32 xtensa_pc_guard_mismatches;
+static u32 xtensa_interp_disabled_reports;
 static s32 xtensa_cycles_remaining;
 static cpu_alert_type xtensa_cpu_alert;
 static xtensa_jit_state xtensa_state;
@@ -1838,6 +1844,9 @@ static bool xtensa_exec_thumb_instruction(u16 opcode, xtensa_arm_flags *flags,
   return false;
 }
 
+#if GPSP_DISABLE_INTERP
+__attribute__((unused))
+#endif
 static bool xtensa_run_arm_block(const xtensa_jit_block_meta *meta)
 {
   xtensa_arm_flags flags;
@@ -1901,6 +1910,24 @@ static bool xtensa_run_arm_block(const xtensa_jit_block_meta *meta)
 
 static u8 *xtensa_jit_run_block_common(const xtensa_jit_block_meta *meta)
 {
+#if GPSP_DISABLE_INTERP
+  if (meta->thumb)
+    xtensa_thumb_blocks++;
+
+  xtensa_unsupported_opcodes++;
+  xtensa_generic_fallbacks++;
+  if (xtensa_interp_disabled_reports < 16)
+  {
+    printf("xtensa interp disabled pc=0x%08" PRIx32
+           " cpsr=0x%08" PRIx32 " block=0x%08" PRIx32 "-0x%08" PRIx32
+           " thumb=%u cycles=%d\n",
+           (uint32_t)reg[REG_PC], (uint32_t)reg[REG_CPSR],
+           (uint32_t)meta->start_pc, (uint32_t)meta->end_pc,
+           meta->thumb ? 1u : 0u, xtensa_cycles_remaining);
+  }
+  xtensa_interp_disabled_reports++;
+  return NULL;
+#else
   if (meta->thumb)
   {
     xtensa_thumb_blocks++;
@@ -1911,6 +1938,7 @@ static u8 *xtensa_jit_run_block_common(const xtensa_jit_block_meta *meta)
     xtensa_generic_fallbacks++;
   }
   return NULL;
+#endif
 }
 
 u8 *xtensa_jit_run_block_arm(const xtensa_jit_block_meta *meta)
@@ -2239,6 +2267,7 @@ void init_emitter(bool must_swap)
   xtensa_helper_arm_insns_executed = 0;
   xtensa_helper_thumb_insns_executed = 0;
   xtensa_pc_guard_mismatches = 0;
+  xtensa_interp_disabled_reports = 0;
   xtensa_cycles_remaining = 0;
   xtensa_cpu_alert = CPU_ALERT_NONE;
   memset(&xtensa_state, 0, sizeof(xtensa_state));

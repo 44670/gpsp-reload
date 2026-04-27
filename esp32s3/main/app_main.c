@@ -7,10 +7,21 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "sdkconfig.h"
+
 #include "esp_log.h"
 #include "esp_partition.h"
+#include "esp_random.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+
+#if GPSP_PC_SAMPLER
+#include "esp_attr.h"
+#include "esp_cpu.h"
+#include "esp_intr_alloc.h"
+#include "esp_private/esp_clk.h"
+#include "xtensa/core-macros.h"
+#endif
 
 #include <libretro.h>
 
@@ -49,6 +60,26 @@ uint32_t xtensa_jit_get_thumb_blocks(void);
 #define GPSP_TEST_DUMP_FRAME 0
 #endif
 
+#ifndef GPSP_PC_SAMPLER
+#define GPSP_PC_SAMPLER 0
+#endif
+
+#ifndef GPSP_PC_SAMPLER_MIN_MS
+#define GPSP_PC_SAMPLER_MIN_MS 50
+#endif
+
+#ifndef GPSP_PC_SAMPLER_MAX_MS
+#define GPSP_PC_SAMPLER_MAX_MS 250
+#endif
+
+#ifndef GPSP_PC_SAMPLER_REPORT_MS
+#define GPSP_PC_SAMPLER_REPORT_MS 5000
+#endif
+
+#ifndef GPSP_PC_SAMPLER_VERBOSE
+#define GPSP_PC_SAMPLER_VERBOSE 0
+#endif
+
 #ifndef USE_QEMU
 #define USE_QEMU 0
 #endif
@@ -84,7 +115,58 @@ uint32_t xtensa_jit_get_thumb_blocks(void);
 #define GPSP_GAMEPAK_PARTITION "gamepak"
 #define GPSP_PLAY_FRAMESKIP_INTERVAL 1
 #define GPSP_PLAY_STATUS_PERIOD_MS 2000
-#define GPSP_PLAY_STATUS_STACK_WORDS 2048
+#define GPSP_PLAY_STATUS_STACK_WORDS 4096
+#define GPSP_PC_SAMPLER_STACK_WORDS 4096
+#define GPSP_PC_SAMPLER_RING_SIZE 256u
+#define GPSP_PC_SAMPLER_RING_MASK (GPSP_PC_SAMPLER_RING_SIZE - 1u)
+#define GPSP_PC_SAMPLER_HIST_BUCKETS 64u
+#define GPSP_PC_SAMPLER_TOP_BUCKETS 8u
+#define GPSP_PC_SAMPLER_HOST_BUCKET_BITS 7u
+#define GPSP_PC_SAMPLER_GUEST_BUCKET_BITS 4u
+
+#if GPSP_PC_SAMPLER
+typedef struct gpsp_pc_sampler_sample
+{
+  uint32_t host_pc;
+  uint32_t ccount;
+  uint32_t guest_pc;
+  uint32_t guest_cpsr;
+  uint32_t guest_halt;
+  uint32_t frame;
+  uint32_t irq_seq;
+  uint32_t reserved;
+} gpsp_pc_sampler_sample_t;
+
+typedef struct gpsp_pc_sampler_hist_bucket
+{
+  uint32_t key;
+  uint32_t count;
+  uint32_t repr_host_pc;
+  uint32_t repr_guest_pc;
+  uint32_t repr_guest_cpsr;
+  uint32_t repr_guest_halt;
+  uint32_t repr_irq_seq;
+} gpsp_pc_sampler_hist_bucket_t;
+
+typedef struct gpsp_pc_sampler_hist
+{
+  gpsp_pc_sampler_hist_bucket_t buckets[GPSP_PC_SAMPLER_HIST_BUCKETS];
+  uint32_t used;
+  uint32_t overflow;
+} gpsp_pc_sampler_hist_t;
+
+typedef struct gpsp_pc_sampler_report_stats
+{
+  uint32_t total;
+  uint32_t active;
+  uint32_t halted;
+  uint32_t thumb;
+  uint32_t arm;
+  gpsp_pc_sampler_hist_t host_active;
+  gpsp_pc_sampler_hist_t guest_active;
+  gpsp_pc_sampler_hist_t host_halt;
+} gpsp_pc_sampler_report_stats_t;
+#endif
 
 static const char *TAG = "gpsp-esp32s3";
 static const char *g_base_dir = ".";
@@ -113,6 +195,24 @@ static const char * volatile g_play_stage = "boot";
 static TaskHandle_t g_play_status_task_handle;
 static StaticTask_t g_play_status_task_buffer;
 static StackType_t g_play_status_task_stack[GPSP_PLAY_STATUS_STACK_WORDS];
+#if GPSP_PC_SAMPLER
+static TaskHandle_t g_pc_sampler_task_handle;
+static StaticTask_t g_pc_sampler_task_buffer;
+static StackType_t g_pc_sampler_task_stack[GPSP_PC_SAMPLER_STACK_WORDS];
+static intr_handle_t g_pc_sampler_intr_handle;
+static uint32_t g_pc_sampler_read_index;
+static uint32_t g_pc_sampler_last_report_irq_count;
+static uint32_t g_pc_sampler_report_count;
+static TickType_t g_pc_sampler_next_report_tick;
+DRAM_ATTR volatile gpsp_pc_sampler_sample_t
+  gpsp_pc_sampler_samples[GPSP_PC_SAMPLER_RING_SIZE];
+DRAM_ATTR volatile uint32_t gpsp_pc_sampler_enabled;
+DRAM_ATTR volatile uint32_t gpsp_pc_sampler_write_index;
+DRAM_ATTR volatile uint32_t gpsp_pc_sampler_irq_count;
+DRAM_ATTR volatile uint32_t gpsp_pc_sampler_min_cycles;
+DRAM_ATTR volatile uint32_t gpsp_pc_sampler_span_cycles;
+DRAM_ATTR volatile uint32_t gpsp_pc_sampler_rng_state;
+#endif
 
 #define ESP32S3_FRAME_CAPTURE_CAPACITY \
   (GBA_SCREEN_WIDTH * GBA_SCREEN_HEIGHT * sizeof(uint16_t))
@@ -182,6 +282,7 @@ typedef struct jit_counters
 
 static bool frame_capture_enabled(void);
 static u32 debug_parse_u32(const char *text, u32 fallback);
+static void pc_sampler_maybe_report_from_status_task(void);
 
 static bool run_mode_is_play(void)
 {
@@ -235,20 +336,500 @@ static void print_play_status(const char *source)
 
 static void play_status_task(void *arg)
 {
+  TickType_t status_period = pdMS_TO_TICKS(GPSP_PLAY_STATUS_PERIOD_MS);
+  TickType_t poll_period = pdMS_TO_TICKS(500);
+  TickType_t next_status_tick;
+
   (void)arg;
 
+  if (status_period == 0)
+    status_period = 1;
+  if (poll_period == 0)
+    poll_period = 1;
+
   print_play_status("task_start");
+  next_status_tick = xTaskGetTickCount() + status_period;
 
   while (g_play_status_enabled)
   {
-    vTaskDelay(pdMS_TO_TICKS(GPSP_PLAY_STATUS_PERIOD_MS));
+    TickType_t now;
+
+    vTaskDelay(poll_period);
+    now = xTaskGetTickCount();
+
+    pc_sampler_maybe_report_from_status_task();
+
     if (g_play_status_enabled)
-      print_play_status("task");
+    {
+      if ((int32_t)(now - next_status_tick) >= 0)
+      {
+        print_play_status("task");
+        next_status_tick = now + status_period;
+      }
+    }
   }
 
   g_play_status_task_handle = NULL;
   vTaskDelete(NULL);
 }
+
+#if GPSP_PC_SAMPLER
+static uint32_t pc_sampler_cycles_from_ms(uint32_t ms, uint32_t cpu_hz)
+{
+  uint64_t cycles;
+
+  if (ms == 0)
+    ms = 1;
+
+  cycles = ((uint64_t)cpu_hz * ms) / 1000u;
+  if (cycles < 1024u)
+    cycles = 1024u;
+  if (cycles > 0x7ffffffeu)
+    cycles = 0x7ffffffeu;
+
+  return (uint32_t)cycles;
+}
+
+static void pc_sampler_configure_timing(uint32_t *cpu_hz_out,
+                                        uint32_t *min_cycles_out,
+                                        uint32_t *max_cycles_out)
+{
+  uint32_t cpu_hz = (uint32_t)esp_clk_cpu_freq();
+  uint32_t min_ms = GPSP_PC_SAMPLER_MIN_MS;
+  uint32_t max_ms = GPSP_PC_SAMPLER_MAX_MS;
+  uint32_t min_cycles;
+  uint32_t max_cycles;
+
+  if (cpu_hz == 0)
+    cpu_hz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ * 1000000u;
+
+  if (min_ms == 0)
+    min_ms = 1;
+  if (max_ms < min_ms)
+    max_ms = min_ms;
+
+  min_cycles = pc_sampler_cycles_from_ms(min_ms, cpu_hz);
+  max_cycles = pc_sampler_cycles_from_ms(max_ms, cpu_hz);
+  if (max_cycles < min_cycles)
+    max_cycles = min_cycles;
+
+  gpsp_pc_sampler_min_cycles = min_cycles;
+  gpsp_pc_sampler_span_cycles = max_cycles - min_cycles;
+
+  *cpu_hz_out = cpu_hz;
+  *min_cycles_out = min_cycles;
+  *max_cycles_out = max_cycles;
+}
+
+static void pc_sampler_copy_sample(uint32_t index,
+                                   gpsp_pc_sampler_sample_t *out)
+{
+  const volatile gpsp_pc_sampler_sample_t *sample =
+    &gpsp_pc_sampler_samples[index & GPSP_PC_SAMPLER_RING_MASK];
+
+  out->host_pc = sample->host_pc;
+  out->ccount = sample->ccount;
+  out->guest_pc = sample->guest_pc;
+  out->guest_cpsr = sample->guest_cpsr;
+  out->guest_halt = sample->guest_halt;
+  out->frame = sample->frame;
+  out->irq_seq = sample->irq_seq;
+  out->reserved = sample->reserved;
+}
+
+static void print_pc_sample(const gpsp_pc_sampler_sample_t *sample,
+                            uint32_t dropped)
+{
+  printf("pc_sample source=raw_timer2_l5 backend=%s mode=%s"
+         " irq=%" PRIu32 " ccount=%" PRIu32
+         " host_pc=0x%08" PRIx32
+         " guest_pc=0x%08" PRIx32 " guest_cpsr=0x%08" PRIx32
+         " thumb=%u halt=%" PRIu32
+         " frame=%" PRIu32 " video_frames=%u dropped=%" PRIu32
+         " stage=%s in_run=%u loops=%" PRIu32 "\n",
+         ESP32S3_BACKEND_NAME, run_mode_name(), sample->irq_seq,
+         sample->ccount, sample->host_pc, sample->guest_pc,
+         sample->guest_cpsr, (sample->guest_cpsr & 0x20u) ? 1u : 0u,
+         sample->guest_halt, sample->frame, (unsigned)g_video_frames,
+         dropped, (const char *)g_play_stage,
+         g_play_in_retro_run ? 1u : 0u, U32_ARG(g_play_loop_count));
+}
+
+static void pc_sampler_hist_add(gpsp_pc_sampler_hist_t *hist, uint32_t key,
+                                const gpsp_pc_sampler_sample_t *sample)
+{
+  uint32_t i;
+
+  for (i = 0; i < hist->used; i++)
+  {
+    gpsp_pc_sampler_hist_bucket_t *bucket = &hist->buckets[i];
+    if (bucket->key == key)
+    {
+      bucket->count++;
+      return;
+    }
+  }
+
+  if (hist->used < GPSP_PC_SAMPLER_HIST_BUCKETS)
+  {
+    gpsp_pc_sampler_hist_bucket_t *bucket = &hist->buckets[hist->used++];
+    bucket->key = key;
+    bucket->count = 1;
+    bucket->repr_host_pc = sample->host_pc;
+    bucket->repr_guest_pc = sample->guest_pc;
+    bucket->repr_guest_cpsr = sample->guest_cpsr;
+    bucket->repr_guest_halt = sample->guest_halt;
+    bucket->repr_irq_seq = sample->irq_seq;
+    return;
+  }
+
+  hist->overflow++;
+}
+
+static uint32_t pc_sampler_bucket_key(uint32_t pc, uint32_t bucket_bits)
+{
+  return pc & ~((1u << bucket_bits) - 1u);
+}
+
+static void pc_sampler_stats_add(gpsp_pc_sampler_report_stats_t *stats,
+                                 const gpsp_pc_sampler_sample_t *sample)
+{
+  bool halted = sample->guest_halt != CPU_ACTIVE;
+  bool thumb = (sample->guest_cpsr & 0x20u) != 0;
+
+  stats->total++;
+  if (thumb)
+    stats->thumb++;
+  else
+    stats->arm++;
+
+  if (halted)
+  {
+    stats->halted++;
+    pc_sampler_hist_add(
+      &stats->host_halt,
+      pc_sampler_bucket_key(sample->host_pc,
+                            GPSP_PC_SAMPLER_HOST_BUCKET_BITS),
+      sample);
+  }
+  else
+  {
+    stats->active++;
+    pc_sampler_hist_add(
+      &stats->host_active,
+      pc_sampler_bucket_key(sample->host_pc,
+                            GPSP_PC_SAMPLER_HOST_BUCKET_BITS),
+      sample);
+    pc_sampler_hist_add(
+      &stats->guest_active,
+      pc_sampler_bucket_key(sample->guest_pc,
+                            GPSP_PC_SAMPLER_GUEST_BUCKET_BITS),
+      sample);
+  }
+}
+
+static void print_pc_sampler_report(uint32_t read_index, uint32_t write_index,
+                                    uint32_t pending, uint32_t dropped,
+                                    const gpsp_pc_sampler_report_stats_t *stats)
+{
+  uint32_t irq_count = gpsp_pc_sampler_irq_count;
+  uint32_t irq_delta = irq_count - g_pc_sampler_last_report_irq_count;
+
+  g_pc_sampler_last_report_irq_count = irq_count;
+  g_pc_sampler_report_count++;
+
+  printf("pc_sample report source=raw_timer2_l5 backend=%s mode=%s"
+         " report=%" PRIu32 " enabled=%" PRIu32
+         " irq_total=%" PRIu32 " irq_delta=%" PRIu32
+         " read=%" PRIu32 " write=%" PRIu32
+         " pending=%" PRIu32 " dropped=%" PRIu32
+         " samples=%" PRIu32 " active=%" PRIu32
+         " halted=%" PRIu32 " thumb=%" PRIu32 " arm=%" PRIu32
+         " stage=%s in_run=%u loops=%" PRIu32
+         " frame=%" PRIu32 " video_frames=%u\n",
+         ESP32S3_BACKEND_NAME, run_mode_name(), g_pc_sampler_report_count,
+         gpsp_pc_sampler_enabled, irq_count, irq_delta, read_index,
+         write_index, pending, dropped, stats->total, stats->active,
+         stats->halted, stats->thumb, stats->arm, (const char *)g_play_stage,
+         g_play_in_retro_run ? 1u : 0u, U32_ARG(g_play_loop_count),
+         U32_ARG(frame_counter), (unsigned)g_video_frames);
+}
+
+static void print_pc_sampler_hist(const char *kind,
+                                  const gpsp_pc_sampler_hist_t *hist,
+                                  uint32_t total)
+{
+  uint32_t printed_keys[GPSP_PC_SAMPLER_TOP_BUCKETS];
+  uint32_t printed = 0;
+
+  if (hist->used == 0)
+    return;
+
+  memset(printed_keys, 0, sizeof(printed_keys));
+
+  while (printed < GPSP_PC_SAMPLER_TOP_BUCKETS)
+  {
+    const gpsp_pc_sampler_hist_bucket_t *best = NULL;
+    uint32_t best_index = 0;
+    uint32_t i;
+
+    for (i = 0; i < hist->used; i++)
+    {
+      const gpsp_pc_sampler_hist_bucket_t *bucket = &hist->buckets[i];
+      bool already_printed = false;
+      uint32_t j;
+
+      for (j = 0; j < printed; j++)
+      {
+        if (printed_keys[j] == bucket->key)
+        {
+          already_printed = true;
+          break;
+        }
+      }
+
+      if (!already_printed &&
+          (!best || bucket->count > best->count))
+      {
+        best = bucket;
+        best_index = i;
+      }
+    }
+
+    if (!best)
+      break;
+
+    printed_keys[printed++] = best->key;
+    printf("pc_sample top_%s report=%" PRIu32
+           " rank=%" PRIu32 " count=%" PRIu32 " total=%" PRIu32
+           " key=0x%08" PRIx32 " host_pc=0x%08" PRIx32
+           " guest_pc=0x%08" PRIx32 " guest_cpsr=0x%08" PRIx32
+           " thumb=%u halt=%" PRIu32 " irq=%" PRIu32 "\n",
+           kind, g_pc_sampler_report_count, printed, best->count, total,
+           best->key, best->repr_host_pc, best->repr_guest_pc,
+           best->repr_guest_cpsr,
+           (best->repr_guest_cpsr & 0x20u) ? 1u : 0u,
+           best->repr_guest_halt, best->repr_irq_seq);
+
+    (void)best_index;
+  }
+
+  if (hist->overflow != 0)
+  {
+    printf("pc_sample top_%s_overflow report=%" PRIu32
+           " buckets=%" PRIu32 " overflow=%" PRIu32 "\n",
+           kind, g_pc_sampler_report_count, hist->used, hist->overflow);
+  }
+}
+
+static void print_pc_sampler_histograms(
+  const gpsp_pc_sampler_report_stats_t *stats)
+{
+  print_pc_sampler_hist("host_active", &stats->host_active, stats->active);
+  print_pc_sampler_hist("guest_active", &stats->guest_active, stats->active);
+  print_pc_sampler_hist("host_halt", &stats->host_halt, stats->halted);
+}
+
+static void pc_sampler_drain_samples(bool print_report)
+{
+  uint32_t read_index = g_pc_sampler_read_index;
+  uint32_t write_index = gpsp_pc_sampler_write_index;
+  uint32_t pending = write_index - read_index;
+  uint32_t dropped = 0;
+  gpsp_pc_sampler_report_stats_t stats;
+
+  memset(&stats, 0, sizeof(stats));
+
+  if (pending > GPSP_PC_SAMPLER_RING_SIZE)
+  {
+    dropped = pending - GPSP_PC_SAMPLER_RING_SIZE;
+    read_index = write_index - GPSP_PC_SAMPLER_RING_SIZE;
+  }
+
+  while (read_index != write_index)
+  {
+    gpsp_pc_sampler_sample_t sample;
+    pc_sampler_copy_sample(read_index, &sample);
+#if GPSP_PC_SAMPLER_VERBOSE
+    print_pc_sample(&sample, dropped);
+#endif
+    pc_sampler_stats_add(&stats, &sample);
+    dropped = 0;
+    read_index++;
+  }
+
+  g_pc_sampler_read_index = read_index;
+
+  if (print_report)
+  {
+    print_pc_sampler_report(g_pc_sampler_read_index, write_index, pending,
+                            dropped, &stats);
+    print_pc_sampler_histograms(&stats);
+  }
+
+  fflush(stdout);
+}
+
+static void pc_sampler_task(void *arg)
+{
+  (void)arg;
+
+  while (gpsp_pc_sampler_enabled ||
+         g_pc_sampler_read_index != gpsp_pc_sampler_write_index)
+  {
+    TickType_t ticks = pdMS_TO_TICKS(GPSP_PC_SAMPLER_REPORT_MS);
+    if (ticks == 0)
+      ticks = 1;
+
+    vTaskDelay(ticks);
+    pc_sampler_drain_samples(true);
+  }
+
+  g_pc_sampler_task_handle = NULL;
+  vTaskDelete(NULL);
+}
+
+static TickType_t pc_sampler_report_period_ticks(void)
+{
+  TickType_t ticks = pdMS_TO_TICKS(GPSP_PC_SAMPLER_REPORT_MS);
+
+  if (ticks == 0)
+    ticks = 1;
+
+  return ticks;
+}
+
+static void pc_sampler_maybe_report_from_status_task(void)
+{
+  TickType_t now;
+
+  if (!gpsp_pc_sampler_enabled &&
+      g_pc_sampler_read_index == gpsp_pc_sampler_write_index)
+  {
+    return;
+  }
+
+  now = xTaskGetTickCount();
+  if (g_pc_sampler_next_report_tick == 0 ||
+      (int32_t)(now - g_pc_sampler_next_report_tick) >= 0)
+  {
+    g_pc_sampler_next_report_tick = now + pc_sampler_report_period_ticks();
+    pc_sampler_drain_samples(true);
+  }
+}
+
+static void start_pc_sampler_task(void)
+{
+  esp_err_t err;
+  uint32_t cpu_hz;
+  uint32_t min_cycles;
+  uint32_t max_cycles;
+  uint32_t initial_delta;
+
+  if (run_mode_is_debug() || g_pc_sampler_task_handle)
+    return;
+
+  if (g_pc_sampler_intr_handle)
+    return;
+
+  pc_sampler_configure_timing(&cpu_hz, &min_cycles, &max_cycles);
+  gpsp_pc_sampler_enabled = 0;
+  gpsp_pc_sampler_write_index = 0;
+  gpsp_pc_sampler_irq_count = 0;
+  gpsp_pc_sampler_rng_state = esp_random();
+  if (gpsp_pc_sampler_rng_state == 0)
+    gpsp_pc_sampler_rng_state = 0x6d2b79f5u;
+  g_pc_sampler_read_index = 0;
+  g_pc_sampler_last_report_irq_count = 0;
+  g_pc_sampler_report_count = 0;
+  g_pc_sampler_next_report_tick =
+    xTaskGetTickCount() + pc_sampler_report_period_ticks();
+
+  err = esp_intr_alloc(ETS_INTERNAL_TIMER2_INTR_SOURCE,
+                       ESP_INTR_FLAG_LEVEL5 | ESP_INTR_FLAG_IRAM |
+                         ESP_INTR_FLAG_INTRDISABLED,
+                       NULL, NULL, &g_pc_sampler_intr_handle);
+  if (err != ESP_OK)
+  {
+    ESP_LOGE(TAG, "reserve raw PC sampler interrupt failed: %s",
+             esp_err_to_name(err));
+    return;
+  }
+
+  if (!run_mode_is_play())
+  {
+    g_pc_sampler_task_handle =
+      xTaskCreateStatic(pc_sampler_task, "gpsp_pc_sample",
+                        GPSP_PC_SAMPLER_STACK_WORDS, NULL,
+                        tskIDLE_PRIORITY + 2,
+                        g_pc_sampler_task_stack,
+                        &g_pc_sampler_task_buffer);
+
+    if (!g_pc_sampler_task_handle)
+    {
+      esp_intr_free(g_pc_sampler_intr_handle);
+      g_pc_sampler_intr_handle = NULL;
+      ESP_LOGE(TAG, "create PC sampler task failed");
+      return;
+    }
+  }
+
+  gpsp_pc_sampler_enabled = 1;
+  initial_delta = min_cycles;
+  if (gpsp_pc_sampler_span_cycles != 0)
+    initial_delta += esp_random() % (gpsp_pc_sampler_span_cycles + 1u);
+  XTHAL_SET_CCOMPARE(2, esp_cpu_get_cycle_count() + initial_delta);
+
+  err = esp_intr_enable(g_pc_sampler_intr_handle);
+  if (err != ESP_OK)
+  {
+    gpsp_pc_sampler_enabled = 0;
+    esp_intr_free(g_pc_sampler_intr_handle);
+    g_pc_sampler_intr_handle = NULL;
+    ESP_LOGE(TAG, "enable raw PC sampler interrupt failed: %s",
+             esp_err_to_name(err));
+    return;
+  }
+
+  printf("pc_sample enabled source=raw_timer2_l5 cpu_hz=%" PRIu32
+         " min_ms=%u max_ms=%u min_cycles=%" PRIu32
+         " max_cycles=%" PRIu32 " report_ms=%u verbose=%u"
+         " report_via=%s\n",
+         cpu_hz,
+         (unsigned)GPSP_PC_SAMPLER_MIN_MS,
+         (unsigned)GPSP_PC_SAMPLER_MAX_MS,
+         min_cycles, max_cycles,
+         (unsigned)GPSP_PC_SAMPLER_REPORT_MS,
+         (unsigned)GPSP_PC_SAMPLER_VERBOSE,
+         run_mode_is_play() ? "play_status" : "sampler_task");
+  fflush(stdout);
+}
+
+static void stop_pc_sampler_task(void)
+{
+  gpsp_pc_sampler_enabled = 0;
+  if (g_pc_sampler_intr_handle)
+  {
+    esp_intr_disable(g_pc_sampler_intr_handle);
+    XTHAL_SET_CCOMPARE(2, esp_cpu_get_cycle_count() + 0x40000000u);
+    esp_intr_free(g_pc_sampler_intr_handle);
+    g_pc_sampler_intr_handle = NULL;
+  }
+  pc_sampler_drain_samples(true);
+}
+#else
+static void pc_sampler_maybe_report_from_status_task(void)
+{
+}
+
+static void start_pc_sampler_task(void)
+{
+}
+
+static void stop_pc_sampler_task(void)
+{
+}
+#endif
 
 static void start_play_status_task(void)
 {
@@ -1405,6 +1986,8 @@ static int run_test(void)
     return 0;
   }
 
+  start_pc_sampler_task();
+
   if (run_mode_is_play())
   {
     g_play_stage = "ready";
@@ -1418,6 +2001,7 @@ static int run_test(void)
   if (!system_ram || system_ram_size < sizeof(dhry_result_t))
   {
     ESP_LOGE(TAG, "system RAM mapping unavailable");
+    stop_pc_sampler_task();
     retro_unload_game();
     retro_deinit();
     unmap_gamepak_partition();
@@ -1432,6 +2016,8 @@ static int run_test(void)
     if (run_mode_is_dhrystone() && result->magic == DHRY_RESULT_MAGIC)
       break;
   }
+
+  stop_pc_sampler_task();
 
   printf("backend=%s mode=%s frames=%u video_frames=%u fb_hash=0x%08" PRIx32
          " magic=0x%08" PRIx32
