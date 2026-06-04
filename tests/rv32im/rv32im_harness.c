@@ -525,6 +525,7 @@ typedef unsigned int usize;
 #define RUNTIME_SWI_TARGET_CYCLES 5u
 #define RUNTIME_SWI_TOTAL_CYCLES \
   (RUNTIME_SWI_CYCLES + RUNTIME_SWI_TARGET_CYCLES)
+#define RUNTIME_SWI_EXTRA_CYCLES 5u
 #define RUNTIME_SWI_OPCODE_5 0xef050000u
 #define RUNTIME_SWI_INITIAL_CPSR 0xa000001fu
 #define RUNTIME_SWI_CPSR_VALUE \
@@ -6291,6 +6292,30 @@ static void run_runtime_reference_workload(const struct harness_state *base,
 
   for (i = 0; i < REG_MAX; i++)
     values[i] = 0;
+  values[REG_LR] = RUNTIME_SWI_LINK_PC;
+  values[REG_PC] = RUNTIME_SWI_TARGET_PC;
+  values[REG_CPSR] = RUNTIME_SWI_CPSR_VALUE;
+  values[CPU_MODE] = MODE_SUPERVISOR;
+  values[CPU_HALT_STATE] = CPU_ACTIVE;
+  values[REG_BUS_VALUE] = RUNTIME_SWI_BUS_VALUE;
+  reg_hash = runtime_update_reg_hash(reg_hash, values);
+  reg_hash = runtime_update_supervisor_state_hash(
+    reg_hash, RUNTIME_SWI_LINK_PC, RUNTIME_SWI_INITIAL_CPSR);
+  mem_hash = runtime_update_memory_hash(mem_hash,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        runtime_reference_sticky_hash());
+  scheduler_hash = runtime_update_scheduler_hash(
+    scheduler_hash,
+    2, RUNTIME_SWI_TARGET_PC, 0,
+    0, RUNTIME_NO_UPDATE_CYCLES,
+    1, RUNTIME_SWI_EXTRA_CYCLES,
+    RUNTIME_SWI_TARGET_PC,
+    0, 0);
+
+  for (i = 0; i < REG_MAX; i++)
+    values[i] = 0;
   values[1] = branch_r1;
   values[2] = branch_r2;
   values[9] = branch_r1 + branch_r2;
@@ -6444,8 +6469,8 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   snapshot->reg_hash = reg_hash;
   snapshot->mem_hash = mem_hash;
   snapshot->scheduler_hash = scheduler_hash;
-  snapshot->blocks = 91;
-  snapshot->fallbacks = 10;
+  snapshot->blocks = 92;
+  snapshot->fallbacks = 11;
   snapshot->native_data_proc = 63;
   snapshot->native_branch = 5;
   snapshot->native_load = 23;
@@ -6461,6 +6486,7 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   u8 *saved_branch_target_entry;
   u8 *saved_bx_target_entry;
   u8 *saved_bl_target_entry;
+  u8 *saved_swi_target_entry;
   u32 reg_hash = 2166136261u;
   u32 mem_hash = 2166136261u;
   u32 scheduler_hash = 2166136261u;
@@ -7274,6 +7300,26 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   reg[2] = g_runtime_fixture_branch_r2;
   execute_arm_translate_internal(RUNTIME_BL_TOTAL_CYCLES, &reg[0]);
   reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+  mem_hash = runtime_update_current_memory_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+
+  reset_runtime_fixture_state(RUNTIME_SWI_START_PC);
+  saved_swi_target_entry = g_runtime_swi_target_entry;
+  g_runtime_swi_target_entry = (u8 *)0;
+  reg[REG_CPSR] = RUNTIME_SWI_INITIAL_CPSR;
+  reg[CPU_MODE] = 0x1fu;
+  reg[REG_LR] = 0x12345678u;
+  reg_mode[MODE_SUPERVISOR & 0xfu][6] = 0xa5a5a5a5u;
+  spsr[MODE_SUPERVISOR & 0xfu] = 0x11111111u;
+  execute_arm_translate_internal(RUNTIME_SWI_CYCLES +
+                                 RUNTIME_SWI_EXTRA_CYCLES,
+                                 &reg[0]);
+  g_runtime_swi_target_entry = saved_swi_target_entry;
+  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+  reg_hash = runtime_update_supervisor_state_hash(
+    reg_hash,
+    reg_mode[MODE_SUPERVISOR & 0xfu][6],
+    spsr[MODE_SUPERVISOR & 0xfu]);
   mem_hash = runtime_update_current_memory_hash(mem_hash);
   scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
 
@@ -8276,7 +8322,7 @@ static void command_compare(void)
 
   if (!ensure_runtime_fixture(&runtime_reason))
   {
-    put_raw("result=FAIL command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_msr_msrctrl_load_store_storebyte_storebytealert_storehalt_pcmem_loadpc_pcstore_regoff_regstore_regwb_halfreg_halfpc_halfwb_halfhalt_blockmem_blockalert_blockhalt_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_swpalert_swphalt_swpb_alert_branchremain_branch_patch_blremain_bl_bxremain_bx_bxthumbremain_swi_cond_pcwrite_spsr_idle_thumb_fallback");
+    put_raw("result=FAIL command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_msr_msrctrl_load_store_storebyte_storebytealert_storehalt_pcmem_loadpc_pcstore_regoff_regstore_regwb_halfreg_halfpc_halfwb_halfhalt_blockmem_blockalert_blockhalt_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_swpalert_swphalt_swpb_alert_branchremain_branch_patch_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_cond_pcwrite_spsr_idle_thumb_fallback");
     put_raw(" harness_mode=");
     put_raw(RUNTIME_FIXTURE_MODE);
     put_raw(" frame_mode=synthetic mem_mode=runtime_stickybits reason=");
@@ -8302,7 +8348,7 @@ static void command_compare(void)
       rv32im.native_store != interp.native_store ||
       rv32im.native_psr != interp.native_psr)
   {
-    put_raw("result=FAIL command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_msr_msrctrl_load_store_storebyte_storebytealert_storehalt_pcmem_loadpc_pcstore_regoff_regstore_regwb_halfreg_halfpc_halfwb_halfhalt_blockmem_blockalert_blockhalt_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_swpalert_swphalt_swpb_alert_branchremain_branch_patch_blremain_bl_bxremain_bx_bxthumbremain_swi_cond_pcwrite_spsr_idle_thumb_fallback interp_frame_hash=");
+    put_raw("result=FAIL command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_msr_msrctrl_load_store_storebyte_storebytealert_storehalt_pcmem_loadpc_pcstore_regoff_regstore_regwb_halfreg_halfpc_halfwb_halfhalt_blockmem_blockalert_blockhalt_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_swpalert_swphalt_swpb_alert_branchremain_branch_patch_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_cond_pcwrite_spsr_idle_thumb_fallback interp_frame_hash=");
     put_u32_hex(interp.frame_hash);
     put_raw(" rv32im_frame_hash=");
     put_u32_hex(rv32im.frame_hash);
@@ -8341,7 +8387,7 @@ static void command_compare(void)
     return;
   }
 
-  put_raw("result=PASS command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_msr_msrctrl_load_store_storebyte_storebytealert_storehalt_pcmem_loadpc_pcstore_regoff_regstore_regwb_halfreg_halfpc_halfwb_halfhalt_blockmem_blockalert_blockhalt_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_swpalert_swphalt_swpb_alert_branchremain_branch_patch_blremain_bl_bxremain_bx_bxthumbremain_swi_cond_pcwrite_spsr_idle_thumb_fallback interp_frame_hash=");
+  put_raw("result=PASS command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_msr_msrctrl_load_store_storebyte_storebytealert_storehalt_pcmem_loadpc_pcstore_regoff_regstore_regwb_halfreg_halfpc_halfwb_halfhalt_blockmem_blockalert_blockhalt_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_swpalert_swphalt_swpb_alert_branchremain_branch_patch_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_cond_pcwrite_spsr_idle_thumb_fallback interp_frame_hash=");
   put_u32_hex(interp.frame_hash);
   put_raw(" rv32im_frame_hash=");
   put_u32_hex(rv32im.frame_hash);
