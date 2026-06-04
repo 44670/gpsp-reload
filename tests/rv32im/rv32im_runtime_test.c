@@ -15,25 +15,28 @@ typedef unsigned int usize;
 #define PROT_EXEC 4
 #define MAP_PRIVATE 2
 #define MAP_ANONYMOUS 32
-#define EXEC_MAP_BYTES 12288u
+#define EXEC_MAP_BYTES 16384u
 
 #define BLOCK_START_PC 0x08000000u
 #define BLOCK_END_PC 0x08000004u
 #define BLOCK_CYCLES 7u
 #define ADD_R2_R0_R1 0xe0802001u
 #define DATA_EXT_START_PC 0x08000040u
-#define DATA_EXT_END_PC (DATA_EXT_START_PC + 24u)
+#define DATA_EXT_END_PC (DATA_EXT_START_PC + 28u)
 #define DATA_EXT_BIC_CYCLES 5u
 #define DATA_EXT_MVN_CYCLES 6u
+#define DATA_EXT_RSB_CYCLES 3u
 #define DATA_EXT_LSL_CYCLES 4u
 #define DATA_EXT_LSR_CYCLES 5u
 #define DATA_EXT_ASR_CYCLES 6u
 #define DATA_EXT_ROR_CYCLES 7u
 #define DATA_EXT_TOTAL_CYCLES \
-  (DATA_EXT_BIC_CYCLES + DATA_EXT_MVN_CYCLES + DATA_EXT_LSL_CYCLES + \
-   DATA_EXT_LSR_CYCLES + DATA_EXT_ASR_CYCLES + DATA_EXT_ROR_CYCLES)
+  (DATA_EXT_BIC_CYCLES + DATA_EXT_MVN_CYCLES + DATA_EXT_RSB_CYCLES + \
+   DATA_EXT_LSL_CYCLES + DATA_EXT_LSR_CYCLES + DATA_EXT_ASR_CYCLES + \
+   DATA_EXT_ROR_CYCLES)
 #define BIC_R9_R0_R1 0xe1c09001u
 #define MVN_R10_0XFF 0xe3e0a0ffu
+#define RSB_R7_R0_R1_LSR4 0xe0607221u
 #define ADD_R11_R0_R1_LSL2 0xe080b101u
 #define ORR_R12_R0_R1_LSR4 0xe180c221u
 #define MOV_R14_R1_ASR0 0xe1a0e041u
@@ -41,6 +44,7 @@ typedef unsigned int usize;
 #define EOR_R8_R0_R1_RRX 0xe0208061u
 #define DATA_EXT_R0_VALUE 0x01010101u
 #define DATA_EXT_R1_VALUE 0x80000010u
+#define DATA_EXT_R7_VALUE 0x06feff00u
 #define DATA_EXT_R8_VALUE 0x11810101u
 #define DATA_EXT_R9_VALUE \
   (DATA_EXT_R0_VALUE & ~DATA_EXT_R1_VALUE)
@@ -243,7 +247,7 @@ typedef unsigned int usize;
 #define SHIFTED_REG_OFFSET_BLOCK_OFFSET 7168u
 #define WRITEBACK_STORE_BLOCK_OFFSET 7680u
 #define WRITEBACK_LOAD_BLOCK_OFFSET 8192u
-#define DATA_EXT_BLOCK_OFFSET 8704u
+#define DATA_EXT_BLOCK_OFFSET 12288u
 #define REG_OFFSET_WRITEBACK_STORE_BLOCK_OFFSET 10240u
 #define REG_OFFSET_WRITEBACK_LOAD_BLOCK_OFFSET 10752u
 #define FRAME_COMPLETE 0x80000000u
@@ -535,6 +539,14 @@ static u32 build_data_ext_block(u8 *code)
                                        DATA_EXT_MVN_CYCLES))
   {
     put_raw("result=FAIL command=runtime reason=mvn_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       RSB_R7_R0_R1_LSR4,
+                                       DATA_EXT_RSB_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=rsb_emit_rejected\n");
     sys_exit(1);
   }
 
@@ -1218,6 +1230,8 @@ static void run_data_ext_remaining_cycles_case(void)
   execute_arm_translate_internal(DATA_EXT_TOTAL_CYCLES + extra_cycles,
                                  &reg[0]);
 
+  if (reg[7] != DATA_EXT_R7_VALUE)
+    fail_u32("data_ext_remaining", "r7", reg[7], DATA_EXT_R7_VALUE);
   if (reg[8] != DATA_EXT_R8_VALUE)
     fail_u32("data_ext_remaining", "r8", reg[8], DATA_EXT_R8_VALUE);
   if (reg[9] != DATA_EXT_R9_VALUE)

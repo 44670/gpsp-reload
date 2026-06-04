@@ -50,6 +50,7 @@ static const u32 fixture_ops[] =
   0xe0878002u, /* add r8, r7, r2 */
   0xe1c09001u, /* bic r9, r0, r1 */
   0xe3e0a0ffu, /* mvn r10, #0xff */
+  0xe060b001u, /* rsb r11, r0, r1 */
 };
 
 static const u32 load_store_ops[] =
@@ -323,6 +324,9 @@ static void run_reference_op(struct arm_fixture_state *state, u32 opcode)
     case 0x2:
       result = lhs - rhs;
       break;
+    case 0x3:
+      result = rhs - lhs;
+      break;
     case 0x4:
       result = lhs + rhs;
       break;
@@ -504,6 +508,9 @@ static void emit_arm_data_proc_op(u8 **code_ptr, u32 opcode)
       break;
     case 0x2:
       riscv_emit_sub(riscv_reg_t2, riscv_reg_t0, riscv_reg_t1);
+      break;
+    case 0x3:
+      riscv_emit_sub(riscv_reg_t2, riscv_reg_t1, riscv_reg_t0);
       break;
     case 0x4:
       riscv_emit_add(riscv_reg_t2, riscv_reg_t0, riscv_reg_t1);

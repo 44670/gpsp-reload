@@ -376,7 +376,7 @@ bool riscv_emit_native_arm_data_proc(u8 **translation_ptr_ref,
     return false;
 
   if (op != 0x0 && op != 0x1 && op != 0x2 &&
-      op != 0x4 && op != 0xc && op != 0xd &&
+      op != 0x3 && op != 0x4 && op != 0xc && op != 0xd &&
       op != 0xe && op != 0xf)
   {
     return false;
@@ -401,6 +401,9 @@ bool riscv_emit_native_arm_data_proc(u8 **translation_ptr_ref,
         break;
       case 0x2:
         riscv_emit_sub(riscv_reg_t2, riscv_reg_t0, riscv_reg_t1);
+        break;
+      case 0x3:
+        riscv_emit_sub(riscv_reg_t2, riscv_reg_t1, riscv_reg_t0);
         break;
       case 0x4:
         riscv_emit_add(riscv_reg_t2, riscv_reg_t0, riscv_reg_t1);
