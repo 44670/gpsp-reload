@@ -2538,6 +2538,142 @@ static u32 build_reg_offset_writeback_load_block(u8 *code)
   return code_bytes;
 }
 
+static u32 opcode_with_condition(u32 opcode, u32 condition)
+{
+  return (opcode & 0x0fffffffu) | (condition << 28);
+}
+
+static void expect_conditional_arm_ops_rejected(u8 *code)
+{
+  const u32 condition_ne = 1u;
+  u8 *translation_ptr;
+  riscv_jit_block_meta *meta;
+  u32 opcode;
+
+  opcode = opcode_with_condition(ADD_R2_R0_R1, condition_ne);
+  translation_ptr = code;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  if (riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                      opcode, BLOCK_CYCLES))
+  {
+    fail_u32("conditional_reject", "data_proc", opcode, 0);
+  }
+
+  opcode = opcode_with_condition(CMP_R0_0X20, condition_ne);
+  translation_ptr = code;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  if (riscv_emit_native_arm_data_proc_test(&translation_ptr, meta,
+                                           opcode, BLOCK_CYCLES))
+  {
+    fail_u32("conditional_reject", "data_proc_test", opcode, 0);
+  }
+
+  opcode = opcode_with_condition(MULTIPLY_MUL_R4_R1_R2, condition_ne);
+  translation_ptr = code;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  if (riscv_emit_native_arm_multiply(&translation_ptr, meta,
+                                     opcode, MULTIPLY_MUL_CYCLES))
+  {
+    fail_u32("conditional_reject", "multiply", opcode, 0);
+  }
+
+  opcode = opcode_with_condition(MULTIPLY_LONG_UMULL_R8_R9_R1_R2,
+                                 condition_ne);
+  translation_ptr = code;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  if (riscv_emit_native_arm_multiply_long(&translation_ptr, meta,
+                                          opcode,
+                                          MULTIPLY_LONG_UMULL_CYCLES))
+  {
+    fail_u32("conditional_reject", "multiply_long", opcode, 0);
+  }
+
+  opcode = opcode_with_condition(MRS_R6_CPSR, condition_ne);
+  translation_ptr = code;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  if (riscv_emit_native_arm_psr(&translation_ptr, meta,
+                                opcode, PSR_MRS_CPSR_CYCLES))
+  {
+    fail_u32("conditional_reject", "psr", opcode, 0);
+  }
+
+  opcode = opcode_with_condition(BRANCH_B_PLUS_12, condition_ne);
+  translation_ptr = code;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  if (riscv_emit_native_arm_b(&translation_ptr, meta,
+                              opcode, BRANCH_START_PC, BRANCH_CYCLES))
+  {
+    fail_u32("conditional_reject", "branch", opcode, 0);
+  }
+
+  opcode = opcode_with_condition(BL_PLUS_16, condition_ne);
+  translation_ptr = code;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  if (riscv_emit_native_arm_bl(&translation_ptr, meta,
+                               opcode, BL_START_PC, BL_CYCLES))
+  {
+    fail_u32("conditional_reject", "bl", opcode, 0);
+  }
+
+  opcode = opcode_with_condition(BX_R7, condition_ne);
+  translation_ptr = code;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  if (riscv_emit_native_arm_bx(&translation_ptr, meta,
+                               opcode, BX_START_PC, BX_CYCLES))
+  {
+    fail_u32("conditional_reject", "bx", opcode, 0);
+  }
+
+  opcode = opcode_with_condition(SWI_OPCODE_5, condition_ne);
+  translation_ptr = code;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  if (riscv_emit_native_arm_swi(&translation_ptr, meta,
+                                opcode, SWI_START_PC, SWI_CYCLES))
+  {
+    fail_u32("conditional_reject", "swi", opcode, 0);
+  }
+
+  opcode = opcode_with_condition(SWP_R4_R5_R3, condition_ne);
+  translation_ptr = code;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  if (riscv_emit_native_arm_swap(&translation_ptr, meta,
+                                 opcode, SWP_WORD_START_PC,
+                                 SWP_WORD_BASE_CYCLES))
+  {
+    fail_u32("conditional_reject", "swap", opcode, 0);
+  }
+
+  opcode = opcode_with_condition(STMIA_R3_WB_R0_R2_R5, condition_ne);
+  translation_ptr = code;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  if (riscv_emit_native_arm_block_memory(&translation_ptr, meta,
+                                         opcode, BLOCK_MEM_STM_START_PC,
+                                         BLOCK_MEM_STM_CYCLES))
+  {
+    fail_u32("conditional_reject", "block_memory", opcode, 0);
+  }
+
+  opcode = opcode_with_condition(LOAD_LDR_R4_R3_0X24, condition_ne);
+  translation_ptr = code;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  if (riscv_emit_native_arm_access_memory(&translation_ptr, meta,
+                                          opcode, LOAD_START_PC,
+                                          LOAD_WORD_BASE_CYCLES))
+  {
+    fail_u32("conditional_reject", "memory", opcode, 0);
+  }
+
+  opcode = opcode_with_condition(HALF_LDRH_R4_R3_0X24, condition_ne);
+  translation_ptr = code;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  if (riscv_emit_native_arm_access_memory(&translation_ptr, meta,
+                                          opcode, HALF_LOAD_START_PC,
+                                          HALF_LDRH_BASE_CYCLES))
+  {
+    fail_u32("conditional_reject", "extra_memory", opcode, 0);
+  }
+}
+
 static void expect_halfword_transfers_rejected(u8 *code)
 {
   static const u32 rejected_opcodes[] =
@@ -6776,6 +6912,7 @@ void _start(void)
   expect_load_pc_unsupported_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_swi_hle_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_swap_pc_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
+  expect_conditional_arm_ops_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   run_cycle_boundary_case();
   run_unsupported_block_fallback_case();
   run_initial_lookup_miss_fallback_case();
