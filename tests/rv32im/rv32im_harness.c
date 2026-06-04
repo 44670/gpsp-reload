@@ -35,7 +35,7 @@ typedef unsigned int usize;
 #define ZLIB_BLOCK_MAX 65535u
 #define ZLIB_BLOCKS ((PNG_RAW_SIZE + ZLIB_BLOCK_MAX - 1) / ZLIB_BLOCK_MAX)
 #define ZLIB_SIZE (2 + PNG_RAW_SIZE + (ZLIB_BLOCKS * 5) + 4)
-#define RUNTIME_EXEC_MAP_BYTES 24064u
+#define RUNTIME_EXEC_MAP_BYTES 24576u
 #define RUNTIME_LOAD_BLOCK_OFFSET 512u
 #define RUNTIME_STORE_BLOCK_OFFSET 1024u
 #define RUNTIME_BRANCH_BLOCK_OFFSET 1536u
@@ -81,6 +81,7 @@ typedef unsigned int usize;
 #define RUNTIME_MULTIPLY_LONG_ACC_BLOCK_OFFSET 22528u
 #define RUNTIME_MULTIPLY_LONG_ACC_FLAG_UMLALS_BLOCK_OFFSET 23040u
 #define RUNTIME_MULTIPLY_LONG_ACC_FLAG_SMLALS_BLOCK_OFFSET 23552u
+#define RUNTIME_CARRY_DATA_BLOCK_OFFSET 24064u
 #define RUNTIME_START_PC 0x08000000u
 #define RUNTIME_END_PC (RUNTIME_START_PC + 4u)
 #define RUNTIME_CYCLES 7u
@@ -96,6 +97,7 @@ typedef unsigned int usize;
 #define RUNTIME_CPSR_LOW_VALUE 0x9fu
 #define RUNTIME_CPSR_CV_LOW_VALUE \
   (0x30000000u | RUNTIME_CPSR_LOW_VALUE)
+#define RUNTIME_CPSR_C_BIT 0x20000000u
 #define RUNTIME_MULTIPLY_LONG_START_PC 0x08001160u
 #define RUNTIME_MULTIPLY_LONG_END_PC \
   (RUNTIME_MULTIPLY_LONG_START_PC + 8u)
@@ -170,6 +172,22 @@ typedef unsigned int usize;
 #define RUNTIME_MULTIPLY_LONG_ACC_FLAG_SMLALS_OLD_HI_VALUE 0x00000000u
 #define RUNTIME_MULTIPLY_LONG_ACC_FLAG_SMLALS_CPSR_VALUE \
   (0x80000000u | RUNTIME_CPSR_CV_LOW_VALUE)
+#define RUNTIME_CARRY_DATA_START_PC 0x08001220u
+#define RUNTIME_CARRY_DATA_END_PC \
+  (RUNTIME_CARRY_DATA_START_PC + 12u)
+#define RUNTIME_CARRY_DATA_ADC_CYCLES 4u
+#define RUNTIME_CARRY_DATA_SBC_CYCLES 5u
+#define RUNTIME_CARRY_DATA_RSC_CYCLES 6u
+#define RUNTIME_CARRY_DATA_TOTAL_CYCLES \
+  (RUNTIME_CARRY_DATA_ADC_CYCLES + RUNTIME_CARRY_DATA_SBC_CYCLES + \
+   RUNTIME_CARRY_DATA_RSC_CYCLES)
+#define RUNTIME_ADC_R6_R0_0X20 0xe2a06020u
+#define RUNTIME_SBC_R7_R0_0X20 0xe2c07020u
+#define RUNTIME_RSC_R8_R0_0X20 0xe2e08020u
+#define RUNTIME_CARRY_DATA_R0_VALUE 0x00000100u
+#define RUNTIME_CARRY_DATA_R6_VALUE 0x00000121u
+#define RUNTIME_CARRY_DATA_R7_VALUE 0x000000e0u
+#define RUNTIME_CARRY_DATA_R8_VALUE 0xffffff20u
 #define RUNTIME_FLAG_ADDS_START_PC 0x08000c00u
 #define RUNTIME_FLAG_ADDS_END_PC (RUNTIME_FLAG_ADDS_START_PC + 4u)
 #define RUNTIME_FLAG_ADDS_CYCLES 5u
@@ -619,6 +637,7 @@ static u8 *g_runtime_multiply_long_flag_smulls_entry;
 static u8 *g_runtime_multiply_long_acc_entry;
 static u8 *g_runtime_multiply_long_acc_flag_umlals_entry;
 static u8 *g_runtime_multiply_long_acc_flag_smlals_entry;
+static u8 *g_runtime_carry_data_entry;
 static u8 *g_runtime_flag_adds_entry;
 static u8 *g_runtime_flag_cmp_entry;
 static u8 *g_runtime_psr_entry;
@@ -718,6 +737,7 @@ static void clear_runtime_fixture_entries(void)
   g_runtime_multiply_long_acc_entry = (u8 *)0;
   g_runtime_multiply_long_acc_flag_umlals_entry = (u8 *)0;
   g_runtime_multiply_long_acc_flag_smlals_entry = (u8 *)0;
+  g_runtime_carry_data_entry = (u8 *)0;
   g_runtime_flag_adds_entry = (u8 *)0;
   g_runtime_flag_cmp_entry = (u8 *)0;
   g_runtime_psr_entry = (u8 *)0;
@@ -1071,6 +1091,7 @@ static int build_runtime_fixture_block(const char **reason)
   u32 multiply_long_acc_code_bytes;
   u32 multiply_long_acc_flag_umlals_code_bytes;
   u32 multiply_long_acc_flag_smlals_code_bytes;
+  u32 carry_data_code_bytes;
   u32 flag_adds_code_bytes;
   u32 flag_cmp_code_bytes;
   u32 psr_code_bytes;
@@ -1845,6 +1866,44 @@ static int build_runtime_fixture_block(const char **reason)
           (g_runtime_code +
            RUNTIME_MULTIPLY_LONG_ACC_FLAG_SMLALS_BLOCK_OFFSET));
 
+  translation_ptr = g_runtime_code + RUNTIME_CARRY_DATA_BLOCK_OFFSET;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_runtime_carry_data_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       RUNTIME_ADC_R6_R0_0X20,
+                                       RUNTIME_CARRY_DATA_ADC_CYCLES))
+  {
+    *reason = "runtime_carry_data_adc_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       RUNTIME_SBC_R7_R0_0X20,
+                                       RUNTIME_CARRY_DATA_SBC_CYCLES))
+  {
+    *reason = "runtime_carry_data_sbc_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       RUNTIME_RSC_R8_R0_0X20,
+                                       RUNTIME_CARRY_DATA_RSC_CYCLES))
+  {
+    *reason = "runtime_carry_data_rsc_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            RUNTIME_CARRY_DATA_START_PC,
+                            RUNTIME_CARRY_DATA_END_PC, false);
+  carry_data_code_bytes =
+    (u32)(translation_ptr -
+          (g_runtime_code + RUNTIME_CARRY_DATA_BLOCK_OFFSET));
+
   translation_ptr = g_runtime_code + RUNTIME_FLAG_ADDS_BLOCK_OFFSET;
   riscv_emit_block_prologue(&translation_ptr, &meta);
   g_runtime_flag_adds_entry = ((u8 *)meta) + block_prologue_size;
@@ -2573,6 +2632,7 @@ static int build_runtime_fixture_block(const char **reason)
     multiply_long_flag_smulls_code_bytes + multiply_long_acc_code_bytes +
     multiply_long_acc_flag_umlals_code_bytes +
     multiply_long_acc_flag_smlals_code_bytes +
+    carry_data_code_bytes +
     flag_adds_code_bytes + flag_cmp_code_bytes +
     psr_code_bytes + msr_cpsr_flags_code_bytes + msr_spsr_code_bytes +
     half_load_code_bytes + half_store_code_bytes +
@@ -2586,8 +2646,8 @@ static int build_runtime_fixture_block(const char **reason)
     shifted_reg_offset_code_bytes + reg_offset_rrx_load_code_bytes;
   flush_ret = syscall3(SYS_RISCV_FLUSH_ICACHE, (long)g_runtime_code,
                        (long)(g_runtime_code +
-                              RUNTIME_MULTIPLY_LONG_ACC_FLAG_SMLALS_BLOCK_OFFSET +
-                              multiply_long_acc_flag_smlals_code_bytes), 0);
+                              RUNTIME_CARRY_DATA_BLOCK_OFFSET +
+                              carry_data_code_bytes), 0);
   if (flush_ret != 0)
   {
     *reason = "runtime_icache_flush_failed";
@@ -2614,6 +2674,7 @@ static int ensure_runtime_fixture(const char **reason)
       g_runtime_multiply_long_acc_entry &&
       g_runtime_multiply_long_acc_flag_umlals_entry &&
       g_runtime_multiply_long_acc_flag_smlals_entry &&
+      g_runtime_carry_data_entry &&
       g_runtime_flag_adds_entry && g_runtime_flag_cmp_entry &&
       g_runtime_psr_entry &&
       g_runtime_msr_cpsr_flags_entry && g_runtime_msr_spsr_entry &&
@@ -3118,6 +3179,28 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   scheduler_hash = runtime_update_scheduler_hash(
     scheduler_hash,
     1, RUNTIME_MULTIPLY_LONG_ACC_FLAG_SMLALS_START_PC, 0,
+    1, 0,
+    0, 0, 0,
+    0, 0);
+
+  for (i = 0; i < REG_MAX; i++)
+    values[i] = 0;
+  values[0] = RUNTIME_CARRY_DATA_R0_VALUE;
+  values[6] = RUNTIME_CARRY_DATA_R6_VALUE;
+  values[7] = RUNTIME_CARRY_DATA_R7_VALUE;
+  values[8] = RUNTIME_CARRY_DATA_R8_VALUE;
+  values[REG_PC] = RUNTIME_CARRY_DATA_END_PC;
+  values[REG_CPSR] = RUNTIME_CPSR_C_BIT;
+  values[CPU_HALT_STATE] = CPU_ACTIVE;
+  reg_hash = runtime_update_reg_hash(reg_hash, values);
+  mem_hash = runtime_update_memory_hash(mem_hash,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        runtime_reference_sticky_hash());
+  scheduler_hash = runtime_update_scheduler_hash(
+    scheduler_hash,
+    1, RUNTIME_CARRY_DATA_START_PC, 0,
     1, 0,
     0, 0, 0,
     0, 0);
@@ -4063,9 +4146,9 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   snapshot->reg_hash = reg_hash;
   snapshot->mem_hash = mem_hash;
   snapshot->scheduler_hash = scheduler_hash;
-  snapshot->blocks = 49;
+  snapshot->blocks = 50;
   snapshot->fallbacks = 2;
-  snapshot->native_data_proc = 29;
+  snapshot->native_data_proc = 32;
   snapshot->native_branch = 5;
   snapshot->native_load = 16;
   snapshot->native_store = 7;
@@ -4177,6 +4260,15 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   reg[REG_CPSR] = RUNTIME_CPSR_CV_LOW_VALUE;
   execute_arm_translate_internal(
     RUNTIME_MULTIPLY_LONG_ACC_FLAG_SMLALS_CYCLES, &reg[0]);
+  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+  mem_hash = runtime_update_current_memory_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+
+  reset_runtime_fixture_state(RUNTIME_CARRY_DATA_START_PC);
+  reg[0] = RUNTIME_CARRY_DATA_R0_VALUE;
+  reg[REG_CPSR] = RUNTIME_CPSR_C_BIT;
+  execute_arm_translate_internal(RUNTIME_CARRY_DATA_TOTAL_CYCLES,
+                                 &reg[0]);
   reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
   mem_hash = runtime_update_current_memory_hash(mem_hash);
   scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
@@ -4735,6 +4827,8 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
   if (g_runtime_multiply_long_acc_flag_smlals_entry &&
       pc == RUNTIME_MULTIPLY_LONG_ACC_FLAG_SMLALS_START_PC)
     return g_runtime_multiply_long_acc_flag_smlals_entry;
+  if (g_runtime_carry_data_entry && pc == RUNTIME_CARRY_DATA_START_PC)
+    return g_runtime_carry_data_entry;
   if (g_runtime_flag_adds_entry && pc == RUNTIME_FLAG_ADDS_START_PC)
     return g_runtime_flag_adds_entry;
   if (g_runtime_flag_cmp_entry && pc == RUNTIME_FLAG_CMP_START_PC)
@@ -5360,7 +5454,7 @@ static void command_compare(void)
 
   if (!ensure_runtime_fixture(&runtime_reason))
   {
-    put_raw("result=FAIL command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_flags_psr_msr_load_store_regoff_halfreg_blockmem_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_alert_branch_patch_bl_bx_swi_cond_spsr_idle_thumb_fallback");
+    put_raw("result=FAIL command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_flags_psr_msr_load_store_regoff_halfreg_blockmem_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_alert_branch_patch_bl_bx_swi_cond_spsr_idle_thumb_fallback");
     put_raw(" harness_mode=");
     put_raw(RUNTIME_FIXTURE_MODE);
     put_raw(" frame_mode=synthetic mem_mode=runtime_stickybits reason=");
@@ -5386,7 +5480,7 @@ static void command_compare(void)
       rv32im.native_store != interp.native_store ||
       rv32im.native_psr != interp.native_psr)
   {
-    put_raw("result=FAIL command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_flags_psr_msr_load_store_regoff_halfreg_blockmem_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_alert_branch_patch_bl_bx_swi_cond_spsr_idle_thumb_fallback interp_frame_hash=");
+    put_raw("result=FAIL command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_flags_psr_msr_load_store_regoff_halfreg_blockmem_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_alert_branch_patch_bl_bx_swi_cond_spsr_idle_thumb_fallback interp_frame_hash=");
     put_u32_hex(interp.frame_hash);
     put_raw(" rv32im_frame_hash=");
     put_u32_hex(rv32im.frame_hash);
@@ -5425,7 +5519,7 @@ static void command_compare(void)
     return;
   }
 
-  put_raw("result=PASS command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_flags_psr_msr_load_store_regoff_halfreg_blockmem_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_alert_branch_patch_bl_bx_swi_cond_spsr_idle_thumb_fallback interp_frame_hash=");
+  put_raw("result=PASS command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_flags_psr_msr_load_store_regoff_halfreg_blockmem_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_alert_branch_patch_bl_bx_swi_cond_spsr_idle_thumb_fallback interp_frame_hash=");
   put_u32_hex(interp.frame_hash);
   put_raw(" rv32im_frame_hash=");
   put_u32_hex(rv32im.frame_hash);
