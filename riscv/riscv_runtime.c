@@ -400,6 +400,36 @@ bool riscv_emit_native_arm_b(u8 **translation_ptr_ref,
   return true;
 }
 
+bool riscv_emit_native_arm_bl(u8 **translation_ptr_ref,
+                              riscv_jit_block_meta *meta,
+                              u32 opcode,
+                              u32 pc,
+                              u32 cycles)
+{
+  u32 condition = opcode >> 28;
+  u8 *ptr = *translation_ptr_ref;
+  u32 target_pc;
+
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
+    return false;
+
+  if (condition != 0xe)
+    return false;
+
+  riscv_emit_li(&ptr, riscv_reg_t0, pc + 4u);
+  riscv_emit_arm_reg_store(&ptr, REG_LR, riscv_reg_t0);
+
+  target_pc = pc + (u32)riscv_arm_branch_delta(opcode);
+  riscv_emit_li(&ptr, riscv_reg_t0, target_pc);
+  riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
+  riscv_emit_adjust_cycles(&ptr, cycles);
+
+  meta->flags |= RISCV_BLOCK_PC_WRITTEN;
+  *translation_ptr_ref = ptr;
+  riscv_native_branch_insns++;
+  return true;
+}
+
 bool riscv_emit_native_arm_bx(u8 **translation_ptr_ref,
                               riscv_jit_block_meta *meta,
                               u32 opcode,

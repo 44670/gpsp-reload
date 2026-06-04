@@ -25,6 +25,12 @@ typedef unsigned int usize;
 #define BRANCH_CYCLES 9u
 #define BRANCH_B_PLUS_12 0xea000001u
 #define BRANCH_BLOCK_OFFSET 512u
+#define BL_START_PC 0x08000180u
+#define BL_TARGET_PC 0x08000190u
+#define BL_LINK_PC (BL_START_PC + 4u)
+#define BL_CYCLES 10u
+#define BL_PLUS_16 0xeb000002u
+#define BL_BLOCK_OFFSET 768u
 #define LOAD_START_PC 0x08000200u
 #define LOAD_WORD_PC LOAD_START_PC
 #define LOAD_BYTE_PC (LOAD_START_PC + 4u)
@@ -140,6 +146,7 @@ u32 gamepak_sticky_bit[1024 / 32];
 static u8 *g_lookup_entry;
 static u8 *g_data_entry;
 static u8 *g_branch_entry;
+static u8 *g_bl_entry;
 static u8 *g_load_entry;
 static u8 *g_store_word_entry;
 static u8 *g_store_byte_entry;
@@ -402,6 +409,29 @@ static u32 build_branch_block(u8 *code)
 
   riscv_emit_block_finalize(meta, &translation_ptr, BRANCH_START_PC,
                             BRANCH_START_PC + 4u, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_bl_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_bl_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_bl(&translation_ptr, meta, BL_PLUS_16,
+                                BL_START_PC, BL_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=bl_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, BL_START_PC,
+                            BL_START_PC + 4u, false);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -771,6 +801,56 @@ static void run_branch_remaining_cycles_case(void)
     fail_u32("branch_remaining", "execute_pc",
              g_execute_pc, BRANCH_TARGET_PC);
   expect_stickybits_cleared("branch_remaining");
+}
+
+static void run_bl_boundary_case(void)
+{
+  reset_runtime_observations(BL_START_PC);
+  g_lookup_entry = g_bl_entry;
+
+  execute_arm_translate_internal(BL_CYCLES, &reg[0]);
+
+  if (reg[REG_PC] != BL_TARGET_PC)
+    fail_u32("bl_boundary", "pc", reg[REG_PC], BL_TARGET_PC);
+  if (reg[REG_LR] != BL_LINK_PC)
+    fail_u32("bl_boundary", "lr", reg[REG_LR], BL_LINK_PC);
+  if (g_lookup_calls != 1)
+    fail_u32("bl_boundary", "lookup_calls", g_lookup_calls, 1);
+  if (g_lookup_pc != BL_START_PC)
+    fail_u32("bl_boundary", "lookup_pc", g_lookup_pc, BL_START_PC);
+  if (g_update_calls != 1)
+    fail_u32("bl_boundary", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("bl_boundary", "update_cycles", (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("bl_boundary", "execute_calls", g_execute_calls, 0);
+  expect_stickybits_cleared("bl_boundary");
+}
+
+static void run_bl_remaining_cycles_case(void)
+{
+  const u32 extra_cycles = 4u;
+
+  reset_runtime_observations(BL_START_PC);
+  g_lookup_entry = g_bl_entry;
+
+  execute_arm_translate_internal(BL_CYCLES + extra_cycles, &reg[0]);
+
+  if (reg[REG_PC] != BL_TARGET_PC)
+    fail_u32("bl_remaining", "pc", reg[REG_PC], BL_TARGET_PC);
+  if (reg[REG_LR] != BL_LINK_PC)
+    fail_u32("bl_remaining", "lr", reg[REG_LR], BL_LINK_PC);
+  if (g_update_calls != 0)
+    fail_u32("bl_remaining", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("bl_remaining", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("bl_remaining", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != BL_TARGET_PC)
+    fail_u32("bl_remaining", "execute_pc",
+             g_execute_pc, BL_TARGET_PC);
+  expect_stickybits_cleared("bl_remaining");
 }
 
 static void run_bx_arm_remaining_cycles_case(void)
@@ -1378,6 +1458,7 @@ void _start(void)
   u8 *code = (u8 *)map_exec_page();
   u32 data_code_bytes;
   u32 branch_code_bytes;
+  u32 bl_code_bytes;
   u32 load_code_bytes;
   u32 store_word_code_bytes;
   u32 store_byte_code_bytes;
@@ -1396,6 +1477,7 @@ void _start(void)
 
   data_code_bytes = build_data_block(code);
   branch_code_bytes = build_branch_block(code + BRANCH_BLOCK_OFFSET);
+  bl_code_bytes = build_bl_block(code + BL_BLOCK_OFFSET);
   load_code_bytes = build_load_block(code + LOAD_BLOCK_OFFSET);
   store_word_code_bytes =
     build_store_block(code + STORE_WORD_BLOCK_OFFSET,
@@ -1426,6 +1508,8 @@ void _start(void)
   run_remaining_cycles_case();
   run_branch_boundary_case();
   run_branch_remaining_cycles_case();
+  run_bl_boundary_case();
+  run_bl_remaining_cycles_case();
   run_bx_arm_remaining_cycles_case();
   run_bx_thumb_boundary_case();
   run_load_boundary_case();
@@ -1445,6 +1529,8 @@ void _start(void)
   put_u32_dec(data_code_bytes);
   put_raw(" branch_code_bytes=");
   put_u32_dec(branch_code_bytes);
+  put_raw(" bl_code_bytes=");
+  put_u32_dec(bl_code_bytes);
   put_raw(" load_code_bytes=");
   put_u32_dec(load_code_bytes);
   put_raw(" store_word_code_bytes=");
@@ -1467,6 +1553,8 @@ void _start(void)
   put_u32_hex((u32)g_data_entry);
   put_raw(" branch_entry=");
   put_u32_hex((u32)g_branch_entry);
+  put_raw(" bl_entry=");
+  put_u32_hex((u32)g_bl_entry);
   put_raw(" load_entry=");
   put_u32_hex((u32)g_load_entry);
   put_raw(" store_word_entry=");

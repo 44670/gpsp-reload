@@ -29,6 +29,7 @@ typedef u8 cpu_alert_type;
 
 typedef enum
 {
+  REG_LR = 14,
   REG_PC = 15,
   REG_CPSR = 16,
   CPU_HALT_STATE = 18,
