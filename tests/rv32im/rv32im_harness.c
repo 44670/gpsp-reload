@@ -35,7 +35,7 @@ typedef unsigned int usize;
 #define ZLIB_BLOCK_MAX 65535u
 #define ZLIB_BLOCKS ((PNG_RAW_SIZE + ZLIB_BLOCK_MAX - 1) / ZLIB_BLOCK_MAX)
 #define ZLIB_SIZE (2 + PNG_RAW_SIZE + (ZLIB_BLOCKS * 5) + 4)
-#define RUNTIME_EXEC_MAP_BYTES 11776u
+#define RUNTIME_EXEC_MAP_BYTES 12800u
 #define RUNTIME_LOAD_BLOCK_OFFSET 512u
 #define RUNTIME_STORE_BLOCK_OFFSET 1024u
 #define RUNTIME_BRANCH_BLOCK_OFFSET 1536u
@@ -58,6 +58,8 @@ typedef unsigned int usize;
 #define RUNTIME_PSR_BLOCK_OFFSET 10240u
 #define RUNTIME_MSR_CPSR_FLAGS_BLOCK_OFFSET 10752u
 #define RUNTIME_MSR_SPSR_BLOCK_OFFSET 11264u
+#define RUNTIME_HALF_LOAD_BLOCK_OFFSET 11776u
+#define RUNTIME_HALF_STORE_BLOCK_OFFSET 12288u
 #define RUNTIME_START_PC 0x08000000u
 #define RUNTIME_END_PC (RUNTIME_START_PC + 4u)
 #define RUNTIME_CYCLES 7u
@@ -209,6 +211,38 @@ typedef unsigned int usize;
 #define RUNTIME_STORE_STR_R6_R3_0X28 0xe5836028u
 #define RUNTIME_STORE_BASE_ADDR 0x02000100u
 #define RUNTIME_STORE_WORD_ADDR (RUNTIME_STORE_BASE_ADDR + 0x28u)
+#define RUNTIME_HALF_LOAD_START_PC 0x08000e00u
+#define RUNTIME_HALF_LDRH_PC RUNTIME_HALF_LOAD_START_PC
+#define RUNTIME_HALF_LDRSB_PC (RUNTIME_HALF_LOAD_START_PC + 4u)
+#define RUNTIME_HALF_LDRSH_PC (RUNTIME_HALF_LOAD_START_PC + 8u)
+#define RUNTIME_HALF_LOAD_END_PC (RUNTIME_HALF_LOAD_START_PC + 12u)
+#define RUNTIME_HALF_LDRH_BASE_CYCLES 4u
+#define RUNTIME_HALF_LDRSB_BASE_CYCLES 5u
+#define RUNTIME_HALF_LDRSH_BASE_CYCLES 6u
+#define RUNTIME_HALF_LOAD_TOTAL_CYCLES \
+  ((RUNTIME_HALF_LDRH_BASE_CYCLES + 2u) + \
+   (RUNTIME_HALF_LDRSB_BASE_CYCLES + 2u) + \
+   (RUNTIME_HALF_LDRSH_BASE_CYCLES + 2u))
+#define RUNTIME_HALF_STORE_START_PC 0x08000e40u
+#define RUNTIME_HALF_STORE_END_PC (RUNTIME_HALF_STORE_START_PC + 4u)
+#define RUNTIME_HALF_STORE_BASE_CYCLES 6u
+#define RUNTIME_HALF_STORE_TOTAL_CYCLES \
+  (RUNTIME_HALF_STORE_BASE_CYCLES + 1u)
+#define RUNTIME_HALF_LDRH_R4_R3_0X24 0xe1d342b4u
+#define RUNTIME_HALF_LDRSB_R5_R3_0X25 0xe1d352d5u
+#define RUNTIME_HALF_LDRSH_R6_R3_0X26 0xe1d362f6u
+#define RUNTIME_HALF_STRH_R7_R3_0X28 0xe1c372b8u
+#define RUNTIME_HALF_BASE_ADDR 0x02000240u
+#define RUNTIME_HALF_U16_ADDR (RUNTIME_HALF_BASE_ADDR + 0x24u)
+#define RUNTIME_HALF_S8_ADDR (RUNTIME_HALF_BASE_ADDR + 0x25u)
+#define RUNTIME_HALF_S16_ADDR (RUNTIME_HALF_BASE_ADDR + 0x26u)
+#define RUNTIME_HALF_STORE_ADDR (RUNTIME_HALF_BASE_ADDR + 0x28u)
+#define RUNTIME_HALF_U16_VALUE 0x000089abu
+#define RUNTIME_HALF_S8_VALUE 0xfffffff0u
+#define RUNTIME_HALF_S16_VALUE 0xffff8123u
+#define RUNTIME_HALF_STORE_VALUE 0x2468ace1u
+#define RUNTIME_HALF_STORE_U16_VALUE \
+  (RUNTIME_HALF_STORE_VALUE & 0xffffu)
 #define RUNTIME_SWP_START_PC 0x08000a00u
 #define RUNTIME_SWP_END_PC (RUNTIME_SWP_START_PC + 4u)
 #define RUNTIME_SWP_BASE_CYCLES 6u
@@ -285,6 +319,8 @@ static u8 *g_runtime_flag_cmp_entry;
 static u8 *g_runtime_psr_entry;
 static u8 *g_runtime_msr_cpsr_flags_entry;
 static u8 *g_runtime_msr_spsr_entry;
+static u8 *g_runtime_half_load_entry;
+static u8 *g_runtime_half_store_entry;
 static u32 g_runtime_code_bytes;
 static u32 g_runtime_lookup_calls;
 static u32 g_runtime_lookup_pc;
@@ -304,10 +340,26 @@ static u32 g_runtime_read8_calls;
 static u32 g_runtime_read8_addr;
 static u32 g_runtime_read8_pc;
 static u32 g_runtime_read8_value;
+static u32 g_runtime_read16_calls;
+static u32 g_runtime_read16_addr;
+static u32 g_runtime_read16_pc;
+static u32 g_runtime_read16_value;
+static u32 g_runtime_read8s_calls;
+static u32 g_runtime_read8s_addr;
+static u32 g_runtime_read8s_pc;
+static u32 g_runtime_read8s_value;
+static u32 g_runtime_read16s_calls;
+static u32 g_runtime_read16s_addr;
+static u32 g_runtime_read16s_pc;
+static u32 g_runtime_read16s_value;
 static u32 g_runtime_write32_calls;
 static u32 g_runtime_write32_addr;
 static u32 g_runtime_write32_pc;
 static u32 g_runtime_write32_value;
+static u32 g_runtime_write16_calls;
+static u32 g_runtime_write16_addr;
+static u32 g_runtime_write16_pc;
+static u32 g_runtime_write16_value;
 static cpu_alert_type g_runtime_store_alert;
 static u32 g_runtime_flush_calls;
 static u32 g_runtime_irq_check_calls;
@@ -318,6 +370,35 @@ static u32 g_runtime_fixture_store_word;
 static u32 g_runtime_fixture_swp_old_word;
 static u32 g_runtime_fixture_branch_r1;
 static u32 g_runtime_fixture_branch_r2;
+
+static void clear_runtime_fixture_entries(void)
+{
+  g_runtime_entry = (u8 *)0;
+  g_runtime_load_entry = (u8 *)0;
+  g_runtime_store_entry = (u8 *)0;
+  g_runtime_branch_entry = (u8 *)0;
+  g_runtime_branch_target_entry = (u8 *)0;
+  g_runtime_unsupported_entry = (u8 *)0;
+  g_runtime_bx_entry = (u8 *)0;
+  g_runtime_bx_target_entry = (u8 *)0;
+  g_runtime_patch_branch_entry = (u8 *)0;
+  g_runtime_patch_branch_target_entry = (u8 *)0;
+  g_runtime_bl_entry = (u8 *)0;
+  g_runtime_bl_target_entry = (u8 *)0;
+  g_runtime_swi_entry = (u8 *)0;
+  g_runtime_swi_target_entry = (u8 *)0;
+  g_runtime_cond_entry = (u8 *)0;
+  g_runtime_pc_write_movs_entry = (u8 *)0;
+  g_runtime_swp_entry = (u8 *)0;
+  g_runtime_multiply_entry = (u8 *)0;
+  g_runtime_flag_adds_entry = (u8 *)0;
+  g_runtime_flag_cmp_entry = (u8 *)0;
+  g_runtime_psr_entry = (u8 *)0;
+  g_runtime_msr_cpsr_flags_entry = (u8 *)0;
+  g_runtime_msr_spsr_entry = (u8 *)0;
+  g_runtime_half_load_entry = (u8 *)0;
+  g_runtime_half_store_entry = (u8 *)0;
+}
 
 static void render_frame(void);
 
@@ -593,10 +674,26 @@ static void reset_runtime_fixture_state(u32 pc)
   g_runtime_read8_addr = 0;
   g_runtime_read8_pc = 0;
   g_runtime_read8_value = 0;
+  g_runtime_read16_calls = 0;
+  g_runtime_read16_addr = 0;
+  g_runtime_read16_pc = 0;
+  g_runtime_read16_value = 0;
+  g_runtime_read8s_calls = 0;
+  g_runtime_read8s_addr = 0;
+  g_runtime_read8s_pc = 0;
+  g_runtime_read8s_value = 0;
+  g_runtime_read16s_calls = 0;
+  g_runtime_read16s_addr = 0;
+  g_runtime_read16s_pc = 0;
+  g_runtime_read16s_value = 0;
   g_runtime_write32_calls = 0;
   g_runtime_write32_addr = 0;
   g_runtime_write32_pc = 0;
   g_runtime_write32_value = 0;
+  g_runtime_write16_calls = 0;
+  g_runtime_write16_addr = 0;
+  g_runtime_write16_pc = 0;
+  g_runtime_write16_value = 0;
   g_runtime_store_alert = CPU_ALERT_NONE;
   g_runtime_flush_calls = 0;
   g_runtime_irq_check_calls = 0;
@@ -630,6 +727,8 @@ static int build_runtime_fixture_block(const char **reason)
   u32 psr_code_bytes;
   u32 msr_cpsr_flags_code_bytes;
   u32 msr_spsr_code_bytes;
+  u32 half_load_code_bytes;
+  u32 half_store_code_bytes;
   u8 *patch_branch_source;
   u8 *cond_skip_source;
 
@@ -1397,6 +1496,8 @@ static int build_runtime_fixture_block(const char **reason)
     g_runtime_psr_entry = (u8 *)0;
     g_runtime_msr_cpsr_flags_entry = (u8 *)0;
     g_runtime_msr_spsr_entry = (u8 *)0;
+    g_runtime_half_load_entry = (u8 *)0;
+    g_runtime_half_store_entry = (u8 *)0;
     return 0;
   }
 
@@ -1440,6 +1541,8 @@ static int build_runtime_fixture_block(const char **reason)
     g_runtime_psr_entry = (u8 *)0;
     g_runtime_msr_cpsr_flags_entry = (u8 *)0;
     g_runtime_msr_spsr_entry = (u8 *)0;
+    g_runtime_half_load_entry = (u8 *)0;
+    g_runtime_half_store_entry = (u8 *)0;
     return 0;
   }
 
@@ -1450,6 +1553,68 @@ static int build_runtime_fixture_block(const char **reason)
     (u32)(translation_ptr -
           (g_runtime_code + RUNTIME_MSR_SPSR_BLOCK_OFFSET));
 
+  translation_ptr = g_runtime_code + RUNTIME_HALF_LOAD_BLOCK_OFFSET;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_runtime_half_load_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_access_memory(&translation_ptr, meta,
+                                           RUNTIME_HALF_LDRH_R4_R3_0X24,
+                                           RUNTIME_HALF_LDRH_PC,
+                                           RUNTIME_HALF_LDRH_BASE_CYCLES))
+  {
+    *reason = "runtime_half_ldrh_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  if (!riscv_emit_native_arm_access_memory(&translation_ptr, meta,
+                                           RUNTIME_HALF_LDRSB_R5_R3_0X25,
+                                           RUNTIME_HALF_LDRSB_PC,
+                                           RUNTIME_HALF_LDRSB_BASE_CYCLES))
+  {
+    *reason = "runtime_half_ldrsb_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  if (!riscv_emit_native_arm_access_memory(&translation_ptr, meta,
+                                           RUNTIME_HALF_LDRSH_R6_R3_0X26,
+                                           RUNTIME_HALF_LDRSH_PC,
+                                           RUNTIME_HALF_LDRSH_BASE_CYCLES))
+  {
+    *reason = "runtime_half_ldrsh_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            RUNTIME_HALF_LOAD_START_PC,
+                            RUNTIME_HALF_LOAD_END_PC, false);
+  half_load_code_bytes =
+    (u32)(translation_ptr -
+          (g_runtime_code + RUNTIME_HALF_LOAD_BLOCK_OFFSET));
+
+  translation_ptr = g_runtime_code + RUNTIME_HALF_STORE_BLOCK_OFFSET;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_runtime_half_store_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_access_memory(&translation_ptr, meta,
+                                           RUNTIME_HALF_STRH_R7_R3_0X28,
+                                           RUNTIME_HALF_STORE_START_PC,
+                                           RUNTIME_HALF_STORE_BASE_CYCLES))
+  {
+    *reason = "runtime_half_strh_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            RUNTIME_HALF_STORE_START_PC,
+                            RUNTIME_HALF_STORE_END_PC, false);
+  half_store_code_bytes =
+    (u32)(translation_ptr -
+          (g_runtime_code + RUNTIME_HALF_STORE_BLOCK_OFFSET));
+
   g_runtime_code_bytes = add_code_bytes + load_code_bytes + store_code_bytes +
     branch_code_bytes + branch_target_code_bytes + unsupported_code_bytes +
     bx_code_bytes + bx_target_code_bytes + patch_branch_code_bytes +
@@ -1457,37 +1622,16 @@ static int build_runtime_fixture_block(const char **reason)
     swi_code_bytes + swi_target_code_bytes + cond_code_bytes +
     pc_write_movs_code_bytes + swp_code_bytes + multiply_code_bytes +
     flag_adds_code_bytes + flag_cmp_code_bytes + psr_code_bytes +
-    msr_cpsr_flags_code_bytes + msr_spsr_code_bytes;
+    msr_cpsr_flags_code_bytes + msr_spsr_code_bytes +
+    half_load_code_bytes + half_store_code_bytes;
   flush_ret = syscall3(SYS_RISCV_FLUSH_ICACHE, (long)g_runtime_code,
                        (long)(g_runtime_code +
-                              RUNTIME_MSR_SPSR_BLOCK_OFFSET +
-                              msr_spsr_code_bytes), 0);
+                              RUNTIME_HALF_STORE_BLOCK_OFFSET +
+                              half_store_code_bytes), 0);
   if (flush_ret != 0)
   {
     *reason = "runtime_icache_flush_failed";
-    g_runtime_entry = (u8 *)0;
-    g_runtime_load_entry = (u8 *)0;
-    g_runtime_store_entry = (u8 *)0;
-    g_runtime_branch_entry = (u8 *)0;
-    g_runtime_branch_target_entry = (u8 *)0;
-    g_runtime_unsupported_entry = (u8 *)0;
-    g_runtime_bx_entry = (u8 *)0;
-    g_runtime_bx_target_entry = (u8 *)0;
-    g_runtime_patch_branch_entry = (u8 *)0;
-    g_runtime_patch_branch_target_entry = (u8 *)0;
-    g_runtime_bl_entry = (u8 *)0;
-    g_runtime_bl_target_entry = (u8 *)0;
-    g_runtime_swi_entry = (u8 *)0;
-    g_runtime_swi_target_entry = (u8 *)0;
-    g_runtime_cond_entry = (u8 *)0;
-    g_runtime_pc_write_movs_entry = (u8 *)0;
-    g_runtime_swp_entry = (u8 *)0;
-    g_runtime_multiply_entry = (u8 *)0;
-    g_runtime_flag_adds_entry = (u8 *)0;
-    g_runtime_flag_cmp_entry = (u8 *)0;
-    g_runtime_psr_entry = (u8 *)0;
-    g_runtime_msr_cpsr_flags_entry = (u8 *)0;
-    g_runtime_msr_spsr_entry = (u8 *)0;
+    clear_runtime_fixture_entries();
     return 0;
   }
 
@@ -1506,7 +1650,8 @@ static int ensure_runtime_fixture(const char **reason)
       g_runtime_pc_write_movs_entry && g_runtime_swp_entry &&
       g_runtime_multiply_entry && g_runtime_flag_adds_entry &&
       g_runtime_flag_cmp_entry && g_runtime_psr_entry &&
-      g_runtime_msr_cpsr_flags_entry && g_runtime_msr_spsr_entry)
+      g_runtime_msr_cpsr_flags_entry && g_runtime_msr_spsr_entry &&
+      g_runtime_half_load_entry && g_runtime_half_store_entry)
     return 1;
 
   g_runtime_code = (u8 *)map_runtime_exec_page();
@@ -1650,6 +1795,43 @@ static u32 runtime_update_memory_hash(u32 hash,
   return hash;
 }
 
+static u32 runtime_update_half_memory_hash(u32 hash,
+                                           u32 read16_calls,
+                                           u32 read16_addr,
+                                           u32 read16_pc,
+                                           u32 read16_value,
+                                           u32 read8s_calls,
+                                           u32 read8s_addr,
+                                           u32 read8s_pc,
+                                           u32 read8s_value,
+                                           u32 read16s_calls,
+                                           u32 read16s_addr,
+                                           u32 read16s_pc,
+                                           u32 read16s_value,
+                                           u32 write16_calls,
+                                           u32 write16_addr,
+                                           u32 write16_pc,
+                                           u32 write16_value)
+{
+  hash = fnv1a_update_u32(hash, read16_calls);
+  hash = fnv1a_update_u32(hash, read16_addr);
+  hash = fnv1a_update_u32(hash, read16_pc);
+  hash = fnv1a_update_u32(hash, read16_value);
+  hash = fnv1a_update_u32(hash, read8s_calls);
+  hash = fnv1a_update_u32(hash, read8s_addr);
+  hash = fnv1a_update_u32(hash, read8s_pc);
+  hash = fnv1a_update_u32(hash, read8s_value);
+  hash = fnv1a_update_u32(hash, read16s_calls);
+  hash = fnv1a_update_u32(hash, read16s_addr);
+  hash = fnv1a_update_u32(hash, read16s_pc);
+  hash = fnv1a_update_u32(hash, read16s_value);
+  hash = fnv1a_update_u32(hash, write16_calls);
+  hash = fnv1a_update_u32(hash, write16_addr);
+  hash = fnv1a_update_u32(hash, write16_pc);
+  hash = fnv1a_update_u32(hash, write16_value);
+  return hash;
+}
+
 static u32 runtime_update_scheduler_hash(u32 hash,
                                          u32 lookup_calls,
                                          u32 lookup_pc,
@@ -1691,6 +1873,27 @@ static u32 runtime_update_current_memory_hash(u32 hash)
                                     g_runtime_write32_pc,
                                     g_runtime_write32_value,
                                     runtime_current_sticky_hash());
+}
+
+static u32 runtime_update_current_half_memory_hash(u32 hash)
+{
+  return runtime_update_half_memory_hash(hash,
+                                         g_runtime_read16_calls,
+                                         g_runtime_read16_addr,
+                                         g_runtime_read16_pc,
+                                         g_runtime_read16_value,
+                                         g_runtime_read8s_calls,
+                                         g_runtime_read8s_addr,
+                                         g_runtime_read8s_pc,
+                                         g_runtime_read8s_value,
+                                         g_runtime_read16s_calls,
+                                         g_runtime_read16s_addr,
+                                         g_runtime_read16s_pc,
+                                         g_runtime_read16s_value,
+                                         g_runtime_write16_calls,
+                                         g_runtime_write16_addr,
+                                         g_runtime_write16_pc,
+                                         g_runtime_write16_value);
 }
 
 static u32 runtime_update_current_scheduler_hash(u32 hash)
@@ -1947,6 +2150,64 @@ static void run_runtime_reference_workload(const struct harness_state *base,
                                                  1, 0,
                                                  0, 0, 0,
                                                  1, 1);
+
+  for (i = 0; i < REG_MAX; i++)
+    values[i] = 0;
+  values[3] = RUNTIME_HALF_BASE_ADDR;
+  values[4] = RUNTIME_HALF_U16_VALUE;
+  values[5] = RUNTIME_HALF_S8_VALUE;
+  values[6] = RUNTIME_HALF_S16_VALUE;
+  values[REG_PC] = RUNTIME_HALF_LOAD_END_PC;
+  values[REG_CPSR] = 0;
+  values[CPU_HALT_STATE] = CPU_ACTIVE;
+  reg_hash = runtime_update_reg_hash(reg_hash, values);
+  mem_hash = runtime_update_memory_hash(mem_hash,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        runtime_reference_sticky_hash());
+  mem_hash = runtime_update_half_memory_hash(
+    mem_hash,
+    1, RUNTIME_HALF_U16_ADDR,
+    RUNTIME_HALF_LDRH_PC, RUNTIME_HALF_U16_VALUE,
+    1, RUNTIME_HALF_S8_ADDR,
+    RUNTIME_HALF_LDRSB_PC, RUNTIME_HALF_S8_VALUE,
+    1, RUNTIME_HALF_S16_ADDR,
+    RUNTIME_HALF_LDRSH_PC, RUNTIME_HALF_S16_VALUE,
+    0, 0, 0, 0);
+  scheduler_hash = runtime_update_scheduler_hash(
+    scheduler_hash,
+    1, RUNTIME_HALF_LOAD_START_PC, 0,
+    1, 0,
+    0, 0, 0,
+    0, 0);
+
+  for (i = 0; i < REG_MAX; i++)
+    values[i] = 0;
+  values[3] = RUNTIME_HALF_BASE_ADDR;
+  values[7] = RUNTIME_HALF_STORE_VALUE;
+  values[REG_PC] = RUNTIME_HALF_STORE_END_PC;
+  values[REG_CPSR] = 0;
+  values[CPU_HALT_STATE] = CPU_ACTIVE;
+  reg_hash = runtime_update_reg_hash(reg_hash, values);
+  mem_hash = runtime_update_memory_hash(mem_hash,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        runtime_reference_sticky_hash());
+  mem_hash = runtime_update_half_memory_hash(
+    mem_hash,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    1, RUNTIME_HALF_STORE_ADDR,
+    RUNTIME_HALF_STORE_END_PC, RUNTIME_HALF_STORE_U16_VALUE);
+  scheduler_hash = runtime_update_scheduler_hash(
+    scheduler_hash,
+    1, RUNTIME_HALF_STORE_START_PC, 0,
+    1, 0,
+    0, 0, 0,
+    1, 1);
 
   for (i = 0; i < REG_MAX; i++)
     values[i] = 0;
@@ -2210,12 +2471,12 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   snapshot->reg_hash = reg_hash;
   snapshot->mem_hash = mem_hash;
   snapshot->scheduler_hash = scheduler_hash;
-  snapshot->blocks = 25;
+  snapshot->blocks = 27;
   snapshot->fallbacks = 2;
   snapshot->native_data_proc = 12;
   snapshot->native_branch = 5;
-  snapshot->native_load = 2;
-  snapshot->native_store = 2;
+  snapshot->native_load = 5;
+  snapshot->native_store = 3;
   snapshot->native_psr = 4;
 }
 
@@ -2327,6 +2588,24 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   execute_arm_translate_internal(RUNTIME_STORE_TOTAL_CYCLES, &reg[0]);
   reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
   mem_hash = runtime_update_current_memory_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+
+  reset_runtime_fixture_state(RUNTIME_HALF_LOAD_START_PC);
+  reg[3] = RUNTIME_HALF_BASE_ADDR;
+  execute_arm_translate_internal(RUNTIME_HALF_LOAD_TOTAL_CYCLES, &reg[0]);
+  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+  mem_hash = runtime_update_current_memory_hash(mem_hash);
+  mem_hash = runtime_update_current_half_memory_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+
+  reset_runtime_fixture_state(RUNTIME_HALF_STORE_START_PC);
+  reg[3] = RUNTIME_HALF_BASE_ADDR;
+  reg[7] = RUNTIME_HALF_STORE_VALUE;
+  g_runtime_store_alert = CPU_ALERT_SMC | CPU_ALERT_IRQ;
+  execute_arm_translate_internal(RUNTIME_HALF_STORE_TOTAL_CYCLES, &reg[0]);
+  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+  mem_hash = runtime_update_current_memory_hash(mem_hash);
+  mem_hash = runtime_update_current_half_memory_hash(mem_hash);
   scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
 
   reset_runtime_fixture_state(RUNTIME_SWP_START_PC);
@@ -2476,23 +2755,44 @@ u32 function_cc read_memory8(u32 address)
 
 u32 function_cc read_memory8s(u32 address)
 {
-  (void)address;
+  u32 value = 0;
+
   g_runtime_read_calls++;
-  return 0;
+  g_runtime_read8s_calls++;
+  g_runtime_read8s_addr = address;
+  g_runtime_read8s_pc = reg[REG_PC];
+  if (address == RUNTIME_HALF_S8_ADDR)
+    value = RUNTIME_HALF_S8_VALUE;
+  g_runtime_read8s_value = value;
+  return value;
 }
 
 u32 function_cc read_memory16(u32 address)
 {
-  (void)address;
+  u32 value = 0;
+
   g_runtime_read_calls++;
-  return 0;
+  g_runtime_read16_calls++;
+  g_runtime_read16_addr = address;
+  g_runtime_read16_pc = reg[REG_PC];
+  if (address == RUNTIME_HALF_U16_ADDR)
+    value = RUNTIME_HALF_U16_VALUE;
+  g_runtime_read16_value = value;
+  return value;
 }
 
 u32 function_cc read_memory16s(u32 address)
 {
-  (void)address;
+  u32 value = 0;
+
   g_runtime_read_calls++;
-  return 0;
+  g_runtime_read16s_calls++;
+  g_runtime_read16s_addr = address;
+  g_runtime_read16s_pc = reg[REG_PC];
+  if (address == RUNTIME_HALF_S16_ADDR)
+    value = RUNTIME_HALF_S16_VALUE;
+  g_runtime_read16s_value = value;
+  return value;
 }
 
 u32 function_cc read_memory32(u32 address)
@@ -2521,10 +2821,12 @@ cpu_alert_type function_cc write_memory8(u32 address, u8 value)
 
 cpu_alert_type function_cc write_memory16(u32 address, u16 value)
 {
-  (void)address;
-  (void)value;
   g_runtime_write_calls++;
-  return CPU_ALERT_NONE;
+  g_runtime_write16_calls++;
+  g_runtime_write16_addr = address;
+  g_runtime_write16_pc = reg[REG_PC];
+  g_runtime_write16_value = value;
+  return g_runtime_store_alert;
 }
 
 cpu_alert_type function_cc write_memory32(u32 address, u32 value)
@@ -2584,6 +2886,10 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
     return g_runtime_load_entry;
   if (g_runtime_store_entry && pc == RUNTIME_STORE_START_PC)
     return g_runtime_store_entry;
+  if (g_runtime_half_load_entry && pc == RUNTIME_HALF_LOAD_START_PC)
+    return g_runtime_half_load_entry;
+  if (g_runtime_half_store_entry && pc == RUNTIME_HALF_STORE_START_PC)
+    return g_runtime_half_store_entry;
   if (g_runtime_branch_entry && pc == RUNTIME_BRANCH_START_PC)
     return g_runtime_branch_entry;
   if (g_runtime_branch_target_entry && pc == RUNTIME_BRANCH_TARGET_PC)
@@ -3148,7 +3454,7 @@ static void command_compare(void)
 
   if (!ensure_runtime_fixture(&runtime_reason))
   {
-    put_raw("result=FAIL command=compare workload=arm_add_multiply_flags_psr_msr_load_store_swp_alert_branch_patch_bl_bx_swi_cond_spsr_idle_thumb_fallback");
+    put_raw("result=FAIL command=compare workload=arm_add_multiply_flags_psr_msr_load_store_half_swp_alert_branch_patch_bl_bx_swi_cond_spsr_idle_thumb_fallback");
     put_raw(" harness_mode=");
     put_raw(RUNTIME_FIXTURE_MODE);
     put_raw(" frame_mode=synthetic mem_mode=runtime_stickybits reason=");
@@ -3174,7 +3480,7 @@ static void command_compare(void)
       rv32im.native_store != interp.native_store ||
       rv32im.native_psr != interp.native_psr)
   {
-    put_raw("result=FAIL command=compare workload=arm_add_multiply_flags_psr_msr_load_store_swp_alert_branch_patch_bl_bx_swi_cond_spsr_idle_thumb_fallback interp_frame_hash=");
+    put_raw("result=FAIL command=compare workload=arm_add_multiply_flags_psr_msr_load_store_half_swp_alert_branch_patch_bl_bx_swi_cond_spsr_idle_thumb_fallback interp_frame_hash=");
     put_u32_hex(interp.frame_hash);
     put_raw(" rv32im_frame_hash=");
     put_u32_hex(rv32im.frame_hash);
@@ -3213,7 +3519,7 @@ static void command_compare(void)
     return;
   }
 
-  put_raw("result=PASS command=compare workload=arm_add_multiply_flags_psr_msr_load_store_swp_alert_branch_patch_bl_bx_swi_cond_spsr_idle_thumb_fallback interp_frame_hash=");
+  put_raw("result=PASS command=compare workload=arm_add_multiply_flags_psr_msr_load_store_half_swp_alert_branch_patch_bl_bx_swi_cond_spsr_idle_thumb_fallback interp_frame_hash=");
   put_u32_hex(interp.frame_hash);
   put_raw(" rv32im_frame_hash=");
   put_u32_hex(rv32im.frame_hash);
