@@ -260,7 +260,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   `framehash`, `compare`, `png`, and `quit`
 - qemu-user harness `compare` execution of generated RV32IM
   `ADD r2, r0, r1`, `ADDS`, `CMP`, `MUL`, `MLA`, `UMULL`, `SMULL`,
-  `UMULLS`, `SMULLS`, `UMLAL`, `SMLAL`, `MRS CPSR`,
+  `UMULLS`, `SMULLS`, `UMLAL`, `SMLAL`, `UMLALS`, `SMLALS`,
+  `MRS CPSR`,
   `MRS SPSR`, `MSR CPSR_flg`, `MSR SPSR`, `LDR`, `LDRB`, `STR`,
   `LDRH`, register-offset `LDRH`, `LDRSB`, register-offset `LDRSB`,
   `LDRSH`, register-offset `LDRSH`, `STRH`, register-offset `STRH`,
@@ -278,12 +279,12 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   store-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, and Thumb lookup-miss fallback fixtures against a local ARM
   reference model, with
-  forty-seven runtime blocks executed, ADDS/CMP CPSR flag results and
+  forty-nine runtime blocks executed, ADDS/CMP CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results, MSR CPSR flag and
   SPSR helper-write effects, and native PSR accounting checked,
-  multiply/accumulate, unsigned/signed long multiply, long multiply flag, and
-  long multiply accumulate results checked, helper memory and alert
-  observations hashed,
+  multiply/accumulate, unsigned/signed long multiply, long multiply flag,
+  long multiply accumulate, and long multiply accumulate flag results
+  checked, helper memory and alert observations hashed,
   register-offset, shifted register-offset, subtract-offset, and RRX load
   address/value observations checked,
   immediate and register-offset halfword signed/unsigned helper load results
