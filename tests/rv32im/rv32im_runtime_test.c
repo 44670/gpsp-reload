@@ -383,6 +383,17 @@ typedef unsigned int usize;
   (PC_SOURCE_R0_VALUE ^ \
    (PC_SOURCE_R1_VALUE << ((PC_SOURCE_EOR_REG_RS_PC + 8u) & 0xffu)))
 #define PC_SOURCE_CPSR_VALUE (0x70000000u | CPSR_LOW_VALUE)
+#define SWI_START_PC 0x08000c40u
+#define SWI_END_PC (SWI_START_PC + 4u)
+#define SWI_CYCLES 9u
+#define SWI_OPCODE_5 0xef050000u
+#define SWI_OPCODE_6 0xef060000u
+#define SWI_TARGET_PC 0x00000008u
+#define SWI_LINK_PC (SWI_START_PC + 4u)
+#define SWI_INITIAL_CPSR 0xa000001fu
+#define SWI_CPSR_VALUE \
+  ((SWI_INITIAL_CPSR & ~0x3fu) | MODE_SUPERVISOR | 0x80u)
+#define SWI_BUS_VALUE 0xe3a02004u
 #define DATA_EXT_R0_VALUE 0x01010101u
 #define DATA_EXT_R1_VALUE 0x80000010u
 #define DATA_EXT_R6_VALUE 0xc1010109u
@@ -686,9 +697,11 @@ typedef unsigned int usize;
 #define PC_WRITE_ADD_BLOCK_OFFSET 33792u
 #define LOAD_PC_BLOCK_OFFSET 34304u
 #define PC_SOURCE_BLOCK_OFFSET 34816u
+#define SWI_BLOCK_OFFSET 35840u
 
 u32 reg[REG_MAX];
 u32 spsr[6];
+u32 reg_mode[7][7];
 u32 idle_loop_target_pc;
 u32 rom_cache_watermark;
 u32 gamepak_sticky_bit[1024 / 32];
@@ -749,6 +762,7 @@ static u8 *g_reg_shift_test_entry;
 static u8 *g_pc_write_mov_entry;
 static u8 *g_pc_write_add_entry;
 static u8 *g_pc_source_entry;
+static u8 *g_swi_entry;
 static u8 *g_psr_entry;
 static u8 *g_writeback_store_entry;
 static u8 *g_writeback_load_entry;
@@ -923,6 +937,8 @@ static void reset_runtime_observations(u32 pc)
     reg[i] = 0;
   for (i = 0; i < 6; i++)
     spsr[i] = 0;
+  for (i = 0; i < 7 * 7; i++)
+    ((u32 *)reg_mode)[i] = 0;
   for (i = 0; i < (1024 / 32); i++)
     gamepak_sticky_bit[i] = 0xffffffffu;
 
@@ -1510,6 +1526,31 @@ static u32 build_pc_source_block(u8 *code)
 
   riscv_emit_block_finalize(meta, &translation_ptr, PC_SOURCE_START_PC,
                             PC_SOURCE_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_swi_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_swi_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_swi(&translation_ptr, meta,
+                                 SWI_OPCODE_5,
+                                 SWI_START_PC,
+                                 SWI_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=swi_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, SWI_START_PC,
+                            SWI_END_PC, false);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -2205,6 +2246,21 @@ static void expect_load_pc_unsupported_rejected(u8 *code)
                                           LOAD_PC_CYCLES))
   {
     fail_u32("load_pc_reject", "accepted", LOAD_LDRB_PC_R3_0X25, 0);
+  }
+}
+
+static void expect_swi_hle_rejected(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  if (riscv_emit_native_arm_swi(&translation_ptr, meta,
+                                SWI_OPCODE_6,
+                                SWI_START_PC,
+                                SWI_CYCLES))
+  {
+    fail_u32("swi_reject", "accepted", SWI_OPCODE_6, 0);
   }
 }
 
@@ -3215,6 +3271,80 @@ static void run_pc_source_remaining_case(void)
     fail_u32("pc_source_remaining", "execute_pc",
              g_execute_pc, PC_SOURCE_END_PC);
   expect_stickybits_cleared("pc_source_remaining");
+}
+
+static void set_cpu_mode_inputs(void)
+{
+  reg[REG_CPSR] = SWI_INITIAL_CPSR;
+  reg[CPU_MODE] = 0x1fu;
+  reg[REG_LR] = 0x12345678u;
+  reg_mode[MODE_SUPERVISOR & 0xfu][6] = 0xa5a5a5a5u;
+  spsr[MODE_SUPERVISOR & 0xfu] = 0x11111111u;
+}
+
+static void expect_swi_results(const char *test_name)
+{
+  if (reg[REG_PC] != SWI_TARGET_PC)
+    fail_u32(test_name, "pc", reg[REG_PC], SWI_TARGET_PC);
+  if (reg[REG_LR] != SWI_LINK_PC)
+    fail_u32(test_name, "lr", reg[REG_LR], SWI_LINK_PC);
+  if (reg[REG_CPSR] != SWI_CPSR_VALUE)
+    fail_u32(test_name, "cpsr", reg[REG_CPSR], SWI_CPSR_VALUE);
+  if (reg[CPU_MODE] != MODE_SUPERVISOR)
+    fail_u32(test_name, "mode", reg[CPU_MODE], MODE_SUPERVISOR);
+  if (reg[REG_BUS_VALUE] != SWI_BUS_VALUE)
+    fail_u32(test_name, "bus", reg[REG_BUS_VALUE], SWI_BUS_VALUE);
+  if (reg_mode[MODE_SUPERVISOR & 0xfu][6] != SWI_LINK_PC)
+    fail_u32(test_name, "supervisor_lr",
+             reg_mode[MODE_SUPERVISOR & 0xfu][6], SWI_LINK_PC);
+  if (spsr[MODE_SUPERVISOR & 0xfu] != SWI_INITIAL_CPSR)
+    fail_u32(test_name, "supervisor_spsr",
+             spsr[MODE_SUPERVISOR & 0xfu], SWI_INITIAL_CPSR);
+}
+
+static void run_swi_boundary_case(void)
+{
+  reset_runtime_observations(SWI_START_PC);
+  g_lookup_entry = g_swi_entry;
+  set_cpu_mode_inputs();
+
+  execute_arm_translate_internal(SWI_CYCLES, &reg[0]);
+
+  expect_swi_results("swi_boundary");
+  if (g_lookup_calls != 1)
+    fail_u32("swi_boundary", "lookup_calls", g_lookup_calls, 1);
+  if (g_lookup_pc != SWI_START_PC)
+    fail_u32("swi_boundary", "lookup_pc", g_lookup_pc, SWI_START_PC);
+  if (g_update_calls != 1)
+    fail_u32("swi_boundary", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("swi_boundary", "update_cycles", (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("swi_boundary", "execute_calls", g_execute_calls, 0);
+  expect_stickybits_cleared("swi_boundary");
+}
+
+static void run_swi_remaining_case(void)
+{
+  const u32 extra_cycles = 5u;
+
+  reset_runtime_observations(SWI_START_PC);
+  g_lookup_entry = g_swi_entry;
+  set_cpu_mode_inputs();
+
+  execute_arm_translate_internal(SWI_CYCLES + extra_cycles, &reg[0]);
+
+  expect_swi_results("swi_remaining");
+  if (g_update_calls != 0)
+    fail_u32("swi_remaining", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("swi_remaining", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("swi_remaining", "execute_cycles", g_execute_cycles,
+             extra_cycles);
+  if (g_execute_pc != SWI_TARGET_PC)
+    fail_u32("swi_remaining", "execute_pc", g_execute_pc, SWI_TARGET_PC);
+  expect_stickybits_cleared("swi_remaining");
 }
 
 static void run_pc_write_mov_boundary_case(void)
@@ -4625,6 +4755,12 @@ void flush_translation_cache_ram(void)
   g_flush_calls++;
 }
 
+void set_cpu_mode(u32 new_mode)
+{
+  reg[REG_LR] = reg_mode[new_mode & 0xfu][6];
+  reg[CPU_MODE] = new_mode;
+}
+
 u32 function_cc update_gba(int remaining_cycles)
 {
   g_update_calls++;
@@ -4684,6 +4820,7 @@ void _start(void)
   u32 reg_shift_flag_ror0_code_bytes;
   u32 reg_shift_test_code_bytes;
   u32 pc_source_code_bytes;
+  u32 swi_code_bytes;
   u32 pc_write_mov_code_bytes;
   u32 pc_write_add_code_bytes;
   u32 branch_code_bytes;
@@ -4885,6 +5022,7 @@ void _start(void)
                           "reg_shift_tst_emit_rejected");
   pc_source_code_bytes =
     build_pc_source_block(code + PC_SOURCE_BLOCK_OFFSET);
+  swi_code_bytes = build_swi_block(code + SWI_BLOCK_OFFSET);
   pc_write_mov_code_bytes =
     build_flag_data_block(code + PC_WRITE_MOV_BLOCK_OFFSET,
                           MOV_PC_R14, PC_WRITE_MOV_START_PC,
@@ -4963,6 +5101,7 @@ void _start(void)
   expect_multiply_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_multiply_long_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_load_pc_unsupported_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
+  expect_swi_hle_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   run_cycle_boundary_case();
   run_remaining_cycles_case();
   run_multiply_remaining_cycles_case();
@@ -5090,6 +5229,8 @@ void _start(void)
   run_reg_shift_test_remaining_case();
   run_pc_source_boundary_case();
   run_pc_source_remaining_case();
+  run_swi_boundary_case();
+  run_swi_remaining_case();
   run_pc_write_mov_boundary_case();
   run_pc_write_add_remaining_case();
   run_branch_boundary_case();
@@ -5192,6 +5333,8 @@ void _start(void)
   put_u32_dec(reg_shift_test_code_bytes);
   put_raw(" pc_source_code_bytes=");
   put_u32_dec(pc_source_code_bytes);
+  put_raw(" swi_code_bytes=");
+  put_u32_dec(swi_code_bytes);
   put_raw(" pc_write_mov_code_bytes=");
   put_u32_dec(pc_write_mov_code_bytes);
   put_raw(" pc_write_add_code_bytes=");
@@ -5312,6 +5455,8 @@ void _start(void)
   put_u32_hex((u32)g_reg_shift_test_entry);
   put_raw(" pc_source_entry=");
   put_u32_hex((u32)g_pc_source_entry);
+  put_raw(" swi_entry=");
+  put_u32_hex((u32)g_swi_entry);
   put_raw(" pc_write_mov_entry=");
   put_u32_hex((u32)g_pc_write_mov_entry);
   put_raw(" pc_write_add_entry=");

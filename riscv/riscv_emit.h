@@ -78,6 +78,11 @@ bool riscv_emit_native_arm_bx(u8 **translation_ptr,
                               u32 opcode,
                               u32 pc,
                               u32 cycles);
+bool riscv_emit_native_arm_swi(u8 **translation_ptr,
+                               riscv_jit_block_meta *meta,
+                               u32 opcode,
+                               u32 pc,
+                               u32 cycles);
 bool riscv_emit_native_arm_access_memory(u8 **translation_ptr,
                                          riscv_jit_block_meta *meta,
                                          u32 opcode,
@@ -307,7 +312,18 @@ void init_emitter(bool must_swap);
   } while (0)
 
 #define arm_swi()                                                             \
-  riscv_emit_current_arm_instruction()
+  do                                                                          \
+  {                                                                           \
+    if (riscv_emit_native_arm_swi(&translation_ptr, riscv_block_meta,         \
+                                  opcode, pc, cycle_count))                   \
+    {                                                                         \
+      cycle_count = 0;                                                        \
+    }                                                                         \
+    else                                                                      \
+    {                                                                         \
+      riscv_emit_current_arm_instruction();                                   \
+    }                                                                         \
+  } while (0)
 
 #define arm_hle_div(cpu_mode)                                                 \
   riscv_emit_current_##cpu_mode##_instruction()

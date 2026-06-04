@@ -221,6 +221,16 @@ static cpu_alert_type riscv_handle_cpu_alert(void)
   return alert;
 }
 
+static void function_cc riscv_execute_swi_arm(u32 pc)
+{
+  reg[REG_BUS_VALUE] = 0xe3a02004u;
+  REG_MODE(MODE_SUPERVISOR)[6] = pc;
+  REG_SPSR(MODE_SUPERVISOR) = reg[REG_CPSR];
+  reg[REG_PC] = 0x00000008u;
+  reg[REG_CPSR] = (reg[REG_CPSR] & ~0x3fu) | MODE_SUPERVISOR | 0x80u;
+  set_cpu_mode(MODE_SUPERVISOR);
+}
+
 static u32 riscv_arm_expand_imm(u32 opcode)
 {
   u32 imm = opcode & 0xffu;
@@ -1241,6 +1251,35 @@ bool riscv_emit_native_arm_bx(u8 **translation_ptr_ref,
   ptr = translation_ptr;
 
   riscv_emit_arm_reg_store(&ptr, REG_CPSR, riscv_reg_t2);
+  riscv_emit_adjust_cycles(&ptr, cycles);
+
+  meta->flags |= RISCV_BLOCK_PC_WRITTEN;
+  *translation_ptr_ref = ptr;
+  riscv_native_branch_insns++;
+  return true;
+}
+
+bool riscv_emit_native_arm_swi(u8 **translation_ptr_ref,
+                               riscv_jit_block_meta *meta,
+                               u32 opcode,
+                               u32 pc,
+                               u32 cycles)
+{
+  u32 condition = opcode >> 28;
+  u32 swinum = (opcode >> 16) & 0xffu;
+  u8 *ptr = *translation_ptr_ref;
+
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
+    return false;
+
+  if (condition != 0xe || (opcode & 0x0f000000u) != 0x0f000000u ||
+      (swinum & 0xfeu) == 0x06u)
+  {
+    return false;
+  }
+
+  riscv_emit_li(&ptr, riscv_reg_a0, pc + 4u);
+  riscv_emit_c_call(&ptr, (uintptr_t)riscv_execute_swi_arm);
   riscv_emit_adjust_cycles(&ptr, cycles);
 
   meta->flags |= RISCV_BLOCK_PC_WRITTEN;

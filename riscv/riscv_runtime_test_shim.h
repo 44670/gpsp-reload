@@ -34,8 +34,13 @@ typedef enum
   REG_CPSR = 16,
   CPU_MODE = 17,
   CPU_HALT_STATE = 18,
+  REG_BUS_VALUE = 19,
   REG_MAX = 64
 } riscv_test_reg_numbers;
+
+#define MODE_SUPERVISOR 0x13
+#define REG_MODE(m) (reg_mode[(m) & 0xf])
+#define REG_SPSR(m) (spsr[(m) & 0xf])
 
 #define CPU_ACTIVE 0
 #define CPU_HALT 1
@@ -44,6 +49,7 @@ typedef enum
 
 extern u32 reg[REG_MAX];
 extern u32 spsr[6];
+extern u32 reg_mode[7][7];
 extern u32 idle_loop_target_pc;
 extern u32 rom_cache_watermark;
 extern u32 gamepak_sticky_bit[1024 / 32];
@@ -67,6 +73,7 @@ cpu_alert_type function_cc write_memory16(u32 address, u16 value);
 cpu_alert_type function_cc write_memory32(u32 address, u32 value);
 u32 check_and_raise_interrupts(void);
 void flush_translation_cache_ram(void);
+void set_cpu_mode(u32 new_mode);
 u32 function_cc update_gba(int remaining_cycles);
 u8 function_cc *block_lookup_address_arm(u32 pc);
 u8 function_cc *block_lookup_address_thumb(u32 pc);
