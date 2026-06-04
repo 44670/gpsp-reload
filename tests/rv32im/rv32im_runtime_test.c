@@ -15,7 +15,7 @@ typedef unsigned int usize;
 #define PROT_EXEC 4
 #define MAP_PRIVATE 2
 #define MAP_ANONYMOUS 32
-#define EXEC_MAP_BYTES 44544u
+#define EXEC_MAP_BYTES 45056u
 
 #define BLOCK_START_PC 0x08000000u
 #define BLOCK_END_PC 0x08000004u
@@ -519,6 +519,8 @@ typedef unsigned int usize;
 #define BX_CYCLES 8u
 #define BX_R7 0xe12fff17u
 #define BX_ARM_TARGET 0x02001000u
+#define BX_ARM_TARGET_END_PC (BX_ARM_TARGET + 4u)
+#define BX_ARM_TARGET_CYCLES 5u
 #define BX_THUMB_TARGET_RAW 0x02001001u
 #define BX_THUMB_TARGET_PC (BX_THUMB_TARGET_RAW & ~1u)
 #define BX_BLOCK_OFFSET 3072u
@@ -836,6 +838,7 @@ typedef unsigned int usize;
 #define LOAD_PC_TARGET_BLOCK_OFFSET 43008u
 #define BLOCK_MEM_LDM_PC_BLOCK_OFFSET 43520u
 #define BL_TARGET_BLOCK_OFFSET 44032u
+#define BX_ARM_TARGET_BLOCK_OFFSET 44544u
 
 u32 reg[REG_MAX];
 u32 spsr[6];
@@ -889,6 +892,7 @@ static u8 *g_store_word_entry;
 static u8 *g_store_byte_entry;
 static u8 *g_store_pc_entry;
 static u8 *g_bx_entry;
+static u8 *g_bx_arm_target_entry;
 static u8 *g_half_load_entry;
 static u8 *g_half_store_entry;
 static u8 *g_half_reg_load_entry;
@@ -4243,6 +4247,50 @@ static void run_bx_arm_remaining_cycles_case(void)
   expect_stickybits_cleared("bx_arm_remaining");
 }
 
+static void run_bx_arm_native_target_case(void)
+{
+  const u32 extra_cycles = 4u;
+
+  reset_runtime_observations(BX_START_PC);
+  g_lookup_entry = g_bx_entry;
+  g_lookup_next_pc = BX_ARM_TARGET;
+  g_lookup_next_entry = g_bx_arm_target_entry;
+  reg[1] = CHAIN_R1_VALUE;
+  reg[2] = CHAIN_R2_VALUE;
+  reg[7] = BX_ARM_TARGET;
+
+  execute_arm_translate_internal(BX_CYCLES + BX_ARM_TARGET_CYCLES +
+                                 extra_cycles, &reg[0]);
+
+  if (reg[REG_PC] != BX_ARM_TARGET_END_PC)
+    fail_u32("bx_arm_native_target", "pc",
+             reg[REG_PC], BX_ARM_TARGET_END_PC);
+  if (reg[REG_CPSR] & CPSR_T_BIT)
+    fail_u32("bx_arm_native_target", "cpsr_t",
+             reg[REG_CPSR] & CPSR_T_BIT, 0);
+  if (reg[3] != CHAIN_R3_VALUE)
+    fail_u32("bx_arm_native_target", "r3", reg[3], CHAIN_R3_VALUE);
+  if (g_lookup_calls != 3)
+    fail_u32("bx_arm_native_target", "lookup_calls", g_lookup_calls, 3);
+  if (g_lookup_pc != BX_ARM_TARGET_END_PC)
+    fail_u32("bx_arm_native_target", "lookup_pc",
+             g_lookup_pc, BX_ARM_TARGET_END_PC);
+  if (g_thumb_lookup_calls != 0)
+    fail_u32("bx_arm_native_target", "thumb_lookup_calls",
+             g_thumb_lookup_calls, 0);
+  if (g_update_calls != 0)
+    fail_u32("bx_arm_native_target", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("bx_arm_native_target", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("bx_arm_native_target", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != BX_ARM_TARGET_END_PC)
+    fail_u32("bx_arm_native_target", "execute_pc",
+             g_execute_pc, BX_ARM_TARGET_END_PC);
+  expect_stickybits_cleared("bx_arm_native_target");
+}
+
 static void run_bx_thumb_boundary_case(void)
 {
   reset_runtime_observations(BX_START_PC);
@@ -6005,6 +6053,7 @@ void _start(void)
   u32 store_byte_code_bytes;
   u32 store_pc_code_bytes;
   u32 bx_code_bytes;
+  u32 bx_arm_target_code_bytes;
   u32 branch_target_code_bytes;
   u32 half_load_code_bytes;
   u32 half_store_code_bytes;
@@ -6292,6 +6341,13 @@ void _start(void)
                       PC_BASE_STORE_START_PC,
                       &g_pc_base_store_entry);
   bx_code_bytes = build_bx_block(code + BX_BLOCK_OFFSET);
+  bx_arm_target_code_bytes =
+    build_single_data_proc_block(code + BX_ARM_TARGET_BLOCK_OFFSET,
+                                 ADD_R3_R2_R1,
+                                 BX_ARM_TARGET,
+                                 BX_ARM_TARGET_CYCLES,
+                                 &g_bx_arm_target_entry,
+                                 "bx_arm_target_emit_rejected");
   half_load_code_bytes = build_half_load_block(code + HALF_LOAD_BLOCK_OFFSET);
   pc_base_half_load_code_bytes =
     build_pc_base_half_load_block(code + PC_BASE_HALF_LOAD_BLOCK_OFFSET);
@@ -6542,6 +6598,7 @@ void _start(void)
   run_bl_remaining_cycles_case();
   run_bl_native_target_case();
   run_bx_arm_remaining_cycles_case();
+  run_bx_arm_native_target_case();
   run_bx_thumb_boundary_case();
   run_bx_thumb_remaining_cycles_case();
   run_load_boundary_case();
@@ -6691,6 +6748,8 @@ void _start(void)
   put_u32_dec(store_pc_code_bytes);
   put_raw(" bx_code_bytes=");
   put_u32_dec(bx_code_bytes);
+  put_raw(" bx_arm_target_code_bytes=");
+  put_u32_dec(bx_arm_target_code_bytes);
   put_raw(" half_load_code_bytes=");
   put_u32_dec(half_load_code_bytes);
   put_raw(" half_store_code_bytes=");
@@ -6847,6 +6906,8 @@ void _start(void)
   put_u32_hex((u32)g_store_pc_entry);
   put_raw(" bx_entry=");
   put_u32_hex((u32)g_bx_entry);
+  put_raw(" bx_arm_target_entry=");
+  put_u32_hex((u32)g_bx_arm_target_entry);
   put_raw(" half_load_entry=");
   put_u32_hex((u32)g_half_load_entry);
   put_raw(" half_store_entry=");
