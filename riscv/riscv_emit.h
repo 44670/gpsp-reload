@@ -63,6 +63,11 @@ bool riscv_emit_native_arm_psr(u8 **translation_ptr,
                                riscv_jit_block_meta *meta,
                                u32 opcode,
                                u32 cycles);
+bool riscv_emit_native_arm_psr_with_pc(u8 **translation_ptr,
+                                       riscv_jit_block_meta *meta,
+                                       u32 opcode,
+                                       u32 pc,
+                                       u32 cycles);
 bool riscv_emit_native_arm_b(u8 **translation_ptr,
                              riscv_jit_block_meta *meta,
                              u32 opcode,
@@ -242,8 +247,9 @@ void init_emitter(bool must_swap);
 #define arm_psr(...)                                                          \
   do                                                                          \
   {                                                                           \
-    if (riscv_emit_native_arm_psr(&translation_ptr, riscv_block_meta,         \
-                                  opcode, cycle_count))                       \
+    if (riscv_emit_native_arm_psr_with_pc(&translation_ptr,                   \
+                                          riscv_block_meta, opcode,           \
+                                          pc, cycle_count))                   \
     {                                                                         \
       cycle_count = 0;                                                        \
     }                                                                         \

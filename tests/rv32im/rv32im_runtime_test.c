@@ -15,7 +15,7 @@ typedef unsigned int usize;
 #define PROT_EXEC 4
 #define MAP_PRIVATE 2
 #define MAP_ANONYMOUS 32
-#define EXEC_MAP_BYTES 36864u
+#define EXEC_MAP_BYTES 40960u
 
 #define BLOCK_START_PC 0x08000000u
 #define BLOCK_END_PC 0x08000004u
@@ -650,10 +650,32 @@ typedef unsigned int usize;
 #define MRS_R7_SPSR 0xe14f7000u
 #define MRS_R15_CPSR 0xe10ff000u
 #define MSR_CPSR_R0 0xe129f000u
+#define MSR_CPSR_R15 0xe129f00fu
+#define MSR_CPSR_FLAGS_IMM 0xe328f20au
+#define MSR_SPSR_R1 0xe169f001u
 #define PSR_CPSR_VALUE 0xa000009fu
 #define PSR_CPU_MODE_VALUE 0x13u
 #define PSR_SPSR_INDEX (PSR_CPU_MODE_VALUE & 0xfu)
 #define PSR_SPSR_VALUE 0x12345678u
+#define PSR_MSR_CPSR_FLAGS_START_PC 0x08000cc0u
+#define PSR_MSR_CPSR_FLAGS_END_PC (PSR_MSR_CPSR_FLAGS_START_PC + 4u)
+#define PSR_MSR_CPSR_CONTROL_START_PC 0x08000ce0u
+#define PSR_MSR_CPSR_CONTROL_END_PC \
+  (PSR_MSR_CPSR_CONTROL_START_PC + 4u)
+#define PSR_MSR_SPSR_START_PC 0x08000d00u
+#define PSR_MSR_SPSR_END_PC (PSR_MSR_SPSR_START_PC + 4u)
+#define PSR_MSR_CPSR_FLAGS_CYCLES 7u
+#define PSR_MSR_CPSR_CONTROL_CYCLES 8u
+#define PSR_MSR_SPSR_CYCLES 9u
+#define PSR_MSR_CPSR_FLAGS_INITIAL 0x30000093u
+#define PSR_MSR_CPSR_FLAGS_EXPECTED 0xa0000093u
+#define PSR_MSR_CPSR_CONTROL_INITIAL 0x100000d3u
+#define PSR_MSR_CPSR_CONTROL_SOURCE 0xa000001fu
+#define PSR_MSR_CPSR_CONTROL_EXPECTED 0xa000001fu
+#define PSR_MSR_CPSR_CONTROL_LR_VALUE 0xcafebabeu
+#define PSR_MSR_SPSR_OLD_VALUE 0x12345678u
+#define PSR_MSR_SPSR_SOURCE 0xa00000d3u
+#define PSR_MSR_SPSR_EXPECTED 0xa23456d3u
 #define WRITEBACK_BASE_ADDR 0x02000400u
 #define WRITEBACK_STORE_ADDR (WRITEBACK_BASE_ADDR + 0x10u)
 #define WRITEBACK_POST_LOAD_ADDR WRITEBACK_BASE_ADDR
@@ -718,6 +740,9 @@ typedef unsigned int usize;
 #define SWI_BLOCK_OFFSET 35840u
 #define SWP_WORD_BLOCK_OFFSET 36096u
 #define SWP_BYTE_BLOCK_OFFSET 36352u
+#define MSR_CPSR_FLAGS_BLOCK_OFFSET 36864u
+#define MSR_CPSR_CONTROL_BLOCK_OFFSET 37376u
+#define MSR_SPSR_BLOCK_OFFSET 37888u
 
 u32 reg[REG_MAX];
 u32 spsr[6];
@@ -786,6 +811,9 @@ static u8 *g_swi_entry;
 static u8 *g_swp_word_entry;
 static u8 *g_swp_byte_entry;
 static u8 *g_psr_entry;
+static u8 *g_msr_cpsr_flags_entry;
+static u8 *g_msr_cpsr_control_entry;
+static u8 *g_msr_spsr_entry;
 static u8 *g_writeback_store_entry;
 static u8 *g_writeback_load_entry;
 static u8 *g_reg_offset_writeback_store_entry;
@@ -2155,6 +2183,31 @@ static u32 build_psr_block(u8 *code)
   return code_bytes;
 }
 
+static u32 build_psr_write_block(u8 *code, u32 opcode, u32 pc, u32 cycles,
+                                 u8 **entry, const char *reject_reason)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  *entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_psr_with_pc(&translation_ptr, meta,
+                                         opcode, pc, cycles))
+  {
+    put_raw("result=FAIL command=runtime reason=");
+    put_raw(reject_reason);
+    put_raw("\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, pc, pc + 4u, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
 static u32 build_writeback_store_block(u8 *code)
 {
   u8 *translation_ptr = code;
@@ -2363,7 +2416,7 @@ static void expect_psr_unsupported_rejected(u8 *code)
   static const u32 rejected_opcodes[] =
   {
     MRS_R15_CPSR,
-    MSR_CPSR_R0
+    MSR_CPSR_R15
   };
   unsigned i;
 
@@ -4426,6 +4479,109 @@ static void run_psr_remaining_case(void)
   expect_stickybits_cleared("psr_remaining");
 }
 
+static void run_msr_cpsr_flags_boundary_case(void)
+{
+  reset_runtime_observations(PSR_MSR_CPSR_FLAGS_START_PC);
+  g_lookup_entry = g_msr_cpsr_flags_entry;
+  reg[REG_CPSR] = PSR_MSR_CPSR_FLAGS_INITIAL;
+  reg[CPU_MODE] = MODE_SUPERVISOR;
+
+  execute_arm_translate_internal(PSR_MSR_CPSR_FLAGS_CYCLES, &reg[0]);
+
+  if (reg[REG_CPSR] != PSR_MSR_CPSR_FLAGS_EXPECTED)
+    fail_u32("msr_cpsr_flags", "cpsr", reg[REG_CPSR],
+             PSR_MSR_CPSR_FLAGS_EXPECTED);
+  if (reg[CPU_MODE] != MODE_SUPERVISOR)
+    fail_u32("msr_cpsr_flags", "mode", reg[CPU_MODE], MODE_SUPERVISOR);
+  if (reg[REG_PC] != PSR_MSR_CPSR_FLAGS_END_PC)
+    fail_u32("msr_cpsr_flags", "pc", reg[REG_PC],
+             PSR_MSR_CPSR_FLAGS_END_PC);
+  if (g_irq_check_calls != 0)
+    fail_u32("msr_cpsr_flags", "irq_calls", g_irq_check_calls, 0);
+  if (g_update_calls != 1)
+    fail_u32("msr_cpsr_flags", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("msr_cpsr_flags", "update_cycles", (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("msr_cpsr_flags", "execute_calls", g_execute_calls, 0);
+  expect_stickybits_cleared("msr_cpsr_flags");
+}
+
+static void run_msr_cpsr_control_remaining_case(void)
+{
+  const u32 extra_cycles = 4u;
+
+  reset_runtime_observations(PSR_MSR_CPSR_CONTROL_START_PC);
+  g_lookup_entry = g_msr_cpsr_control_entry;
+  reg[0] = PSR_MSR_CPSR_CONTROL_SOURCE;
+  reg[REG_CPSR] = PSR_MSR_CPSR_CONTROL_INITIAL;
+  reg[CPU_MODE] = MODE_SUPERVISOR;
+  reg_mode[MODE_SYSTEM & 0xfu][6] = PSR_MSR_CPSR_CONTROL_LR_VALUE;
+
+  execute_arm_translate_internal(PSR_MSR_CPSR_CONTROL_CYCLES + extra_cycles,
+                                 &reg[0]);
+
+  if (reg[REG_CPSR] != PSR_MSR_CPSR_CONTROL_EXPECTED)
+    fail_u32("msr_cpsr_control", "cpsr", reg[REG_CPSR],
+             PSR_MSR_CPSR_CONTROL_EXPECTED);
+  if (reg[CPU_MODE] != MODE_SYSTEM)
+    fail_u32("msr_cpsr_control", "mode", reg[CPU_MODE], MODE_SYSTEM);
+  if (reg[REG_LR] != PSR_MSR_CPSR_CONTROL_LR_VALUE)
+    fail_u32("msr_cpsr_control", "lr", reg[REG_LR],
+             PSR_MSR_CPSR_CONTROL_LR_VALUE);
+  if (reg[REG_PC] != PSR_MSR_CPSR_CONTROL_END_PC)
+    fail_u32("msr_cpsr_control", "pc", reg[REG_PC],
+             PSR_MSR_CPSR_CONTROL_END_PC);
+  if (g_irq_check_calls != 1)
+    fail_u32("msr_cpsr_control", "irq_calls", g_irq_check_calls, 1);
+  if (g_update_calls != 0)
+    fail_u32("msr_cpsr_control", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("msr_cpsr_control", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("msr_cpsr_control", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != PSR_MSR_CPSR_CONTROL_END_PC)
+    fail_u32("msr_cpsr_control", "execute_pc", g_execute_pc,
+             PSR_MSR_CPSR_CONTROL_END_PC);
+  expect_stickybits_cleared("msr_cpsr_control");
+}
+
+static void run_msr_spsr_remaining_case(void)
+{
+  const u32 extra_cycles = 6u;
+
+  reset_runtime_observations(PSR_MSR_SPSR_START_PC);
+  g_lookup_entry = g_msr_spsr_entry;
+  reg[1] = PSR_MSR_SPSR_SOURCE;
+  reg[REG_CPSR] = PSR_CPSR_VALUE;
+  reg[CPU_MODE] = MODE_SUPERVISOR;
+  spsr[MODE_SUPERVISOR & 0xfu] = PSR_MSR_SPSR_OLD_VALUE;
+
+  execute_arm_translate_internal(PSR_MSR_SPSR_CYCLES + extra_cycles, &reg[0]);
+
+  if (spsr[MODE_SUPERVISOR & 0xfu] != PSR_MSR_SPSR_EXPECTED)
+    fail_u32("msr_spsr", "spsr", spsr[MODE_SUPERVISOR & 0xfu],
+             PSR_MSR_SPSR_EXPECTED);
+  if (reg[REG_CPSR] != PSR_CPSR_VALUE)
+    fail_u32("msr_spsr", "cpsr", reg[REG_CPSR], PSR_CPSR_VALUE);
+  if (reg[CPU_MODE] != MODE_SUPERVISOR)
+    fail_u32("msr_spsr", "mode", reg[CPU_MODE], MODE_SUPERVISOR);
+  if (reg[REG_PC] != PSR_MSR_SPSR_END_PC)
+    fail_u32("msr_spsr", "pc", reg[REG_PC], PSR_MSR_SPSR_END_PC);
+  if (g_irq_check_calls != 0)
+    fail_u32("msr_spsr", "irq_calls", g_irq_check_calls, 0);
+  if (g_update_calls != 0)
+    fail_u32("msr_spsr", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("msr_spsr", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("msr_spsr", "execute_cycles", g_execute_cycles, extra_cycles);
+  if (g_execute_pc != PSR_MSR_SPSR_END_PC)
+    fail_u32("msr_spsr", "execute_pc", g_execute_pc, PSR_MSR_SPSR_END_PC);
+  expect_stickybits_cleared("msr_spsr");
+}
+
 static void run_writeback_store_case(void)
 {
   const u32 extra_cycles = 4u;
@@ -5005,6 +5161,9 @@ void _start(void)
   u32 reg_offset_rrx_load_code_bytes;
   u32 shifted_reg_offset_code_bytes;
   u32 psr_code_bytes;
+  u32 msr_cpsr_flags_code_bytes;
+  u32 msr_cpsr_control_code_bytes;
+  u32 msr_spsr_code_bytes;
   u32 writeback_store_code_bytes;
   u32 writeback_load_code_bytes;
   u32 reg_offset_writeback_store_code_bytes;
@@ -5256,6 +5415,27 @@ void _start(void)
   shifted_reg_offset_code_bytes =
     build_shifted_reg_offset_block(code + SHIFTED_REG_OFFSET_BLOCK_OFFSET);
   psr_code_bytes = build_psr_block(code + PSR_BLOCK_OFFSET);
+  msr_cpsr_flags_code_bytes =
+    build_psr_write_block(code + MSR_CPSR_FLAGS_BLOCK_OFFSET,
+                          MSR_CPSR_FLAGS_IMM,
+                          PSR_MSR_CPSR_FLAGS_START_PC,
+                          PSR_MSR_CPSR_FLAGS_CYCLES,
+                          &g_msr_cpsr_flags_entry,
+                          "msr_cpsr_flags_emit_rejected");
+  msr_cpsr_control_code_bytes =
+    build_psr_write_block(code + MSR_CPSR_CONTROL_BLOCK_OFFSET,
+                          MSR_CPSR_R0,
+                          PSR_MSR_CPSR_CONTROL_START_PC,
+                          PSR_MSR_CPSR_CONTROL_CYCLES,
+                          &g_msr_cpsr_control_entry,
+                          "msr_cpsr_control_emit_rejected");
+  msr_spsr_code_bytes =
+    build_psr_write_block(code + MSR_SPSR_BLOCK_OFFSET,
+                          MSR_SPSR_R1,
+                          PSR_MSR_SPSR_START_PC,
+                          PSR_MSR_SPSR_CYCLES,
+                          &g_msr_spsr_entry,
+                          "msr_spsr_emit_rejected");
   writeback_store_code_bytes =
     build_writeback_store_block(code + WRITEBACK_STORE_BLOCK_OFFSET);
   writeback_load_code_bytes =
@@ -5427,6 +5607,9 @@ void _start(void)
   run_shifted_reg_offset_load_case();
   run_reg_offset_rrx_load_case();
   run_psr_remaining_case();
+  run_msr_cpsr_flags_boundary_case();
+  run_msr_cpsr_control_remaining_case();
+  run_msr_spsr_remaining_case();
   run_writeback_store_case();
   run_writeback_post_load_case();
   run_reg_offset_writeback_store_case();
@@ -5562,6 +5745,12 @@ void _start(void)
   put_u32_dec(shifted_reg_offset_code_bytes);
   put_raw(" psr_code_bytes=");
   put_u32_dec(psr_code_bytes);
+  put_raw(" msr_cpsr_flags_code_bytes=");
+  put_u32_dec(msr_cpsr_flags_code_bytes);
+  put_raw(" msr_cpsr_control_code_bytes=");
+  put_u32_dec(msr_cpsr_control_code_bytes);
+  put_raw(" msr_spsr_code_bytes=");
+  put_u32_dec(msr_spsr_code_bytes);
   put_raw(" writeback_store_code_bytes=");
   put_u32_dec(writeback_store_code_bytes);
   put_raw(" writeback_load_code_bytes=");
@@ -5688,6 +5877,12 @@ void _start(void)
   put_u32_hex((u32)g_shifted_reg_offset_entry);
   put_raw(" psr_entry=");
   put_u32_hex((u32)g_psr_entry);
+  put_raw(" msr_cpsr_flags_entry=");
+  put_u32_hex((u32)g_msr_cpsr_flags_entry);
+  put_raw(" msr_cpsr_control_entry=");
+  put_u32_hex((u32)g_msr_cpsr_control_entry);
+  put_raw(" msr_spsr_entry=");
+  put_u32_hex((u32)g_msr_spsr_entry);
   put_raw(" writeback_store_entry=");
   put_u32_hex((u32)g_writeback_store_entry);
   put_raw(" writeback_load_entry=");

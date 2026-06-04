@@ -38,9 +38,17 @@ typedef enum
   REG_MAX = 64
 } riscv_test_reg_numbers;
 
+#define MODE_USER 0x00
+#define MODE_SYSTEM 0x10
+#define MODE_IRQ 0x11
+#define MODE_FIQ 0x12
 #define MODE_SUPERVISOR 0x13
+#define MODE_ABORT 0x14
+#define MODE_UNDEFINED 0x15
+#define MODE_INVALID 0x16
 #define REG_MODE(m) (reg_mode[(m) & 0xf])
 #define REG_SPSR(m) (spsr[(m) & 0xf])
+#define PRIVMODE(m) ((m) >> 4)
 
 #define CPU_ACTIVE 0
 #define CPU_HALT 1

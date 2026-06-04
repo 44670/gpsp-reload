@@ -257,6 +257,50 @@ static void function_cc riscv_execute_swi_arm(u32 pc)
   set_cpu_mode(MODE_SUPERVISOR);
 }
 
+static const u32 riscv_psr_cpsr_masks[4][2] =
+{
+  { 0x00000000u, 0x00000000u },
+  { 0x00000020u, 0x000000EFu },
+  { 0xF0000000u, 0xF0000000u },
+  { 0xF0000020u, 0xF00000EFu }
+};
+
+static const u32 riscv_psr_spsr_masks[4] =
+{
+  0x00000000u, 0x000000EFu, 0xF0000000u, 0xF00000EFu
+};
+
+static const u32 riscv_psr_cpu_modes[16] =
+{
+  MODE_USER, MODE_FIQ, MODE_IRQ, MODE_SUPERVISOR,
+  MODE_INVALID, MODE_INVALID, MODE_INVALID, MODE_ABORT,
+  MODE_INVALID, MODE_INVALID, MODE_INVALID, MODE_UNDEFINED,
+  MODE_INVALID, MODE_INVALID, MODE_INVALID, MODE_SYSTEM
+};
+
+static void function_cc riscv_store_cpsr(u32 source, u32 psr_pfield)
+{
+  u32 store_mask =
+    riscv_psr_cpsr_masks[psr_pfield & 3u][PRIVMODE(reg[CPU_MODE])];
+  u32 cpsr = (source & store_mask) | (reg[REG_CPSR] & ~store_mask);
+
+  reg[REG_CPSR] = cpsr;
+  if (store_mask & 0xffu)
+  {
+    set_cpu_mode(riscv_psr_cpu_modes[cpsr & 0xfu]);
+    check_and_raise_interrupts();
+  }
+}
+
+static void function_cc riscv_store_spsr(u32 source, u32 psr_pfield)
+{
+  u32 store_mask = riscv_psr_spsr_masks[psr_pfield & 3u];
+  u32 mode = reg[CPU_MODE] & 0xfu;
+  u32 old_spsr = spsr[mode];
+
+  spsr[mode] = (source & store_mask) | (old_spsr & ~store_mask);
+}
+
 static u32 riscv_arm_expand_imm(u32 opcode)
 {
   u32 imm = opcode & 0xffu;
@@ -1139,49 +1183,97 @@ bool riscv_emit_native_arm_multiply_long(u8 **translation_ptr_ref,
   return true;
 }
 
-bool riscv_emit_native_arm_psr(u8 **translation_ptr_ref,
-                               riscv_jit_block_meta *meta,
-                               u32 opcode,
-                               u32 cycles)
+bool riscv_emit_native_arm_psr_with_pc(u8 **translation_ptr_ref,
+                                       riscv_jit_block_meta *meta,
+                                       u32 opcode,
+                                       u32 pc,
+                                       u32 cycles)
 {
   u32 condition = opcode >> 28;
+  u32 op_class = (opcode >> 20) & 0xffu;
   u32 use_spsr = (opcode >> 22) & 1u;
   u32 rd = (opcode >> 12) & 0xfu;
+  u32 rm = opcode & 0xfu;
   u8 *ptr = *translation_ptr_ref;
 
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
     return false;
 
-  if (condition != 0xe || (opcode & 0x0fbf0fffu) != 0x010f0000u ||
-      rd == REG_PC)
+  if (condition != 0xe)
+    return false;
+
+  if ((opcode & 0x0fbf0fffu) == 0x010f0000u)
+  {
+    if (rd == REG_PC)
+      return false;
+
+    if (use_spsr)
+    {
+      u8 *translation_ptr;
+
+      riscv_emit_arm_reg_load(&ptr, riscv_reg_t0, CPU_MODE);
+      riscv_emit_li(&ptr, riscv_reg_t1, (u32)(uintptr_t)&spsr[0]);
+      translation_ptr = ptr;
+      riscv_emit_andi(riscv_reg_t0, riscv_reg_t0, 0xf);
+      riscv_emit_slli(riscv_reg_t0, riscv_reg_t0, 2);
+      riscv_emit_add(riscv_reg_t1, riscv_reg_t1, riscv_reg_t0);
+      riscv_emit_lw(riscv_reg_t0, riscv_reg_t1, 0);
+      ptr = translation_ptr;
+    }
+    else
+    {
+      riscv_emit_arm_reg_load(&ptr, riscv_reg_t0, REG_CPSR);
+    }
+
+    riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_t0);
+    riscv_emit_adjust_cycles(&ptr, cycles);
+
+    *translation_ptr_ref = ptr;
+    riscv_native_psr_insns++;
+    return true;
+  }
+
+  if (op_class != 0x12u && op_class != 0x16u &&
+      op_class != 0x32u && op_class != 0x36u)
   {
     return false;
   }
 
-  if (use_spsr)
-  {
-    u8 *translation_ptr;
+  if (rd != 0xfu)
+    return false;
 
-    riscv_emit_arm_reg_load(&ptr, riscv_reg_t0, CPU_MODE);
-    riscv_emit_li(&ptr, riscv_reg_t1, (u32)(uintptr_t)&spsr[0]);
-    translation_ptr = ptr;
-    riscv_emit_andi(riscv_reg_t0, riscv_reg_t0, 0xf);
-    riscv_emit_slli(riscv_reg_t0, riscv_reg_t0, 2);
-    riscv_emit_add(riscv_reg_t1, riscv_reg_t1, riscv_reg_t0);
-    riscv_emit_lw(riscv_reg_t0, riscv_reg_t1, 0);
-    ptr = translation_ptr;
+  if ((op_class == 0x12u || op_class == 0x16u) &&
+      ((opcode & 0x00000ff0u) || rm == REG_PC))
+  {
+    return false;
   }
+
+  if (op_class == 0x32u || op_class == 0x36u)
+    riscv_emit_li(&ptr, riscv_reg_a0, riscv_arm_expand_imm(opcode));
   else
-  {
-    riscv_emit_arm_reg_load(&ptr, riscv_reg_t0, REG_CPSR);
-  }
+    riscv_emit_arm_reg_load(&ptr, riscv_reg_a0, rm);
 
-  riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_t0);
+  riscv_emit_li(&ptr, riscv_reg_t0, pc + 4u);
+  riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
+  riscv_emit_li(&ptr, riscv_reg_a1,
+                ((opcode >> 16) & 1u) | ((opcode >> 18) & 2u));
+  riscv_emit_c_call(&ptr, use_spsr ? (uintptr_t)riscv_store_spsr
+                                  : (uintptr_t)riscv_store_cpsr);
   riscv_emit_adjust_cycles(&ptr, cycles);
+  riscv_emit_helper_call(&ptr, meta);
 
   *translation_ptr_ref = ptr;
   riscv_native_psr_insns++;
   return true;
+}
+
+bool riscv_emit_native_arm_psr(u8 **translation_ptr_ref,
+                               riscv_jit_block_meta *meta,
+                               u32 opcode,
+                               u32 cycles)
+{
+  return riscv_emit_native_arm_psr_with_pc(translation_ptr_ref, meta,
+                                          opcode, 0, cycles);
 }
 
 bool riscv_emit_native_arm_b(u8 **translation_ptr_ref,
