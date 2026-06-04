@@ -138,8 +138,10 @@ typedef unsigned int usize;
 #define REG_OFFSET_STORE_BLOCK_OFFSET 6144u
 #define REG_OFFSET_REJECT_BLOCK_OFFSET 6656u
 #define FRAME_COMPLETE 0x80000000u
+#define IDLE_LOOP_DISABLED 0xffffffffu
 
 u32 reg[REG_MAX];
+u32 idle_loop_target_pc;
 u32 rom_cache_watermark;
 u32 gamepak_sticky_bit[1024 / 32];
 
@@ -329,6 +331,7 @@ static void reset_runtime_observations(u32 pc)
   reg[REG_PC] = pc;
   reg[REG_CPSR] = 0;
   reg[CPU_HALT_STATE] = CPU_ACTIVE;
+  idle_loop_target_pc = IDLE_LOOP_DISABLED;
   g_lookup_calls = 0;
   g_lookup_pc = 0;
   g_update_calls = 0;
@@ -801,6 +804,27 @@ static void run_branch_remaining_cycles_case(void)
     fail_u32("branch_remaining", "execute_pc",
              g_execute_pc, BRANCH_TARGET_PC);
   expect_stickybits_cleared("branch_remaining");
+}
+
+static void run_branch_idle_loop_case(void)
+{
+  const u32 extra_cycles = 5u;
+
+  reset_runtime_observations(BRANCH_START_PC);
+  g_lookup_entry = g_branch_entry;
+  idle_loop_target_pc = BRANCH_TARGET_PC;
+
+  execute_arm_translate_internal(BRANCH_CYCLES + extra_cycles, &reg[0]);
+
+  if (reg[REG_PC] != BRANCH_TARGET_PC)
+    fail_u32("branch_idle_loop", "pc", reg[REG_PC], BRANCH_TARGET_PC);
+  if (g_update_calls != 1)
+    fail_u32("branch_idle_loop", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("branch_idle_loop", "update_cycles", (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("branch_idle_loop", "execute_calls", g_execute_calls, 0);
+  expect_stickybits_cleared("branch_idle_loop");
 }
 
 static void run_bl_boundary_case(void)
@@ -1508,6 +1532,7 @@ void _start(void)
   run_remaining_cycles_case();
   run_branch_boundary_case();
   run_branch_remaining_cycles_case();
+  run_branch_idle_loop_case();
   run_bl_boundary_case();
   run_bl_remaining_cycles_case();
   run_bx_arm_remaining_cycles_case();

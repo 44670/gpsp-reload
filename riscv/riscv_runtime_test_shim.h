@@ -42,6 +42,7 @@ typedef enum
 #define completed_frame(c) ((c) & 0x80000000)
 
 extern u32 reg[REG_MAX];
+extern u32 idle_loop_target_pc;
 extern u32 rom_cache_watermark;
 extern u32 gamepak_sticky_bit[1024 / 32];
 

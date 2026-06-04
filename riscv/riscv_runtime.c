@@ -253,6 +253,9 @@ static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta)
   if (riscv_cpu_alert != CPU_ALERT_NONE)
     alert = riscv_handle_cpu_alert();
 
+  if (reg[REG_PC] == idle_loop_target_pc && riscv_cycles_remaining > 0)
+    riscv_cycles_remaining = 0;
+
   if ((alert & CPU_ALERT_HALT) || reg[CPU_HALT_STATE] != CPU_ACTIVE ||
       riscv_cycles_remaining <= 0)
   {
