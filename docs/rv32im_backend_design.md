@@ -256,9 +256,10 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - scriptable qemu-user harness commands for `load`, `reset`, `backend`, `run`,
   `cont`, `stepi`, `stepb`, `regs`, `mem`, `counters`, `tracepc`,
   `framehash`, `compare`, `png`, and `quit`
-- qemu-user harness `compare` execution of a generated RV32IM
-  `ADD r2, r0, r1` runtime fixture against a local ARM reference model, with
-  one runtime block executed and no fallback
+- qemu-user harness `compare` execution of generated RV32IM
+  `ADD r2, r0, r1`, `LDR`, `LDRB`, and `STR` runtime fixtures against a local
+  ARM reference model, with three runtime blocks executed, helper memory
+  observations hashed, and no fallback
 
 Remaining first-phase gaps should stay narrow and evidence-driven:
 
