@@ -1,4 +1,5 @@
 typedef unsigned int u32;
+typedef signed int s32;
 typedef unsigned char u8;
 typedef unsigned int usize;
 
@@ -31,6 +32,11 @@ struct arm_mem_fixture_state
 struct arm_branch_fixture_state
 {
   u32 word[18];
+};
+
+struct scheduler_fixture_state
+{
+  u32 word[3];
 };
 
 static const u32 fixture_ops[] =
@@ -69,6 +75,16 @@ static const u32 branch_indirect_op = 0xe12fff13u; /* bx r3 */
 #define BRANCH_EXIT_DIRECT 1u
 #define BRANCH_EXIT_INDIRECT 2u
 #define ARM_CPSR_T 0x20u
+
+#define SCHED_WORD_CYCLES 0u
+#define SCHED_WORD_ALERT 1u
+#define SCHED_WORD_EXIT_REASON 2u
+#define SCHED_STATE_WORDS 3u
+#define SCHED_CASES 3u
+#define SCHED_BLOCK_CYCLES 32
+#define SCHED_EXIT_CONTINUE 0u
+#define SCHED_EXIT_CYCLES 1u
+#define SCHED_EXIT_ALERT 2u
 
 static long syscall1(long number, long arg0)
 {
@@ -201,6 +217,30 @@ static u32 fnv1a_bytes(const u8 *data, usize bytes)
   return hash;
 }
 
+static u32 fnv1a_scheduler_states(const struct scheduler_fixture_state *states,
+                                  usize count)
+{
+  u32 hash = 2166136261u;
+  usize i;
+  usize j;
+
+  for (i = 0; i < count; i++)
+  {
+    for (j = 0; j < SCHED_STATE_WORDS; j++)
+    {
+      u32 value = states[i].word[j];
+      unsigned byte;
+      for (byte = 0; byte < 4; byte++)
+      {
+        hash ^= (value >> (byte * 8)) & 0xffu;
+        hash *= 16777619u;
+      }
+    }
+  }
+
+  return hash;
+}
+
 static void init_state(struct arm_fixture_state *state)
 {
   unsigned i;
@@ -240,6 +280,14 @@ static void init_branch_state(struct arm_branch_fixture_state *state)
   state->word[BRANCH_WORD_PC] = 0x08000000u;
   state->word[BRANCH_WORD_CPSR] = 0;
   state->word[BRANCH_WORD_EXIT_REASON] = 0;
+}
+
+static void init_scheduler_state(struct scheduler_fixture_state *state,
+                                 u32 cycles, u32 alert)
+{
+  state->word[SCHED_WORD_CYCLES] = cycles;
+  state->word[SCHED_WORD_ALERT] = alert;
+  state->word[SCHED_WORD_EXIT_REASON] = 0xffffffffu;
 }
 
 static u32 arm_expand_imm(u32 opcode)
@@ -368,6 +416,21 @@ static void run_reference_branch_indirect(struct arm_branch_fixture_state *state
   state->word[BRANCH_WORD_PC] = target & ~1u;
   state->word[BRANCH_WORD_CPSR] = (target & 1u) ? ARM_CPSR_T : 0;
   state->word[BRANCH_WORD_EXIT_REASON] = BRANCH_EXIT_INDIRECT;
+}
+
+static void run_reference_scheduler(struct scheduler_fixture_state *state)
+{
+  s32 cycles = (s32)state->word[SCHED_WORD_CYCLES];
+
+  cycles -= SCHED_BLOCK_CYCLES;
+  state->word[SCHED_WORD_CYCLES] = (u32)cycles;
+
+  if (state->word[SCHED_WORD_ALERT])
+    state->word[SCHED_WORD_EXIT_REASON] = SCHED_EXIT_ALERT;
+  else if (cycles <= 0)
+    state->word[SCHED_WORD_EXIT_REASON] = SCHED_EXIT_CYCLES;
+  else
+    state->word[SCHED_WORD_EXIT_REASON] = SCHED_EXIT_CONTINUE;
 }
 
 static void emit_li(u8 **code_ptr, riscv_reg_number rd, u32 value)
@@ -526,6 +589,29 @@ static u32 emit_branch_indirect_block(u8 *code, u32 opcode)
   return (u32)(translation_ptr - code);
 }
 
+static u32 emit_scheduler_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+
+  riscv_emit_lw(riscv_reg_t0, riscv_reg_a0, SCHED_WORD_CYCLES * 4u);
+  riscv_emit_addi(riscv_reg_t0, riscv_reg_t0, -SCHED_BLOCK_CYCLES);
+  riscv_emit_sw(riscv_reg_t0, riscv_reg_a0, SCHED_WORD_CYCLES * 4u);
+  riscv_emit_lw(riscv_reg_t1, riscv_reg_a0, SCHED_WORD_ALERT * 4u);
+  riscv_emit_bne(riscv_reg_t1, riscv_reg_zero, 20);
+  riscv_emit_bge(riscv_reg_zero, riscv_reg_t0, 28);
+  riscv_emit_addi(riscv_reg_t2, riscv_reg_zero, SCHED_EXIT_CONTINUE);
+  riscv_emit_sw(riscv_reg_t2, riscv_reg_a0, SCHED_WORD_EXIT_REASON * 4u);
+  riscv_emit_jalr(riscv_reg_zero, riscv_reg_ra, 0);
+  riscv_emit_addi(riscv_reg_t2, riscv_reg_zero, SCHED_EXIT_ALERT);
+  riscv_emit_sw(riscv_reg_t2, riscv_reg_a0, SCHED_WORD_EXIT_REASON * 4u);
+  riscv_emit_jalr(riscv_reg_zero, riscv_reg_ra, 0);
+  riscv_emit_addi(riscv_reg_t2, riscv_reg_zero, SCHED_EXIT_CYCLES);
+  riscv_emit_sw(riscv_reg_t2, riscv_reg_a0, SCHED_WORD_EXIT_REASON * 4u);
+  riscv_emit_jalr(riscv_reg_zero, riscv_reg_ra, 0);
+
+  return (u32)(translation_ptr - code);
+}
+
 static u32 emit_fixture_block(u8 *code)
 {
   u8 *translation_ptr = code;
@@ -576,6 +662,8 @@ void _start(void)
   struct arm_mem_fixture_state jit_mem_state;
   struct arm_branch_fixture_state interp_branch_state;
   struct arm_branch_fixture_state jit_branch_state;
+  struct scheduler_fixture_state interp_sched_state[SCHED_CASES];
+  struct scheduler_fixture_state jit_sched_state[SCHED_CASES];
   typedef void (*jit_block_fn)(void *);
   u8 *code = (u8 *)map_exec_page();
   u32 code_bytes;
@@ -590,7 +678,11 @@ void _start(void)
   u32 jit_branch_hash;
   u32 direct_code_bytes;
   u32 indirect_code_bytes;
+  u32 interp_sched_hash;
+  u32 jit_sched_hash;
+  u32 sched_code_bytes;
   unsigned i;
+  unsigned j;
 
   if (!code)
   {
@@ -767,6 +859,68 @@ void _start(void)
   put_u32_hex(interp_branch_hash);
   put_raw(" rv32im_hash=");
   put_u32_hex(jit_branch_hash);
+  put_raw(" reason=state_equal\n");
+
+  init_scheduler_state(&interp_sched_state[0], 96u, 0);
+  init_scheduler_state(&jit_sched_state[0], 96u, 0);
+  init_scheduler_state(&interp_sched_state[1], 32u, 0);
+  init_scheduler_state(&jit_sched_state[1], 32u, 0);
+  init_scheduler_state(&interp_sched_state[2], 96u, 0x10u);
+  init_scheduler_state(&jit_sched_state[2], 96u, 0x10u);
+
+  sched_code_bytes = emit_scheduler_block(code);
+  flush_ret = (u32)syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code,
+                            (long)(code + sched_code_bytes), 0);
+
+  for (i = 0; i < SCHED_CASES; i++)
+  {
+    run_reference_scheduler(&interp_sched_state[i]);
+    ((jit_block_fn)code)(&jit_sched_state[i]);
+  }
+
+  interp_sched_hash = fnv1a_scheduler_states(interp_sched_state, SCHED_CASES);
+  jit_sched_hash = fnv1a_scheduler_states(jit_sched_state, SCHED_CASES);
+
+  for (i = 0; i < SCHED_CASES; i++)
+  {
+    for (j = 0; j < SCHED_STATE_WORDS; j++)
+    {
+      if (interp_sched_state[i].word[j] != jit_sched_state[i].word[j])
+      {
+        put_raw("result=FAIL command=exec_scheduler_exit case=");
+        put_u32_dec(i);
+        put_raw(" word=");
+        put_u32_dec(j);
+        put_raw(" interp=");
+        put_u32_hex(interp_sched_state[i].word[j]);
+        put_raw(" rv32im=");
+        put_u32_hex(jit_sched_state[i].word[j]);
+        put_raw(" interp_hash=");
+        put_u32_hex(interp_sched_hash);
+        put_raw(" rv32im_hash=");
+        put_u32_hex(jit_sched_hash);
+        put_raw(" reason=scheduler_state_mismatch\n");
+        sys_exit(1);
+      }
+    }
+  }
+
+  put_raw("result=PASS command=exec_scheduler_exit cases=");
+  put_u32_dec(SCHED_CASES);
+  put_raw(" code_bytes=");
+  put_u32_dec(sched_code_bytes);
+  put_raw(" flush_ret=");
+  put_u32_hex(flush_ret);
+  put_raw(" continue_exit=");
+  put_u32_hex(jit_sched_state[0].word[SCHED_WORD_EXIT_REASON]);
+  put_raw(" cycle_exit=");
+  put_u32_hex(jit_sched_state[1].word[SCHED_WORD_EXIT_REASON]);
+  put_raw(" alert_exit=");
+  put_u32_hex(jit_sched_state[2].word[SCHED_WORD_EXIT_REASON]);
+  put_raw(" interp_hash=");
+  put_u32_hex(interp_sched_hash);
+  put_raw(" rv32im_hash=");
+  put_u32_hex(jit_sched_hash);
   put_raw(" reason=state_equal\n");
   sys_exit(0);
 }
