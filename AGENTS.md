@@ -9,6 +9,97 @@
 - Host-specific entry/exit stubs live in files such as `mips/mips_stub.S` and `arm/arm_stub.S`.
 - There is also an experimental JS backend (`jsjit_*`), but the ESP32-S3 target should not grow new JS work.
 - Current ESP32-S3 phase is CoreS3 SE playable firmware with experimental Xtensa JIT enabled by default.
+- Main development goal now: add a native RV32IM dynarec backend by first
+  learning the current good MIPS backend carefully.
+
+## Active RV32IM Backend Goal
+
+- Primary goal: add a new native RV32IM backend for gpSP.
+- Before implementing RV32IM code emission or stubs, study the MIPS backend
+  carefully enough to preserve the existing gpSP dynarec contract.
+- Treat `cpu_threaded.c` as the frontend contract and `mips/mips_emit.h` plus
+  `mips/mips_stub.S` as the main working model for backend structure.
+- Use MIPS for structure, not for mechanical instruction translation. RISC-V
+  has no branch delay slots and has different immediate, branch, call, and ABI
+  rules.
+- Initial RV32 target is plain 32-bit RV32I/M emission. Do not depend on the
+  compressed `C` extension, bitmanip extensions, floating point, or
+  Espressif-specific custom instructions for the first milestone.
+- Keep the first RV32IM milestone narrow:
+  - raw RV32I/M emitter helpers
+  - backend register mapping and psABI-safe helper calls
+  - entry/exit stub shape
+  - direct arithmetic/data-processing lowering
+  - basic loads/stores
+  - direct and indirect branch exits
+  - scheduler return on cycle exhaustion or alerts
+  - executable cache sync and branch patching
+- Validate behavior against the interpreter first. RISC-V disassembly or ISA
+  execution tests are useful, but they do not replace ARM guest-state
+  equivalence against `cpu.cc` and `gba_memory.c`.
+- A qemu-user based RV32IM development harness is part of the backend goal, not
+  a nice-to-have afterthought. Build it early enough that emitter, stub, helper
+  call, scheduler, and frame-output behavior can be tested before hardware.
+- Commit at coherent semi-milestones after local validation. Do not wait for
+  the entire backend to be finished before making commits, but keep each commit
+  scoped to one validated step and do not include unrelated worktree changes.
+
+## RV32IM QEMU-User Harness Requirement
+
+- Develop a host-controlled RV32IM harness that runs under `qemu-riscv32`
+  qemu-user, separate from ESP-IDF QEMU system tests.
+- The harness should be controllable through stdin/stdout so scripts can drive
+  deterministic runs without a GUI or interactive debugger.
+- Required harness capabilities:
+  - load a ROM/test image or synthetic block fixture
+  - select backend mode where relevant, at minimum interpreter vs RV32IM JIT
+  - reset emulator/backend state
+  - run for a frame count, cycle budget, or until scheduler/debug stop
+  - step by guest instruction or translated block when debugging divergence
+  - dump guest registers, selected memory ranges, IO ranges, and backend
+    counters
+  - dump the latest frame as RGB565/base64 on stdout and/or write a `.png`
+    file
+  - print parseable summary lines with backend, result, frame count, cycle or
+    block counters, framebuffer hash, and failure reason
+  - exit cleanly on `PASS`/`FAIL`/timeout so automation never hangs
+- Prefer a small command protocol over ad hoc logs. Useful commands include
+  `load`, `reset`, `backend`, `run`, `cont`, `stepi`, `stepb`, `regs`, `mem`,
+  `watchio`, `bp`, `tracepc`, `framehash`, `png`, and `quit`.
+- `run` and `cont` should remain distinct: `run` drives libretro-style
+  frame/video/audio progression; `cont` may stop at CPU scheduler or debug
+  boundaries.
+- The harness should support PNG artifacts the same way existing test tooling
+  values actual frame inspection: framebuffer hashes are useful, but a real
+  `.png` is stronger evidence when display state diverges.
+- Reuse patterns from `tests/headless/` and
+  `tests/esp32s3/qemu_capture_png.py` where practical, but keep the RV32IM
+  harness focused on qemu-user and backend development rather than ESP32-S3
+  firmware behavior.
+- Use the harness for interpreter-vs-RV32IM differential testing. Pure RISC-V
+  ISA/disassembly tests can catch emitter bugs, but the required pass condition
+  is matching gpSP guest-visible behavior.
+- Keep harness output stable and machine-parseable so CI/scripts can compare
+  summaries, hashes, frame PNGs, register snapshots, and failure reasons across
+  interpreter and RV32IM runs.
+
+## RV32IM Semi-Milestone Commit Rule
+
+- When a semi-milestone is coherent and locally validated, make a git commit for
+  it instead of letting unrelated phases accumulate.
+- Good commit boundaries include:
+  - RV32I/M raw emitter plus disassembly/encoding tests
+  - qemu-user smoke harness bootstrapped with stdin/stdout control
+  - qemu-user PNG/framehash capture working
+  - RV32IM entry/exit stub calling convention proven
+  - first interpreter-equivalent arithmetic/data-processing blocks
+  - basic load/store helpers and memory behavior parity
+  - direct/indirect branch exits and scheduler return parity
+  - cache sync/patching/invalidation integration
+- Before committing, inspect the worktree and commit only files relevant to the
+  semi-milestone. Preserve unrelated user changes.
+- The commit message should name the validated behavior, not just the files
+  touched.
 
 ## Current ESP32-S3 Phase
 
@@ -207,7 +298,9 @@
 ## Practical Rule For Future Agents
 
 - When in doubt, read `cpu_threaded.c` first. It defines the dynarec contract.
-- Use `mips/mips_emit.h` and `mips/mips_stub.S` as the primary native backend reference.
+- For RV32IM work, read the current MIPS backend carefully before editing. Use
+  `mips/mips_emit.h` and `mips/mips_stub.S` as the primary native backend
+  reference.
 - Do not treat a backend as complete unless it handles control-flow exits, update/scheduler boundaries, cache sync, and invalidation, not just instruction translation.
 
 
@@ -222,6 +315,13 @@ QEMU runs. Do not introduce custom build directories such as
 ~/esp-idf
 ~/work/CardPuterADV/esp-walkie-talkie
 ~/CardPuterADV/esp-walkie-talkie/refs -> CoreS3SE, not CoreS3
+~/work/refs/tinyemu -> TinyEMU RISC-V reference, if present
+~/work/refs/tinyemu-2019-12-21 -> local TinyEMU snapshot observed here
+
+TinyEMU may help as a compact RISC-V ISA/interpreter and system-emulation
+reference for RV32 behavior tests. Do not use it as the gpSP dynarec contract
+reference; `cpu_threaded.c` plus the native MIPS backend remain the primary
+backend structure references.
 
 ## ESP32-S3 JIT backend
 
