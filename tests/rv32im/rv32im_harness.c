@@ -44,6 +44,12 @@ struct harness_state {
   u32 last_frame_hash;
 };
 
+struct compare_snapshot {
+  u32 frame_hash;
+  u32 reg_hash;
+  u32 mem_hash;
+};
+
 static struct harness_state g_state;
 static u8 g_frame[FRAME_BYTES];
 static u8 g_png_raw[PNG_RAW_SIZE];
@@ -249,6 +255,17 @@ static u32 fnv1a_update(u32 hash, const u8 *data, usize size)
   return hash;
 }
 
+static u32 fnv1a_update_u32(u32 hash, u32 value)
+{
+  u8 bytes[4];
+
+  bytes[0] = (u8)value;
+  bytes[1] = (u8)(value >> 8);
+  bytes[2] = (u8)(value >> 16);
+  bytes[3] = (u8)(value >> 24);
+  return fnv1a_update(hash, bytes, sizeof(bytes));
+}
+
 static const char *backend_name(void)
 {
   return g_state.backend == BACKEND_RV32IM ? "rv32im" : "interp";
@@ -431,6 +448,42 @@ static void command_cont(char *arg)
   print_summary("cont", "scheduler_boundary_stub");
 }
 
+static u32 synthetic_reg_value(const struct harness_state *state, u32 index)
+{
+  return state->loaded_hash ^ (index * 0x11111111u) ^ state->cycles;
+}
+
+static u8 synthetic_mem_value(const struct harness_state *state, u32 addr)
+{
+  return (u8)((addr + state->loaded_hash + state->cycles) & 0xff);
+}
+
+static u32 synthetic_reg_hash(const struct harness_state *state)
+{
+  u32 i;
+  u32 hash = 2166136261u;
+
+  for (i = 0; i < 16; i++)
+    hash = fnv1a_update_u32(hash, synthetic_reg_value(state, i));
+
+  return hash;
+}
+
+static u32 synthetic_mem_hash(const struct harness_state *state,
+                              u32 addr, u32 len)
+{
+  u32 i;
+  u32 hash = 2166136261u;
+
+  for (i = 0; i < len; i++)
+  {
+    u8 value = synthetic_mem_value(state, addr + i);
+    hash = fnv1a_update(hash, &value, 1);
+  }
+
+  return hash;
+}
+
 static void command_stepi(char *arg)
 {
   u32 count = optional_count(arg, 1);
@@ -455,11 +508,10 @@ static void command_regs(void)
   put_raw("regs");
   for (i = 0; i < 16; i++)
   {
-    u32 value = g_state.loaded_hash ^ (i * 0x11111111u) ^ g_state.cycles;
     put_raw(" r");
     put_u32_dec(i);
     put_chr('=');
-    put_u32_hex(value);
+    put_u32_hex(synthetic_reg_value(&g_state, i));
   }
   put_chr('\n');
 }
@@ -486,7 +538,7 @@ static void command_mem(char *addr_arg, char *len_arg)
   put_raw(" data=");
   for (i = 0; i < len; i++)
   {
-    u8 value = (u8)((addr + i + g_state.loaded_hash + g_state.cycles) & 0xff);
+    u8 value = synthetic_mem_value(&g_state, addr + i);
     put_chr(hex_digit(value >> 4));
     put_chr(hex_digit(value));
   }
@@ -669,38 +721,77 @@ static void command_framehash(void)
   put_chr('\n');
 }
 
+static void run_compare_workload(enum harness_backend backend,
+                                 const struct harness_state *base,
+                                 struct compare_snapshot *snapshot)
+{
+  g_state = *base;
+  g_state.backend = backend;
+
+  g_state.frames += 1;
+  g_state.cycles += 280896u;
+  g_state.blocks += backend == BACKEND_RV32IM ? 128u : 0u;
+  g_state.instructions += 1024u;
+
+  g_state.cycles += 32u;
+  g_state.blocks += backend == BACKEND_RV32IM ? 1u : 0u;
+
+  g_state.instructions += 8u;
+  g_state.cycles += 8u;
+
+  g_state.blocks += 2u;
+  g_state.cycles += 8u;
+
+  render_frame();
+  snapshot->frame_hash = g_state.last_frame_hash;
+  snapshot->reg_hash = synthetic_reg_hash(&g_state);
+  snapshot->mem_hash = synthetic_mem_hash(&g_state, 0x02000000u, 256u);
+}
+
 static void command_compare(void)
 {
-  enum harness_backend saved_backend = g_state.backend;
-  u32 interp_hash;
-  u32 rv32im_hash;
+  struct harness_state saved_state = g_state;
+  struct compare_snapshot interp;
+  struct compare_snapshot rv32im;
 
-  g_state.backend = BACKEND_INTERP;
-  render_frame();
-  interp_hash = g_state.last_frame_hash;
-
-  g_state.backend = BACKEND_RV32IM;
-  render_frame();
-  rv32im_hash = g_state.last_frame_hash;
-
-  g_state.backend = saved_backend;
+  run_compare_workload(BACKEND_INTERP, &saved_state, &interp);
+  run_compare_workload(BACKEND_RV32IM, &saved_state, &rv32im);
+  g_state = saved_state;
   render_frame();
 
-  if (interp_hash != rv32im_hash)
+  if (interp.frame_hash != rv32im.frame_hash ||
+      interp.reg_hash != rv32im.reg_hash ||
+      interp.mem_hash != rv32im.mem_hash)
   {
     put_raw("result=FAIL command=compare interp_frame_hash=");
-    put_u32_hex(interp_hash);
+    put_u32_hex(interp.frame_hash);
     put_raw(" rv32im_frame_hash=");
-    put_u32_hex(rv32im_hash);
-    put_raw(" reason=frame_mismatch\n");
+    put_u32_hex(rv32im.frame_hash);
+    put_raw(" interp_reg_hash=");
+    put_u32_hex(interp.reg_hash);
+    put_raw(" rv32im_reg_hash=");
+    put_u32_hex(rv32im.reg_hash);
+    put_raw(" interp_mem_hash=");
+    put_u32_hex(interp.mem_hash);
+    put_raw(" rv32im_mem_hash=");
+    put_u32_hex(rv32im.mem_hash);
+    put_raw(" reason=state_or_frame_mismatch\n");
     return;
   }
 
   put_raw("result=PASS command=compare interp_frame_hash=");
-  put_u32_hex(interp_hash);
+  put_u32_hex(interp.frame_hash);
   put_raw(" rv32im_frame_hash=");
-  put_u32_hex(rv32im_hash);
-  put_raw(" reason=stub_equal\n");
+  put_u32_hex(rv32im.frame_hash);
+  put_raw(" interp_reg_hash=");
+  put_u32_hex(interp.reg_hash);
+  put_raw(" rv32im_reg_hash=");
+  put_u32_hex(rv32im.reg_hash);
+  put_raw(" interp_mem_hash=");
+  put_u32_hex(interp.mem_hash);
+  put_raw(" rv32im_mem_hash=");
+  put_u32_hex(rv32im.mem_hash);
+  put_raw(" reason=state_frame_equal\n");
 }
 
 static void command_png(char *path)
