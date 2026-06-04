@@ -15,7 +15,7 @@ typedef unsigned int usize;
 #define PROT_EXEC 4
 #define MAP_PRIVATE 2
 #define MAP_ANONYMOUS 32
-#define EXEC_MAP_BYTES 45056u
+#define EXEC_MAP_BYTES 45568u
 
 #define BLOCK_START_PC 0x08000000u
 #define BLOCK_END_PC 0x08000004u
@@ -34,6 +34,9 @@ typedef unsigned int usize;
 #define UNSUPPORTED_START_PC 0x08000020u
 #define UNSUPPORTED_END_PC (UNSUPPORTED_START_PC + 4u)
 #define UNSUPPORTED_CYCLES 11u
+#define THUMB_UNSUPPORTED_START_PC 0x02001020u
+#define THUMB_UNSUPPORTED_END_PC (THUMB_UNSUPPORTED_START_PC + 2u)
+#define THUMB_UNSUPPORTED_CYCLES 13u
 #define MULTIPLY_START_PC 0x08000080u
 #define MULTIPLY_END_PC (MULTIPLY_START_PC + 8u)
 #define MULTIPLY_MUL_CYCLES 5u
@@ -840,6 +843,7 @@ typedef unsigned int usize;
 #define BLOCK_MEM_LDM_PC_BLOCK_OFFSET 43520u
 #define BL_TARGET_BLOCK_OFFSET 44032u
 #define BX_ARM_TARGET_BLOCK_OFFSET 44544u
+#define THUMB_UNSUPPORTED_BLOCK_OFFSET 45056u
 
 u32 reg[REG_MAX];
 u32 spsr[6];
@@ -857,6 +861,7 @@ static u32 g_thumb_lookup_entry_pc;
 static u8 *g_data_entry;
 static u8 *g_chain_second_entry;
 static u8 *g_unsupported_entry;
+static u8 *g_thumb_unsupported_entry;
 static u8 *g_multiply_entry;
 static u8 *g_multiply_flag_muls_entry;
 static u8 *g_multiply_flag_mlas_entry;
@@ -1233,6 +1238,22 @@ static u32 build_unsupported_block(u8 *code)
   riscv_mark_block_unsupported(meta);
   riscv_emit_block_finalize(meta, &translation_ptr, UNSUPPORTED_START_PC,
                             UNSUPPORTED_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_thumb_unsupported_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_thumb_unsupported_entry = ((u8 *)meta) + block_prologue_size;
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            THUMB_UNSUPPORTED_START_PC,
+                            THUMB_UNSUPPORTED_END_PC, true);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -2905,6 +2926,45 @@ static void run_unsupported_block_fallback_case(void)
     fail_u32("unsupported_fallback", "execute_pc",
              g_execute_pc, UNSUPPORTED_START_PC);
   expect_stickybits_cleared("unsupported_fallback");
+}
+
+static void run_thumb_unsupported_block_fallback_case(void)
+{
+  reset_runtime_observations(THUMB_UNSUPPORTED_START_PC);
+  reg[REG_CPSR] = CPSR_T_BIT;
+  g_thumb_lookup_entry = g_thumb_unsupported_entry;
+  g_thumb_lookup_entry_pc = THUMB_UNSUPPORTED_START_PC;
+
+  execute_arm_translate_internal(THUMB_UNSUPPORTED_CYCLES, &reg[0]);
+
+  if (reg[REG_PC] != THUMB_UNSUPPORTED_START_PC)
+    fail_u32("thumb_unsupported_fallback", "pc",
+             reg[REG_PC], THUMB_UNSUPPORTED_START_PC);
+  if ((reg[REG_CPSR] & CPSR_T_BIT) != CPSR_T_BIT)
+    fail_u32("thumb_unsupported_fallback", "cpsr_t",
+             reg[REG_CPSR] & CPSR_T_BIT, CPSR_T_BIT);
+  if (g_lookup_calls != 0)
+    fail_u32("thumb_unsupported_fallback", "arm_lookup_calls",
+             g_lookup_calls, 0);
+  if (g_thumb_lookup_calls != 1)
+    fail_u32("thumb_unsupported_fallback", "thumb_lookup_calls",
+             g_thumb_lookup_calls, 1);
+  if (g_thumb_lookup_pc != THUMB_UNSUPPORTED_START_PC)
+    fail_u32("thumb_unsupported_fallback", "thumb_lookup_pc",
+             g_thumb_lookup_pc, THUMB_UNSUPPORTED_START_PC);
+  if (g_update_calls != 0)
+    fail_u32("thumb_unsupported_fallback", "update_calls",
+             g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("thumb_unsupported_fallback", "execute_calls",
+             g_execute_calls, 1);
+  if (g_execute_cycles != THUMB_UNSUPPORTED_CYCLES)
+    fail_u32("thumb_unsupported_fallback", "execute_cycles",
+             g_execute_cycles, THUMB_UNSUPPORTED_CYCLES);
+  if (g_execute_pc != THUMB_UNSUPPORTED_START_PC)
+    fail_u32("thumb_unsupported_fallback", "execute_pc",
+             g_execute_pc, THUMB_UNSUPPORTED_START_PC);
+  expect_stickybits_cleared("thumb_unsupported_fallback");
 }
 
 static void run_initial_lookup_fallback_case(const char *test_name,
@@ -6517,6 +6577,7 @@ void _start(void)
   u32 data_code_bytes;
   u32 chain_second_code_bytes;
   u32 unsupported_code_bytes;
+  u32 thumb_unsupported_code_bytes;
   u32 multiply_code_bytes;
   u32 multiply_flag_muls_code_bytes;
   u32 multiply_flag_mlas_code_bytes;
@@ -6610,6 +6671,8 @@ void _start(void)
                                  "chain_second_emit_rejected");
   unsupported_code_bytes =
     build_unsupported_block(code + UNSUPPORTED_BLOCK_OFFSET);
+  thumb_unsupported_code_bytes =
+    build_thumb_unsupported_block(code + THUMB_UNSUPPORTED_BLOCK_OFFSET);
   multiply_code_bytes = build_multiply_block(code + MULTIPLY_BLOCK_OFFSET);
   multiply_flag_muls_code_bytes =
     build_multiply_flag_block(code + MULTIPLY_FLAG_MULS_BLOCK_OFFSET,
@@ -6969,6 +7032,7 @@ void _start(void)
   expect_conditional_arm_ops_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   run_cycle_boundary_case();
   run_unsupported_block_fallback_case();
+  run_thumb_unsupported_block_fallback_case();
   run_initial_lookup_miss_fallback_case();
   run_initial_lookup_invalid_fallback_case();
   run_initial_thumb_lookup_miss_fallback_case();
@@ -7171,6 +7235,8 @@ void _start(void)
   put_u32_dec(chain_second_code_bytes);
   put_raw(" unsupported_code_bytes=");
   put_u32_dec(unsupported_code_bytes);
+  put_raw(" thumb_unsupported_code_bytes=");
+  put_u32_dec(thumb_unsupported_code_bytes);
   put_raw(" multiply_code_bytes=");
   put_u32_dec(multiply_code_bytes);
   put_raw(" multiply_flag_muls_code_bytes=");
@@ -7329,6 +7395,8 @@ void _start(void)
   put_u32_hex((u32)g_chain_second_entry);
   put_raw(" unsupported_entry=");
   put_u32_hex((u32)g_unsupported_entry);
+  put_raw(" thumb_unsupported_entry=");
+  put_u32_hex((u32)g_thumb_unsupported_entry);
   put_raw(" multiply_entry=");
   put_u32_hex((u32)g_multiply_entry);
   put_raw(" multiply_flag_muls_entry=");
