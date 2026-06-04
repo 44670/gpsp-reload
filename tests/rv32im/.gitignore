@@ -1,3 +1,4 @@
 rv32im_harness
 rv32im_codegen
+rv32im_abi_test
 out/
