@@ -20,6 +20,7 @@ typedef unsigned int usize;
 #define BLOCK_START_PC 0x08000000u
 #define BLOCK_END_PC 0x08000004u
 #define BLOCK_CYCLES 7u
+#define INVALID_LOOKUP_ENTRY ((u8 *)(usize)0xffffffffu)
 #define ADD_R2_R0_R1 0xe0802001u
 #define CHAIN_SECOND_START_PC BLOCK_END_PC
 #define CHAIN_SECOND_END_PC (CHAIN_SECOND_START_PC + 4u)
@@ -2794,6 +2795,40 @@ static void run_remaining_cycles_case(void)
   if (g_execute_pc != BLOCK_END_PC)
     fail_u32("remaining_cycles", "execute_pc", g_execute_pc, BLOCK_END_PC);
   expect_stickybits_cleared("remaining_cycles");
+}
+
+static void run_invalid_relookup_fallback_case(void)
+{
+  const u32 extra_cycles = 5u;
+
+  reset_runtime_observations(BLOCK_START_PC);
+  g_lookup_entry = g_data_entry;
+  g_lookup_next_pc = BLOCK_END_PC;
+  g_lookup_next_entry = INVALID_LOOKUP_ENTRY;
+  reg[0] = CHAIN_R0_VALUE;
+  reg[1] = CHAIN_R1_VALUE;
+
+  execute_arm_translate_internal(BLOCK_CYCLES + extra_cycles, &reg[0]);
+
+  if (reg[2] != CHAIN_R2_VALUE)
+    fail_u32("invalid_relookup", "r2", reg[2], CHAIN_R2_VALUE);
+  if (reg[REG_PC] != BLOCK_END_PC)
+    fail_u32("invalid_relookup", "pc", reg[REG_PC], BLOCK_END_PC);
+  if (g_lookup_calls != 2)
+    fail_u32("invalid_relookup", "lookup_calls", g_lookup_calls, 2);
+  if (g_lookup_pc != BLOCK_END_PC)
+    fail_u32("invalid_relookup", "lookup_pc", g_lookup_pc, BLOCK_END_PC);
+  if (g_update_calls != 0)
+    fail_u32("invalid_relookup", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("invalid_relookup", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("invalid_relookup", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != BLOCK_END_PC)
+    fail_u32("invalid_relookup", "execute_pc",
+             g_execute_pc, BLOCK_END_PC);
+  expect_stickybits_cleared("invalid_relookup");
 }
 
 static void run_native_chain_remaining_case(void)
@@ -6490,6 +6525,7 @@ void _start(void)
   run_cycle_boundary_case();
   run_unsupported_block_fallback_case();
   run_remaining_cycles_case();
+  run_invalid_relookup_fallback_case();
   run_native_chain_remaining_case();
   run_update_cycle_refill_chain_case();
   run_update_pc_change_chain_case();
