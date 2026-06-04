@@ -1450,7 +1450,7 @@ cpu_alert_type flag_interrupt(irq_type irq_raised)
   return check_interrupt();
 }
 
-#if !defined(HAVE_DYNAREC) || defined(XTENSA_ARCH)
+#if !defined(HAVE_DYNAREC) || defined(XTENSA_ARCH) || defined(RISCV_ARCH)
 
 // When switching modes set spsr[new_mode] to cpsr. Modifying PC as the
 // target of a data proc instruction will set cpsr to spsr[cpu_mode].

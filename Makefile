@@ -569,6 +569,8 @@ else ifeq ($(CPU_ARCH), arm64)
 	DEFINES += -DARM64_ARCH
 else ifeq ($(CPU_ARCH), mips)
 	DEFINES += -DMIPS_ARCH
+else ifeq ($(CPU_ARCH), riscv)
+	DEFINES += -DRISCV_ARCH
 else ifeq ($(CPU_ARCH), xtensa)
 	DEFINES += -DXTENSA_ARCH
 else ifeq ($(CPU_ARCH), x86_32)

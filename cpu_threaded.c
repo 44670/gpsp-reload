@@ -32,6 +32,11 @@
 u8 *last_rom_translation_ptr = NULL;
 u8 *last_ram_translation_ptr = NULL;
 
+#if defined(RISCV_ARCH) && !defined(MMAP_JIT_CACHE)
+u8 rom_translation_cache[ROM_TRANSLATION_CACHE_SIZE];
+u8 ram_translation_cache[RAM_TRANSLATION_CACHE_SIZE];
+#endif
+
 #if defined(MMAP_JIT_CACHE) || defined(XTENSA_ARCH)
 u8* rom_translation_cache;
 u8* ram_translation_cache;
@@ -214,6 +219,8 @@ typedef struct
 /* Include the right emitter headers */
 #if defined(MIPS_ARCH)
   #include "mips/mips_emit.h"
+#elif defined(RISCV_ARCH)
+  #include "riscv/riscv_emit.h"
 #elif defined(XTENSA_ARCH)
   #include "esp32s3/xtensa_emit.h"
 #elif defined(ARM_ARCH)
@@ -260,7 +267,7 @@ typedef struct
   void platform_cache_sync(void *baseaddr, void *endptr) {
     __clear_cache(baseaddr, endptr);
   }
-#elif defined(MIPS_ARCH)
+#elif defined(MIPS_ARCH) || defined(RISCV_ARCH)
   void platform_cache_sync(void *baseaddr, void *endptr) {
     __builtin___clear_cache(baseaddr, endptr);
   }
@@ -3192,7 +3199,7 @@ bool translate_block_arm(u32 pc, bool ram_region)
   else
     rom_translation_ptr = translation_ptr;
 
-#if defined(XTENSA_ARCH)
+#if defined(XTENSA_ARCH) || defined(RISCV_ARCH)
   (void)external_block_exits;
   (void)external_block_exit_position;
 #else
@@ -3370,7 +3377,7 @@ bool translate_block_thumb(u32 pc, bool ram_region)
   else
     rom_translation_ptr = translation_ptr;
 
-#if defined(XTENSA_ARCH)
+#if defined(XTENSA_ARCH) || defined(RISCV_ARCH)
   (void)external_block_exits;
   (void)external_block_exit_position;
 #else
