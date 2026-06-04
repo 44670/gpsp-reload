@@ -297,7 +297,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   handling, SWP-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, and Thumb lookup-miss fallback fixtures against a local ARM
   reference model, with
-  eighty-seven runtime blocks executed, ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
+  eighty-eight runtime blocks executed, ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results, MSR CPSR flag and
   control mode/banked-LR effects, SPSR helper-write effects, and native PSR
   accounting checked,
@@ -326,12 +326,12 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   SWP SMC/IRQ flush/interrupt observations, SWP HALT update behavior,
   byte read/write observations, and remaining-cycle handoff for `SWP` and
   `SWPB`,
-  direct, indirect, conditional, SWI, PC-write, SPSR-restore, and patched
-  branch execution exercised,
+  direct, indirect, conditional, SWI, PC-write, SPSR-restore, patched branch,
+  and direct-branch remaining-cycle execution exercised,
   scheduler/update/HALT/idle-loop/Thumb-lookup observations hashed, with
-  unsupported-block, Thumb lookup-miss, byte-store, block-memory, and SWP
-  alert remaining-cycle lookup-misses, and SWPB remaining-cycle lookup-miss
-  fallbacks observed
+  unsupported-block, Thumb lookup-miss, direct-branch remaining-cycle
+  lookup-miss, byte-store, block-memory, and SWP alert remaining-cycle
+  lookup-misses, and SWPB remaining-cycle lookup-miss fallbacks observed
 
 Remaining first-phase gaps should stay narrow and evidence-driven:
 
