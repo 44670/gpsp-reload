@@ -816,7 +816,7 @@ bool riscv_emit_native_arm_multiply(u8 **translation_ptr_ref,
     return false;
 
   if (condition != 0xe || (opcode & 0x0fc000f0u) != 0x00000090u ||
-      set_flags || rd == REG_PC || rm == REG_PC || rs == REG_PC ||
+      rd == REG_PC || rm == REG_PC || rs == REG_PC ||
       (accumulate && rn == REG_PC))
   {
     return false;
@@ -837,6 +837,12 @@ bool riscv_emit_native_arm_multiply(u8 **translation_ptr_ref,
   }
 
   riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_t2);
+  if (set_flags)
+  {
+    riscv_emit_arm_cpsr_c_load(&ptr, riscv_reg_t3);
+    riscv_emit_arm_cpsr_v_load(&ptr, riscv_reg_t4);
+    riscv_emit_arm_cpsr_store_nzcv(&ptr);
+  }
   riscv_emit_adjust_cycles(&ptr, cycles);
 
   *translation_ptr_ref = ptr;
