@@ -244,7 +244,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - raw RV32I/M emitter encoding checks against clang/LLVM reference output
 - qemu-riscv32 ABI entry/return checks
 - data-processing, flag-producing data-processing, multiply, long multiply,
-  PSR, load/store, halfword, block memory, SWP, SWI, HLE div, and PC-source
+  PSR, load/store, writeback memory, halfword, block memory, SWP, SWI,
+  HLE div, and PC-source
   runtime cases
 - helper-backed memory paths and CPU alert handling for SMC, IRQ, and HALT
 - scheduler update and frame-complete exits through `update_gba()` semantics
@@ -260,7 +261,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   `ADD r2, r0, r1`, `ADDS`, `CMP`, `MUL`, `MLA`, `MRS CPSR`,
   `MRS SPSR`, `MSR CPSR_flg`, `MSR SPSR`, `LDR`, `LDRB`, `STR`,
   `LDRH`, `LDRSB`, `LDRSH`, `STRH`, `STMIA`, `LDMIA`,
-  HLE `Div`, HLE `DivArm`, PC-source data-processing/test ops, `SWP`,
+  HLE `Div`, HLE `DivArm`, PC-source data-processing/test ops,
+  pre/post-index writeback memory ops, `SWP`,
   direct-branch-to-native-target, and
   `BL` link-register branch-to-native-target, and `BX r7`
   indirect-branch-to-native-target runtime fixtures, SWI-to-BIOS target
@@ -270,11 +272,12 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   store-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, and Thumb lookup-miss fallback fixtures against a local ARM
   reference model, with
-  thirty-two runtime blocks executed, ADDS/CMP CPSR flag results and
+  thirty-four runtime blocks executed, ADDS/CMP CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results, MSR CPSR flag and
   SPSR helper-write effects, and native PSR accounting checked,
   multiply/accumulate results checked, helper memory and alert observations hashed,
   halfword signed/unsigned helper load results and store observations checked,
+  immediate memory writeback address/source ordering checked,
   block-memory writeback and ordered multi-word helper transfers checked,
   HLE division quotient/remainder/absolute-quotient helper results checked,
   PC-source `pc+8`/`pc+12` operand and shifted-register flag behavior checked,
