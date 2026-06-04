@@ -340,7 +340,7 @@ static void print_fail(const char *command, const char *reason)
 
 static void command_help(void)
 {
-  put_raw("commands=load reset backend run cont stepi stepb regs mem framehash compare png quit\n");
+  put_raw("commands=load reset backend run cont stepi stepb regs mem counters framehash compare png quit\n");
 }
 
 static void command_backend(char *arg)
@@ -552,6 +552,28 @@ static void command_mem(char *addr_arg, char *len_arg)
     put_chr(hex_digit(value));
   }
   put_chr('\n');
+}
+
+static void command_counters(void)
+{
+  render_frame();
+  put_raw("result=PASS command=counters backend=");
+  put_raw(backend_name());
+  put_raw(" frames=");
+  put_u32_dec(g_state.frames);
+  put_raw(" cycles=");
+  put_u32_dec(g_state.cycles);
+  put_raw(" blocks=");
+  put_u32_dec(g_state.blocks);
+  put_raw(" instructions=");
+  put_u32_dec(g_state.instructions);
+  put_raw(" loaded_bytes=");
+  put_u32_dec(g_state.loaded_bytes);
+  put_raw(" loaded_hash=");
+  put_u32_hex(g_state.loaded_hash);
+  put_raw(" frame_hash=");
+  put_u32_hex(g_state.last_frame_hash);
+  put_raw(" reason=state_counters\n");
 }
 
 static u32 crc32_update(u32 crc, const u8 *data, usize len)
@@ -905,6 +927,10 @@ static void process_line(char *line)
     char *addr = next_token(&cursor);
     char *len = next_token(&cursor);
     command_mem(addr, len);
+  }
+  else if (str_eq(cmd, "counters"))
+  {
+    command_counters();
   }
   else if (str_eq(cmd, "framehash"))
   {
