@@ -20,6 +20,13 @@ typedef signed long long s64;
 
 #define function_cc
 
+typedef u8 cpu_alert_type;
+
+#define CPU_ALERT_NONE 0
+#define CPU_ALERT_HALT (1 << 0)
+#define CPU_ALERT_SMC (1 << 1)
+#define CPU_ALERT_IRQ (1 << 2)
+
 typedef enum
 {
   REG_PC = 15,
@@ -29,6 +36,7 @@ typedef enum
 } riscv_test_reg_numbers;
 
 #define CPU_ACTIVE 0
+#define CPU_HALT 1
 #define cycles_to_run(c) ((c) & 0x7FFF)
 #define completed_frame(c) ((c) & 0x80000000)
 
@@ -47,6 +55,10 @@ static inline void clear_gamepak_stickybits(void)
 void execute_arm(u32 cycles);
 u32 function_cc read_memory8(u32 address);
 u32 function_cc read_memory32(u32 address);
+cpu_alert_type function_cc write_memory8(u32 address, u8 value);
+cpu_alert_type function_cc write_memory32(u32 address, u32 value);
+u32 check_and_raise_interrupts(void);
+void flush_translation_cache_ram(void);
 u32 function_cc update_gba(int remaining_cycles);
 u8 function_cc *block_lookup_address_arm(u32 pc);
 u8 function_cc *block_lookup_address_thumb(u32 pc);

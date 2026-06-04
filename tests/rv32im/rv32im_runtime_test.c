@@ -41,6 +41,26 @@ typedef unsigned int usize;
 #define LOAD_WORD_VALUE 0xa1b2c3d4u
 #define LOAD_BYTE_VALUE 0x7eu
 #define LOAD_BLOCK_OFFSET 1024u
+#define STORE_WORD_START_PC 0x08000300u
+#define STORE_BYTE_START_PC 0x08000340u
+#define STORE_PC_START_PC 0x08000380u
+#define STORE_WORD_END_PC (STORE_WORD_START_PC + 4u)
+#define STORE_BYTE_END_PC (STORE_BYTE_START_PC + 4u)
+#define STORE_PC_END_PC (STORE_PC_START_PC + 4u)
+#define STORE_BASE_CYCLES 6u
+#define STORE_TOTAL_CYCLES (STORE_BASE_CYCLES + 1u)
+#define STORE_STR_R6_R3_0X28 0xe5836028u
+#define STORE_STRB_R6_R3_0X29 0xe5c36029u
+#define STORE_STR_R15_R3_0X2C 0xe583f02cu
+#define STORE_BASE_ADDR 0x02000100u
+#define STORE_WORD_ADDR (STORE_BASE_ADDR + 0x28u)
+#define STORE_BYTE_ADDR (STORE_BASE_ADDR + 0x29u)
+#define STORE_PC_ADDR (STORE_BASE_ADDR + 0x2cu)
+#define STORE_VALUE 0x13579bdfu
+#define STORE_PC_VALUE (STORE_PC_START_PC + 12u)
+#define STORE_WORD_BLOCK_OFFSET 1536u
+#define STORE_BYTE_BLOCK_OFFSET 2048u
+#define STORE_PC_BLOCK_OFFSET 2560u
 #define FRAME_COMPLETE 0x80000000u
 
 u32 reg[REG_MAX];
@@ -51,6 +71,9 @@ static u8 *g_lookup_entry;
 static u8 *g_data_entry;
 static u8 *g_branch_entry;
 static u8 *g_load_entry;
+static u8 *g_store_word_entry;
+static u8 *g_store_byte_entry;
+static u8 *g_store_pc_entry;
 static u32 g_lookup_calls;
 static u32 g_lookup_pc;
 static u32 g_update_calls;
@@ -64,6 +87,17 @@ static u32 g_read32_pc;
 static u32 g_read8_calls;
 static u32 g_read8_addr;
 static u32 g_read8_pc;
+static u32 g_write32_calls;
+static u32 g_write32_addr;
+static u32 g_write32_value;
+static u32 g_write32_pc;
+static u32 g_write8_calls;
+static u32 g_write8_addr;
+static u32 g_write8_value;
+static u32 g_write8_pc;
+static u32 g_flush_calls;
+static u32 g_irq_check_calls;
+static cpu_alert_type g_store_alert;
 
 static long syscall1(long number, long arg0)
 {
@@ -213,6 +247,17 @@ static void reset_runtime_observations(u32 pc)
   g_read8_calls = 0;
   g_read8_addr = 0;
   g_read8_pc = 0;
+  g_write32_calls = 0;
+  g_write32_addr = 0;
+  g_write32_value = 0;
+  g_write32_pc = 0;
+  g_write8_calls = 0;
+  g_write8_addr = 0;
+  g_write8_value = 0;
+  g_write8_pc = 0;
+  g_flush_calls = 0;
+  g_irq_check_calls = 0;
+  g_store_alert = CPU_ALERT_NONE;
 }
 
 static u32 build_data_block(u8 *code)
@@ -290,6 +335,28 @@ static u32 build_load_block(u8 *code)
 
   riscv_emit_block_finalize(meta, &translation_ptr, LOAD_START_PC,
                             LOAD_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_store_block(u8 *code, u32 opcode, u32 pc, u8 **entry_out)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  *entry_out = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_access_memory(&translation_ptr, meta,
+                                           opcode, pc, STORE_BASE_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=store_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, pc, pc + 4u, false);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -485,6 +552,182 @@ static void run_load_remaining_cycles_case(void)
   expect_stickybits_cleared("load_remaining");
 }
 
+static void expect_store_word(const char *test_name, u32 pc)
+{
+  if (g_write32_calls != 1)
+    fail_u32(test_name, "write32_calls", g_write32_calls, 1);
+  if (g_write32_addr != STORE_WORD_ADDR)
+    fail_u32(test_name, "write32_addr", g_write32_addr, STORE_WORD_ADDR);
+  if (g_write32_value != STORE_VALUE)
+    fail_u32(test_name, "write32_value", g_write32_value, STORE_VALUE);
+  if (g_write32_pc != pc)
+    fail_u32(test_name, "write32_pc", g_write32_pc, pc);
+}
+
+static void run_store_word_boundary_case(void)
+{
+  reset_runtime_observations(STORE_WORD_START_PC);
+  g_lookup_entry = g_store_word_entry;
+  reg[3] = STORE_BASE_ADDR;
+  reg[6] = STORE_VALUE;
+
+  execute_arm_translate_internal(STORE_TOTAL_CYCLES, &reg[0]);
+
+  expect_store_word("store_word_boundary", STORE_WORD_END_PC);
+  if (reg[REG_PC] != STORE_WORD_END_PC)
+    fail_u32("store_word_boundary", "pc", reg[REG_PC], STORE_WORD_END_PC);
+  if (g_update_calls != 1)
+    fail_u32("store_word_boundary", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("store_word_boundary", "update_cycles", (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("store_word_boundary", "execute_calls", g_execute_calls, 0);
+  if (g_flush_calls != 0)
+    fail_u32("store_word_boundary", "flush_calls", g_flush_calls, 0);
+  if (g_irq_check_calls != 0)
+    fail_u32("store_word_boundary", "irq_calls", g_irq_check_calls, 0);
+  expect_stickybits_cleared("store_word_boundary");
+}
+
+static void run_store_word_remaining_cycles_case(void)
+{
+  const u32 extra_cycles = 5u;
+
+  reset_runtime_observations(STORE_WORD_START_PC);
+  g_lookup_entry = g_store_word_entry;
+  reg[3] = STORE_BASE_ADDR;
+  reg[6] = STORE_VALUE;
+
+  execute_arm_translate_internal(STORE_TOTAL_CYCLES + extra_cycles, &reg[0]);
+
+  expect_store_word("store_word_remaining", STORE_WORD_END_PC);
+  if (reg[REG_PC] != STORE_WORD_END_PC)
+    fail_u32("store_word_remaining", "pc", reg[REG_PC], STORE_WORD_END_PC);
+  if (g_update_calls != 0)
+    fail_u32("store_word_remaining", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("store_word_remaining", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("store_word_remaining", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != STORE_WORD_END_PC)
+    fail_u32("store_word_remaining", "execute_pc",
+             g_execute_pc, STORE_WORD_END_PC);
+  expect_stickybits_cleared("store_word_remaining");
+}
+
+static void run_store_pc_value_case(void)
+{
+  const u32 extra_cycles = 2u;
+
+  reset_runtime_observations(STORE_PC_START_PC);
+  g_lookup_entry = g_store_pc_entry;
+  reg[3] = STORE_BASE_ADDR;
+
+  execute_arm_translate_internal(STORE_TOTAL_CYCLES + extra_cycles, &reg[0]);
+
+  if (g_write32_calls != 1)
+    fail_u32("store_pc_value", "write32_calls", g_write32_calls, 1);
+  if (g_write32_addr != STORE_PC_ADDR)
+    fail_u32("store_pc_value", "write32_addr", g_write32_addr, STORE_PC_ADDR);
+  if (g_write32_value != STORE_PC_VALUE)
+    fail_u32("store_pc_value", "write32_value",
+             g_write32_value, STORE_PC_VALUE);
+  if (g_write32_pc != STORE_PC_END_PC)
+    fail_u32("store_pc_value", "write32_pc",
+             g_write32_pc, STORE_PC_END_PC);
+  if (reg[REG_PC] != STORE_PC_END_PC)
+    fail_u32("store_pc_value", "pc", reg[REG_PC], STORE_PC_END_PC);
+  if (g_execute_calls != 1)
+    fail_u32("store_pc_value", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("store_pc_value", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  expect_stickybits_cleared("store_pc_value");
+}
+
+static void run_store_byte_remaining_cycles_case(void)
+{
+  const u32 extra_cycles = 3u;
+
+  reset_runtime_observations(STORE_BYTE_START_PC);
+  g_lookup_entry = g_store_byte_entry;
+  reg[3] = STORE_BASE_ADDR;
+  reg[6] = STORE_VALUE;
+
+  execute_arm_translate_internal(STORE_TOTAL_CYCLES + extra_cycles, &reg[0]);
+
+  if (g_write8_calls != 1)
+    fail_u32("store_byte_remaining", "write8_calls", g_write8_calls, 1);
+  if (g_write8_addr != STORE_BYTE_ADDR)
+    fail_u32("store_byte_remaining", "write8_addr",
+             g_write8_addr, STORE_BYTE_ADDR);
+  if (g_write8_value != (STORE_VALUE & 0xffu))
+    fail_u32("store_byte_remaining", "write8_value",
+             g_write8_value, STORE_VALUE & 0xffu);
+  if (g_write8_pc != STORE_BYTE_END_PC)
+    fail_u32("store_byte_remaining", "write8_pc",
+             g_write8_pc, STORE_BYTE_END_PC);
+  if (reg[REG_PC] != STORE_BYTE_END_PC)
+    fail_u32("store_byte_remaining", "pc", reg[REG_PC], STORE_BYTE_END_PC);
+  if (g_execute_calls != 1)
+    fail_u32("store_byte_remaining", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("store_byte_remaining", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  expect_stickybits_cleared("store_byte_remaining");
+}
+
+static void run_store_smc_irq_alert_case(void)
+{
+  const u32 extra_cycles = 4u;
+
+  reset_runtime_observations(STORE_WORD_START_PC);
+  g_lookup_entry = g_store_word_entry;
+  g_store_alert = CPU_ALERT_SMC | CPU_ALERT_IRQ;
+  reg[3] = STORE_BASE_ADDR;
+  reg[6] = STORE_VALUE;
+
+  execute_arm_translate_internal(STORE_TOTAL_CYCLES + extra_cycles, &reg[0]);
+
+  expect_store_word("store_smc_irq", STORE_WORD_END_PC);
+  if (g_flush_calls != 1)
+    fail_u32("store_smc_irq", "flush_calls", g_flush_calls, 1);
+  if (g_irq_check_calls != 1)
+    fail_u32("store_smc_irq", "irq_calls", g_irq_check_calls, 1);
+  if (g_update_calls != 0)
+    fail_u32("store_smc_irq", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("store_smc_irq", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("store_smc_irq", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  expect_stickybits_cleared("store_smc_irq");
+}
+
+static void run_store_halt_alert_case(void)
+{
+  const u32 extra_cycles = 2u;
+
+  reset_runtime_observations(STORE_WORD_START_PC);
+  g_lookup_entry = g_store_word_entry;
+  g_store_alert = CPU_ALERT_HALT;
+  reg[3] = STORE_BASE_ADDR;
+  reg[6] = STORE_VALUE;
+
+  execute_arm_translate_internal(STORE_TOTAL_CYCLES + extra_cycles, &reg[0]);
+
+  expect_store_word("store_halt", STORE_WORD_END_PC);
+  if (g_update_calls != 1)
+    fail_u32("store_halt", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != extra_cycles)
+    fail_u32("store_halt", "update_cycles",
+             (u32)g_update_cycles, extra_cycles);
+  if (g_execute_calls != 0)
+    fail_u32("store_halt", "execute_calls", g_execute_calls, 0);
+  expect_stickybits_cleared("store_halt");
+}
+
 void execute_arm(u32 cycles)
 {
   g_execute_calls++;
@@ -506,6 +749,39 @@ u32 function_cc read_memory8(u32 address)
   g_read8_addr = address;
   g_read8_pc = reg[REG_PC];
   return LOAD_BYTE_VALUE;
+}
+
+cpu_alert_type function_cc write_memory32(u32 address, u32 value)
+{
+  g_write32_calls++;
+  g_write32_addr = address;
+  g_write32_value = value;
+  g_write32_pc = reg[REG_PC];
+  if (g_store_alert & CPU_ALERT_HALT)
+    reg[CPU_HALT_STATE] = CPU_HALT;
+  return g_store_alert;
+}
+
+cpu_alert_type function_cc write_memory8(u32 address, u8 value)
+{
+  g_write8_calls++;
+  g_write8_addr = address;
+  g_write8_value = value;
+  g_write8_pc = reg[REG_PC];
+  if (g_store_alert & CPU_ALERT_HALT)
+    reg[CPU_HALT_STATE] = CPU_HALT;
+  return g_store_alert;
+}
+
+u32 check_and_raise_interrupts(void)
+{
+  g_irq_check_calls++;
+  return 0;
+}
+
+void flush_translation_cache_ram(void)
+{
+  g_flush_calls++;
 }
 
 u32 function_cc update_gba(int remaining_cycles)
@@ -538,6 +814,9 @@ void _start(void)
   u32 data_code_bytes;
   u32 branch_code_bytes;
   u32 load_code_bytes;
+  u32 store_word_code_bytes;
+  u32 store_byte_code_bytes;
+  u32 store_pc_code_bytes;
 
   if (!code)
   {
@@ -548,12 +827,33 @@ void _start(void)
   data_code_bytes = build_data_block(code);
   branch_code_bytes = build_branch_block(code + BRANCH_BLOCK_OFFSET);
   load_code_bytes = build_load_block(code + LOAD_BLOCK_OFFSET);
+  store_word_code_bytes =
+    build_store_block(code + STORE_WORD_BLOCK_OFFSET,
+                      STORE_STR_R6_R3_0X28,
+                      STORE_WORD_START_PC,
+                      &g_store_word_entry);
+  store_byte_code_bytes =
+    build_store_block(code + STORE_BYTE_BLOCK_OFFSET,
+                      STORE_STRB_R6_R3_0X29,
+                      STORE_BYTE_START_PC,
+                      &g_store_byte_entry);
+  store_pc_code_bytes =
+    build_store_block(code + STORE_PC_BLOCK_OFFSET,
+                      STORE_STR_R15_R3_0X2C,
+                      STORE_PC_START_PC,
+                      &g_store_pc_entry);
   run_cycle_boundary_case();
   run_remaining_cycles_case();
   run_branch_boundary_case();
   run_branch_remaining_cycles_case();
   run_load_boundary_case();
   run_load_remaining_cycles_case();
+  run_store_word_boundary_case();
+  run_store_word_remaining_cycles_case();
+  run_store_pc_value_case();
+  run_store_byte_remaining_cycles_case();
+  run_store_smc_irq_alert_case();
+  run_store_halt_alert_case();
 
   put_raw("result=PASS command=runtime code_bytes=");
   put_u32_dec(data_code_bytes);
@@ -561,12 +861,24 @@ void _start(void)
   put_u32_dec(branch_code_bytes);
   put_raw(" load_code_bytes=");
   put_u32_dec(load_code_bytes);
+  put_raw(" store_word_code_bytes=");
+  put_u32_dec(store_word_code_bytes);
+  put_raw(" store_byte_code_bytes=");
+  put_u32_dec(store_byte_code_bytes);
+  put_raw(" store_pc_code_bytes=");
+  put_u32_dec(store_pc_code_bytes);
   put_raw(" data_entry=");
   put_u32_hex((u32)g_data_entry);
   put_raw(" branch_entry=");
   put_u32_hex((u32)g_branch_entry);
   put_raw(" load_entry=");
   put_u32_hex((u32)g_load_entry);
+  put_raw(" store_word_entry=");
+  put_u32_hex((u32)g_store_word_entry);
+  put_raw(" store_byte_entry=");
+  put_u32_hex((u32)g_store_byte_entry);
+  put_raw(" store_pc_entry=");
+  put_u32_hex((u32)g_store_pc_entry);
   put_raw(" reason=state_equal\n");
   sys_exit(0);
 }

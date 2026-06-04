@@ -41,6 +41,8 @@ static u32 riscv_interpreter_fallbacks;
 static u32 riscv_native_data_proc_insns;
 static u32 riscv_native_branch_insns;
 static u32 riscv_native_load_insns;
+static u32 riscv_native_store_insns;
+static cpu_alert_type riscv_cpu_alert;
 
 static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta);
 
@@ -149,7 +151,7 @@ static void riscv_emit_adjust_cycles(u8 **ptr, u32 cycles)
   riscv_emit_global_u32_store(ptr, &riscv_cycles_remaining, riscv_reg_t3);
 }
 
-static void riscv_emit_call_u32_arg(u8 **ptr, uintptr_t function_addr)
+static void riscv_emit_c_call(u8 **ptr, uintptr_t function_addr)
 {
   u8 *translation_ptr;
 
@@ -165,6 +167,35 @@ static void riscv_emit_call_u32_arg(u8 **ptr, uintptr_t function_addr)
   riscv_emit_addi(riscv_reg_sp, riscv_reg_sp, 16);
 
   *ptr = translation_ptr;
+}
+
+static u32 function_cc riscv_store_u8(u32 address, u32 value)
+{
+  cpu_alert_type alert = write_memory8(address, (u8)value);
+  riscv_cpu_alert |= alert;
+  return alert;
+}
+
+static u32 function_cc riscv_store_u32(u32 address, u32 value)
+{
+  cpu_alert_type alert = write_memory32(address, value);
+  riscv_cpu_alert |= alert;
+  return alert;
+}
+
+static cpu_alert_type riscv_handle_cpu_alert(void)
+{
+  cpu_alert_type alert = riscv_cpu_alert;
+
+  riscv_cpu_alert = CPU_ALERT_NONE;
+
+  if (alert & CPU_ALERT_SMC)
+    flush_translation_cache_ram();
+
+  if (alert & CPU_ALERT_IRQ)
+    check_and_raise_interrupts();
+
+  return alert;
 }
 
 static u32 riscv_arm_expand_imm(u32 opcode)
@@ -205,13 +236,18 @@ static void riscv_emit_helper_call(u8 **ptr, const riscv_jit_block_meta *meta)
 static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta)
 {
   u32 update_ret;
+  cpu_alert_type alert = CPU_ALERT_NONE;
 
   (void)meta;
 
   riscv_blocks_executed++;
   riscv_interpreter_fallbacks++;
 
-  if (riscv_cycles_remaining <= 0)
+  if (riscv_cpu_alert != CPU_ALERT_NONE)
+    alert = riscv_handle_cpu_alert();
+
+  if ((alert & CPU_ALERT_HALT) || reg[CPU_HALT_STATE] != CPU_ACTIVE ||
+      riscv_cycles_remaining <= 0)
   {
     update_ret = update_gba(riscv_cycles_remaining);
     if (completed_frame(update_ret))
@@ -223,8 +259,11 @@ static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta)
     riscv_cycles_remaining = (s32)cycles_to_run(update_ret);
   }
 
-  execute_arm((u32)riscv_cycles_remaining);
-  riscv_cycles_remaining = 0;
+  if (riscv_cycles_remaining > 0)
+  {
+    execute_arm((u32)riscv_cycles_remaining);
+    riscv_cycles_remaining = 0;
+  }
 
   return NULL;
 }
@@ -375,8 +414,8 @@ bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
     return false;
 
-  if (condition != 0xe || !load || immediate_offset || !pre_index ||
-      writeback || rn == REG_PC || rd == REG_PC)
+  if (condition != 0xe || immediate_offset || !pre_index ||
+      writeback || rn == REG_PC || (load && rd == REG_PC))
   {
     return false;
   }
@@ -411,15 +450,33 @@ bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,
     }
   }
 
-  riscv_emit_li(&ptr, riscv_reg_t0, pc);
-  riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
-  riscv_emit_call_u32_arg(&ptr, byte ? (uintptr_t)read_memory8
-                                    : (uintptr_t)read_memory32);
-  riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_a0);
-  riscv_emit_adjust_cycles(&ptr, cycles + 2u);
+  if (load)
+  {
+    riscv_emit_li(&ptr, riscv_reg_t0, pc);
+    riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
+    riscv_emit_c_call(&ptr, byte ? (uintptr_t)read_memory8
+                                : (uintptr_t)read_memory32);
+    riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_a0);
+    riscv_emit_adjust_cycles(&ptr, cycles + 2u);
+    riscv_native_load_insns++;
+  }
+  else
+  {
+    if (rd == REG_PC)
+      riscv_emit_li(&ptr, riscv_reg_a1, pc + 12u);
+    else
+      riscv_emit_arm_reg_load(&ptr, riscv_reg_a1, rd);
+
+    riscv_emit_li(&ptr, riscv_reg_t0, pc + 4u);
+    riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
+    riscv_emit_c_call(&ptr, byte ? (uintptr_t)riscv_store_u8
+                                : (uintptr_t)riscv_store_u32);
+    riscv_emit_adjust_cycles(&ptr, cycles + 1u);
+    riscv_emit_helper_call(&ptr, meta);
+    riscv_native_store_insns++;
+  }
 
   *translation_ptr_ref = ptr;
-  riscv_native_load_insns++;
   return true;
 }
 
@@ -467,6 +524,8 @@ void init_emitter(bool must_swap)
   riscv_native_data_proc_insns = 0;
   riscv_native_branch_insns = 0;
   riscv_native_load_insns = 0;
+  riscv_native_store_insns = 0;
+  riscv_cpu_alert = CPU_ALERT_NONE;
   rom_cache_watermark = RISCV_INITIAL_ROM_WATERMARK;
   init_bios_hooks();
 }
@@ -484,6 +543,7 @@ u32 execute_arm_translate_internal(u32 cycles, void *regptr)
   (void)regptr;
 
   riscv_cycles_remaining = (s32)cycles;
+  riscv_cpu_alert = CPU_ALERT_NONE;
   clear_gamepak_stickybits();
 
   if (cycles == 0)
