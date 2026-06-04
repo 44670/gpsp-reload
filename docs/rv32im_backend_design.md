@@ -244,8 +244,9 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - raw RV32I/M emitter encoding checks against clang/LLVM reference output
 - qemu-riscv32 ABI entry/return checks
 - data-processing, flag-producing data-processing, multiply, long multiply,
-  PSR, load/store, register-offset load, writeback memory, immediate and
-  register-offset halfword memory, block memory, SWP, SWI, HLE div, and
+  PSR, load/store, register-offset load/store, writeback memory,
+  register-offset writeback memory, immediate and register-offset halfword
+  memory, block memory, SWP, SWI, HLE div, and
   PC-source
   runtime cases
 - helper-backed memory paths and CPU alert handling for SMC, IRQ, and HALT
@@ -269,12 +270,14 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   `TEQ`, `CMN`, `MRS CPSR`,
   `MRS SPSR`, `MSR CPSR_flg`, `MSR CPSR_ctl`, `MSR SPSR`,
   `LDR`, `LDRB`, `STR`, `STRB`, register-offset `STRB`,
+  register-offset writeback `STR`, post-index register-offset `LDRB`,
   `LDRH`, register-offset `LDRH`, `LDRSB`, register-offset `LDRSB`,
   `LDRSH`, register-offset `LDRSH`, `STRH`, register-offset `STRH`,
   `STMIA`, `LDMIA`, `STMDB sp!`, `LDMIA ... {pc}`,
   `LDMIA ... {pc}^`,
   HLE `Div`, HLE `DivArm`, PC-source data-processing/test ops,
   register-offset/shifted/RRX load ops, pre/post-index writeback memory ops,
+  register-offset writeback/post-index memory ops,
   `SWP`,
   direct-branch-to-native-target, and
   `BL` link-register branch-to-native-target, and `BX r7`
@@ -285,7 +288,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   store-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, and Thumb lookup-miss fallback fixtures against a local ARM
   reference model, with
-  sixty-nine runtime blocks executed, ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
+  seventy-one runtime blocks executed, ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results, MSR CPSR flag and
   control mode/banked-LR effects, SPSR helper-write effects, and native PSR
   accounting checked,
@@ -296,8 +299,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   register-shifted flag/test and TEQ/CMN CPSR results checked,
   helper memory, byte-store, register-offset byte-store, and alert
   observations hashed,
-  register-offset, shifted register-offset, subtract-offset, and RRX load
-  address/value observations checked,
+  register-offset, shifted register-offset, subtract-offset, RRX load, and
+  register-offset writeback load/store address/value observations checked,
   immediate and register-offset halfword signed/unsigned helper load results
   and store observations checked,
   immediate memory writeback address/source ordering checked,
