@@ -45,6 +45,8 @@ static inline void clear_gamepak_stickybits(void)
 }
 
 void execute_arm(u32 cycles);
+u32 function_cc read_memory8(u32 address);
+u32 function_cc read_memory32(u32 address);
 u32 function_cc update_gba(int remaining_cycles);
 u8 function_cc *block_lookup_address_arm(u32 pc);
 u8 function_cc *block_lookup_address_thumb(u32 pc);

@@ -40,6 +40,7 @@ static u32 riscv_blocks_executed;
 static u32 riscv_interpreter_fallbacks;
 static u32 riscv_native_data_proc_insns;
 static u32 riscv_native_branch_insns;
+static u32 riscv_native_load_insns;
 
 static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta);
 
@@ -146,6 +147,24 @@ static void riscv_emit_adjust_cycles(u8 **ptr, u32 cycles)
   }
   *ptr = translation_ptr;
   riscv_emit_global_u32_store(ptr, &riscv_cycles_remaining, riscv_reg_t3);
+}
+
+static void riscv_emit_call_u32_arg(u8 **ptr, uintptr_t function_addr)
+{
+  u8 *translation_ptr;
+
+  translation_ptr = *ptr;
+  riscv_emit_addi(riscv_reg_sp, riscv_reg_sp, -16);
+  riscv_emit_sw(riscv_reg_ra, riscv_reg_sp, 12);
+  *ptr = translation_ptr;
+
+  riscv_emit_li(ptr, riscv_reg_t0, (u32)function_addr);
+  translation_ptr = *ptr;
+  riscv_emit_jalr(riscv_reg_ra, riscv_reg_t0, 0);
+  riscv_emit_lw(riscv_reg_ra, riscv_reg_sp, 12);
+  riscv_emit_addi(riscv_reg_sp, riscv_reg_sp, 16);
+
+  *ptr = translation_ptr;
 }
 
 static u32 riscv_arm_expand_imm(u32 opcode)
@@ -335,6 +354,75 @@ bool riscv_emit_native_arm_b(u8 **translation_ptr_ref,
   return true;
 }
 
+bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,
+                                         riscv_jit_block_meta *meta,
+                                         u32 opcode,
+                                         u32 pc,
+                                         u32 cycles)
+{
+  u32 condition = opcode >> 28;
+  u32 immediate_offset = (opcode >> 25) & 1u;
+  u32 pre_index = (opcode >> 24) & 1u;
+  u32 up = (opcode >> 23) & 1u;
+  u32 byte = (opcode >> 22) & 1u;
+  u32 writeback = (opcode >> 21) & 1u;
+  u32 load = (opcode >> 20) & 1u;
+  u32 rn = (opcode >> 16) & 0xfu;
+  u32 rd = (opcode >> 12) & 0xfu;
+  u32 offset = opcode & 0xfffu;
+  u8 *ptr = *translation_ptr_ref;
+
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
+    return false;
+
+  if (condition != 0xe || !load || immediate_offset || !pre_index ||
+      writeback || rn == REG_PC || rd == REG_PC)
+  {
+    return false;
+  }
+
+  riscv_emit_arm_reg_load(&ptr, riscv_reg_a0, rn);
+
+  if (offset)
+  {
+    if (up && offset <= 2047u)
+    {
+      u8 *translation_ptr = ptr;
+      riscv_emit_addi(riscv_reg_a0, riscv_reg_a0, offset);
+      ptr = translation_ptr;
+    }
+    else if (!up && offset <= 2048u)
+    {
+      u8 *translation_ptr = ptr;
+      riscv_emit_addi(riscv_reg_a0, riscv_reg_a0, -(int)offset);
+      ptr = translation_ptr;
+    }
+    else
+    {
+      u8 *translation_ptr;
+
+      riscv_emit_li(&ptr, riscv_reg_t0, offset);
+      translation_ptr = ptr;
+      if (up)
+        riscv_emit_add(riscv_reg_a0, riscv_reg_a0, riscv_reg_t0);
+      else
+        riscv_emit_sub(riscv_reg_a0, riscv_reg_a0, riscv_reg_t0);
+      ptr = translation_ptr;
+    }
+  }
+
+  riscv_emit_li(&ptr, riscv_reg_t0, pc);
+  riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
+  riscv_emit_call_u32_arg(&ptr, byte ? (uintptr_t)read_memory8
+                                    : (uintptr_t)read_memory32);
+  riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_a0);
+  riscv_emit_adjust_cycles(&ptr, cycles + 2u);
+
+  *translation_ptr_ref = ptr;
+  riscv_native_load_insns++;
+  return true;
+}
+
 void riscv_emit_block_finalize(riscv_jit_block_meta *meta,
                                u8 **translation_ptr,
                                u32 block_start_pc,
@@ -378,6 +466,7 @@ void init_emitter(bool must_swap)
   riscv_interpreter_fallbacks = 0;
   riscv_native_data_proc_insns = 0;
   riscv_native_branch_insns = 0;
+  riscv_native_load_insns = 0;
   rom_cache_watermark = RISCV_INITIAL_ROM_WATERMARK;
   init_bios_hooks();
 }
