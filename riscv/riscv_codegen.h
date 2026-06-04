@@ -58,8 +58,11 @@ typedef enum
 } riscv_opcode;
 
 #define riscv_emit_raw_u32(value)                                             \
-  *((u32 *)translation_ptr) = (u32)(value);                                   \
-  translation_ptr += 4                                                        \
+  do                                                                          \
+  {                                                                           \
+    *((u32 *)translation_ptr) = (u32)(value);                                 \
+    translation_ptr += 4;                                                     \
+  } while (0)                                                                 \
 
 #define riscv_emit_r(funct7, funct3, rd, rs1, rs2)                            \
   riscv_emit_raw_u32((((u32)(funct7) & 0x7f) << 25) |                        \
