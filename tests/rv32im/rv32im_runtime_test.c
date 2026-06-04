@@ -21,6 +21,13 @@ typedef unsigned int usize;
 #define BLOCK_END_PC 0x08000004u
 #define BLOCK_CYCLES 7u
 #define ADD_R2_R0_R1 0xe0802001u
+#define DATA_EXT_START_PC 0x08000040u
+#define DATA_EXT_END_PC (DATA_EXT_START_PC + 8u)
+#define DATA_EXT_BIC_CYCLES 5u
+#define DATA_EXT_MVN_CYCLES 6u
+#define DATA_EXT_TOTAL_CYCLES (DATA_EXT_BIC_CYCLES + DATA_EXT_MVN_CYCLES)
+#define BIC_R9_R0_R1 0xe1c09001u
+#define MVN_R10_0XFF 0xe3e0a0ffu
 #define BRANCH_START_PC 0x08000100u
 #define BRANCH_TARGET_PC 0x0800010cu
 #define BRANCH_CYCLES 9u
@@ -165,6 +172,7 @@ typedef unsigned int usize;
 #define SHIFTED_REG_OFFSET_BLOCK_OFFSET 7168u
 #define WRITEBACK_STORE_BLOCK_OFFSET 7680u
 #define WRITEBACK_LOAD_BLOCK_OFFSET 8192u
+#define DATA_EXT_BLOCK_OFFSET 8704u
 #define FRAME_COMPLETE 0x80000000u
 #define IDLE_LOOP_DISABLED 0xffffffffu
 
@@ -175,6 +183,7 @@ u32 gamepak_sticky_bit[1024 / 32];
 
 static u8 *g_lookup_entry;
 static u8 *g_data_entry;
+static u8 *g_data_ext_entry;
 static u8 *g_branch_entry;
 static u8 *g_bl_entry;
 static u8 *g_load_entry;
@@ -420,6 +429,38 @@ static u32 build_data_block(u8 *code)
 
   riscv_emit_block_finalize(meta, &translation_ptr, BLOCK_START_PC,
                             BLOCK_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_data_ext_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_data_ext_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       BIC_R9_R0_R1,
+                                       DATA_EXT_BIC_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=bic_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       MVN_R10_0XFF,
+                                       DATA_EXT_MVN_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=mvn_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, DATA_EXT_START_PC,
+                            DATA_EXT_END_PC, false);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -865,6 +906,40 @@ static void run_remaining_cycles_case(void)
   if (g_execute_pc != BLOCK_END_PC)
     fail_u32("remaining_cycles", "execute_pc", g_execute_pc, BLOCK_END_PC);
   expect_stickybits_cleared("remaining_cycles");
+}
+
+static void run_data_ext_remaining_cycles_case(void)
+{
+  const u32 r0 = 0x12345678u;
+  const u32 r1 = 0x00ff00ffu;
+  const u32 extra_cycles = 4u;
+
+  reset_runtime_observations(DATA_EXT_START_PC);
+  g_lookup_entry = g_data_ext_entry;
+  reg[0] = r0;
+  reg[1] = r1;
+
+  execute_arm_translate_internal(DATA_EXT_TOTAL_CYCLES + extra_cycles,
+                                 &reg[0]);
+
+  if (reg[9] != (r0 & ~r1))
+    fail_u32("data_ext_remaining", "r9", reg[9], r0 & ~r1);
+  if (reg[10] != ~0xffu)
+    fail_u32("data_ext_remaining", "r10", reg[10], ~0xffu);
+  if (reg[REG_PC] != DATA_EXT_END_PC)
+    fail_u32("data_ext_remaining", "pc",
+             reg[REG_PC], DATA_EXT_END_PC);
+  if (g_update_calls != 0)
+    fail_u32("data_ext_remaining", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("data_ext_remaining", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("data_ext_remaining", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != DATA_EXT_END_PC)
+    fail_u32("data_ext_remaining", "execute_pc",
+             g_execute_pc, DATA_EXT_END_PC);
+  expect_stickybits_cleared("data_ext_remaining");
 }
 
 static void run_branch_boundary_case(void)
@@ -1707,6 +1782,7 @@ void _start(void)
 {
   u8 *code = (u8 *)map_exec_page();
   u32 data_code_bytes;
+  u32 data_ext_code_bytes;
   u32 branch_code_bytes;
   u32 bl_code_bytes;
   u32 load_code_bytes;
@@ -1729,6 +1805,7 @@ void _start(void)
   }
 
   data_code_bytes = build_data_block(code);
+  data_ext_code_bytes = build_data_ext_block(code + DATA_EXT_BLOCK_OFFSET);
   branch_code_bytes = build_branch_block(code + BRANCH_BLOCK_OFFSET);
   bl_code_bytes = build_bl_block(code + BL_BLOCK_OFFSET);
   load_code_bytes = build_load_block(code + LOAD_BLOCK_OFFSET);
@@ -1765,6 +1842,7 @@ void _start(void)
   expect_shifted_reg_offset_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   run_cycle_boundary_case();
   run_remaining_cycles_case();
+  run_data_ext_remaining_cycles_case();
   run_branch_boundary_case();
   run_branch_remaining_cycles_case();
   run_branch_idle_loop_case();
@@ -1790,6 +1868,8 @@ void _start(void)
 
   put_raw("result=PASS command=runtime code_bytes=");
   put_u32_dec(data_code_bytes);
+  put_raw(" data_ext_code_bytes=");
+  put_u32_dec(data_ext_code_bytes);
   put_raw(" branch_code_bytes=");
   put_u32_dec(branch_code_bytes);
   put_raw(" bl_code_bytes=");
@@ -1820,6 +1900,8 @@ void _start(void)
   put_u32_dec(writeback_load_code_bytes);
   put_raw(" data_entry=");
   put_u32_hex((u32)g_data_entry);
+  put_raw(" data_ext_entry=");
+  put_u32_hex((u32)g_data_ext_entry);
   put_raw(" branch_entry=");
   put_u32_hex((u32)g_branch_entry);
   put_raw(" bl_entry=");

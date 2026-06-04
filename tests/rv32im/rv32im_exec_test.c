@@ -48,6 +48,8 @@ static const u32 fixture_ops[] =
   0xe0206001u, /* eor r6, r0, r1 */
   0xe3a0707fu, /* mov r7, #0x7f */
   0xe0878002u, /* add r8, r7, r2 */
+  0xe1c09001u, /* bic r9, r0, r1 */
+  0xe3e0a0ffu, /* mvn r10, #0xff */
 };
 
 static const u32 load_store_ops[] =
@@ -330,6 +332,12 @@ static void run_reference_op(struct arm_fixture_state *state, u32 opcode)
     case 0xd:
       result = rhs;
       break;
+    case 0xe:
+      result = lhs & ~rhs;
+      break;
+    case 0xf:
+      result = ~rhs;
+      break;
     default:
       break;
   }
@@ -477,7 +485,7 @@ static void emit_arm_data_proc_op(u8 **code_ptr, u32 opcode)
   u32 rd = (opcode >> 12) & 0xfu;
   u8 *translation_ptr = *code_ptr;
 
-  if (arm_op != 0xd)
+  if (arm_op != 0xd && arm_op != 0xf)
   {
     riscv_emit_lw(riscv_reg_t0, riscv_reg_a0, rn * 4u);
   }
@@ -505,6 +513,13 @@ static void emit_arm_data_proc_op(u8 **code_ptr, u32 opcode)
       break;
     case 0xd:
       riscv_emit_add(riscv_reg_t2, riscv_reg_t1, riscv_reg_zero);
+      break;
+    case 0xe:
+      riscv_emit_xori(riscv_reg_t1, riscv_reg_t1, -1);
+      riscv_emit_and(riscv_reg_t2, riscv_reg_t0, riscv_reg_t1);
+      break;
+    case 0xf:
+      riscv_emit_xori(riscv_reg_t2, riscv_reg_t1, -1);
       break;
     default:
       riscv_emit_add(riscv_reg_t2, riscv_reg_zero, riscv_reg_zero);
