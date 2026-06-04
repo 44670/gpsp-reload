@@ -1,8 +1,9 @@
 # RV32IM Backend Design Notes
 
-This note captures the current gpSP native dynarec contract before RV32IM
-lowering starts. It is based on `cpu_threaded.c`, `mips/mips_emit.h`, and
-`mips/mips_stub.S`, with `main.c`/`main.h` used for scheduler return semantics.
+This note captures the gpSP native dynarec contract for RV32IM bring-up and
+tracks the first-phase proof status. It is based on `cpu_threaded.c`,
+`mips/mips_emit.h`, and `mips/mips_stub.S`, with `main.c`/`main.h` used for
+scheduler return semantics.
 
 The first RV32IM backend should copy the MIPS backend's structure, not its
 instructions. MIPS delay-slot tricks, jump encodings, and code placement rules
@@ -219,22 +220,59 @@ before being treated as a real backend.
 ## RV32IM First-Phase Implications
 
 - Add `riscv/riscv_emit.h`, `riscv/riscv_codegen.h`, and a runtime stub file
-  only after the current MIPS flow remains explainable from this note.
+  in the same frontend/backend split described above.
 - Emit plain RV32I/M 32-bit instructions first. Do not emit compressed `C`.
 - Reserve enough bytes for every patch site before the first branch-patching
   implementation. Prefer conservative long-branch sequences over range
   assumptions.
-- Keep a fixed CPU-state base pointer and a cycle counter in known registers.
-  Use psABI callee-saved registers only after the entry stub saves them.
-- Build the `qemu-riscv32` harness before broad opcode lowering. It should
-  prove entry/exit, update paths, helper calls, frame hash/PNG output, and
-  interpreter-vs-RV32IM state equivalence.
+- Keep the first backend state-backed. Do not add a guest register cache before
+  helper calls, exits, scheduler return, cache sync, and invalidation are
+  proven.
+- Use qemu-user proofs before broad opcode lowering. Each new backend boundary
+  should have a deterministic `result=PASS` runtime case before it is treated
+  as stable.
 - Treat a passing raw RISC-V emitter test as necessary but not sufficient. The
   backend is only correct when guest-visible ARM state, memory, scheduler
   return, and frame output match the interpreter.
 
+## Current RV32IM Proof Status
+
+The RV32IM backend now has a standalone qemu-user proof suite in
+`tests/rv32im/` and production lowering in `riscv/riscv_runtime.c` /
+`riscv/riscv_emit.h`. The current validated surface includes:
+
+- raw RV32I/M emitter encoding checks against clang/LLVM reference output
+- qemu-riscv32 ABI entry/return checks
+- data-processing, flag-producing data-processing, multiply, long multiply,
+  PSR, load/store, halfword, block memory, SWP, SWI, HLE div, and PC-source
+  runtime cases
+- helper-backed memory paths and CPU alert handling for SMC, IRQ, and HALT
+- scheduler update and frame-complete exits through `update_gba()` semantics
+- cycle checkpoints emitted at frontend internal branch join points
+- conditional block headers for ARM conditions `0..13`
+- internal, external, conditional, SWI, and absolute RV32IM branch patch sites
+- ARM and Thumb lookup/fallback paths, including restored-SPSR Thumb fallback
+- SPSR restore for `Rd=PC,S=1` data-processing writes and `LDM ... {pc}^`
+- scriptable qemu-user harness commands for `load`, `reset`, `backend`, `run`,
+  `cont`, `stepi`, `stepb`, `regs`, `mem`, `counters`, `tracepc`,
+  `framehash`, `compare`, `png`, and `quit`
+
+Remaining first-phase gaps should stay narrow and evidence-driven:
+
+- Thumb instruction lowering remains deliberately unsupported; Thumb blocks
+  must keep routing through fallback until a separate Thumb milestone exists.
+- Conditional ARM opcodes are still expected to enter through the frontend's
+  conditional block header rewrite, not by accepting non-AL conditions in each
+  low-level emitter API.
+- Keep unsupported or architecturally risky PC/register combinations rejected
+  until there is a matching interpreter-parity proof.
+- Broader performance work, guest register caching, compressed RISC-V emission,
+  and ESP32-specific tuning remain out of scope for the first correctness
+  phase.
+
 ## Semi-Milestone Gate
 
-This Objective 1 note is a commit boundary only after the source references are
-checked against the current worktree. The next semi-milestone should be a
-minimal RV32I/M emitter and qemu-user harness scaffold, not broad ARM lowering.
+Every validated RV32IM semi-milestone should be committed separately. A typical
+gate is `git diff --check`, `make -C tests/rv32im test`, a top-level unix
+RV32IM dynarec smoke build when production backend code changed, and
+`make -C tests/rv32im clean` before committing.
