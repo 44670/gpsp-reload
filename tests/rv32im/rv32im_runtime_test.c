@@ -127,16 +127,26 @@ typedef unsigned int usize;
 #define REG_OFFSET_LDRB_R9_R3_NEG_R2 0xe7539002u
 #define REG_OFFSET_STRB_R9_R3_NEG_R2 0xe7439002u
 #define REG_OFFSET_LDR_R8_R3_R2_LSL2 0xe7938102u
+#define REG_OFFSET_LDR_R8_R3_R2_RRX 0xe7938062u
+#define SHIFTED_REG_OFFSET_START_PC 0x08000680u
+#define SHIFTED_REG_OFFSET_END_PC (SHIFTED_REG_OFFSET_START_PC + 4u)
+#define SHIFTED_REG_OFFSET_CYCLES 7u
+#define SHIFTED_REG_OFFSET_TOTAL_CYCLES (SHIFTED_REG_OFFSET_CYCLES + 2u)
+#define SHIFTED_REG_OFFSET_LDRB_R10_R3_R2_LSL2 0xe7d3a102u
 #define REG_OFFSET_BASE_ADDR 0x02000300u
 #define REG_OFFSET_VALUE 0x34u
 #define REG_OFFSET_WORD_ADDR (REG_OFFSET_BASE_ADDR + REG_OFFSET_VALUE)
 #define REG_OFFSET_BYTE_ADDR (REG_OFFSET_BASE_ADDR - REG_OFFSET_VALUE)
+#define SHIFTED_REG_OFFSET_BYTE_ADDR \
+  (REG_OFFSET_BASE_ADDR + (REG_OFFSET_VALUE << 2))
 #define REG_OFFSET_WORD_VALUE 0x55667788u
 #define REG_OFFSET_BYTE_VALUE 0xa5u
+#define SHIFTED_REG_OFFSET_BYTE_VALUE 0x5au
 #define REG_OFFSET_STORE_VALUE 0x123456f2u
 #define REG_OFFSET_LOAD_BLOCK_OFFSET 5632u
 #define REG_OFFSET_STORE_BLOCK_OFFSET 6144u
 #define REG_OFFSET_REJECT_BLOCK_OFFSET 6656u
+#define SHIFTED_REG_OFFSET_BLOCK_OFFSET 7168u
 #define FRAME_COMPLETE 0x80000000u
 #define IDLE_LOOP_DISABLED 0xffffffffu
 
@@ -158,6 +168,7 @@ static u8 *g_half_load_entry;
 static u8 *g_half_store_entry;
 static u8 *g_reg_offset_load_entry;
 static u8 *g_reg_offset_store_entry;
+static u8 *g_shifted_reg_offset_entry;
 static u32 g_lookup_calls;
 static u32 g_lookup_pc;
 static u32 g_update_calls;
@@ -646,6 +657,32 @@ static u32 build_reg_offset_store_block(u8 *code)
   return code_bytes;
 }
 
+static u32 build_shifted_reg_offset_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_shifted_reg_offset_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_access_memory(
+        &translation_ptr, meta,
+        SHIFTED_REG_OFFSET_LDRB_R10_R3_R2_LSL2,
+        SHIFTED_REG_OFFSET_START_PC,
+        SHIFTED_REG_OFFSET_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=shifted_reg_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, SHIFTED_REG_OFFSET_START_PC,
+                            SHIFTED_REG_OFFSET_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
 static void expect_halfword_transfers_rejected(u8 *code)
 {
   static const u32 rejected_opcodes[] =
@@ -680,12 +717,12 @@ static void expect_shifted_reg_offset_rejected(u8 *code)
 
   riscv_emit_block_prologue(&translation_ptr, &meta);
   if (riscv_emit_native_arm_access_memory(&translation_ptr, meta,
-                                          REG_OFFSET_LDR_R8_R3_R2_LSL2,
+                                          REG_OFFSET_LDR_R8_R3_R2_RRX,
                                           REG_OFFSET_LOAD_START_PC,
                                           REG_OFFSET_LDR_BASE_CYCLES))
   {
     fail_u32("reg_offset_reject", "accepted",
-             REG_OFFSET_LDR_R8_R3_R2_LSL2, 0);
+             REG_OFFSET_LDR_R8_R3_R2_RRX, 0);
   }
 }
 
@@ -1182,6 +1219,40 @@ static void run_reg_offset_store_remaining_cycles_case(void)
   expect_stickybits_cleared("reg_offset_store");
 }
 
+static void run_shifted_reg_offset_load_case(void)
+{
+  const u32 extra_cycles = 2u;
+
+  reset_runtime_observations(SHIFTED_REG_OFFSET_START_PC);
+  g_lookup_entry = g_shifted_reg_offset_entry;
+  reg[2] = REG_OFFSET_VALUE;
+  reg[3] = REG_OFFSET_BASE_ADDR;
+
+  execute_arm_translate_internal(SHIFTED_REG_OFFSET_TOTAL_CYCLES + extra_cycles,
+                                 &reg[0]);
+
+  if (reg[10] != SHIFTED_REG_OFFSET_BYTE_VALUE)
+    fail_u32("shifted_reg_offset", "r10",
+             reg[10], SHIFTED_REG_OFFSET_BYTE_VALUE);
+  if (reg[REG_PC] != SHIFTED_REG_OFFSET_END_PC)
+    fail_u32("shifted_reg_offset", "pc",
+             reg[REG_PC], SHIFTED_REG_OFFSET_END_PC);
+  if (g_read8_calls != 1)
+    fail_u32("shifted_reg_offset", "read8_calls", g_read8_calls, 1);
+  if (g_read8_addr != SHIFTED_REG_OFFSET_BYTE_ADDR)
+    fail_u32("shifted_reg_offset", "read8_addr",
+             g_read8_addr, SHIFTED_REG_OFFSET_BYTE_ADDR);
+  if (g_read8_pc != SHIFTED_REG_OFFSET_START_PC)
+    fail_u32("shifted_reg_offset", "read8_pc",
+             g_read8_pc, SHIFTED_REG_OFFSET_START_PC);
+  if (g_execute_calls != 1)
+    fail_u32("shifted_reg_offset", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("shifted_reg_offset", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  expect_stickybits_cleared("shifted_reg_offset");
+}
+
 static void expect_store_word(const char *test_name, u32 pc)
 {
   if (g_write32_calls != 1)
@@ -1382,6 +1453,8 @@ u32 function_cc read_memory8(u32 address)
   g_read8_pc = reg[REG_PC];
   if (address == REG_OFFSET_BYTE_ADDR)
     return REG_OFFSET_BYTE_VALUE;
+  if (address == SHIFTED_REG_OFFSET_BYTE_ADDR)
+    return SHIFTED_REG_OFFSET_BYTE_VALUE;
   return LOAD_BYTE_VALUE;
 }
 
@@ -1492,6 +1565,7 @@ void _start(void)
   u32 half_store_code_bytes;
   u32 reg_offset_load_code_bytes;
   u32 reg_offset_store_code_bytes;
+  u32 shifted_reg_offset_code_bytes;
 
   if (!code)
   {
@@ -1526,6 +1600,8 @@ void _start(void)
     build_reg_offset_load_block(code + REG_OFFSET_LOAD_BLOCK_OFFSET);
   reg_offset_store_code_bytes =
     build_reg_offset_store_block(code + REG_OFFSET_STORE_BLOCK_OFFSET);
+  shifted_reg_offset_code_bytes =
+    build_shifted_reg_offset_block(code + SHIFTED_REG_OFFSET_BLOCK_OFFSET);
   expect_halfword_transfers_rejected(code + HALF_REJECT_BLOCK_OFFSET);
   expect_shifted_reg_offset_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   run_cycle_boundary_case();
@@ -1541,6 +1617,7 @@ void _start(void)
   run_load_remaining_cycles_case();
   run_half_load_remaining_cycles_case();
   run_reg_offset_load_remaining_cycles_case();
+  run_shifted_reg_offset_load_case();
   run_store_word_boundary_case();
   run_store_word_remaining_cycles_case();
   run_store_pc_value_case();
@@ -1574,6 +1651,8 @@ void _start(void)
   put_u32_dec(reg_offset_load_code_bytes);
   put_raw(" reg_offset_store_code_bytes=");
   put_u32_dec(reg_offset_store_code_bytes);
+  put_raw(" shifted_reg_offset_code_bytes=");
+  put_u32_dec(shifted_reg_offset_code_bytes);
   put_raw(" data_entry=");
   put_u32_hex((u32)g_data_entry);
   put_raw(" branch_entry=");
@@ -1598,6 +1677,8 @@ void _start(void)
   put_u32_hex((u32)g_reg_offset_load_entry);
   put_raw(" reg_offset_store_entry=");
   put_u32_hex((u32)g_reg_offset_store_entry);
+  put_raw(" shifted_reg_offset_entry=");
+  put_u32_hex((u32)g_shifted_reg_offset_entry);
   put_raw(" reason=state_equal\n");
   sys_exit(0);
 }

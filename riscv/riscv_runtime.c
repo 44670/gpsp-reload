@@ -561,6 +561,48 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
   return true;
 }
 
+static bool riscv_emit_arm_memory_reg_offset(u8 **ptr_ref, u32 opcode)
+{
+  u32 rm = opcode & 0xfu;
+  u32 shift_type = (opcode >> 5) & 0x3u;
+  u32 shift = (opcode >> 7) & 0x1fu;
+  u8 *ptr = *ptr_ref;
+  u8 *translation_ptr;
+
+  if (((opcode >> 4) & 1u) || rm == REG_PC)
+    return false;
+
+  riscv_emit_arm_reg_load(&ptr, riscv_reg_t0, rm);
+  translation_ptr = ptr;
+
+  switch (shift_type)
+  {
+    case 0:
+      if (shift)
+        riscv_emit_slli(riscv_reg_t0, riscv_reg_t0, shift);
+      break;
+    case 1:
+      if (shift)
+        riscv_emit_srli(riscv_reg_t0, riscv_reg_t0, shift);
+      else
+        riscv_emit_add(riscv_reg_t0, riscv_reg_zero, riscv_reg_zero);
+      break;
+    case 2:
+      riscv_emit_srai(riscv_reg_t0, riscv_reg_t0, shift ? shift : 31u);
+      break;
+    default:
+      if (!shift)
+        return false;
+      riscv_emit_srli(riscv_reg_t1, riscv_reg_t0, shift);
+      riscv_emit_slli(riscv_reg_t0, riscv_reg_t0, 32u - shift);
+      riscv_emit_or(riscv_reg_t0, riscv_reg_t0, riscv_reg_t1);
+      break;
+  }
+
+  *ptr_ref = translation_ptr;
+  return true;
+}
+
 bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,
                                          riscv_jit_block_meta *meta,
                                          u32 opcode,
@@ -576,7 +618,6 @@ bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,
   u32 load = (opcode >> 20) & 1u;
   u32 rn = (opcode >> 16) & 0xfu;
   u32 rd = (opcode >> 12) & 0xfu;
-  u32 rm = opcode & 0xfu;
   u32 offset = opcode & 0xfffu;
   u8 *ptr = *translation_ptr_ref;
 
@@ -595,16 +636,15 @@ bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,
     return false;
   }
 
-  if (register_offset && ((((opcode >> 4) & 0xffu) != 0) || rm == REG_PC))
-    return false;
-
   riscv_emit_arm_reg_load(&ptr, riscv_reg_a0, rn);
 
   if (register_offset)
   {
     u8 *translation_ptr;
 
-    riscv_emit_arm_reg_load(&ptr, riscv_reg_t0, rm);
+    if (!riscv_emit_arm_memory_reg_offset(&ptr, opcode))
+      return false;
+
     translation_ptr = ptr;
     if (up)
       riscv_emit_add(riscv_reg_a0, riscv_reg_a0, riscv_reg_t0);
