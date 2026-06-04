@@ -894,7 +894,7 @@ bool riscv_emit_native_arm_multiply_long(u8 **translation_ptr_ref,
     return false;
 
   if (condition != 0xe || (opcode & 0x0f8000f0u) != 0x00800090u ||
-      accumulate || rdhi == REG_PC || rdlo == REG_PC ||
+      (accumulate && set_flags) || rdhi == REG_PC || rdlo == REG_PC ||
       rm == REG_PC || rs == REG_PC)
   {
     return false;
@@ -909,6 +909,18 @@ bool riscv_emit_native_arm_multiply_long(u8 **translation_ptr_ref,
   else
     riscv_emit_mulhu(riscv_reg_t3, riscv_reg_t0, riscv_reg_t1);
   ptr = translation_ptr;
+
+  if (accumulate)
+  {
+    riscv_emit_arm_reg_load(&ptr, riscv_reg_t4, rdlo);
+    riscv_emit_arm_reg_load(&ptr, riscv_reg_t5, rdhi);
+    translation_ptr = ptr;
+    riscv_emit_add(riscv_reg_t2, riscv_reg_t2, riscv_reg_t4);
+    riscv_emit_sltu(riscv_reg_t4, riscv_reg_t2, riscv_reg_t4);
+    riscv_emit_add(riscv_reg_t3, riscv_reg_t3, riscv_reg_t5);
+    riscv_emit_add(riscv_reg_t3, riscv_reg_t3, riscv_reg_t4);
+    ptr = translation_ptr;
+  }
 
   riscv_emit_arm_reg_store(&ptr, rdlo, riscv_reg_t2);
   riscv_emit_arm_reg_store(&ptr, rdhi, riscv_reg_t3);
