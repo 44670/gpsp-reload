@@ -707,9 +707,6 @@ bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,
     return false;
   }
 
-  if (register_offset && writeback_address)
-    return false;
-
   riscv_emit_arm_reg_load(&ptr, riscv_reg_a0, rn);
 
   if (register_offset)
@@ -720,10 +717,22 @@ bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,
       return false;
 
     translation_ptr = ptr;
-    if (up)
+    if (!pre_index)
+    {
+      if (up)
+        riscv_emit_add(riscv_reg_t2, riscv_reg_a0, riscv_reg_t0);
+      else
+        riscv_emit_sub(riscv_reg_t2, riscv_reg_a0, riscv_reg_t0);
+      writeback_reg = riscv_reg_t2;
+    }
+    else if (up)
+    {
       riscv_emit_add(riscv_reg_a0, riscv_reg_a0, riscv_reg_t0);
+    }
     else
+    {
       riscv_emit_sub(riscv_reg_a0, riscv_reg_a0, riscv_reg_t0);
+    }
     ptr = translation_ptr;
   }
   else if (!pre_index)
