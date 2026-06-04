@@ -712,7 +712,7 @@ bool riscv_emit_native_arm_data_proc(u8 **translation_ptr_ref,
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
     return false;
 
-  if (condition != 0xe || rd == REG_PC)
+  if (condition != 0xe || (rd == REG_PC && set_flags))
     return false;
 
   if (set_flags && !arithmetic_flags && !logical_flags)
@@ -871,6 +871,8 @@ bool riscv_emit_native_arm_data_proc(u8 **translation_ptr_ref,
   }
 
   riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_t2);
+  if (rd == REG_PC)
+    meta->flags |= RISCV_BLOCK_PC_WRITTEN;
   if (arithmetic_flags)
     riscv_emit_arm_cpsr_store_nzcv(&ptr);
   else if (logical_flags)

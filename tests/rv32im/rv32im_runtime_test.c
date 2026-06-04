@@ -331,6 +331,18 @@ typedef unsigned int usize;
 #define REG_SHIFT_FLAG_ASR_CPSR_VALUE (0xb0000000u | CPSR_LOW_VALUE)
 #define REG_SHIFT_FLAG_ROR0_CPSR_VALUE (0xb0000000u | CPSR_LOW_VALUE)
 #define REG_SHIFT_TEST_CPSR_VALUE (0x70000000u | CPSR_LOW_VALUE)
+#define PC_WRITE_MOV_START_PC 0x08000b80u
+#define PC_WRITE_MOV_END_PC (PC_WRITE_MOV_START_PC + 4u)
+#define PC_WRITE_ADD_START_PC 0x08000ba0u
+#define PC_WRITE_ADD_END_PC (PC_WRITE_ADD_START_PC + 4u)
+#define PC_WRITE_MOV_CYCLES 5u
+#define PC_WRITE_ADD_CYCLES 6u
+#define MOV_PC_R14 0xe1a0f00eu
+#define MOVS_PC_R14 0xe1b0f00eu
+#define ADD_PC_R0_0X40 0xe280f040u
+#define PC_WRITE_MOV_TARGET 0x02008000u
+#define PC_WRITE_ADD_R0_VALUE 0x02001000u
+#define PC_WRITE_ADD_TARGET 0x02001040u
 #define DATA_EXT_R0_VALUE 0x01010101u
 #define DATA_EXT_R1_VALUE 0x80000010u
 #define DATA_EXT_R6_VALUE 0xc1010109u
@@ -622,6 +634,8 @@ typedef unsigned int usize;
 #define PC_BASE_LOAD_BLOCK_OFFSET 31744u
 #define PC_BASE_STORE_BLOCK_OFFSET 32256u
 #define PC_BASE_HALF_LOAD_BLOCK_OFFSET 32768u
+#define PC_WRITE_MOV_BLOCK_OFFSET 33280u
+#define PC_WRITE_ADD_BLOCK_OFFSET 33792u
 
 u32 reg[REG_MAX];
 u32 spsr[6];
@@ -681,6 +695,8 @@ static u8 *g_reg_shift_flag_lsr_entry;
 static u8 *g_reg_shift_flag_asr_entry;
 static u8 *g_reg_shift_flag_ror0_entry;
 static u8 *g_reg_shift_test_entry;
+static u8 *g_pc_write_mov_entry;
+static u8 *g_pc_write_add_entry;
 static u8 *g_psr_entry;
 static u8 *g_writeback_store_entry;
 static u8 *g_writeback_load_entry;
@@ -2045,6 +2061,20 @@ static void expect_shifted_data_proc_rejected(u8 *code)
   }
 }
 
+static void expect_data_proc_pc_flag_rejected(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  if (riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                      MOVS_PC_R14,
+                                      PC_WRITE_MOV_CYCLES))
+  {
+    fail_u32("data_proc_pc_flag_reject", "accepted", MOVS_PC_R14, 0);
+  }
+}
+
 static void expect_logical_data_proc_test_rejected(u8 *code)
 {
   u8 *translation_ptr = code;
@@ -2962,6 +2992,58 @@ static void run_reg_shift_test_remaining_case(void)
     fail_u32("reg_shift_test", "execute_pc",
              g_execute_pc, REG_SHIFT_TEST_END_PC);
   expect_stickybits_cleared("reg_shift_test");
+}
+
+static void run_pc_write_mov_boundary_case(void)
+{
+  reset_runtime_observations(PC_WRITE_MOV_START_PC);
+  g_lookup_entry = g_pc_write_mov_entry;
+  reg[14] = PC_WRITE_MOV_TARGET;
+
+  execute_arm_translate_internal(PC_WRITE_MOV_CYCLES, &reg[0]);
+
+  if (reg[REG_PC] != PC_WRITE_MOV_TARGET)
+    fail_u32("pc_write_mov_boundary", "pc",
+             reg[REG_PC], PC_WRITE_MOV_TARGET);
+  if (g_lookup_calls != 1)
+    fail_u32("pc_write_mov_boundary", "lookup_calls", g_lookup_calls, 1);
+  if (g_lookup_pc != PC_WRITE_MOV_START_PC)
+    fail_u32("pc_write_mov_boundary", "lookup_pc",
+             g_lookup_pc, PC_WRITE_MOV_START_PC);
+  if (g_update_calls != 1)
+    fail_u32("pc_write_mov_boundary", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("pc_write_mov_boundary", "update_cycles",
+             (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("pc_write_mov_boundary", "execute_calls", g_execute_calls, 0);
+  expect_stickybits_cleared("pc_write_mov_boundary");
+}
+
+static void run_pc_write_add_remaining_case(void)
+{
+  const u32 extra_cycles = 5u;
+
+  reset_runtime_observations(PC_WRITE_ADD_START_PC);
+  g_lookup_entry = g_pc_write_add_entry;
+  reg[0] = PC_WRITE_ADD_R0_VALUE;
+
+  execute_arm_translate_internal(PC_WRITE_ADD_CYCLES + extra_cycles, &reg[0]);
+
+  if (reg[REG_PC] != PC_WRITE_ADD_TARGET)
+    fail_u32("pc_write_add_remaining", "pc",
+             reg[REG_PC], PC_WRITE_ADD_TARGET);
+  if (g_update_calls != 0)
+    fail_u32("pc_write_add_remaining", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("pc_write_add_remaining", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("pc_write_add_remaining", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != PC_WRITE_ADD_TARGET)
+    fail_u32("pc_write_add_remaining", "execute_pc",
+             g_execute_pc, PC_WRITE_ADD_TARGET);
+  expect_stickybits_cleared("pc_write_add_remaining");
 }
 
 static void run_branch_boundary_case(void)
@@ -4315,6 +4397,8 @@ void _start(void)
   u32 reg_shift_flag_asr_code_bytes;
   u32 reg_shift_flag_ror0_code_bytes;
   u32 reg_shift_test_code_bytes;
+  u32 pc_write_mov_code_bytes;
+  u32 pc_write_add_code_bytes;
   u32 branch_code_bytes;
   u32 bl_code_bytes;
   u32 load_code_bytes;
@@ -4511,6 +4595,18 @@ void _start(void)
                           REG_SHIFT_TEST_END_PC, REG_SHIFT_TEST_CYCLES,
                           &g_reg_shift_test_entry,
                           "reg_shift_tst_emit_rejected");
+  pc_write_mov_code_bytes =
+    build_flag_data_block(code + PC_WRITE_MOV_BLOCK_OFFSET,
+                          MOV_PC_R14, PC_WRITE_MOV_START_PC,
+                          PC_WRITE_MOV_END_PC, PC_WRITE_MOV_CYCLES,
+                          &g_pc_write_mov_entry,
+                          "pc_write_mov_emit_rejected");
+  pc_write_add_code_bytes =
+    build_flag_data_block(code + PC_WRITE_ADD_BLOCK_OFFSET,
+                          ADD_PC_R0_0X40, PC_WRITE_ADD_START_PC,
+                          PC_WRITE_ADD_END_PC, PC_WRITE_ADD_CYCLES,
+                          &g_pc_write_add_entry,
+                          "pc_write_add_emit_rejected");
   branch_code_bytes = build_branch_block(code + BRANCH_BLOCK_OFFSET);
   bl_code_bytes = build_bl_block(code + BL_BLOCK_OFFSET);
   load_code_bytes = build_load_block(code + LOAD_BLOCK_OFFSET);
@@ -4572,6 +4668,7 @@ void _start(void)
   expect_halfword_transfers_rejected(code + HALF_REJECT_BLOCK_OFFSET);
   expect_shifted_reg_offset_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_shifted_data_proc_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
+  expect_data_proc_pc_flag_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_logical_data_proc_test_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_psr_unsupported_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_multiply_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
@@ -4701,6 +4798,8 @@ void _start(void)
                           REG_SHIFT_FLAG_R9_VALUE,
                           REG_SHIFT_FLAG_ROR0_CPSR_VALUE, 5);
   run_reg_shift_test_remaining_case();
+  run_pc_write_mov_boundary_case();
+  run_pc_write_add_remaining_case();
   run_branch_boundary_case();
   run_branch_remaining_cycles_case();
   run_branch_idle_loop_case();
@@ -4797,6 +4896,10 @@ void _start(void)
   put_u32_dec(reg_shift_flag_ror0_code_bytes);
   put_raw(" reg_shift_test_code_bytes=");
   put_u32_dec(reg_shift_test_code_bytes);
+  put_raw(" pc_write_mov_code_bytes=");
+  put_u32_dec(pc_write_mov_code_bytes);
+  put_raw(" pc_write_add_code_bytes=");
+  put_u32_dec(pc_write_add_code_bytes);
   put_raw(" branch_code_bytes=");
   put_u32_dec(branch_code_bytes);
   put_raw(" bl_code_bytes=");
@@ -4909,6 +5012,10 @@ void _start(void)
   put_u32_hex((u32)g_reg_shift_flag_ror0_entry);
   put_raw(" reg_shift_test_entry=");
   put_u32_hex((u32)g_reg_shift_test_entry);
+  put_raw(" pc_write_mov_entry=");
+  put_u32_hex((u32)g_pc_write_mov_entry);
+  put_raw(" pc_write_add_entry=");
+  put_u32_hex((u32)g_pc_write_add_entry);
   put_raw(" branch_entry=");
   put_u32_hex((u32)g_branch_entry);
   put_raw(" bl_entry=");
