@@ -21,6 +21,20 @@ typedef unsigned int usize;
 #define BLOCK_END_PC 0x08000004u
 #define BLOCK_CYCLES 7u
 #define ADD_R2_R0_R1 0xe0802001u
+#define MULTIPLY_START_PC 0x08000080u
+#define MULTIPLY_END_PC (MULTIPLY_START_PC + 8u)
+#define MULTIPLY_MUL_CYCLES 5u
+#define MULTIPLY_MLA_CYCLES 6u
+#define MULTIPLY_TOTAL_CYCLES \
+  (MULTIPLY_MUL_CYCLES + MULTIPLY_MLA_CYCLES)
+#define MULTIPLY_MUL_R4_R1_R2 0xe0040291u
+#define MULTIPLY_MLA_R5_R1_R2_R3 0xe0253291u
+#define MULTIPLY_MUL_R6_R15_R2 0xe006029fu
+#define MULTIPLY_R1_VALUE 0x00001234u
+#define MULTIPLY_R2_VALUE 0x00010001u
+#define MULTIPLY_R3_VALUE 0x80000000u
+#define MULTIPLY_R4_VALUE 0x12341234u
+#define MULTIPLY_R5_VALUE 0x92341234u
 #define DATA_EXT_START_PC 0x08000040u
 #define DATA_EXT_END_PC (DATA_EXT_START_PC + 28u)
 #define DATA_EXT_BIC_CYCLES 5u
@@ -248,6 +262,7 @@ typedef unsigned int usize;
 #define WRITEBACK_STORE_BLOCK_OFFSET 7680u
 #define WRITEBACK_LOAD_BLOCK_OFFSET 8192u
 #define DATA_EXT_BLOCK_OFFSET 12288u
+#define MULTIPLY_BLOCK_OFFSET 13312u
 #define REG_OFFSET_WRITEBACK_STORE_BLOCK_OFFSET 10240u
 #define REG_OFFSET_WRITEBACK_LOAD_BLOCK_OFFSET 10752u
 #define FRAME_COMPLETE 0x80000000u
@@ -260,6 +275,7 @@ u32 gamepak_sticky_bit[1024 / 32];
 
 static u8 *g_lookup_entry;
 static u8 *g_data_entry;
+static u8 *g_multiply_entry;
 static u8 *g_data_ext_entry;
 static u8 *g_branch_entry;
 static u8 *g_bl_entry;
@@ -512,6 +528,38 @@ static u32 build_data_block(u8 *code)
 
   riscv_emit_block_finalize(meta, &translation_ptr, BLOCK_START_PC,
                             BLOCK_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_multiply_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_multiply_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_multiply(&translation_ptr, meta,
+                                      MULTIPLY_MUL_R4_R1_R2,
+                                      MULTIPLY_MUL_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=mul_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_multiply(&translation_ptr, meta,
+                                      MULTIPLY_MLA_R5_R1_R2_R3,
+                                      MULTIPLY_MLA_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=mla_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, MULTIPLY_START_PC,
+                            MULTIPLY_END_PC, false);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -1147,6 +1195,20 @@ static void expect_shifted_data_proc_rejected(u8 *code)
   }
 }
 
+static void expect_multiply_rejected(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  if (riscv_emit_native_arm_multiply(&translation_ptr, meta,
+                                     MULTIPLY_MUL_R6_R15_R2,
+                                     MULTIPLY_MUL_CYCLES))
+  {
+    fail_u32("multiply_reject", "accepted", MULTIPLY_MUL_R6_R15_R2, 0);
+  }
+}
+
 static void expect_stickybits_cleared(const char *test_name)
 {
   unsigned i;
@@ -1216,6 +1278,39 @@ static void run_remaining_cycles_case(void)
   if (g_execute_pc != BLOCK_END_PC)
     fail_u32("remaining_cycles", "execute_pc", g_execute_pc, BLOCK_END_PC);
   expect_stickybits_cleared("remaining_cycles");
+}
+
+static void run_multiply_remaining_cycles_case(void)
+{
+  const u32 extra_cycles = 4u;
+
+  reset_runtime_observations(MULTIPLY_START_PC);
+  g_lookup_entry = g_multiply_entry;
+  reg[1] = MULTIPLY_R1_VALUE;
+  reg[2] = MULTIPLY_R2_VALUE;
+  reg[3] = MULTIPLY_R3_VALUE;
+
+  execute_arm_translate_internal(MULTIPLY_TOTAL_CYCLES + extra_cycles,
+                                 &reg[0]);
+
+  if (reg[4] != MULTIPLY_R4_VALUE)
+    fail_u32("multiply_remaining", "r4", reg[4], MULTIPLY_R4_VALUE);
+  if (reg[5] != MULTIPLY_R5_VALUE)
+    fail_u32("multiply_remaining", "r5", reg[5], MULTIPLY_R5_VALUE);
+  if (reg[REG_PC] != MULTIPLY_END_PC)
+    fail_u32("multiply_remaining", "pc",
+             reg[REG_PC], MULTIPLY_END_PC);
+  if (g_update_calls != 0)
+    fail_u32("multiply_remaining", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("multiply_remaining", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("multiply_remaining", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != MULTIPLY_END_PC)
+    fail_u32("multiply_remaining", "execute_pc",
+             g_execute_pc, MULTIPLY_END_PC);
+  expect_stickybits_cleared("multiply_remaining");
 }
 
 static void run_data_ext_remaining_cycles_case(void)
@@ -2368,6 +2463,7 @@ void _start(void)
 {
   u8 *code = (u8 *)map_exec_page();
   u32 data_code_bytes;
+  u32 multiply_code_bytes;
   u32 data_ext_code_bytes;
   u32 branch_code_bytes;
   u32 bl_code_bytes;
@@ -2397,6 +2493,7 @@ void _start(void)
   }
 
   data_code_bytes = build_data_block(code);
+  multiply_code_bytes = build_multiply_block(code + MULTIPLY_BLOCK_OFFSET);
   data_ext_code_bytes = build_data_ext_block(code + DATA_EXT_BLOCK_OFFSET);
   branch_code_bytes = build_branch_block(code + BRANCH_BLOCK_OFFSET);
   bl_code_bytes = build_bl_block(code + BL_BLOCK_OFFSET);
@@ -2447,8 +2544,10 @@ void _start(void)
   expect_halfword_transfers_rejected(code + HALF_REJECT_BLOCK_OFFSET);
   expect_shifted_reg_offset_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_shifted_data_proc_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
+  expect_multiply_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   run_cycle_boundary_case();
   run_remaining_cycles_case();
+  run_multiply_remaining_cycles_case();
   run_data_ext_remaining_cycles_case();
   run_branch_boundary_case();
   run_branch_remaining_cycles_case();
@@ -2481,6 +2580,8 @@ void _start(void)
 
   put_raw("result=PASS command=runtime code_bytes=");
   put_u32_dec(data_code_bytes);
+  put_raw(" multiply_code_bytes=");
+  put_u32_dec(multiply_code_bytes);
   put_raw(" data_ext_code_bytes=");
   put_u32_dec(data_ext_code_bytes);
   put_raw(" branch_code_bytes=");
@@ -2525,6 +2626,8 @@ void _start(void)
   put_u32_dec(reg_offset_writeback_load_code_bytes);
   put_raw(" data_entry=");
   put_u32_hex((u32)g_data_entry);
+  put_raw(" multiply_entry=");
+  put_u32_hex((u32)g_multiply_entry);
   put_raw(" data_ext_entry=");
   put_u32_hex((u32)g_data_ext_entry);
   put_raw(" branch_entry=");

@@ -37,6 +37,10 @@ bool riscv_emit_native_arm_data_proc(u8 **translation_ptr,
                                      riscv_jit_block_meta *meta,
                                      u32 opcode,
                                      u32 cycles);
+bool riscv_emit_native_arm_multiply(u8 **translation_ptr,
+                                    riscv_jit_block_meta *meta,
+                                    u32 opcode,
+                                    u32 cycles);
 bool riscv_emit_native_arm_b(u8 **translation_ptr,
                              riscv_jit_block_meta *meta,
                              u32 opcode,
@@ -156,7 +160,21 @@ void init_emitter(bool must_swap);
   arm_data_proc(__VA_ARGS__)
 
 #define arm_multiply(...)                                                     \
-  riscv_emit_current_arm_instruction()
+  do                                                                          \
+  {                                                                           \
+    u32 riscv_multiply_extra_cycles = ((opcode >> 21) & 1u) ? 3u : 2u;       \
+    if (riscv_emit_native_arm_multiply(&translation_ptr,                     \
+                                       riscv_block_meta, opcode,             \
+                                       cycle_count +                         \
+                                         riscv_multiply_extra_cycles))        \
+    {                                                                         \
+      cycle_count = (u32)(0u - riscv_multiply_extra_cycles);                 \
+    }                                                                         \
+    else                                                                      \
+    {                                                                         \
+      riscv_emit_current_arm_instruction();                                   \
+    }                                                                         \
+  } while (0)
 
 #define arm_multiply_long(...)                                                \
   riscv_emit_current_arm_instruction()
