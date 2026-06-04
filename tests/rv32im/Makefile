@@ -44,8 +44,12 @@ LLVM_OBJCOPY ?= llvm-objcopy
 
 all: $(HARNESS) $(CODEGEN) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST)
 
-$(HARNESS): rv32im_harness.c
-	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) -o $@ $<
+$(HARNESS): rv32im_harness.c $(ROOT)/riscv/riscv_runtime.c \
+		$(ROOT)/riscv/riscv_emit.h $(ROOT)/riscv/riscv_codegen.h \
+		$(ROOT)/riscv/riscv_runtime_test_shim.h
+	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) \
+		-DRISCV_RUNTIME_STANDALONE_TEST -I$(ROOT) -I$(ROOT)/riscv \
+		-o $@ rv32im_harness.c $(ROOT)/riscv/riscv_runtime.c
 
 $(CODEGEN): rv32im_codegen.c $(ROOT)/riscv/riscv_codegen.h
 	$(HOST_CC) -std=c99 -O2 -Wall -Wextra -I$(ROOT)/riscv -o $@ rv32im_codegen.c
@@ -104,7 +108,10 @@ smoke: $(HARNESS) $(SMOKE_LOAD) $(SMOKE_PNG_SIG) $(OUT_DIR)
 	grep -q 'tracepc backend=rv32im count=4 pcs=.*harness_mode=synthetic' $(SMOKE_LOG)
 	grep -q 'reason=synthetic_pc_trace' $(SMOKE_LOG)
 	grep -q 'framehash width=240 height=160 bytes=76800 hash=.*harness_mode=synthetic' $(SMOKE_LOG)
-	grep -q 'reason=synthetic_state_frame_equal' $(SMOKE_LOG)
+	grep -q 'result=PASS command=compare workload=arm_add_r2_r0_r1' $(SMOKE_LOG)
+	grep -q 'rv32im_blocks=1 rv32im_fallbacks=0 rv32im_native_data_proc=1' $(SMOKE_LOG)
+	grep -q 'command=compare.*harness_mode=runtime_fixture frame_mode=synthetic mem_mode=runtime_stickybits' $(SMOKE_LOG)
+	grep -q 'reason=runtime_state_synthetic_frame_equal' $(SMOKE_LOG)
 	grep -q 'result=PASS command=png backend=rv32im width=240 height=160' $(SMOKE_LOG)
 	grep -q 'command=png.*harness_mode=synthetic' $(SMOKE_LOG)
 	grep -q 'result=PASS command=quit backend=rv32im' $(SMOKE_LOG)

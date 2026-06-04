@@ -256,13 +256,17 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - scriptable qemu-user harness commands for `load`, `reset`, `backend`, `run`,
   `cont`, `stepi`, `stepb`, `regs`, `mem`, `counters`, `tracepc`,
   `framehash`, `compare`, `png`, and `quit`
+- qemu-user harness `compare` execution of a generated RV32IM
+  `ADD r2, r0, r1` runtime fixture against a local ARM reference model, with
+  one runtime block executed and no fallback
 
 Remaining first-phase gaps should stay narrow and evidence-driven:
 
-- The qemu-user harness currently has synthetic/fixture-backed state, memory,
-  trace, and frame paths for protocol, PNG, and automation bring-up. Its output
-  is labeled with `harness_mode=synthetic` and synthetic-specific reasons until
-  those paths are replaced by real interpreter-vs-RV32IM emulator workloads.
+- The qemu-user harness still has synthetic/fixture-backed state, memory, trace,
+  and frame paths outside the runtime-backed `compare` state fixture. Synthetic
+  paths stay labeled with `harness_mode=synthetic`; the `compare` fixture is
+  labeled `harness_mode=runtime_fixture` and still marks its frame hash as
+  synthetic until real emulator frame output is wired in.
 - Thumb instruction lowering remains deliberately unsupported; Thumb blocks
   must keep routing through fallback until a separate Thumb milestone exists.
 - Conditional ARM opcodes are still expected to enter through the frontend's
