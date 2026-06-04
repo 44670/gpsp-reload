@@ -8,10 +8,14 @@
  * License, or (at your option) any later version.
  */
 
+#if defined(RISCV_RUNTIME_STANDALONE_TEST)
+#include "riscv/riscv_runtime_test_shim.h"
+#else
 #include "common.h"
 #include "cpu.h"
 #include "gba_memory.h"
 #include "main.h"
+#endif
 #include "riscv/riscv_emit.h"
 
 #include <stddef.h>
@@ -157,10 +161,17 @@ static void riscv_emit_helper_call(u8 **ptr, const riscv_jit_block_meta *meta)
 {
   u8 *translation_ptr;
 
+  translation_ptr = *ptr;
+  riscv_emit_addi(riscv_reg_sp, riscv_reg_sp, -16);
+  riscv_emit_sw(riscv_reg_ra, riscv_reg_sp, 12);
+  *ptr = translation_ptr;
+
   riscv_emit_li(ptr, riscv_reg_a0, (u32)(uintptr_t)meta);
   riscv_emit_li(ptr, riscv_reg_t0, (u32)(uintptr_t)riscv_jit_run_block);
   translation_ptr = *ptr;
   riscv_emit_jalr(riscv_reg_ra, riscv_reg_t0, 0);
+  riscv_emit_lw(riscv_reg_ra, riscv_reg_sp, 12);
+  riscv_emit_addi(riscv_reg_sp, riscv_reg_sp, 16);
   riscv_emit_jalr(riscv_reg_zero, riscv_reg_ra, 0);
   *ptr = translation_ptr;
 }
@@ -212,7 +223,7 @@ void riscv_mark_block_unsupported(riscv_jit_block_meta *meta)
     meta->flags &= ~RISCV_BLOCK_NATIVE_SUPPORTED;
 }
 
-bool riscv_emit_native_arm_data_proc(u8 **translation_ptr,
+bool riscv_emit_native_arm_data_proc(u8 **translation_ptr_ref,
                                      riscv_jit_block_meta *meta,
                                      u32 opcode,
                                      u32 cycles)
@@ -224,7 +235,7 @@ bool riscv_emit_native_arm_data_proc(u8 **translation_ptr,
   u32 rn = (opcode >> 16) & 0xfu;
   u32 rd = (opcode >> 12) & 0xfu;
   u32 rm = opcode & 0xfu;
-  u8 *ptr = *translation_ptr;
+  u8 *ptr = *translation_ptr_ref;
 
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
     return false;
@@ -253,7 +264,7 @@ bool riscv_emit_native_arm_data_proc(u8 **translation_ptr,
     riscv_emit_arm_reg_load(&ptr, riscv_reg_t1, rm);
 
   {
-    u8 *emit_ptr = ptr;
+    u8 *translation_ptr = ptr;
 
     switch (op)
     {
@@ -279,13 +290,13 @@ bool riscv_emit_native_arm_data_proc(u8 **translation_ptr,
         return false;
     }
 
-    ptr = emit_ptr;
+    ptr = translation_ptr;
   }
 
   riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_t2);
   riscv_emit_adjust_cycles(&ptr, cycles);
 
-  *translation_ptr = ptr;
+  *translation_ptr_ref = ptr;
   riscv_native_data_proc_insns++;
   return true;
 }

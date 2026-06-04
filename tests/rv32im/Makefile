@@ -7,6 +7,7 @@ HARNESS := rv32im_harness
 CODEGEN := rv32im_codegen
 ABI_TEST := rv32im_abi_test
 EXEC_TEST := rv32im_exec_test
+RUNTIME_TEST := rv32im_runtime_test
 OUT_DIR := out
 SMOKE_PNG := $(OUT_DIR)/rv32im_harness.png
 CODEGEN_BIN := $(OUT_DIR)/rv32im_codegen.bin
@@ -38,7 +39,7 @@ RV32_LDFLAGS := \
 HOST_CC ?= cc
 LLVM_OBJCOPY ?= llvm-objcopy
 
-all: $(HARNESS) $(CODEGEN) $(ABI_TEST) $(EXEC_TEST)
+all: $(HARNESS) $(CODEGEN) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST)
 
 $(HARNESS): rv32im_harness.c
 	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) -o $@ $<
@@ -51,6 +52,13 @@ $(ABI_TEST): rv32im_abi_test.c rv32im_abi_stub.S
 
 $(EXEC_TEST): rv32im_exec_test.c $(ROOT)/riscv/riscv_codegen.h
 	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) -I$(ROOT)/riscv -o $@ rv32im_exec_test.c
+
+$(RUNTIME_TEST): rv32im_runtime_test.c $(ROOT)/riscv/riscv_runtime.c \
+		$(ROOT)/riscv/riscv_emit.h $(ROOT)/riscv/riscv_codegen.h \
+		$(ROOT)/riscv/riscv_runtime_test_shim.h
+	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) \
+		-DRISCV_RUNTIME_STANDALONE_TEST -I$(ROOT) -I$(ROOT)/riscv \
+		-o $@ rv32im_runtime_test.c $(ROOT)/riscv/riscv_runtime.c
 
 $(OUT_DIR):
 	mkdir -p $@
@@ -76,10 +84,13 @@ abi: $(ABI_TEST)
 exec: $(EXEC_TEST)
 	$(QEMU_RISCV32) ./$(EXEC_TEST)
 
-test: codegen abi exec smoke
+runtime: $(RUNTIME_TEST)
+	$(QEMU_RISCV32) ./$(RUNTIME_TEST)
+
+test: codegen abi exec runtime smoke
 
 clean:
-	rm -f $(HARNESS) $(CODEGEN) $(ABI_TEST) $(EXEC_TEST)
+	rm -f $(HARNESS) $(CODEGEN) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST)
 	rm -rf $(OUT_DIR)
 
-.PHONY: all codegen abi exec smoke test clean
+.PHONY: all codegen abi exec runtime smoke test clean
