@@ -304,6 +304,56 @@ void riscv_mark_block_unsupported(riscv_jit_block_meta *meta)
     meta->flags &= ~RISCV_BLOCK_NATIVE_SUPPORTED;
 }
 
+static bool riscv_emit_arm_data_proc_operand2(u8 **ptr_ref, u32 opcode)
+{
+  u32 imm_op = (opcode >> 25) & 1u;
+  u32 rm = opcode & 0xfu;
+  u32 shift_type = (opcode >> 5) & 0x3u;
+  u32 shift = (opcode >> 7) & 0x1fu;
+  u8 *ptr = *ptr_ref;
+  u8 *translation_ptr;
+
+  if (imm_op)
+  {
+    riscv_emit_li(&ptr, riscv_reg_t1, riscv_arm_expand_imm(opcode));
+    *ptr_ref = ptr;
+    return true;
+  }
+
+  if (((opcode >> 4) & 1u) || rm == REG_PC)
+    return false;
+
+  riscv_emit_arm_reg_load(&ptr, riscv_reg_t1, rm);
+  translation_ptr = ptr;
+
+  switch (shift_type)
+  {
+    case 0:
+      if (shift)
+        riscv_emit_slli(riscv_reg_t1, riscv_reg_t1, shift);
+      break;
+    case 1:
+      if (shift)
+        riscv_emit_srli(riscv_reg_t1, riscv_reg_t1, shift);
+      else
+        riscv_emit_add(riscv_reg_t1, riscv_reg_zero, riscv_reg_zero);
+      break;
+    case 2:
+      riscv_emit_srai(riscv_reg_t1, riscv_reg_t1, shift ? shift : 31u);
+      break;
+    default:
+      if (!shift)
+        return false;
+      riscv_emit_srli(riscv_reg_t3, riscv_reg_t1, shift);
+      riscv_emit_slli(riscv_reg_t1, riscv_reg_t1, 32u - shift);
+      riscv_emit_or(riscv_reg_t1, riscv_reg_t1, riscv_reg_t3);
+      break;
+  }
+
+  *ptr_ref = translation_ptr;
+  return true;
+}
+
 bool riscv_emit_native_arm_data_proc(u8 **translation_ptr_ref,
                                      riscv_jit_block_meta *meta,
                                      u32 opcode,
@@ -312,10 +362,8 @@ bool riscv_emit_native_arm_data_proc(u8 **translation_ptr_ref,
   u32 condition = opcode >> 28;
   u32 op = (opcode >> 21) & 0xfu;
   u32 set_flags = (opcode >> 20) & 1u;
-  u32 imm_op = (opcode >> 25) & 1u;
   u32 rn = (opcode >> 16) & 0xfu;
   u32 rd = (opcode >> 12) & 0xfu;
-  u32 rm = opcode & 0xfu;
   u8 *ptr = *translation_ptr_ref;
 
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
@@ -325,9 +373,6 @@ bool riscv_emit_native_arm_data_proc(u8 **translation_ptr_ref,
     return false;
 
   if (op != 0xd && op != 0xf && rn == REG_PC)
-    return false;
-
-  if (!imm_op && (((opcode >> 4) & 0xffu) != 0 || rm == REG_PC))
     return false;
 
   if (op != 0x0 && op != 0x1 && op != 0x2 &&
@@ -340,10 +385,8 @@ bool riscv_emit_native_arm_data_proc(u8 **translation_ptr_ref,
   if (op != 0xd && op != 0xf)
     riscv_emit_arm_reg_load(&ptr, riscv_reg_t0, rn);
 
-  if (imm_op)
-    riscv_emit_li(&ptr, riscv_reg_t1, riscv_arm_expand_imm(opcode));
-  else
-    riscv_emit_arm_reg_load(&ptr, riscv_reg_t1, rm);
+  if (!riscv_emit_arm_data_proc_operand2(&ptr, opcode))
+    return false;
 
   {
     u8 *translation_ptr = ptr;

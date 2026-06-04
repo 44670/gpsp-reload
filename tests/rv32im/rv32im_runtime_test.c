@@ -22,12 +22,32 @@ typedef unsigned int usize;
 #define BLOCK_CYCLES 7u
 #define ADD_R2_R0_R1 0xe0802001u
 #define DATA_EXT_START_PC 0x08000040u
-#define DATA_EXT_END_PC (DATA_EXT_START_PC + 8u)
+#define DATA_EXT_END_PC (DATA_EXT_START_PC + 24u)
 #define DATA_EXT_BIC_CYCLES 5u
 #define DATA_EXT_MVN_CYCLES 6u
-#define DATA_EXT_TOTAL_CYCLES (DATA_EXT_BIC_CYCLES + DATA_EXT_MVN_CYCLES)
+#define DATA_EXT_LSL_CYCLES 4u
+#define DATA_EXT_LSR_CYCLES 5u
+#define DATA_EXT_ASR_CYCLES 6u
+#define DATA_EXT_ROR_CYCLES 7u
+#define DATA_EXT_TOTAL_CYCLES \
+  (DATA_EXT_BIC_CYCLES + DATA_EXT_MVN_CYCLES + DATA_EXT_LSL_CYCLES + \
+   DATA_EXT_LSR_CYCLES + DATA_EXT_ASR_CYCLES + DATA_EXT_ROR_CYCLES)
 #define BIC_R9_R0_R1 0xe1c09001u
 #define MVN_R10_0XFF 0xe3e0a0ffu
+#define ADD_R11_R0_R1_LSL2 0xe080b101u
+#define ORR_R12_R0_R1_LSR4 0xe180c221u
+#define MOV_R14_R1_ASR0 0xe1a0e041u
+#define EOR_R8_R0_R1_ROR8 0xe0208461u
+#define EOR_R8_R0_R1_RRX 0xe0208061u
+#define DATA_EXT_R0_VALUE 0x01010101u
+#define DATA_EXT_R1_VALUE 0x80000010u
+#define DATA_EXT_R8_VALUE 0x11810101u
+#define DATA_EXT_R9_VALUE \
+  (DATA_EXT_R0_VALUE & ~DATA_EXT_R1_VALUE)
+#define DATA_EXT_R10_VALUE (~0xffu)
+#define DATA_EXT_R11_VALUE 0x01010141u
+#define DATA_EXT_R12_VALUE 0x09010101u
+#define DATA_EXT_R14_VALUE 0xffffffffu
 #define BRANCH_START_PC 0x08000100u
 #define BRANCH_TARGET_PC 0x0800010cu
 #define BRANCH_CYCLES 9u
@@ -515,6 +535,38 @@ static u32 build_data_ext_block(u8 *code)
                                        DATA_EXT_MVN_CYCLES))
   {
     put_raw("result=FAIL command=runtime reason=mvn_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       ADD_R11_R0_R1_LSL2,
+                                       DATA_EXT_LSL_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=lsl_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       ORR_R12_R0_R1_LSR4,
+                                       DATA_EXT_LSR_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=lsr_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       MOV_R14_R1_ASR0,
+                                       DATA_EXT_ASR_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=asr_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       EOR_R8_R0_R1_ROR8,
+                                       DATA_EXT_ROR_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=ror_emit_rejected\n");
     sys_exit(1);
   }
 
@@ -1069,6 +1121,20 @@ static void expect_shifted_reg_offset_rejected(u8 *code)
   }
 }
 
+static void expect_shifted_data_proc_rejected(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  if (riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                      EOR_R8_R0_R1_RRX,
+                                      DATA_EXT_ROR_CYCLES))
+  {
+    fail_u32("data_proc_reject", "accepted", EOR_R8_R0_R1_RRX, 0);
+  }
+}
+
 static void expect_stickybits_cleared(const char *test_name)
 {
   unsigned i;
@@ -1142,22 +1208,28 @@ static void run_remaining_cycles_case(void)
 
 static void run_data_ext_remaining_cycles_case(void)
 {
-  const u32 r0 = 0x12345678u;
-  const u32 r1 = 0x00ff00ffu;
   const u32 extra_cycles = 4u;
 
   reset_runtime_observations(DATA_EXT_START_PC);
   g_lookup_entry = g_data_ext_entry;
-  reg[0] = r0;
-  reg[1] = r1;
+  reg[0] = DATA_EXT_R0_VALUE;
+  reg[1] = DATA_EXT_R1_VALUE;
 
   execute_arm_translate_internal(DATA_EXT_TOTAL_CYCLES + extra_cycles,
                                  &reg[0]);
 
-  if (reg[9] != (r0 & ~r1))
-    fail_u32("data_ext_remaining", "r9", reg[9], r0 & ~r1);
-  if (reg[10] != ~0xffu)
-    fail_u32("data_ext_remaining", "r10", reg[10], ~0xffu);
+  if (reg[8] != DATA_EXT_R8_VALUE)
+    fail_u32("data_ext_remaining", "r8", reg[8], DATA_EXT_R8_VALUE);
+  if (reg[9] != DATA_EXT_R9_VALUE)
+    fail_u32("data_ext_remaining", "r9", reg[9], DATA_EXT_R9_VALUE);
+  if (reg[10] != DATA_EXT_R10_VALUE)
+    fail_u32("data_ext_remaining", "r10", reg[10], DATA_EXT_R10_VALUE);
+  if (reg[11] != DATA_EXT_R11_VALUE)
+    fail_u32("data_ext_remaining", "r11", reg[11], DATA_EXT_R11_VALUE);
+  if (reg[12] != DATA_EXT_R12_VALUE)
+    fail_u32("data_ext_remaining", "r12", reg[12], DATA_EXT_R12_VALUE);
+  if (reg[14] != DATA_EXT_R14_VALUE)
+    fail_u32("data_ext_remaining", "r14", reg[14], DATA_EXT_R14_VALUE);
   if (reg[REG_PC] != DATA_EXT_END_PC)
     fail_u32("data_ext_remaining", "pc",
              reg[REG_PC], DATA_EXT_END_PC);
@@ -2360,6 +2432,7 @@ void _start(void)
       code + REG_OFFSET_WRITEBACK_LOAD_BLOCK_OFFSET);
   expect_halfword_transfers_rejected(code + HALF_REJECT_BLOCK_OFFSET);
   expect_shifted_reg_offset_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
+  expect_shifted_data_proc_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   run_cycle_boundary_case();
   run_remaining_cycles_case();
   run_data_ext_remaining_cycles_case();
