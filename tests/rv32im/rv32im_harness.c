@@ -58,6 +58,9 @@ typedef unsigned int usize;
 #define RUNTIME_BRANCH_TARGET_CYCLES 5u
 #define RUNTIME_BRANCH_TOTAL_CYCLES \
   (RUNTIME_BRANCH_CYCLES + RUNTIME_BRANCH_TARGET_CYCLES)
+#define RUNTIME_BRANCH_IDLE_EXTRA_CYCLES 5u
+#define RUNTIME_BRANCH_IDLE_TOTAL_CYCLES \
+  (RUNTIME_BRANCH_CYCLES + RUNTIME_BRANCH_IDLE_EXTRA_CYCLES)
 #define RUNTIME_BRANCH_B_PLUS_12 0xea000001u
 #define RUNTIME_BRANCH_TARGET_ADD_R3_R2_R1 0xe0823001u
 #define RUNTIME_BX_START_PC 0x08000400u
@@ -959,6 +962,24 @@ static void run_runtime_reference_workload(const struct harness_state *base,
 
   for (i = 0; i < REG_MAX; i++)
     values[i] = 0;
+  values[REG_PC] = RUNTIME_BRANCH_TARGET_PC;
+  values[REG_CPSR] = 0;
+  values[CPU_HALT_STATE] = CPU_ACTIVE;
+  reg_hash = runtime_update_reg_hash(reg_hash, values);
+  mem_hash = runtime_update_memory_hash(mem_hash,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        runtime_reference_sticky_hash());
+  scheduler_hash = runtime_update_scheduler_hash(scheduler_hash,
+                                                 1,
+                                                 RUNTIME_BRANCH_START_PC, 0,
+                                                 1, 0,
+                                                 0, 0, 0,
+                                                 0, 0);
+
+  for (i = 0; i < REG_MAX; i++)
+    values[i] = 0;
   values[1] = branch_r1;
   values[2] = branch_r2;
   values[4] = branch_r1 + branch_r2;
@@ -1004,7 +1025,7 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   snapshot->reg_hash = reg_hash;
   snapshot->mem_hash = mem_hash;
   snapshot->scheduler_hash = scheduler_hash;
-  snapshot->blocks = 8;
+  snapshot->blocks = 9;
   snapshot->fallbacks = 1;
   snapshot->native_data_proc = 3;
   snapshot->native_branch = 2;
@@ -1056,6 +1077,13 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   reg[1] = g_runtime_fixture_branch_r1;
   reg[2] = g_runtime_fixture_branch_r2;
   execute_arm_translate_internal(RUNTIME_BRANCH_TOTAL_CYCLES, &reg[0]);
+  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+  mem_hash = runtime_update_current_memory_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+
+  reset_runtime_fixture_state(RUNTIME_BRANCH_START_PC);
+  idle_loop_target_pc = RUNTIME_BRANCH_TARGET_PC;
+  execute_arm_translate_internal(RUNTIME_BRANCH_IDLE_TOTAL_CYCLES, &reg[0]);
   reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
   mem_hash = runtime_update_current_memory_hash(mem_hash);
   scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
@@ -1749,7 +1777,7 @@ static void command_compare(void)
 
   if (!ensure_runtime_fixture(&runtime_reason))
   {
-    put_raw("result=FAIL command=compare workload=arm_add_load_store_branch_bx_fallback");
+    put_raw("result=FAIL command=compare workload=arm_add_load_store_branch_bx_idle_fallback");
     put_raw(" harness_mode=");
     put_raw(RUNTIME_FIXTURE_MODE);
     put_raw(" frame_mode=synthetic mem_mode=runtime_stickybits reason=");
@@ -1774,7 +1802,7 @@ static void command_compare(void)
       rv32im.native_load != interp.native_load ||
       rv32im.native_store != interp.native_store)
   {
-    put_raw("result=FAIL command=compare workload=arm_add_load_store_branch_bx_fallback interp_frame_hash=");
+    put_raw("result=FAIL command=compare workload=arm_add_load_store_branch_bx_idle_fallback interp_frame_hash=");
     put_u32_hex(interp.frame_hash);
     put_raw(" rv32im_frame_hash=");
     put_u32_hex(rv32im.frame_hash);
@@ -1811,7 +1839,7 @@ static void command_compare(void)
     return;
   }
 
-  put_raw("result=PASS command=compare workload=arm_add_load_store_branch_bx_fallback interp_frame_hash=");
+  put_raw("result=PASS command=compare workload=arm_add_load_store_branch_bx_idle_fallback interp_frame_hash=");
   put_u32_hex(interp.frame_hash);
   put_raw(" rv32im_frame_hash=");
   put_u32_hex(rv32im.frame_hash);
