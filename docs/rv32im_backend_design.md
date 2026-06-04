@@ -297,7 +297,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   handling, SWP-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, and Thumb lookup-miss fallback fixtures against a local ARM
   reference model, with
-  one hundred eighteen runtime blocks executed, ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
+  one hundred nineteen runtime blocks executed, ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results and remaining-cycle handoff, MSR CPSR flag remaining-cycle handoff,
   MSR CPSR control mode/banked-LR effects and remaining-cycle handoff, SPSR helper-write effects and remaining-cycle handoff, and native PSR
   accounting checked,
@@ -313,7 +313,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   register-offset writeback load/store address/value observations checked,
   immediate and PC-relative halfword load remaining-cycle handoffs, register-offset halfword load/store remaining-cycle handoffs, writeback halfword
   signed/unsigned helper load results and store observations checked,
-  halfword writeback store source/base ordering, store remaining-cycle handoff, and post-index load ordering
+  halfword writeback store source/base ordering, store/load remaining-cycle handoff, and post-index load ordering
   checked,
   immediate memory writeback address/source ordering and store/load remaining-cycle handoff checked,
   block-memory writeback, decrement-before push, PC-loaded native target
