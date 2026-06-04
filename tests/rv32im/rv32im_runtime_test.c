@@ -2767,6 +2767,48 @@ static void run_unsupported_block_fallback_case(void)
   expect_stickybits_cleared("unsupported_fallback");
 }
 
+static void run_initial_lookup_fallback_case(const char *test_name,
+                                             u8 *lookup_entry)
+{
+  const u32 cycles = BLOCK_CYCLES + 7u;
+
+  reset_runtime_observations(BLOCK_START_PC);
+  g_lookup_entry = lookup_entry;
+  reg[0] = CHAIN_R0_VALUE;
+  reg[1] = CHAIN_R1_VALUE;
+
+  execute_arm_translate_internal(cycles, &reg[0]);
+
+  if (reg[2] != 0)
+    fail_u32(test_name, "r2", reg[2], 0);
+  if (reg[REG_PC] != BLOCK_START_PC)
+    fail_u32(test_name, "pc", reg[REG_PC], BLOCK_START_PC);
+  if (g_lookup_calls != 1)
+    fail_u32(test_name, "lookup_calls", g_lookup_calls, 1);
+  if (g_lookup_pc != BLOCK_START_PC)
+    fail_u32(test_name, "lookup_pc", g_lookup_pc, BLOCK_START_PC);
+  if (g_update_calls != 0)
+    fail_u32(test_name, "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32(test_name, "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != cycles)
+    fail_u32(test_name, "execute_cycles", g_execute_cycles, cycles);
+  if (g_execute_pc != BLOCK_START_PC)
+    fail_u32(test_name, "execute_pc", g_execute_pc, BLOCK_START_PC);
+  expect_stickybits_cleared(test_name);
+}
+
+static void run_initial_lookup_miss_fallback_case(void)
+{
+  run_initial_lookup_fallback_case("initial_lookup_miss", (u8 *)0);
+}
+
+static void run_initial_lookup_invalid_fallback_case(void)
+{
+  run_initial_lookup_fallback_case("initial_lookup_invalid",
+                                   INVALID_LOOKUP_ENTRY);
+}
+
 static void run_remaining_cycles_case(void)
 {
   const u32 r0 = 0x20000011u;
@@ -6736,6 +6778,8 @@ void _start(void)
   expect_swap_pc_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   run_cycle_boundary_case();
   run_unsupported_block_fallback_case();
+  run_initial_lookup_miss_fallback_case();
+  run_initial_lookup_invalid_fallback_case();
   run_remaining_cycles_case();
   run_invalid_relookup_fallback_case();
   run_native_chain_remaining_case();
