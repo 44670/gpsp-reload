@@ -20,13 +20,20 @@ typedef unsigned int usize;
 #define BLOCK_END_PC 0x08000004u
 #define BLOCK_CYCLES 7u
 #define ADD_R2_R0_R1 0xe0802001u
+#define BRANCH_START_PC 0x08000100u
+#define BRANCH_TARGET_PC 0x0800010cu
+#define BRANCH_CYCLES 9u
+#define BRANCH_B_PLUS_12 0xea000001u
+#define BRANCH_BLOCK_OFFSET 512u
 #define FRAME_COMPLETE 0x80000000u
 
 u32 reg[REG_MAX];
 u32 rom_cache_watermark;
 u32 gamepak_sticky_bit[1024 / 32];
 
-static u8 *g_entry;
+static u8 *g_lookup_entry;
+static u8 *g_data_entry;
+static u8 *g_branch_entry;
 static u32 g_lookup_calls;
 static u32 g_lookup_pc;
 static u32 g_update_calls;
@@ -158,7 +165,7 @@ static void *map_exec_page(void)
   return (void *)ret;
 }
 
-static void reset_runtime_observations(void)
+static void reset_runtime_observations(u32 pc)
 {
   unsigned i;
 
@@ -167,7 +174,7 @@ static void reset_runtime_observations(void)
   for (i = 0; i < (1024 / 32); i++)
     gamepak_sticky_bit[i] = 0xffffffffu;
 
-  reg[REG_PC] = BLOCK_START_PC;
+  reg[REG_PC] = pc;
   reg[REG_CPSR] = 0;
   reg[CPU_HALT_STATE] = CPU_ACTIVE;
   g_lookup_calls = 0;
@@ -179,14 +186,14 @@ static void reset_runtime_observations(void)
   g_execute_pc = 0;
 }
 
-static u32 build_native_block(u8 *code)
+static u32 build_data_block(u8 *code)
 {
   u8 *translation_ptr = code;
   riscv_jit_block_meta *meta;
   u32 code_bytes;
 
   riscv_emit_block_prologue(&translation_ptr, &meta);
-  g_entry = ((u8 *)meta) + block_prologue_size;
+  g_data_entry = ((u8 *)meta) + block_prologue_size;
 
   if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
                                        ADD_R2_R0_R1, BLOCK_CYCLES))
@@ -197,6 +204,29 @@ static u32 build_native_block(u8 *code)
 
   riscv_emit_block_finalize(meta, &translation_ptr, BLOCK_START_PC,
                             BLOCK_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_branch_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_branch_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_b(&translation_ptr, meta, BRANCH_B_PLUS_12,
+                               BRANCH_START_PC, BRANCH_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=branch_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, BRANCH_START_PC,
+                            BRANCH_START_PC + 4u, false);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -219,7 +249,8 @@ static void run_cycle_boundary_case(void)
   const u32 r1 = 0x01020304u;
   const u32 expected_sum = r0 + r1;
 
-  reset_runtime_observations();
+  reset_runtime_observations(BLOCK_START_PC);
+  g_lookup_entry = g_data_entry;
   reg[0] = r0;
   reg[1] = r1;
 
@@ -249,7 +280,8 @@ static void run_remaining_cycles_case(void)
   const u32 extra_cycles = 5u;
   const u32 expected_sum = r0 + r1;
 
-  reset_runtime_observations();
+  reset_runtime_observations(BLOCK_START_PC);
+  g_lookup_entry = g_data_entry;
   reg[0] = r0;
   reg[1] = r1;
 
@@ -271,6 +303,52 @@ static void run_remaining_cycles_case(void)
   expect_stickybits_cleared("remaining_cycles");
 }
 
+static void run_branch_boundary_case(void)
+{
+  reset_runtime_observations(BRANCH_START_PC);
+  g_lookup_entry = g_branch_entry;
+
+  execute_arm_translate_internal(BRANCH_CYCLES, &reg[0]);
+
+  if (reg[REG_PC] != BRANCH_TARGET_PC)
+    fail_u32("branch_boundary", "pc", reg[REG_PC], BRANCH_TARGET_PC);
+  if (g_lookup_calls != 1)
+    fail_u32("branch_boundary", "lookup_calls", g_lookup_calls, 1);
+  if (g_lookup_pc != BRANCH_START_PC)
+    fail_u32("branch_boundary", "lookup_pc", g_lookup_pc, BRANCH_START_PC);
+  if (g_update_calls != 1)
+    fail_u32("branch_boundary", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("branch_boundary", "update_cycles", (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("branch_boundary", "execute_calls", g_execute_calls, 0);
+  expect_stickybits_cleared("branch_boundary");
+}
+
+static void run_branch_remaining_cycles_case(void)
+{
+  const u32 extra_cycles = 3u;
+
+  reset_runtime_observations(BRANCH_START_PC);
+  g_lookup_entry = g_branch_entry;
+
+  execute_arm_translate_internal(BRANCH_CYCLES + extra_cycles, &reg[0]);
+
+  if (reg[REG_PC] != BRANCH_TARGET_PC)
+    fail_u32("branch_remaining", "pc", reg[REG_PC], BRANCH_TARGET_PC);
+  if (g_update_calls != 0)
+    fail_u32("branch_remaining", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("branch_remaining", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("branch_remaining", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != BRANCH_TARGET_PC)
+    fail_u32("branch_remaining", "execute_pc",
+             g_execute_pc, BRANCH_TARGET_PC);
+  expect_stickybits_cleared("branch_remaining");
+}
+
 void execute_arm(u32 cycles)
 {
   g_execute_calls++;
@@ -289,7 +367,7 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
 {
   g_lookup_calls++;
   g_lookup_pc = pc;
-  return g_entry;
+  return g_lookup_entry;
 }
 
 u8 function_cc *block_lookup_address_thumb(u32 pc)
@@ -305,7 +383,8 @@ void init_bios_hooks(void)
 void _start(void)
 {
   u8 *code = (u8 *)map_exec_page();
-  u32 code_bytes;
+  u32 data_code_bytes;
+  u32 branch_code_bytes;
 
   if (!code)
   {
@@ -313,14 +392,21 @@ void _start(void)
     sys_exit(1);
   }
 
-  code_bytes = build_native_block(code);
+  data_code_bytes = build_data_block(code);
+  branch_code_bytes = build_branch_block(code + BRANCH_BLOCK_OFFSET);
   run_cycle_boundary_case();
   run_remaining_cycles_case();
+  run_branch_boundary_case();
+  run_branch_remaining_cycles_case();
 
   put_raw("result=PASS command=runtime code_bytes=");
-  put_u32_dec(code_bytes);
-  put_raw(" entry=");
-  put_u32_hex((u32)g_entry);
+  put_u32_dec(data_code_bytes);
+  put_raw(" branch_code_bytes=");
+  put_u32_dec(branch_code_bytes);
+  put_raw(" data_entry=");
+  put_u32_hex((u32)g_data_entry);
+  put_raw(" branch_entry=");
+  put_u32_hex((u32)g_branch_entry);
   put_raw(" reason=state_equal\n");
   sys_exit(0);
 }

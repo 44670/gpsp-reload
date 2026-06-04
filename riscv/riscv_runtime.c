@@ -28,7 +28,8 @@ extern u32 rom_cache_watermark;
 enum
 {
   RISCV_INITIAL_ROM_WATERMARK = 16,
-  RISCV_BLOCK_NATIVE_SUPPORTED = 1u
+  RISCV_BLOCK_NATIVE_SUPPORTED = 1u,
+  RISCV_BLOCK_PC_WRITTEN = 2u
 };
 
 #define RISCV_INVALID_BLOCK_ENTRY ((u8 *)(uintptr_t)~(uintptr_t)0)
@@ -38,6 +39,7 @@ static u32 riscv_blocks_emitted;
 static u32 riscv_blocks_executed;
 static u32 riscv_interpreter_fallbacks;
 static u32 riscv_native_data_proc_insns;
+static u32 riscv_native_branch_insns;
 
 static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta);
 
@@ -155,6 +157,11 @@ static u32 riscv_arm_expand_imm(u32 opcode)
     return imm;
 
   return (imm >> rot) | (imm << (32u - rot));
+}
+
+static s32 riscv_arm_branch_delta(u32 opcode)
+{
+  return ((s32)((opcode & 0x00ffffffu) << 8) >> 6) + 8;
 }
 
 static void riscv_emit_helper_call(u8 **ptr, const riscv_jit_block_meta *meta)
@@ -301,6 +308,33 @@ bool riscv_emit_native_arm_data_proc(u8 **translation_ptr_ref,
   return true;
 }
 
+bool riscv_emit_native_arm_b(u8 **translation_ptr_ref,
+                             riscv_jit_block_meta *meta,
+                             u32 opcode,
+                             u32 pc,
+                             u32 cycles)
+{
+  u32 condition = opcode >> 28;
+  u8 *ptr = *translation_ptr_ref;
+  u32 target_pc;
+
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
+    return false;
+
+  if (condition != 0xe)
+    return false;
+
+  target_pc = pc + (u32)riscv_arm_branch_delta(opcode);
+  riscv_emit_li(&ptr, riscv_reg_t0, target_pc);
+  riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
+  riscv_emit_adjust_cycles(&ptr, cycles);
+
+  meta->flags |= RISCV_BLOCK_PC_WRITTEN;
+  *translation_ptr_ref = ptr;
+  riscv_native_branch_insns++;
+  return true;
+}
+
 void riscv_emit_block_finalize(riscv_jit_block_meta *meta,
                                u8 **translation_ptr,
                                u32 block_start_pc,
@@ -321,8 +355,11 @@ void riscv_emit_block_finalize(riscv_jit_block_meta *meta,
   }
   else
   {
-    riscv_emit_li(&ptr, riscv_reg_t0, block_end_pc);
-    riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
+    if (!(meta->flags & RISCV_BLOCK_PC_WRITTEN))
+    {
+      riscv_emit_li(&ptr, riscv_reg_t0, block_end_pc);
+      riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
+    }
   }
 
   riscv_emit_helper_call(&ptr, meta);
@@ -340,6 +377,7 @@ void init_emitter(bool must_swap)
   riscv_blocks_executed = 0;
   riscv_interpreter_fallbacks = 0;
   riscv_native_data_proc_insns = 0;
+  riscv_native_branch_insns = 0;
   rom_cache_watermark = RISCV_INITIAL_ROM_WATERMARK;
   init_bios_hooks();
 }
