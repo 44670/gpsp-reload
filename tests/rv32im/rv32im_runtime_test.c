@@ -412,6 +412,14 @@ typedef unsigned int usize;
 #define SWI_CPSR_VALUE \
   ((SWI_INITIAL_CPSR & ~0x3fu) | MODE_SUPERVISOR | 0x80u)
 #define SWI_BUS_VALUE 0xe3a02004u
+#define CONDITIONAL_START_PC 0x08000b00u
+#define CONDITIONAL_END_PC (CONDITIONAL_START_PC + 4u)
+#define CONDITIONAL_CYCLES 6u
+#define CONDITIONAL_R0_VALUE 0x00000051u
+#define CONDITIONAL_R1_VALUE 0x00000022u
+#define CONDITIONAL_R2_VALUE \
+  (CONDITIONAL_R0_VALUE + CONDITIONAL_R1_VALUE)
+#define CPSR_Z_BIT 0x40000000u
 #define SWP_WORD_START_PC 0x08000c80u
 #define SWP_BYTE_START_PC 0x08000ca0u
 #define SWP_WORD_END_PC (SWP_WORD_START_PC + 4u)
@@ -875,6 +883,7 @@ typedef unsigned int usize;
 #define EXTERNAL_BRANCH_BLOCK_OFFSET 46080u
 #define EXTERNAL_BRANCH_TARGET_BLOCK_OFFSET 46592u
 #define SWI_PATCH_BLOCK_OFFSET 47104u
+#define CONDITIONAL_BLOCK_OFFSET 47616u
 #define EXPECTED_INITIAL_ROM_WATERMARK 16u
 
 u32 reg[REG_MAX];
@@ -955,6 +964,7 @@ static u8 *g_reg_shift_test_entry;
 static u8 *g_pc_write_mov_entry;
 static u8 *g_pc_write_add_entry;
 static u8 *g_pc_source_entry;
+static u8 *g_conditional_entry;
 static u8 *g_swi_entry;
 static u8 *g_swi_patch_entry;
 static u8 *g_swi_target_entry;
@@ -1959,6 +1969,45 @@ static u32 build_pc_source_block(u8 *code)
 
   riscv_emit_block_finalize(meta, &translation_ptr, PC_SOURCE_START_PC,
                             PC_SOURCE_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_conditional_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u8 *skip_source;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_conditional_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_arm_conditional_block_header(
+        &translation_ptr, meta, 0x0, CONDITIONAL_CYCLES, &skip_source))
+  {
+    put_raw("result=FAIL command=runtime reason=cond_header_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!skip_source)
+  {
+    put_raw("result=FAIL command=runtime reason=cond_header_no_patch\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       ADD_R2_R0_R1, 0))
+  {
+    put_raw("result=FAIL command=runtime reason=cond_data_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_patch_unconditional_branch(skip_source, translation_ptr);
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            CONDITIONAL_START_PC,
+                            CONDITIONAL_END_PC, false);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -4435,6 +4484,48 @@ static void run_pc_source_remaining_case(void)
     fail_u32("pc_source_remaining", "execute_pc",
              g_execute_pc, PC_SOURCE_END_PC);
   expect_stickybits_cleared("pc_source_remaining");
+}
+
+static void run_conditional_eq_case(const char *test_name, u32 cpsr,
+                                    u32 expected_r2)
+{
+  reset_runtime_observations(CONDITIONAL_START_PC);
+  g_lookup_entry = g_conditional_entry;
+  reg[0] = CONDITIONAL_R0_VALUE;
+  reg[1] = CONDITIONAL_R1_VALUE;
+  reg[REG_CPSR] = cpsr;
+
+  execute_arm_translate_internal(CONDITIONAL_CYCLES, &reg[0]);
+
+  if (reg[2] != expected_r2)
+    fail_u32(test_name, "r2", reg[2], expected_r2);
+  if (reg[REG_PC] != CONDITIONAL_END_PC)
+    fail_u32(test_name, "pc", reg[REG_PC], CONDITIONAL_END_PC);
+  if (reg[REG_CPSR] != cpsr)
+    fail_u32(test_name, "cpsr", reg[REG_CPSR], cpsr);
+  if (g_lookup_calls != 1)
+    fail_u32(test_name, "lookup_calls", g_lookup_calls, 1);
+  if (g_lookup_pc != CONDITIONAL_START_PC)
+    fail_u32(test_name, "lookup_pc", g_lookup_pc, CONDITIONAL_START_PC);
+  if (g_update_calls != 1)
+    fail_u32(test_name, "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32(test_name, "update_cycles", (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32(test_name, "execute_calls", g_execute_calls, 0);
+  expect_stickybits_cleared(test_name);
+}
+
+static void run_conditional_eq_taken_case(void)
+{
+  run_conditional_eq_case("conditional_eq_taken",
+                          CPSR_Z_BIT | CPSR_LOW_VALUE,
+                          CONDITIONAL_R2_VALUE);
+}
+
+static void run_conditional_eq_skipped_case(void)
+{
+  run_conditional_eq_case("conditional_eq_skipped", CPSR_LOW_VALUE, 0);
 }
 
 static void set_cpu_mode_inputs(void)
@@ -7202,6 +7293,7 @@ void _start(void)
   u32 reg_shift_flag_ror0_code_bytes;
   u32 reg_shift_test_code_bytes;
   u32 pc_source_code_bytes;
+  u32 conditional_code_bytes;
   u32 swi_code_bytes;
   u32 swi_patch_code_bytes;
   u32 swi_target_code_bytes;
@@ -7439,6 +7531,8 @@ void _start(void)
                           "reg_shift_tst_emit_rejected");
   pc_source_code_bytes =
     build_pc_source_block(code + PC_SOURCE_BLOCK_OFFSET);
+  conditional_code_bytes =
+    build_conditional_block(code + CONDITIONAL_BLOCK_OFFSET);
   swi_code_bytes = build_swi_block(code + SWI_BLOCK_OFFSET);
   swi_target_code_bytes =
     build_single_data_proc_block(code + SWI_TARGET_BLOCK_OFFSET,
@@ -7784,6 +7878,8 @@ void _start(void)
   run_reg_shift_test_remaining_case();
   run_pc_source_boundary_case();
   run_pc_source_remaining_case();
+  run_conditional_eq_taken_case();
+  run_conditional_eq_skipped_case();
   run_swi_boundary_case();
   run_swi_remaining_case();
   run_swi_native_target_case();
@@ -7922,6 +8018,8 @@ void _start(void)
   put_u32_dec(reg_shift_test_code_bytes);
   put_raw(" pc_source_code_bytes=");
   put_u32_dec(pc_source_code_bytes);
+  put_raw(" conditional_code_bytes=");
+  put_u32_dec(conditional_code_bytes);
   put_raw(" swi_code_bytes=");
   put_u32_dec(swi_code_bytes);
   put_raw(" swi_patch_code_bytes=");
@@ -8102,6 +8200,8 @@ void _start(void)
   put_u32_hex((u32)g_reg_shift_test_entry);
   put_raw(" pc_source_entry=");
   put_u32_hex((u32)g_pc_source_entry);
+  put_raw(" conditional_entry=");
+  put_u32_hex((u32)g_conditional_entry);
   put_raw(" swi_entry=");
   put_u32_hex((u32)g_swi_entry);
   put_raw(" swi_patch_entry=");

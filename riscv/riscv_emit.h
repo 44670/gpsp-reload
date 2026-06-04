@@ -118,6 +118,11 @@ bool riscv_emit_native_arm_swi_patchable(u8 **translation_ptr,
                                          u32 opcode,
                                          u32 pc,
                                          u32 cycles);
+bool riscv_emit_arm_conditional_block_header(u8 **translation_ptr,
+                                             riscv_jit_block_meta *meta,
+                                             u32 condition,
+                                             u32 cycles,
+                                             u8 **branch_source);
 bool riscv_emit_native_arm_hle_div(u8 **translation_ptr,
                                    riscv_jit_block_meta *meta,
                                    bool divarm,
@@ -165,8 +170,7 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
 #define generate_branch_patch_conditional(dest, offset)                       \
   do                                                                          \
   {                                                                           \
-    (void)(dest);                                                             \
-    (void)(offset);                                                           \
+    riscv_patch_unconditional_branch((dest), (offset));                       \
   } while (0)
 
 #define generate_branch_patch_unconditional(dest, offset)                     \
@@ -200,7 +204,16 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
 #define arm_conditional_block_header()                                        \
   do                                                                          \
   {                                                                           \
-    riscv_mark_block_unsupported(riscv_block_meta);                           \
+    if (riscv_emit_arm_conditional_block_header(                              \
+          &translation_ptr, riscv_block_meta, condition,                      \
+          cycle_count, &backpatch_address))                                  \
+    {                                                                         \
+      cycle_count = 0;                                                        \
+    }                                                                         \
+    else                                                                      \
+    {                                                                         \
+      riscv_mark_block_unsupported(riscv_block_meta);                         \
+    }                                                                         \
   } while (0)
 
 #define emit_trace_arm_instruction(pc)                                        \
@@ -215,11 +228,15 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
     (void)(pc);                                                               \
   } while (0)
 
+#define riscv_arm_effective_opcode()                                          \
+  ((condition == 0x0e) ? opcode : ((opcode & 0x0fffffffu) | 0xe0000000u))
+
 #define arm_data_proc(...)                                                    \
   do                                                                          \
   {                                                                           \
     if (riscv_emit_native_arm_data_proc_with_pc(&translation_ptr,             \
-                                                riscv_block_meta, opcode,     \
+                                                riscv_block_meta,             \
+                                                riscv_arm_effective_opcode(), \
                                                 pc, cycle_count))             \
     {                                                                         \
       cycle_count = 0;                                                        \
@@ -234,8 +251,9 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
   do                                                                          \
   {                                                                           \
     if (riscv_emit_native_arm_data_proc_test_with_pc(&translation_ptr,        \
-                                                     riscv_block_meta,        \
-                                                     opcode, pc,              \
+                                                    riscv_block_meta,        \
+                                                     riscv_arm_effective_opcode(), \
+                                                     pc,                      \
                                                      cycle_count))            \
     {                                                                         \
       cycle_count = 0;                                                        \
@@ -254,7 +272,8 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
   {                                                                           \
     u32 riscv_multiply_extra_cycles = ((opcode >> 21) & 1u) ? 3u : 2u;       \
     if (riscv_emit_native_arm_multiply(&translation_ptr,                     \
-                                       riscv_block_meta, opcode,             \
+                                       riscv_block_meta,                     \
+                                       riscv_arm_effective_opcode(),         \
                                        cycle_count +                         \
                                          riscv_multiply_extra_cycles))        \
     {                                                                         \
@@ -272,7 +291,8 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
     u32 riscv_multiply_long_extra_cycles =                                   \
       (((opcode >> 22) & 1u) && !((opcode >> 21) & 1u)) ? 2u : 3u;           \
     if (riscv_emit_native_arm_multiply_long(&translation_ptr,                \
-                                            riscv_block_meta, opcode,        \
+                                            riscv_block_meta,                \
+                                            riscv_arm_effective_opcode(),    \
                                             cycle_count +                    \
                                               riscv_multiply_long_extra_cycles)) \
     {                                                                         \
@@ -288,7 +308,8 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
   do                                                                          \
   {                                                                           \
     if (riscv_emit_native_arm_psr_with_pc(&translation_ptr,                   \
-                                          riscv_block_meta, opcode,           \
+                                          riscv_block_meta,                  \
+                                          riscv_arm_effective_opcode(),       \
                                           pc, cycle_count))                   \
     {                                                                         \
       cycle_count = 0;                                                        \
@@ -303,7 +324,8 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
   do                                                                          \
   {                                                                           \
     if (riscv_emit_native_arm_access_memory(&translation_ptr,                 \
-                                            riscv_block_meta, opcode,         \
+                                            riscv_block_meta,                \
+                                            riscv_arm_effective_opcode(),     \
                                             pc, cycle_count))                 \
     {                                                                         \
       cycle_count = 0;                                                        \
@@ -318,7 +340,8 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
   do                                                                          \
   {                                                                           \
     if (riscv_emit_native_arm_block_memory(&translation_ptr,                  \
-                                           riscv_block_meta, opcode,          \
+                                           riscv_block_meta,                 \
+                                           riscv_arm_effective_opcode(),      \
                                            pc, cycle_count))                  \
     {                                                                         \
       cycle_count = 0;                                                        \
@@ -333,7 +356,8 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
   do                                                                          \
   {                                                                           \
     if (riscv_emit_native_arm_swap(&translation_ptr, riscv_block_meta,        \
-                                   opcode, pc, cycle_count))                  \
+                                   riscv_arm_effective_opcode(),             \
+                                   pc, cycle_count))                          \
     {                                                                         \
       cycle_count = 0;                                                        \
     }                                                                         \
@@ -349,7 +373,7 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
     if (riscv_emit_native_arm_b_patchable(                                    \
           &translation_ptr, riscv_block_meta,                                 \
           &block_exits[block_exit_position].branch_source,                   \
-          opcode, pc, cycle_count))                                           \
+          riscv_arm_effective_opcode(), pc, cycle_count))                     \
     {                                                                         \
       block_exit_position++;                                                  \
       cycle_count = 0;                                                        \
@@ -366,7 +390,7 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
     if (riscv_emit_native_arm_bl_patchable(                                   \
           &translation_ptr, riscv_block_meta,                                 \
           &block_exits[block_exit_position].branch_source,                   \
-          opcode, pc, cycle_count))                                           \
+          riscv_arm_effective_opcode(), pc, cycle_count))                     \
     {                                                                         \
       block_exit_position++;                                                  \
       cycle_count = 0;                                                        \
@@ -381,7 +405,8 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
   do                                                                          \
   {                                                                           \
     if (riscv_emit_native_arm_bx(&translation_ptr, riscv_block_meta,          \
-                                 opcode, pc, cycle_count))                    \
+                                 riscv_arm_effective_opcode(),               \
+                                 pc, cycle_count))                            \
     {                                                                         \
       cycle_count = 0;                                                        \
     }                                                                         \
@@ -397,7 +422,7 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
     if (riscv_emit_native_arm_swi_patchable(                                  \
           &translation_ptr, riscv_block_meta,                                 \
           &block_exits[block_exit_position].branch_source,                   \
-          opcode, pc, cycle_count))                                           \
+          riscv_arm_effective_opcode(), pc, cycle_count))                     \
     {                                                                         \
       block_exit_position++;                                                  \
       cycle_count = 0;                                                        \
