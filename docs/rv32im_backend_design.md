@@ -259,7 +259,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - qemu-user harness `compare` execution of generated RV32IM
   `ADD r2, r0, r1`, `ADDS`, `CMP`, `MUL`, `MLA`, `MRS CPSR`,
   `MRS SPSR`, `MSR CPSR_flg`, `MSR SPSR`, `LDR`, `LDRB`, `STR`,
-  `LDRH`, `LDRSB`, `LDRSH`, `STRH`, `SWP`,
+  `LDRH`, `LDRSB`, `LDRSH`, `STRH`, `STMIA`, `LDMIA`, `SWP`,
   direct-branch-to-native-target, and
   `BL` link-register branch-to-native-target, and `BX r7`
   indirect-branch-to-native-target runtime fixtures, SWI-to-BIOS target
@@ -269,11 +269,12 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   store-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, and Thumb lookup-miss fallback fixtures against a local ARM
   reference model, with
-  twenty-seven runtime blocks executed, ADDS/CMP CPSR flag results and
+  twenty-nine runtime blocks executed, ADDS/CMP CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results, MSR CPSR flag and
   SPSR helper-write effects, and native PSR accounting checked,
   multiply/accumulate results checked, helper memory and alert observations hashed,
   halfword signed/unsigned helper load results and store observations checked,
+  block-memory writeback and ordered multi-word helper transfers checked,
   SWP helper old-value/read-PC/write-PC behavior checked,
   direct, indirect, conditional, SWI, PC-write/SPSR-restore, and patched
   branch execution exercised,
