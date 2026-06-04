@@ -3229,6 +3229,41 @@ static void run_update_pc_change_chain_case(void)
   expect_stickybits_cleared("update_pc_chain");
 }
 
+static void run_update_frame_complete_pc_change_case(void)
+{
+  reset_runtime_observations(BLOCK_START_PC);
+  g_lookup_entry = g_data_entry;
+  g_lookup_next_pc = CHAIN_SECOND_START_PC;
+  g_lookup_next_entry = g_chain_second_entry;
+  g_update_first_return = FRAME_COMPLETE | PC_CHANGED | CHAIN_SECOND_CYCLES;
+  g_update_first_pc_changed = 1;
+  g_update_first_pc = CHAIN_SECOND_START_PC;
+  reg[0] = CHAIN_R0_VALUE;
+  reg[1] = CHAIN_R1_VALUE;
+
+  execute_arm_translate_internal(BLOCK_CYCLES, &reg[0]);
+
+  if (reg[2] != CHAIN_R2_VALUE)
+    fail_u32("update_frame_pc", "r2", reg[2], CHAIN_R2_VALUE);
+  if (reg[3] != 0)
+    fail_u32("update_frame_pc", "r3", reg[3], 0);
+  if (reg[REG_PC] != CHAIN_SECOND_START_PC)
+    fail_u32("update_frame_pc", "pc",
+             reg[REG_PC], CHAIN_SECOND_START_PC);
+  if (g_lookup_calls != 1)
+    fail_u32("update_frame_pc", "lookup_calls", g_lookup_calls, 1);
+  if (g_lookup_pc != BLOCK_START_PC)
+    fail_u32("update_frame_pc", "lookup_pc", g_lookup_pc, BLOCK_START_PC);
+  if (g_update_calls != 1)
+    fail_u32("update_frame_pc", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("update_frame_pc", "update_cycles",
+             (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("update_frame_pc", "execute_calls", g_execute_calls, 0);
+  expect_stickybits_cleared("update_frame_pc");
+}
+
 static void run_multiply_remaining_cycles_case(void)
 {
   const u32 extra_cycles = 4u;
@@ -7161,6 +7196,7 @@ void _start(void)
   run_native_chain_remaining_case();
   run_update_cycle_refill_chain_case();
   run_update_pc_change_chain_case();
+  run_update_frame_complete_pc_change_case();
   run_multiply_remaining_cycles_case();
   run_multiply_flag_muls_case();
   run_multiply_flag_mlas_case();
