@@ -15,7 +15,7 @@ typedef unsigned int usize;
 #define PROT_EXEC 4
 #define MAP_PRIVATE 2
 #define MAP_ANONYMOUS 32
-#define EXEC_MAP_BYTES 16384u
+#define EXEC_MAP_BYTES 20480u
 
 #define BLOCK_START_PC 0x08000000u
 #define BLOCK_END_PC 0x08000004u
@@ -51,6 +51,25 @@ typedef unsigned int usize;
 #define CARRY_DATA_R6_VALUE 0x00000121u
 #define CARRY_DATA_R7_VALUE 0x000000e0u
 #define CARRY_DATA_R8_VALUE 0xffffff20u
+#define CMP_BORROW_START_PC 0x080000e0u
+#define CMP_EQUAL_START_PC 0x080000f0u
+#define CMN_OVERFLOW_START_PC 0x08000110u
+#define CMP_BORROW_END_PC (CMP_BORROW_START_PC + 4u)
+#define CMP_EQUAL_END_PC (CMP_EQUAL_START_PC + 4u)
+#define CMN_OVERFLOW_END_PC (CMN_OVERFLOW_START_PC + 4u)
+#define CMP_BORROW_CYCLES 4u
+#define CMP_EQUAL_CYCLES 5u
+#define CMN_OVERFLOW_CYCLES 6u
+#define CMP_R0_0X20 0xe3500020u
+#define CMN_R1_0X1 0xe3710001u
+#define TST_R0_R1 0xe1100001u
+#define CPSR_LOW_VALUE 0x9fu
+#define CMP_BORROW_R0_VALUE 0x00000010u
+#define CMP_EQUAL_R0_VALUE 0x00000020u
+#define CMN_OVERFLOW_R1_VALUE 0x7fffffffu
+#define CMP_BORROW_CPSR_VALUE (0x80000000u | CPSR_LOW_VALUE)
+#define CMP_EQUAL_CPSR_VALUE (0x60000000u | CPSR_LOW_VALUE)
+#define CMN_OVERFLOW_CPSR_VALUE (0x90000000u | CPSR_LOW_VALUE)
 #define DATA_EXT_START_PC 0x08000040u
 #define DATA_EXT_END_PC (DATA_EXT_START_PC + 28u)
 #define DATA_EXT_BIC_CYCLES 5u
@@ -284,6 +303,9 @@ typedef unsigned int usize;
 #define FRAME_COMPLETE 0x80000000u
 #define IDLE_LOOP_DISABLED 0xffffffffu
 #define CARRY_DATA_BLOCK_OFFSET 14336u
+#define CMP_BORROW_BLOCK_OFFSET 14848u
+#define CMP_EQUAL_BLOCK_OFFSET 15360u
+#define CMN_OVERFLOW_BLOCK_OFFSET 15872u
 
 u32 reg[REG_MAX];
 u32 idle_loop_target_pc;
@@ -294,6 +316,9 @@ static u8 *g_lookup_entry;
 static u8 *g_data_entry;
 static u8 *g_multiply_entry;
 static u8 *g_carry_data_entry;
+static u8 *g_cmp_borrow_entry;
+static u8 *g_cmp_equal_entry;
+static u8 *g_cmn_overflow_entry;
 static u8 *g_data_ext_entry;
 static u8 *g_branch_entry;
 static u8 *g_bl_entry;
@@ -618,6 +643,32 @@ static u32 build_carry_data_block(u8 *code)
 
   riscv_emit_block_finalize(meta, &translation_ptr, CARRY_DATA_START_PC,
                             CARRY_DATA_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_data_test_block(u8 *code, u32 opcode, u32 start_pc,
+                                 u32 end_pc, u32 cycles, u8 **entry,
+                                 const char *reject_reason)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  *entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_data_proc_test(&translation_ptr, meta,
+                                            opcode, cycles))
+  {
+    put_raw("result=FAIL command=runtime reason=");
+    put_raw(reject_reason);
+    put_raw("\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, start_pc, end_pc, false);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -1253,6 +1304,20 @@ static void expect_shifted_data_proc_rejected(u8 *code)
   }
 }
 
+static void expect_logical_data_proc_test_rejected(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  if (riscv_emit_native_arm_data_proc_test(&translation_ptr, meta,
+                                           TST_R0_R1,
+                                           CMP_BORROW_CYCLES))
+  {
+    fail_u32("data_proc_test_reject", "accepted", TST_R0_R1, 0);
+  }
+}
+
 static void expect_multiply_rejected(u8 *code)
 {
   u8 *translation_ptr = code;
@@ -1434,6 +1499,64 @@ static void run_carry_data_remaining_cycles_case(void)
     fail_u32("carry_data_remaining", "execute_pc",
              g_execute_pc, CARRY_DATA_END_PC);
   expect_stickybits_cleared("carry_data_remaining");
+}
+
+static void run_data_test_boundary_case(const char *test_name, u8 *entry,
+                                        u32 start_pc, u32 end_pc,
+                                        u32 cycles, u32 reg_index,
+                                        u32 reg_value, u32 expected_cpsr)
+{
+  reset_runtime_observations(start_pc);
+  g_lookup_entry = entry;
+  reg[reg_index] = reg_value;
+  reg[REG_CPSR] = CPSR_LOW_VALUE;
+
+  execute_arm_translate_internal(cycles, &reg[0]);
+
+  if (reg[REG_CPSR] != expected_cpsr)
+    fail_u32(test_name, "cpsr", reg[REG_CPSR], expected_cpsr);
+  if (reg[REG_PC] != end_pc)
+    fail_u32(test_name, "pc", reg[REG_PC], end_pc);
+  if (g_lookup_calls != 1)
+    fail_u32(test_name, "lookup_calls", g_lookup_calls, 1);
+  if (g_lookup_pc != start_pc)
+    fail_u32(test_name, "lookup_pc", g_lookup_pc, start_pc);
+  if (g_update_calls != 1)
+    fail_u32(test_name, "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32(test_name, "update_cycles", (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32(test_name, "execute_calls", g_execute_calls, 0);
+  expect_stickybits_cleared(test_name);
+}
+
+static void run_data_test_remaining_case(const char *test_name, u8 *entry,
+                                         u32 start_pc, u32 end_pc,
+                                         u32 cycles, u32 reg_index,
+                                         u32 reg_value, u32 expected_cpsr)
+{
+  const u32 extra_cycles = 5u;
+
+  reset_runtime_observations(start_pc);
+  g_lookup_entry = entry;
+  reg[reg_index] = reg_value;
+  reg[REG_CPSR] = CPSR_LOW_VALUE;
+
+  execute_arm_translate_internal(cycles + extra_cycles, &reg[0]);
+
+  if (reg[REG_CPSR] != expected_cpsr)
+    fail_u32(test_name, "cpsr", reg[REG_CPSR], expected_cpsr);
+  if (reg[REG_PC] != end_pc)
+    fail_u32(test_name, "pc", reg[REG_PC], end_pc);
+  if (g_update_calls != 0)
+    fail_u32(test_name, "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32(test_name, "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32(test_name, "execute_cycles", g_execute_cycles, extra_cycles);
+  if (g_execute_pc != end_pc)
+    fail_u32(test_name, "execute_pc", g_execute_pc, end_pc);
+  expect_stickybits_cleared(test_name);
 }
 
 static void run_data_ext_remaining_cycles_case(void)
@@ -2588,6 +2711,9 @@ void _start(void)
   u32 data_code_bytes;
   u32 multiply_code_bytes;
   u32 carry_data_code_bytes;
+  u32 cmp_borrow_code_bytes;
+  u32 cmp_equal_code_bytes;
+  u32 cmn_overflow_code_bytes;
   u32 data_ext_code_bytes;
   u32 branch_code_bytes;
   u32 bl_code_bytes;
@@ -2620,6 +2746,22 @@ void _start(void)
   multiply_code_bytes = build_multiply_block(code + MULTIPLY_BLOCK_OFFSET);
   carry_data_code_bytes =
     build_carry_data_block(code + CARRY_DATA_BLOCK_OFFSET);
+  cmp_borrow_code_bytes =
+    build_data_test_block(code + CMP_BORROW_BLOCK_OFFSET,
+                          CMP_R0_0X20, CMP_BORROW_START_PC,
+                          CMP_BORROW_END_PC, CMP_BORROW_CYCLES,
+                          &g_cmp_borrow_entry, "cmp_borrow_emit_rejected");
+  cmp_equal_code_bytes =
+    build_data_test_block(code + CMP_EQUAL_BLOCK_OFFSET,
+                          CMP_R0_0X20, CMP_EQUAL_START_PC,
+                          CMP_EQUAL_END_PC, CMP_EQUAL_CYCLES,
+                          &g_cmp_equal_entry, "cmp_equal_emit_rejected");
+  cmn_overflow_code_bytes =
+    build_data_test_block(code + CMN_OVERFLOW_BLOCK_OFFSET,
+                          CMN_R1_0X1, CMN_OVERFLOW_START_PC,
+                          CMN_OVERFLOW_END_PC, CMN_OVERFLOW_CYCLES,
+                          &g_cmn_overflow_entry,
+                          "cmn_overflow_emit_rejected");
   data_ext_code_bytes = build_data_ext_block(code + DATA_EXT_BLOCK_OFFSET);
   branch_code_bytes = build_branch_block(code + BRANCH_BLOCK_OFFSET);
   bl_code_bytes = build_bl_block(code + BL_BLOCK_OFFSET);
@@ -2670,12 +2812,30 @@ void _start(void)
   expect_halfword_transfers_rejected(code + HALF_REJECT_BLOCK_OFFSET);
   expect_shifted_reg_offset_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_shifted_data_proc_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
+  expect_logical_data_proc_test_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_multiply_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   run_cycle_boundary_case();
   run_remaining_cycles_case();
   run_multiply_remaining_cycles_case();
   run_carry_data_boundary_case();
   run_carry_data_remaining_cycles_case();
+  run_data_test_boundary_case("cmp_borrow_boundary", g_cmp_borrow_entry,
+                              CMP_BORROW_START_PC, CMP_BORROW_END_PC,
+                              CMP_BORROW_CYCLES, 0,
+                              CMP_BORROW_R0_VALUE,
+                              CMP_BORROW_CPSR_VALUE);
+  run_data_test_remaining_case("cmp_equal_remaining", g_cmp_equal_entry,
+                               CMP_EQUAL_START_PC, CMP_EQUAL_END_PC,
+                               CMP_EQUAL_CYCLES, 0,
+                               CMP_EQUAL_R0_VALUE,
+                               CMP_EQUAL_CPSR_VALUE);
+  run_data_test_remaining_case("cmn_overflow_remaining",
+                               g_cmn_overflow_entry,
+                               CMN_OVERFLOW_START_PC,
+                               CMN_OVERFLOW_END_PC,
+                               CMN_OVERFLOW_CYCLES, 1,
+                               CMN_OVERFLOW_R1_VALUE,
+                               CMN_OVERFLOW_CPSR_VALUE);
   run_data_ext_remaining_cycles_case();
   run_branch_boundary_case();
   run_branch_remaining_cycles_case();
@@ -2712,6 +2872,12 @@ void _start(void)
   put_u32_dec(multiply_code_bytes);
   put_raw(" carry_data_code_bytes=");
   put_u32_dec(carry_data_code_bytes);
+  put_raw(" cmp_borrow_code_bytes=");
+  put_u32_dec(cmp_borrow_code_bytes);
+  put_raw(" cmp_equal_code_bytes=");
+  put_u32_dec(cmp_equal_code_bytes);
+  put_raw(" cmn_overflow_code_bytes=");
+  put_u32_dec(cmn_overflow_code_bytes);
   put_raw(" data_ext_code_bytes=");
   put_u32_dec(data_ext_code_bytes);
   put_raw(" branch_code_bytes=");
@@ -2760,6 +2926,12 @@ void _start(void)
   put_u32_hex((u32)g_multiply_entry);
   put_raw(" carry_data_entry=");
   put_u32_hex((u32)g_carry_data_entry);
+  put_raw(" cmp_borrow_entry=");
+  put_u32_hex((u32)g_cmp_borrow_entry);
+  put_raw(" cmp_equal_entry=");
+  put_u32_hex((u32)g_cmp_equal_entry);
+  put_raw(" cmn_overflow_entry=");
+  put_u32_hex((u32)g_cmn_overflow_entry);
   put_raw(" data_ext_entry=");
   put_u32_hex((u32)g_data_ext_entry);
   put_raw(" branch_entry=");

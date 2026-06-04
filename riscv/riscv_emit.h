@@ -37,6 +37,10 @@ bool riscv_emit_native_arm_data_proc(u8 **translation_ptr,
                                      riscv_jit_block_meta *meta,
                                      u32 opcode,
                                      u32 cycles);
+bool riscv_emit_native_arm_data_proc_test(u8 **translation_ptr,
+                                          riscv_jit_block_meta *meta,
+                                          u32 opcode,
+                                          u32 cycles);
 bool riscv_emit_native_arm_multiply(u8 **translation_ptr,
                                     riscv_jit_block_meta *meta,
                                     u32 opcode,
@@ -154,7 +158,19 @@ void init_emitter(bool must_swap);
   } while (0)
 
 #define arm_data_proc_test(...)                                               \
-  riscv_emit_current_arm_instruction()
+  do                                                                          \
+  {                                                                           \
+    if (riscv_emit_native_arm_data_proc_test(&translation_ptr,                \
+                                             riscv_block_meta, opcode,        \
+                                             cycle_count))                    \
+    {                                                                         \
+      cycle_count = 0;                                                        \
+    }                                                                         \
+    else                                                                      \
+    {                                                                         \
+      riscv_emit_current_arm_instruction();                                   \
+    }                                                                         \
+  } while (0)
 
 #define arm_data_proc_unary(...)                                              \
   arm_data_proc(__VA_ARGS__)
