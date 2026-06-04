@@ -444,6 +444,7 @@ static bool riscv_emit_arm_data_proc_operand2_with_carry(u8 **ptr_ref,
 {
   u32 imm_op = (opcode >> 25) & 1u;
   u32 rm = opcode & 0xfu;
+  u32 rs = (opcode >> 8) & 0xfu;
   u32 shift_type = (opcode >> 5) & 0x3u;
   u32 shift = (opcode >> 7) & 0x1fu;
   u8 *ptr = *ptr_ref;
@@ -469,7 +470,106 @@ static bool riscv_emit_arm_data_proc_operand2_with_carry(u8 **ptr_ref,
   }
 
   if (((opcode >> 4) & 1u) || rm == REG_PC)
-    return false;
+  {
+    if (!((opcode >> 4) & 1u) || rm == REG_PC || rs == REG_PC)
+      return false;
+
+    riscv_emit_arm_reg_load(&ptr, riscv_reg_t1, rm);
+    riscv_emit_arm_reg_load(&ptr, riscv_reg_t4, rs);
+    riscv_emit_arm_cpsr_c_load(&ptr, riscv_reg_t6);
+    translation_ptr = ptr;
+    riscv_emit_andi(riscv_reg_t4, riscv_reg_t4, 0xff);
+
+    switch (shift_type)
+    {
+      case 0:
+        riscv_emit_sub(riscv_reg_t3, riscv_reg_zero, riscv_reg_t4);
+        riscv_emit_srl(riscv_reg_t3, riscv_reg_t1, riscv_reg_t3);
+        riscv_emit_andi(riscv_reg_t3, riscv_reg_t3, 1);
+        riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t4, 33);
+        riscv_emit_sltiu(riscv_reg_t2, riscv_reg_t4, 1);
+        riscv_emit_xori(riscv_reg_t2, riscv_reg_t2, 1);
+        riscv_emit_and(riscv_reg_t5, riscv_reg_t5, riscv_reg_t2);
+        riscv_emit_sub(riscv_reg_t5, riscv_reg_zero, riscv_reg_t5);
+        riscv_emit_and(riscv_reg_t3, riscv_reg_t3, riscv_reg_t5);
+        riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t4, 1);
+        riscv_emit_sub(riscv_reg_t5, riscv_reg_zero, riscv_reg_t5);
+        riscv_emit_and(riscv_reg_t6, riscv_reg_t6, riscv_reg_t5);
+        riscv_emit_or(riscv_reg_t3, riscv_reg_t3, riscv_reg_t6);
+        riscv_emit_sll(riscv_reg_t1, riscv_reg_t1, riscv_reg_t4);
+        riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t4, 32);
+        riscv_emit_sub(riscv_reg_t5, riscv_reg_zero, riscv_reg_t5);
+        riscv_emit_and(riscv_reg_t1, riscv_reg_t1, riscv_reg_t5);
+        break;
+      case 1:
+        riscv_emit_addi(riscv_reg_t3, riscv_reg_t4, -1);
+        riscv_emit_srl(riscv_reg_t3, riscv_reg_t1, riscv_reg_t3);
+        riscv_emit_andi(riscv_reg_t3, riscv_reg_t3, 1);
+        riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t4, 33);
+        riscv_emit_sltiu(riscv_reg_t2, riscv_reg_t4, 1);
+        riscv_emit_xori(riscv_reg_t2, riscv_reg_t2, 1);
+        riscv_emit_and(riscv_reg_t5, riscv_reg_t5, riscv_reg_t2);
+        riscv_emit_sub(riscv_reg_t5, riscv_reg_zero, riscv_reg_t5);
+        riscv_emit_and(riscv_reg_t3, riscv_reg_t3, riscv_reg_t5);
+        riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t4, 1);
+        riscv_emit_sub(riscv_reg_t5, riscv_reg_zero, riscv_reg_t5);
+        riscv_emit_and(riscv_reg_t6, riscv_reg_t6, riscv_reg_t5);
+        riscv_emit_or(riscv_reg_t3, riscv_reg_t3, riscv_reg_t6);
+        riscv_emit_srl(riscv_reg_t1, riscv_reg_t1, riscv_reg_t4);
+        riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t4, 32);
+        riscv_emit_sub(riscv_reg_t5, riscv_reg_zero, riscv_reg_t5);
+        riscv_emit_and(riscv_reg_t1, riscv_reg_t1, riscv_reg_t5);
+        break;
+      case 2:
+        riscv_emit_addi(riscv_reg_t3, riscv_reg_t4, -1);
+        riscv_emit_srl(riscv_reg_t3, riscv_reg_t1, riscv_reg_t3);
+        riscv_emit_andi(riscv_reg_t3, riscv_reg_t3, 1);
+        riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t4, 32);
+        riscv_emit_sltiu(riscv_reg_t2, riscv_reg_t4, 1);
+        riscv_emit_xori(riscv_reg_t2, riscv_reg_t2, 1);
+        riscv_emit_and(riscv_reg_t5, riscv_reg_t5, riscv_reg_t2);
+        riscv_emit_sub(riscv_reg_t5, riscv_reg_zero, riscv_reg_t5);
+        riscv_emit_and(riscv_reg_t3, riscv_reg_t3, riscv_reg_t5);
+        riscv_emit_srli(riscv_reg_t5, riscv_reg_t1, 31);
+        riscv_emit_sltiu(riscv_reg_t2, riscv_reg_t4, 32);
+        riscv_emit_xori(riscv_reg_t2, riscv_reg_t2, 1);
+        riscv_emit_sub(riscv_reg_t2, riscv_reg_zero, riscv_reg_t2);
+        riscv_emit_and(riscv_reg_t5, riscv_reg_t5, riscv_reg_t2);
+        riscv_emit_or(riscv_reg_t3, riscv_reg_t3, riscv_reg_t5);
+        riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t4, 1);
+        riscv_emit_sub(riscv_reg_t5, riscv_reg_zero, riscv_reg_t5);
+        riscv_emit_and(riscv_reg_t6, riscv_reg_t6, riscv_reg_t5);
+        riscv_emit_or(riscv_reg_t3, riscv_reg_t3, riscv_reg_t6);
+        riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t4, 32);
+        riscv_emit_sub(riscv_reg_t5, riscv_reg_zero, riscv_reg_t5);
+        riscv_emit_and(riscv_reg_t2, riscv_reg_t4, riscv_reg_t5);
+        riscv_emit_xori(riscv_reg_t5, riscv_reg_t5, -1);
+        riscv_emit_addi(riscv_reg_t6, riscv_reg_zero, 31);
+        riscv_emit_and(riscv_reg_t6, riscv_reg_t6, riscv_reg_t5);
+        riscv_emit_or(riscv_reg_t4, riscv_reg_t2, riscv_reg_t6);
+        riscv_emit_sra(riscv_reg_t1, riscv_reg_t1, riscv_reg_t4);
+        break;
+      default:
+        riscv_emit_addi(riscv_reg_t3, riscv_reg_t4, -1);
+        riscv_emit_srl(riscv_reg_t3, riscv_reg_t1, riscv_reg_t3);
+        riscv_emit_andi(riscv_reg_t3, riscv_reg_t3, 1);
+        riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t4, 1);
+        riscv_emit_sub(riscv_reg_t5, riscv_reg_zero, riscv_reg_t5);
+        riscv_emit_and(riscv_reg_t6, riscv_reg_t6, riscv_reg_t5);
+        riscv_emit_xori(riscv_reg_t5, riscv_reg_t5, -1);
+        riscv_emit_and(riscv_reg_t3, riscv_reg_t3, riscv_reg_t5);
+        riscv_emit_or(riscv_reg_t3, riscv_reg_t3, riscv_reg_t6);
+        riscv_emit_andi(riscv_reg_t4, riscv_reg_t4, 31);
+        riscv_emit_sub(riscv_reg_t5, riscv_reg_zero, riscv_reg_t4);
+        riscv_emit_srl(riscv_reg_t2, riscv_reg_t1, riscv_reg_t4);
+        riscv_emit_sll(riscv_reg_t1, riscv_reg_t1, riscv_reg_t5);
+        riscv_emit_or(riscv_reg_t1, riscv_reg_t1, riscv_reg_t2);
+        break;
+    }
+
+    *ptr_ref = translation_ptr;
+    return true;
+  }
 
   riscv_emit_arm_reg_load(&ptr, riscv_reg_t1, rm);
   translation_ptr = ptr;

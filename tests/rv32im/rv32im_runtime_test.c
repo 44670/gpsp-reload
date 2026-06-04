@@ -296,6 +296,41 @@ typedef unsigned int usize;
 #define REG_SHIFT_DATA_R9_VALUE REG_SHIFT_DATA_R0_VALUE
 #define REG_SHIFT_DATA_R10_VALUE 0xffffffffu
 #define REG_SHIFT_DATA_R11_VALUE 0x81010111u
+#define REG_SHIFT_FLAG_LSL_START_PC 0x08000a60u
+#define REG_SHIFT_FLAG_LSR_START_PC 0x08000a80u
+#define REG_SHIFT_FLAG_ASR_START_PC 0x08000aa0u
+#define REG_SHIFT_FLAG_ROR0_START_PC 0x08000ac0u
+#define REG_SHIFT_TEST_START_PC 0x08000ae0u
+#define REG_SHIFT_FLAG_LSL_END_PC (REG_SHIFT_FLAG_LSL_START_PC + 4u)
+#define REG_SHIFT_FLAG_LSR_END_PC (REG_SHIFT_FLAG_LSR_START_PC + 4u)
+#define REG_SHIFT_FLAG_ASR_END_PC (REG_SHIFT_FLAG_ASR_START_PC + 4u)
+#define REG_SHIFT_FLAG_ROR0_END_PC (REG_SHIFT_FLAG_ROR0_START_PC + 4u)
+#define REG_SHIFT_TEST_END_PC (REG_SHIFT_TEST_START_PC + 4u)
+#define REG_SHIFT_FLAG_LSL_CYCLES 6u
+#define REG_SHIFT_FLAG_LSR_CYCLES 7u
+#define REG_SHIFT_FLAG_ASR_CYCLES 8u
+#define REG_SHIFT_FLAG_ROR0_CYCLES 9u
+#define REG_SHIFT_TEST_CYCLES 6u
+#define REG_SHIFT_ANDS_R6_R0_R1_LSL_R2 0xe0106211u
+#define REG_SHIFT_EORS_R7_R0_R1_LSR_R3 0xe0307331u
+#define REG_SHIFT_MOVS_R8_R1_ASR_R4 0xe1b08451u
+#define REG_SHIFT_ORRS_R9_R0_R1_ROR_R5 0xe1909571u
+#define REG_SHIFT_TST_R0_R1_LSL_R15 0xe1100f11u
+#define REG_SHIFT_FLAG_R0_VALUE 0x80000001u
+#define REG_SHIFT_FLAG_R1_VALUE 0x80000001u
+#define REG_SHIFT_FLAG_R2_VALUE 32u
+#define REG_SHIFT_FLAG_R3_VALUE 40u
+#define REG_SHIFT_FLAG_R4_VALUE 40u
+#define REG_SHIFT_FLAG_R5_VALUE 0u
+#define REG_SHIFT_FLAG_R6_VALUE 0u
+#define REG_SHIFT_FLAG_R7_VALUE REG_SHIFT_FLAG_R0_VALUE
+#define REG_SHIFT_FLAG_R8_VALUE 0xffffffffu
+#define REG_SHIFT_FLAG_R9_VALUE REG_SHIFT_FLAG_R0_VALUE
+#define REG_SHIFT_FLAG_LSL_CPSR_VALUE (0x70000000u | CPSR_LOW_VALUE)
+#define REG_SHIFT_FLAG_LSR_CPSR_VALUE (0x90000000u | CPSR_LOW_VALUE)
+#define REG_SHIFT_FLAG_ASR_CPSR_VALUE (0xb0000000u | CPSR_LOW_VALUE)
+#define REG_SHIFT_FLAG_ROR0_CPSR_VALUE (0xb0000000u | CPSR_LOW_VALUE)
+#define REG_SHIFT_TEST_CPSR_VALUE (0x70000000u | CPSR_LOW_VALUE)
 #define DATA_EXT_R0_VALUE 0x01010101u
 #define DATA_EXT_R1_VALUE 0x80000010u
 #define DATA_EXT_R6_VALUE 0xc1010109u
@@ -555,6 +590,11 @@ typedef unsigned int usize;
 #define MULTIPLY_LONG_ACC_FLAG_UMLALS_BLOCK_OFFSET 27648u
 #define MULTIPLY_LONG_ACC_FLAG_SMLALS_BLOCK_OFFSET 28160u
 #define REG_SHIFT_DATA_BLOCK_OFFSET 28672u
+#define REG_SHIFT_FLAG_LSL_BLOCK_OFFSET 29184u
+#define REG_SHIFT_FLAG_LSR_BLOCK_OFFSET 29696u
+#define REG_SHIFT_FLAG_ASR_BLOCK_OFFSET 30208u
+#define REG_SHIFT_FLAG_ROR0_BLOCK_OFFSET 30720u
+#define REG_SHIFT_TEST_BLOCK_OFFSET 31232u
 
 u32 reg[REG_MAX];
 u32 spsr[6];
@@ -606,6 +646,11 @@ static u8 *g_reg_offset_store_entry;
 static u8 *g_reg_offset_rrx_load_entry;
 static u8 *g_shifted_reg_offset_entry;
 static u8 *g_reg_shift_data_entry;
+static u8 *g_reg_shift_flag_lsl_entry;
+static u8 *g_reg_shift_flag_lsr_entry;
+static u8 *g_reg_shift_flag_asr_entry;
+static u8 *g_reg_shift_flag_ror0_entry;
+static u8 *g_reg_shift_test_entry;
 static u8 *g_psr_entry;
 static u8 *g_writeback_store_entry;
 static u8 *g_writeback_load_entry;
@@ -1908,10 +1953,11 @@ static void expect_logical_data_proc_test_rejected(u8 *code)
 
   riscv_emit_block_prologue(&translation_ptr, &meta);
   if (riscv_emit_native_arm_data_proc_test(&translation_ptr, meta,
-                                           TST_R0_R1_LSL_R2,
+                                           REG_SHIFT_TST_R0_R1_LSL_R15,
                                            CMP_BORROW_CYCLES))
   {
-    fail_u32("data_proc_test_reject", "accepted", TST_R0_R1_LSL_R2, 0);
+    fail_u32("data_proc_test_reject", "accepted",
+             REG_SHIFT_TST_R0_R1_LSL_R15, 0);
   }
 }
 
@@ -2731,6 +2777,92 @@ static void run_reg_shift_data_remaining_case(void)
     fail_u32("reg_shift_data", "execute_pc",
              g_execute_pc, REG_SHIFT_DATA_END_PC);
   expect_stickybits_cleared("reg_shift_data");
+}
+
+static void setup_reg_shift_flag_inputs(void)
+{
+  reg[0] = REG_SHIFT_FLAG_R0_VALUE;
+  reg[1] = REG_SHIFT_FLAG_R1_VALUE;
+  reg[2] = REG_SHIFT_FLAG_R2_VALUE;
+  reg[3] = REG_SHIFT_FLAG_R3_VALUE;
+  reg[4] = REG_SHIFT_FLAG_R4_VALUE;
+  reg[5] = REG_SHIFT_FLAG_R5_VALUE;
+  reg[REG_CPSR] = CPSR_CV_LOW_VALUE;
+}
+
+static void run_reg_shift_flag_case(const char *test_name, u8 *entry,
+                                    u32 start_pc, u32 end_pc, u32 cycles,
+                                    u32 rd_index, u32 expected_rd,
+                                    u32 expected_cpsr, u32 extra_cycles)
+{
+  reset_runtime_observations(start_pc);
+  g_lookup_entry = entry;
+  setup_reg_shift_flag_inputs();
+
+  execute_arm_translate_internal(cycles + extra_cycles, &reg[0]);
+
+  if (reg[rd_index] != expected_rd)
+    fail_u32(test_name, "rd", reg[rd_index], expected_rd);
+  if (reg[REG_CPSR] != expected_cpsr)
+    fail_u32(test_name, "cpsr", reg[REG_CPSR], expected_cpsr);
+  if (reg[REG_PC] != end_pc)
+    fail_u32(test_name, "pc", reg[REG_PC], end_pc);
+
+  if (extra_cycles)
+  {
+    if (g_update_calls != 0)
+      fail_u32(test_name, "update_calls", g_update_calls, 0);
+    if (g_execute_calls != 1)
+      fail_u32(test_name, "execute_calls", g_execute_calls, 1);
+    if (g_execute_cycles != extra_cycles)
+      fail_u32(test_name, "execute_cycles", g_execute_cycles, extra_cycles);
+    if (g_execute_pc != end_pc)
+      fail_u32(test_name, "execute_pc", g_execute_pc, end_pc);
+  }
+  else
+  {
+    if (g_lookup_calls != 1)
+      fail_u32(test_name, "lookup_calls", g_lookup_calls, 1);
+    if (g_lookup_pc != start_pc)
+      fail_u32(test_name, "lookup_pc", g_lookup_pc, start_pc);
+    if (g_update_calls != 1)
+      fail_u32(test_name, "update_calls", g_update_calls, 1);
+    if ((u32)g_update_cycles != 0)
+      fail_u32(test_name, "update_cycles", (u32)g_update_cycles, 0);
+    if (g_execute_calls != 0)
+      fail_u32(test_name, "execute_calls", g_execute_calls, 0);
+  }
+
+  expect_stickybits_cleared(test_name);
+}
+
+static void run_reg_shift_test_remaining_case(void)
+{
+  const u32 extra_cycles = 5u;
+
+  reset_runtime_observations(REG_SHIFT_TEST_START_PC);
+  g_lookup_entry = g_reg_shift_test_entry;
+  setup_reg_shift_flag_inputs();
+
+  execute_arm_translate_internal(REG_SHIFT_TEST_CYCLES + extra_cycles,
+                                 &reg[0]);
+
+  if (reg[REG_CPSR] != REG_SHIFT_TEST_CPSR_VALUE)
+    fail_u32("reg_shift_test", "cpsr",
+             reg[REG_CPSR], REG_SHIFT_TEST_CPSR_VALUE);
+  if (reg[REG_PC] != REG_SHIFT_TEST_END_PC)
+    fail_u32("reg_shift_test", "pc", reg[REG_PC], REG_SHIFT_TEST_END_PC);
+  if (g_update_calls != 0)
+    fail_u32("reg_shift_test", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("reg_shift_test", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("reg_shift_test", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != REG_SHIFT_TEST_END_PC)
+    fail_u32("reg_shift_test", "execute_pc",
+             g_execute_pc, REG_SHIFT_TEST_END_PC);
+  expect_stickybits_cleared("reg_shift_test");
 }
 
 static void run_branch_boundary_case(void)
@@ -3946,6 +4078,11 @@ void _start(void)
   u32 logical_flag_code_bytes;
   u32 data_ext_code_bytes;
   u32 reg_shift_data_code_bytes;
+  u32 reg_shift_flag_lsl_code_bytes;
+  u32 reg_shift_flag_lsr_code_bytes;
+  u32 reg_shift_flag_asr_code_bytes;
+  u32 reg_shift_flag_ror0_code_bytes;
+  u32 reg_shift_test_code_bytes;
   u32 branch_code_bytes;
   u32 bl_code_bytes;
   u32 load_code_bytes;
@@ -4101,6 +4238,44 @@ void _start(void)
   data_ext_code_bytes = build_data_ext_block(code + DATA_EXT_BLOCK_OFFSET);
   reg_shift_data_code_bytes =
     build_reg_shift_data_block(code + REG_SHIFT_DATA_BLOCK_OFFSET);
+  reg_shift_flag_lsl_code_bytes =
+    build_flag_data_block(code + REG_SHIFT_FLAG_LSL_BLOCK_OFFSET,
+                          REG_SHIFT_ANDS_R6_R0_R1_LSL_R2,
+                          REG_SHIFT_FLAG_LSL_START_PC,
+                          REG_SHIFT_FLAG_LSL_END_PC,
+                          REG_SHIFT_FLAG_LSL_CYCLES,
+                          &g_reg_shift_flag_lsl_entry,
+                          "reg_shift_ands_lsl_emit_rejected");
+  reg_shift_flag_lsr_code_bytes =
+    build_flag_data_block(code + REG_SHIFT_FLAG_LSR_BLOCK_OFFSET,
+                          REG_SHIFT_EORS_R7_R0_R1_LSR_R3,
+                          REG_SHIFT_FLAG_LSR_START_PC,
+                          REG_SHIFT_FLAG_LSR_END_PC,
+                          REG_SHIFT_FLAG_LSR_CYCLES,
+                          &g_reg_shift_flag_lsr_entry,
+                          "reg_shift_eors_lsr_emit_rejected");
+  reg_shift_flag_asr_code_bytes =
+    build_flag_data_block(code + REG_SHIFT_FLAG_ASR_BLOCK_OFFSET,
+                          REG_SHIFT_MOVS_R8_R1_ASR_R4,
+                          REG_SHIFT_FLAG_ASR_START_PC,
+                          REG_SHIFT_FLAG_ASR_END_PC,
+                          REG_SHIFT_FLAG_ASR_CYCLES,
+                          &g_reg_shift_flag_asr_entry,
+                          "reg_shift_movs_asr_emit_rejected");
+  reg_shift_flag_ror0_code_bytes =
+    build_flag_data_block(code + REG_SHIFT_FLAG_ROR0_BLOCK_OFFSET,
+                          REG_SHIFT_ORRS_R9_R0_R1_ROR_R5,
+                          REG_SHIFT_FLAG_ROR0_START_PC,
+                          REG_SHIFT_FLAG_ROR0_END_PC,
+                          REG_SHIFT_FLAG_ROR0_CYCLES,
+                          &g_reg_shift_flag_ror0_entry,
+                          "reg_shift_orrs_ror0_emit_rejected");
+  reg_shift_test_code_bytes =
+    build_data_test_block(code + REG_SHIFT_TEST_BLOCK_OFFSET,
+                          TST_R0_R1_LSL_R2, REG_SHIFT_TEST_START_PC,
+                          REG_SHIFT_TEST_END_PC, REG_SHIFT_TEST_CYCLES,
+                          &g_reg_shift_test_entry,
+                          "reg_shift_tst_emit_rejected");
   branch_code_bytes = build_branch_block(code + BRANCH_BLOCK_OFFSET);
   bl_code_bytes = build_bl_block(code + BL_BLOCK_OFFSET);
   load_code_bytes = build_load_block(code + LOAD_BLOCK_OFFSET);
@@ -4253,6 +4428,35 @@ void _start(void)
   run_logical_flag_remaining_case();
   run_data_ext_remaining_cycles_case();
   run_reg_shift_data_remaining_case();
+  run_reg_shift_flag_case("reg_shift_flag_lsl_boundary",
+                          g_reg_shift_flag_lsl_entry,
+                          REG_SHIFT_FLAG_LSL_START_PC,
+                          REG_SHIFT_FLAG_LSL_END_PC,
+                          REG_SHIFT_FLAG_LSL_CYCLES, 6,
+                          REG_SHIFT_FLAG_R6_VALUE,
+                          REG_SHIFT_FLAG_LSL_CPSR_VALUE, 0);
+  run_reg_shift_flag_case("reg_shift_flag_lsr_remaining",
+                          g_reg_shift_flag_lsr_entry,
+                          REG_SHIFT_FLAG_LSR_START_PC,
+                          REG_SHIFT_FLAG_LSR_END_PC,
+                          REG_SHIFT_FLAG_LSR_CYCLES, 7,
+                          REG_SHIFT_FLAG_R7_VALUE,
+                          REG_SHIFT_FLAG_LSR_CPSR_VALUE, 5);
+  run_reg_shift_flag_case("reg_shift_flag_asr_boundary",
+                          g_reg_shift_flag_asr_entry,
+                          REG_SHIFT_FLAG_ASR_START_PC,
+                          REG_SHIFT_FLAG_ASR_END_PC,
+                          REG_SHIFT_FLAG_ASR_CYCLES, 8,
+                          REG_SHIFT_FLAG_R8_VALUE,
+                          REG_SHIFT_FLAG_ASR_CPSR_VALUE, 0);
+  run_reg_shift_flag_case("reg_shift_flag_ror0_remaining",
+                          g_reg_shift_flag_ror0_entry,
+                          REG_SHIFT_FLAG_ROR0_START_PC,
+                          REG_SHIFT_FLAG_ROR0_END_PC,
+                          REG_SHIFT_FLAG_ROR0_CYCLES, 9,
+                          REG_SHIFT_FLAG_R9_VALUE,
+                          REG_SHIFT_FLAG_ROR0_CPSR_VALUE, 5);
+  run_reg_shift_test_remaining_case();
   run_branch_boundary_case();
   run_branch_remaining_cycles_case();
   run_branch_idle_loop_case();
@@ -4336,6 +4540,16 @@ void _start(void)
   put_u32_dec(data_ext_code_bytes);
   put_raw(" reg_shift_data_code_bytes=");
   put_u32_dec(reg_shift_data_code_bytes);
+  put_raw(" reg_shift_flag_lsl_code_bytes=");
+  put_u32_dec(reg_shift_flag_lsl_code_bytes);
+  put_raw(" reg_shift_flag_lsr_code_bytes=");
+  put_u32_dec(reg_shift_flag_lsr_code_bytes);
+  put_raw(" reg_shift_flag_asr_code_bytes=");
+  put_u32_dec(reg_shift_flag_asr_code_bytes);
+  put_raw(" reg_shift_flag_ror0_code_bytes=");
+  put_u32_dec(reg_shift_flag_ror0_code_bytes);
+  put_raw(" reg_shift_test_code_bytes=");
+  put_u32_dec(reg_shift_test_code_bytes);
   put_raw(" branch_code_bytes=");
   put_u32_dec(branch_code_bytes);
   put_raw(" bl_code_bytes=");
@@ -4432,6 +4646,16 @@ void _start(void)
   put_u32_hex((u32)g_data_ext_entry);
   put_raw(" reg_shift_data_entry=");
   put_u32_hex((u32)g_reg_shift_data_entry);
+  put_raw(" reg_shift_flag_lsl_entry=");
+  put_u32_hex((u32)g_reg_shift_flag_lsl_entry);
+  put_raw(" reg_shift_flag_lsr_entry=");
+  put_u32_hex((u32)g_reg_shift_flag_lsr_entry);
+  put_raw(" reg_shift_flag_asr_entry=");
+  put_u32_hex((u32)g_reg_shift_flag_asr_entry);
+  put_raw(" reg_shift_flag_ror0_entry=");
+  put_u32_hex((u32)g_reg_shift_flag_ror0_entry);
+  put_raw(" reg_shift_test_entry=");
+  put_u32_hex((u32)g_reg_shift_test_entry);
   put_raw(" branch_entry=");
   put_u32_hex((u32)g_branch_entry);
   put_raw(" bl_entry=");
