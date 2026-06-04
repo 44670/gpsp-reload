@@ -893,6 +893,8 @@ static u8 *g_reg_offset_writeback_store_entry;
 static u8 *g_reg_offset_writeback_load_entry;
 static u32 g_lookup_calls;
 static u32 g_lookup_pc;
+static u32 g_thumb_lookup_calls;
+static u32 g_thumb_lookup_pc;
 static u32 g_update_calls;
 static s32 g_update_cycles;
 static u32 g_update_first_return;
@@ -1082,6 +1084,8 @@ static void reset_runtime_observations(u32 pc)
   g_lookup_next_pc = 0;
   g_lookup_calls = 0;
   g_lookup_pc = 0;
+  g_thumb_lookup_calls = 0;
+  g_thumb_lookup_pc = 0;
   g_update_calls = 0;
   g_update_cycles = 0x7fffffff;
   g_update_first_return = FRAME_COMPLETE;
@@ -4013,6 +4017,44 @@ static void run_bx_thumb_boundary_case(void)
   expect_stickybits_cleared("bx_thumb_boundary");
 }
 
+static void run_bx_thumb_remaining_cycles_case(void)
+{
+  const u32 extra_cycles = 5u;
+
+  reset_runtime_observations(BX_START_PC);
+  g_lookup_entry = g_bx_entry;
+  reg[7] = BX_THUMB_TARGET_RAW;
+
+  execute_arm_translate_internal(BX_CYCLES + extra_cycles, &reg[0]);
+
+  if (reg[REG_PC] != BX_THUMB_TARGET_PC)
+    fail_u32("bx_thumb_remaining", "pc",
+             reg[REG_PC], BX_THUMB_TARGET_PC);
+  if ((reg[REG_CPSR] & CPSR_T_BIT) != CPSR_T_BIT)
+    fail_u32("bx_thumb_remaining", "cpsr_t",
+             reg[REG_CPSR] & CPSR_T_BIT, CPSR_T_BIT);
+  if (g_lookup_calls != 1)
+    fail_u32("bx_thumb_remaining", "arm_lookup_calls",
+             g_lookup_calls, 1);
+  if (g_thumb_lookup_calls != 1)
+    fail_u32("bx_thumb_remaining", "thumb_lookup_calls",
+             g_thumb_lookup_calls, 1);
+  if (g_thumb_lookup_pc != BX_THUMB_TARGET_PC)
+    fail_u32("bx_thumb_remaining", "thumb_lookup_pc",
+             g_thumb_lookup_pc, BX_THUMB_TARGET_PC);
+  if (g_update_calls != 0)
+    fail_u32("bx_thumb_remaining", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("bx_thumb_remaining", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("bx_thumb_remaining", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != BX_THUMB_TARGET_PC)
+    fail_u32("bx_thumb_remaining", "execute_pc",
+             g_execute_pc, BX_THUMB_TARGET_PC);
+  expect_stickybits_cleared("bx_thumb_remaining");
+}
+
 static void expect_load_helpers(const char *test_name)
 {
   if (g_read32_calls != 1)
@@ -5547,7 +5589,8 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
 
 u8 function_cc *block_lookup_address_thumb(u32 pc)
 {
-  (void)pc;
+  g_thumb_lookup_calls++;
+  g_thumb_lookup_pc = pc;
   return (u8 *)0;
 }
 
@@ -6101,6 +6144,7 @@ void _start(void)
   run_bl_remaining_cycles_case();
   run_bx_arm_remaining_cycles_case();
   run_bx_thumb_boundary_case();
+  run_bx_thumb_remaining_cycles_case();
   run_load_boundary_case();
   run_load_remaining_cycles_case();
   run_load_pc_boundary_case();
