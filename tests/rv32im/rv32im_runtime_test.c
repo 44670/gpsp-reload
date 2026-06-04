@@ -987,6 +987,7 @@ static u32 g_block_write_value[BLOCK_MEM_MAX_TRANSFERS];
 static cpu_alert_type g_store_alert;
 static u32 g_init_bios_hooks_calls;
 static riscv_runtime_stats g_first_emit_stats;
+static riscv_runtime_stats g_first_execute_stats;
 
 static long syscall1(long number, long arg0)
 {
@@ -1250,6 +1251,38 @@ static void run_first_emit_stats_case(void)
   if (g_first_emit_stats.native_psr_insns != 0)
     fail_u32("first_emit_stats", "native_psr",
              g_first_emit_stats.native_psr_insns, 0);
+}
+
+static void run_first_execute_stats_case(void)
+{
+  const u32 r0 = 0x12345678u;
+  const u32 r1 = 0x01020304u;
+  const u32 expected_sum = r0 + r1;
+
+  reset_runtime_observations(BLOCK_START_PC);
+  g_lookup_entry = g_data_entry;
+  reg[0] = r0;
+  reg[1] = r1;
+
+  execute_arm_translate_internal(BLOCK_CYCLES, &reg[0]);
+  riscv_get_runtime_stats(&g_first_execute_stats);
+
+  if (reg[2] != expected_sum)
+    fail_u32("first_execute_stats", "r2", reg[2], expected_sum);
+  if (reg[REG_PC] != BLOCK_END_PC)
+    fail_u32("first_execute_stats", "pc", reg[REG_PC], BLOCK_END_PC);
+  if (g_first_execute_stats.blocks_emitted != 1)
+    fail_u32("first_execute_stats", "blocks_emitted",
+             g_first_execute_stats.blocks_emitted, 1);
+  if (g_first_execute_stats.blocks_executed != 1)
+    fail_u32("first_execute_stats", "blocks_executed",
+             g_first_execute_stats.blocks_executed, 1);
+  if (g_first_execute_stats.interpreter_fallbacks != 0)
+    fail_u32("first_execute_stats", "interpreter_fallbacks",
+             g_first_execute_stats.interpreter_fallbacks, 0);
+  if (g_first_execute_stats.native_data_proc_insns != 1)
+    fail_u32("first_execute_stats", "native_data_proc",
+             g_first_execute_stats.native_data_proc_insns, 1);
 }
 
 static u32 build_data_block(u8 *code)
@@ -6895,6 +6928,7 @@ void _start(void)
 
   data_code_bytes = build_data_block(code);
   run_first_emit_stats_case();
+  run_first_execute_stats_case();
   chain_second_code_bytes =
     build_single_data_proc_block(code + CHAIN_SECOND_BLOCK_OFFSET,
                                  ADD_R3_R2_R1,
@@ -7634,6 +7668,10 @@ void _start(void)
   put_u32_dec(g_first_emit_stats.blocks_emitted);
   put_raw(" first_emit_data=");
   put_u32_dec(g_first_emit_stats.native_data_proc_insns);
+  put_raw(" first_exec_blocks=");
+  put_u32_dec(g_first_execute_stats.blocks_executed);
+  put_raw(" first_exec_fallbacks=");
+  put_u32_dec(g_first_execute_stats.interpreter_fallbacks);
   put_raw(" data_entry=");
   put_u32_hex((u32)g_data_entry);
   put_raw(" chain_second_entry=");
