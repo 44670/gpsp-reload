@@ -458,8 +458,9 @@ bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
     return false;
 
-  if (condition != 0xe || immediate_offset || !pre_index ||
-      writeback || rn == REG_PC || (load && rd == REG_PC))
+  if (condition != 0xe || (opcode & 0x0c000000u) != 0x04000000u ||
+      immediate_offset || !pre_index || writeback || rn == REG_PC ||
+      (load && rd == REG_PC))
   {
     return false;
   }

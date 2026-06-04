@@ -69,6 +69,10 @@ typedef unsigned int usize;
 #define BX_THUMB_TARGET_PC (BX_THUMB_TARGET_RAW & ~1u)
 #define BX_BLOCK_OFFSET 3072u
 #define CPSR_T_BIT 0x20u
+#define HALF_LDRH_R4_R3_0X24 0xe1d342b4u
+#define HALF_STRH_R4_R3_0X24 0xe1c342b4u
+#define HALF_LDRSB_R4_R3_0X24 0xe1d342d4u
+#define HALF_LDRSH_R4_R3_0X24 0xe1d342f4u
 #define FRAME_COMPLETE 0x80000000u
 
 u32 reg[REG_MAX];
@@ -392,6 +396,33 @@ static u32 build_bx_block(u8 *code)
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
+}
+
+static void expect_halfword_transfers_rejected(u8 *code)
+{
+  static const u32 rejected_opcodes[] =
+  {
+    HALF_LDRH_R4_R3_0X24,
+    HALF_STRH_R4_R3_0X24,
+    HALF_LDRSB_R4_R3_0X24,
+    HALF_LDRSH_R4_R3_0X24
+  };
+  unsigned i;
+
+  for (i = 0; i < sizeof(rejected_opcodes) / sizeof(rejected_opcodes[0]); i++)
+  {
+    u8 *translation_ptr = code;
+    riscv_jit_block_meta *meta;
+
+    riscv_emit_block_prologue(&translation_ptr, &meta);
+    if (riscv_emit_native_arm_access_memory(&translation_ptr, meta,
+                                            rejected_opcodes[i],
+                                            LOAD_START_PC,
+                                            LOAD_WORD_BASE_CYCLES))
+    {
+      fail_u32("halfword_reject", "accepted", rejected_opcodes[i], 0);
+    }
+  }
 }
 
 static void expect_stickybits_cleared(const char *test_name)
@@ -926,6 +957,7 @@ void _start(void)
                       STORE_PC_START_PC,
                       &g_store_pc_entry);
   bx_code_bytes = build_bx_block(code + BX_BLOCK_OFFSET);
+  expect_halfword_transfers_rejected(code + BX_BLOCK_OFFSET + 512u);
   run_cycle_boundary_case();
   run_remaining_cycles_case();
   run_branch_boundary_case();
