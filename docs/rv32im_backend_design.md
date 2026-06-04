@@ -292,12 +292,12 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   mode/bus/banked-state effects,
   NE conditional-header taken/skipped behavior,
   `MOV pc, r14` PC-write behavior, `MOVS pc, r14` SPSR restore behavior,
-  store-triggered SMC/IRQ alert handling, store/halfword/block/SWP
-  HALT-alert handling, SWP-triggered SMC/IRQ alert handling, idle-loop gate,
-  unsupported-block
+  store-triggered SMC/IRQ alert handling, byte-store SMC/IRQ alert handling,
+  store/halfword/block/SWP HALT-alert handling, SWP-triggered SMC/IRQ alert
+  handling, idle-loop gate, unsupported-block
   fallback, and Thumb lookup-miss fallback fixtures against a local ARM
   reference model, with
-  eighty-five runtime blocks executed, ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
+  eighty-six runtime blocks executed, ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results, MSR CPSR flag and
   control mode/banked-LR effects, SPSR helper-write effects, and native PSR
   accounting checked,
@@ -307,8 +307,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   extended shifted and register-shifted data-processing results checked,
   register-shifted flag/test and TEQ/CMN CPSR results checked,
   helper memory, byte-store, load-to-PC memory, PC-relative load/store memory,
-  source-PC store, register-offset byte-store, and SMC/IRQ/HALT alert
-  observations hashed,
+  source-PC store, register-offset byte-store, byte-store SMC/IRQ
+  remaining-cycle handoff, and SMC/IRQ/HALT alert observations hashed,
   register-offset, shifted register-offset, subtract-offset, RRX load, and
   register-offset writeback load/store address/value observations checked,
   immediate, PC-relative, register-offset, and writeback halfword
@@ -328,8 +328,9 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   direct, indirect, conditional, SWI, PC-write, SPSR-restore, and patched
   branch execution exercised,
   scheduler/update/HALT/idle-loop/Thumb-lookup observations hashed, with
-  unsupported-block, Thumb lookup-miss, SWP alert remaining-cycle lookup-miss,
-  and SWPB remaining-cycle lookup-miss fallbacks observed
+  unsupported-block, Thumb lookup-miss, byte-store and SWP alert
+  remaining-cycle lookup-misses, and SWPB remaining-cycle lookup-miss
+  fallbacks observed
 
 Remaining first-phase gaps should stay narrow and evidence-driven:
 
