@@ -28,6 +28,11 @@ struct arm_mem_fixture_state
   u8 mem[64];
 };
 
+struct arm_branch_fixture_state
+{
+  u32 word[18];
+};
+
 static const u32 fixture_ops[] =
 {
   0xe0802001u, /* add r2, r0, r1 */
@@ -51,8 +56,19 @@ static const u32 load_store_ops[] =
   0xe59a600cu, /* ldr r6, [r10, #12] */
 };
 
+static const u32 branch_direct_op = 0xea000001u;   /* b +12 */
+static const u32 branch_indirect_op = 0xe12fff13u; /* bx r3 */
+
 #define MEM_FIXTURE_BASE_OFFSET (16u * 4u + 16u)
 #define MEM_FIXTURE_BYTES 64u
+
+#define BRANCH_WORD_PC 15u
+#define BRANCH_WORD_CPSR 16u
+#define BRANCH_WORD_EXIT_REASON 17u
+#define BRANCH_STATE_WORDS 18u
+#define BRANCH_EXIT_DIRECT 1u
+#define BRANCH_EXIT_INDIRECT 2u
+#define ARM_CPSR_T 0x20u
 
 static long syscall1(long number, long arg0)
 {
@@ -213,6 +229,19 @@ static void init_mem_state(struct arm_mem_fixture_state *state)
   state->r[10] = MEM_FIXTURE_BASE_OFFSET;
 }
 
+static void init_branch_state(struct arm_branch_fixture_state *state)
+{
+  unsigned i;
+
+  for (i = 0; i < BRANCH_STATE_WORDS; i++)
+    state->word[i] = 0x30000000u + (i * 0x01010101u);
+
+  state->word[3] = 0x02000101u;
+  state->word[BRANCH_WORD_PC] = 0x08000000u;
+  state->word[BRANCH_WORD_CPSR] = 0;
+  state->word[BRANCH_WORD_EXIT_REASON] = 0;
+}
+
 static u32 arm_expand_imm(u32 opcode)
 {
   u32 imm = opcode & 0xffu;
@@ -308,6 +337,37 @@ static void run_reference_load_store(struct arm_mem_fixture_state *state)
   unsigned i;
   for (i = 0; i < sizeof(load_store_ops) / sizeof(load_store_ops[0]); i++)
     run_reference_load_store_op(state, load_store_ops[i]);
+}
+
+static int arm_branch_delta(u32 opcode)
+{
+  u32 imm24 = opcode & 0x00ffffffu;
+  int signed_imm;
+
+  if (imm24 & 0x00800000u)
+    signed_imm = (int)(imm24 | 0xff000000u);
+  else
+    signed_imm = (int)imm24;
+
+  return (signed_imm * 4) + 8;
+}
+
+static void run_reference_branch_direct(struct arm_branch_fixture_state *state,
+                                        u32 opcode)
+{
+  state->word[BRANCH_WORD_PC] += (u32)arm_branch_delta(opcode);
+  state->word[BRANCH_WORD_EXIT_REASON] = BRANCH_EXIT_DIRECT;
+}
+
+static void run_reference_branch_indirect(struct arm_branch_fixture_state *state,
+                                          u32 opcode)
+{
+  u32 rm = opcode & 0xfu;
+  u32 target = state->word[rm];
+
+  state->word[BRANCH_WORD_PC] = target & ~1u;
+  state->word[BRANCH_WORD_CPSR] = (target & 1u) ? ARM_CPSR_T : 0;
+  state->word[BRANCH_WORD_EXIT_REASON] = BRANCH_EXIT_INDIRECT;
 }
 
 static void emit_li(u8 **code_ptr, riscv_reg_number rd, u32 value)
@@ -434,6 +494,38 @@ static void emit_arm_load_store_op(u8 **code_ptr, u32 opcode)
   *code_ptr = translation_ptr;
 }
 
+static u32 emit_branch_direct_block(u8 *code, u32 opcode)
+{
+  u8 *translation_ptr = code;
+
+  riscv_emit_lw(riscv_reg_t0, riscv_reg_a0, BRANCH_WORD_PC * 4u);
+  riscv_emit_addi(riscv_reg_t0, riscv_reg_t0, arm_branch_delta(opcode));
+  riscv_emit_sw(riscv_reg_t0, riscv_reg_a0, BRANCH_WORD_PC * 4u);
+  riscv_emit_addi(riscv_reg_t1, riscv_reg_zero, BRANCH_EXIT_DIRECT);
+  riscv_emit_sw(riscv_reg_t1, riscv_reg_a0, BRANCH_WORD_EXIT_REASON * 4u);
+  riscv_emit_jalr(riscv_reg_zero, riscv_reg_ra, 0);
+
+  return (u32)(translation_ptr - code);
+}
+
+static u32 emit_branch_indirect_block(u8 *code, u32 opcode)
+{
+  u32 rm = opcode & 0xfu;
+  u8 *translation_ptr = code;
+
+  riscv_emit_lw(riscv_reg_t0, riscv_reg_a0, rm * 4u);
+  riscv_emit_andi(riscv_reg_t1, riscv_reg_t0, -2);
+  riscv_emit_sw(riscv_reg_t1, riscv_reg_a0, BRANCH_WORD_PC * 4u);
+  riscv_emit_andi(riscv_reg_t2, riscv_reg_t0, 1);
+  riscv_emit_slli(riscv_reg_t2, riscv_reg_t2, 5);
+  riscv_emit_sw(riscv_reg_t2, riscv_reg_a0, BRANCH_WORD_CPSR * 4u);
+  riscv_emit_addi(riscv_reg_t1, riscv_reg_zero, BRANCH_EXIT_INDIRECT);
+  riscv_emit_sw(riscv_reg_t1, riscv_reg_a0, BRANCH_WORD_EXIT_REASON * 4u);
+  riscv_emit_jalr(riscv_reg_zero, riscv_reg_ra, 0);
+
+  return (u32)(translation_ptr - code);
+}
+
 static u32 emit_fixture_block(u8 *code)
 {
   u8 *translation_ptr = code;
@@ -482,6 +574,8 @@ void _start(void)
   struct arm_fixture_state jit_state;
   struct arm_mem_fixture_state interp_mem_state;
   struct arm_mem_fixture_state jit_mem_state;
+  struct arm_branch_fixture_state interp_branch_state;
+  struct arm_branch_fixture_state jit_branch_state;
   typedef void (*jit_block_fn)(void *);
   u8 *code = (u8 *)map_exec_page();
   u32 code_bytes;
@@ -492,6 +586,10 @@ void _start(void)
   u32 jit_mem_reg_hash;
   u32 interp_mem_hash;
   u32 jit_mem_hash;
+  u32 interp_branch_hash;
+  u32 jit_branch_hash;
+  u32 direct_code_bytes;
+  u32 indirect_code_bytes;
   unsigned i;
 
   if (!code)
@@ -611,6 +709,64 @@ void _start(void)
   put_u32_hex(interp_mem_hash);
   put_raw(" rv32im_mem_hash=");
   put_u32_hex(jit_mem_hash);
+  put_raw(" reason=state_equal\n");
+
+  init_branch_state(&interp_branch_state);
+  init_branch_state(&jit_branch_state);
+
+  direct_code_bytes = emit_branch_direct_block(code, branch_direct_op);
+  flush_ret = (u32)syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code,
+                            (long)(code + direct_code_bytes), 0);
+
+  run_reference_branch_direct(&interp_branch_state, branch_direct_op);
+  ((jit_block_fn)code)(&jit_branch_state);
+
+  indirect_code_bytes = emit_branch_indirect_block(code, branch_indirect_op);
+  flush_ret |= (u32)syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code,
+                             (long)(code + indirect_code_bytes), 0);
+
+  run_reference_branch_indirect(&interp_branch_state, branch_indirect_op);
+  ((jit_block_fn)code)(&jit_branch_state);
+
+  interp_branch_hash = fnv1a_words(interp_branch_state.word,
+                                   BRANCH_STATE_WORDS);
+  jit_branch_hash = fnv1a_words(jit_branch_state.word, BRANCH_STATE_WORDS);
+
+  for (i = 0; i < BRANCH_STATE_WORDS; i++)
+  {
+    if (interp_branch_state.word[i] != jit_branch_state.word[i])
+    {
+      put_raw("result=FAIL command=exec_branch_exit word=");
+      put_u32_dec(i);
+      put_raw(" interp=");
+      put_u32_hex(interp_branch_state.word[i]);
+      put_raw(" rv32im=");
+      put_u32_hex(jit_branch_state.word[i]);
+      put_raw(" interp_hash=");
+      put_u32_hex(interp_branch_hash);
+      put_raw(" rv32im_hash=");
+      put_u32_hex(jit_branch_hash);
+      put_raw(" reason=branch_state_mismatch\n");
+      sys_exit(1);
+    }
+  }
+
+  put_raw("result=PASS command=exec_branch_exit direct_code_bytes=");
+  put_u32_dec(direct_code_bytes);
+  put_raw(" indirect_code_bytes=");
+  put_u32_dec(indirect_code_bytes);
+  put_raw(" flush_ret=");
+  put_u32_hex(flush_ret);
+  put_raw(" pc=");
+  put_u32_hex(jit_branch_state.word[BRANCH_WORD_PC]);
+  put_raw(" cpsr=");
+  put_u32_hex(jit_branch_state.word[BRANCH_WORD_CPSR]);
+  put_raw(" exit_reason=");
+  put_u32_hex(jit_branch_state.word[BRANCH_WORD_EXIT_REASON]);
+  put_raw(" interp_hash=");
+  put_u32_hex(interp_branch_hash);
+  put_raw(" rv32im_hash=");
+  put_u32_hex(jit_branch_hash);
   put_raw(" reason=state_equal\n");
   sys_exit(0);
 }
