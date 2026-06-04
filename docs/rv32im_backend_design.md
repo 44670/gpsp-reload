@@ -285,7 +285,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   HLE `Div`, HLE `DivArm`, PC-source data-processing/test ops,
   register-offset/shifted/RRX load ops, pre/post-index writeback memory ops,
   register-offset writeback/post-index memory ops,
-  `SWP`,
+  `SWP`, `SWPB`,
   direct-branch-to-native-target, and
   `BL` link-register branch-to-native-target, and `BX r7`
   indirect-branch-to-native-target runtime fixtures, SWI-to-BIOS target
@@ -295,7 +295,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   store-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, and Thumb lookup-miss fallback fixtures against a local ARM
   reference model, with
-  seventy-eight runtime blocks executed, ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
+  seventy-nine runtime blocks executed, ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results, MSR CPSR flag and
   control mode/banked-LR effects, SPSR helper-write effects, and native PSR
   accounting checked,
@@ -318,11 +318,13 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   transfers checked,
   HLE division quotient/remainder/absolute-quotient helper results checked,
   PC-source `pc+8`/`pc+12` operand and shifted-register flag behavior checked,
-  SWP helper old-value/read-PC/write-PC behavior checked,
+  SWP/SWPB helper old-value/read-PC/write-PC behavior checked, including
+  byte read/write observations and remaining-cycle handoff for `SWPB`,
   direct, indirect, conditional, SWI, PC-write, SPSR-restore, and patched
   branch execution exercised,
-  scheduler/update/idle-loop/Thumb-lookup observations hashed, and two
-  deliberate fallbacks
+  scheduler/update/idle-loop/Thumb-lookup observations hashed, with
+  unsupported-block, Thumb lookup-miss, and SWPB remaining-cycle lookup-miss
+  fallbacks observed
 
 Remaining first-phase gaps should stay narrow and evidence-driven:
 
