@@ -35,7 +35,7 @@ typedef unsigned int usize;
 #define ZLIB_BLOCK_MAX 65535u
 #define ZLIB_BLOCKS ((PNG_RAW_SIZE + ZLIB_BLOCK_MAX - 1) / ZLIB_BLOCK_MAX)
 #define ZLIB_SIZE (2 + PNG_RAW_SIZE + (ZLIB_BLOCKS * 5) + 4)
-#define RUNTIME_EXEC_MAP_BYTES 36864u
+#define RUNTIME_EXEC_MAP_BYTES 37376u
 #define RUNTIME_LOAD_BLOCK_OFFSET 512u
 #define RUNTIME_STORE_BLOCK_OFFSET 1024u
 #define RUNTIME_BRANCH_BLOCK_OFFSET 1536u
@@ -99,6 +99,7 @@ typedef unsigned int usize;
 #define RUNTIME_MSR_CPSR_CONTROL_BLOCK_OFFSET 34816u
 #define RUNTIME_FLAG_TEQ_BLOCK_OFFSET 35328u
 #define RUNTIME_FLAG_CMN_BLOCK_OFFSET 35840u
+#define RUNTIME_STORE_BYTE_BLOCK_OFFSET 36352u
 #define RUNTIME_START_PC 0x08000000u
 #define RUNTIME_END_PC (RUNTIME_START_PC + 4u)
 #define RUNTIME_CYCLES 7u
@@ -547,11 +548,15 @@ typedef unsigned int usize;
 #define RUNTIME_LOAD_BYTE_ADDR (RUNTIME_LOAD_BASE_ADDR + 0x25u)
 #define RUNTIME_STORE_START_PC 0x08000300u
 #define RUNTIME_STORE_END_PC (RUNTIME_STORE_START_PC + 4u)
+#define RUNTIME_STORE_BYTE_START_PC 0x080014a0u
+#define RUNTIME_STORE_BYTE_END_PC (RUNTIME_STORE_BYTE_START_PC + 4u)
 #define RUNTIME_STORE_BASE_CYCLES 6u
 #define RUNTIME_STORE_TOTAL_CYCLES (RUNTIME_STORE_BASE_CYCLES + 1u)
 #define RUNTIME_STORE_STR_R6_R3_0X28 0xe5836028u
+#define RUNTIME_STORE_STRB_R6_R3_0X29 0xe5c36029u
 #define RUNTIME_STORE_BASE_ADDR 0x02000100u
 #define RUNTIME_STORE_WORD_ADDR (RUNTIME_STORE_BASE_ADDR + 0x28u)
+#define RUNTIME_STORE_BYTE_ADDR (RUNTIME_STORE_BASE_ADDR + 0x29u)
 #define RUNTIME_HALF_LOAD_START_PC 0x08000e00u
 #define RUNTIME_HALF_LDRH_PC RUNTIME_HALF_LOAD_START_PC
 #define RUNTIME_HALF_LDRSB_PC (RUNTIME_HALF_LOAD_START_PC + 4u)
@@ -842,6 +847,7 @@ static u8 *g_runtime_code;
 static u8 *g_runtime_entry;
 static u8 *g_runtime_load_entry;
 static u8 *g_runtime_store_entry;
+static u8 *g_runtime_store_byte_entry;
 static u8 *g_runtime_branch_entry;
 static u8 *g_runtime_branch_target_entry;
 static u8 *g_runtime_unsupported_entry;
@@ -938,6 +944,10 @@ static u32 g_runtime_write32_calls;
 static u32 g_runtime_write32_addr;
 static u32 g_runtime_write32_pc;
 static u32 g_runtime_write32_value;
+static u32 g_runtime_write8_calls;
+static u32 g_runtime_write8_addr;
+static u32 g_runtime_write8_pc;
+static u32 g_runtime_write8_value;
 static u32 g_runtime_write16_calls;
 static u32 g_runtime_write16_addr;
 static u32 g_runtime_write16_pc;
@@ -959,6 +969,7 @@ static void clear_runtime_fixture_entries(void)
   g_runtime_entry = (u8 *)0;
   g_runtime_load_entry = (u8 *)0;
   g_runtime_store_entry = (u8 *)0;
+  g_runtime_store_byte_entry = (u8 *)0;
   g_runtime_branch_entry = (u8 *)0;
   g_runtime_branch_target_entry = (u8 *)0;
   g_runtime_unsupported_entry = (u8 *)0;
@@ -1312,6 +1323,10 @@ static void reset_runtime_fixture_state(u32 pc)
   g_runtime_write32_addr = 0;
   g_runtime_write32_pc = 0;
   g_runtime_write32_value = 0;
+  g_runtime_write8_calls = 0;
+  g_runtime_write8_addr = 0;
+  g_runtime_write8_pc = 0;
+  g_runtime_write8_value = 0;
   g_runtime_write16_calls = 0;
   g_runtime_write16_addr = 0;
   g_runtime_write16_pc = 0;
@@ -1330,6 +1345,7 @@ static int build_runtime_fixture_block(const char **reason)
   u32 add_code_bytes;
   u32 load_code_bytes;
   u32 store_code_bytes;
+  u32 store_byte_code_bytes;
   u32 branch_code_bytes;
   u32 branch_target_code_bytes;
   u32 unsupported_code_bytes;
@@ -1461,6 +1477,26 @@ static int build_runtime_fixture_block(const char **reason)
                             RUNTIME_STORE_END_PC, false);
   store_code_bytes =
     (u32)(translation_ptr - (g_runtime_code + RUNTIME_STORE_BLOCK_OFFSET));
+
+  translation_ptr = g_runtime_code + RUNTIME_STORE_BYTE_BLOCK_OFFSET;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_runtime_store_byte_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_access_memory(
+        &translation_ptr, meta, RUNTIME_STORE_STRB_R6_R3_0X29,
+        RUNTIME_STORE_BYTE_START_PC, RUNTIME_STORE_BASE_CYCLES))
+  {
+    *reason = "runtime_store_byte_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            RUNTIME_STORE_BYTE_START_PC,
+                            RUNTIME_STORE_BYTE_END_PC, false);
+  store_byte_code_bytes =
+    (u32)(translation_ptr -
+          (g_runtime_code + RUNTIME_STORE_BYTE_BLOCK_OFFSET));
 
   translation_ptr = g_runtime_code + RUNTIME_BRANCH_BLOCK_OFFSET;
   riscv_emit_block_prologue(&translation_ptr, &meta);
@@ -3398,7 +3434,8 @@ static int build_runtime_fixture_block(const char **reason)
     (u32)(translation_ptr -
           (g_runtime_code + RUNTIME_REG_OFFSET_RRX_LOAD_BLOCK_OFFSET));
 
-  g_runtime_code_bytes = add_code_bytes + load_code_bytes + store_code_bytes +
+  g_runtime_code_bytes = add_code_bytes + load_code_bytes +
+    store_code_bytes + store_byte_code_bytes +
     branch_code_bytes + branch_target_code_bytes + unsupported_code_bytes +
     bx_code_bytes + bx_target_code_bytes + patch_branch_code_bytes +
     patch_branch_target_code_bytes + bl_code_bytes + bl_target_code_bytes +
@@ -3433,8 +3470,8 @@ static int build_runtime_fixture_block(const char **reason)
     shifted_reg_offset_code_bytes + reg_offset_rrx_load_code_bytes;
   flush_ret = syscall3(SYS_RISCV_FLUSH_ICACHE, (long)g_runtime_code,
                        (long)(g_runtime_code +
-                              RUNTIME_FLAG_CMN_BLOCK_OFFSET +
-                              flag_cmn_code_bytes), 0);
+                              RUNTIME_STORE_BYTE_BLOCK_OFFSET +
+                              store_byte_code_bytes), 0);
   if (flush_ret != 0)
   {
     *reason = "runtime_icache_flush_failed";
@@ -3448,6 +3485,7 @@ static int build_runtime_fixture_block(const char **reason)
 static int ensure_runtime_fixture(const char **reason)
 {
   if (g_runtime_entry && g_runtime_load_entry && g_runtime_store_entry &&
+      g_runtime_store_byte_entry &&
       g_runtime_branch_entry && g_runtime_branch_target_entry &&
       g_runtime_unsupported_entry && g_runtime_bx_entry &&
       g_runtime_bx_target_entry && g_runtime_patch_branch_entry &&
@@ -3634,6 +3672,19 @@ static u32 runtime_update_memory_hash(u32 hash,
   return hash;
 }
 
+static u32 runtime_append_write8_hash(u32 hash,
+                                      u32 write8_calls,
+                                      u32 write8_addr,
+                                      u32 write8_pc,
+                                      u32 write8_value)
+{
+  hash = fnv1a_update_u32(hash, write8_calls);
+  hash = fnv1a_update_u32(hash, write8_addr);
+  hash = fnv1a_update_u32(hash, write8_pc);
+  hash = fnv1a_update_u32(hash, write8_value);
+  return hash;
+}
+
 static u32 runtime_update_half_memory_hash(u32 hash,
                                            u32 read16_calls,
                                            u32 read16_addr,
@@ -3730,6 +3781,15 @@ static u32 runtime_update_current_memory_hash(u32 hash)
                                     g_runtime_write32_pc,
                                     g_runtime_write32_value,
                                     runtime_current_sticky_hash());
+}
+
+static u32 runtime_update_current_write8_hash(u32 hash)
+{
+  return runtime_append_write8_hash(hash,
+                                    g_runtime_write8_calls,
+                                    g_runtime_write8_addr,
+                                    g_runtime_write8_pc,
+                                    g_runtime_write8_value);
 }
 
 static u32 runtime_update_current_half_memory_hash(u32 hash)
@@ -4518,6 +4578,30 @@ static void run_runtime_reference_workload(const struct harness_state *base,
                                                  1, 0,
                                                  0, 0, 0,
                                                  0, 0);
+
+  for (i = 0; i < REG_MAX; i++)
+    values[i] = 0;
+  values[3] = RUNTIME_STORE_BASE_ADDR;
+  values[6] = store_word;
+  values[REG_PC] = RUNTIME_STORE_BYTE_END_PC;
+  values[REG_CPSR] = 0;
+  values[CPU_HALT_STATE] = CPU_ACTIVE;
+  reg_hash = runtime_update_reg_hash(reg_hash, values);
+  mem_hash = runtime_update_memory_hash(mem_hash,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        runtime_reference_sticky_hash());
+  mem_hash = runtime_append_write8_hash(mem_hash,
+                                        1, RUNTIME_STORE_BYTE_ADDR,
+                                        RUNTIME_STORE_BYTE_END_PC,
+                                        store_word & 0xffu);
+  scheduler_hash = runtime_update_scheduler_hash(
+    scheduler_hash,
+    1, RUNTIME_STORE_BYTE_START_PC, 0,
+    1, 0,
+    0, 0, 0,
+    0, 0);
 
   for (i = 0; i < REG_MAX; i++)
     values[i] = 0;
@@ -5334,12 +5418,12 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   snapshot->reg_hash = reg_hash;
   snapshot->mem_hash = mem_hash;
   snapshot->scheduler_hash = scheduler_hash;
-  snapshot->blocks = 67;
+  snapshot->blocks = 68;
   snapshot->fallbacks = 2;
   snapshot->native_data_proc = 63;
   snapshot->native_branch = 5;
   snapshot->native_load = 16;
-  snapshot->native_store = 7;
+  snapshot->native_store = 8;
   snapshot->native_psr = 5;
 }
 
@@ -5695,6 +5779,15 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   execute_arm_translate_internal(RUNTIME_STORE_TOTAL_CYCLES, &reg[0]);
   reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
   mem_hash = runtime_update_current_memory_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+
+  reset_runtime_fixture_state(RUNTIME_STORE_BYTE_START_PC);
+  reg[3] = RUNTIME_STORE_BASE_ADDR;
+  reg[6] = g_runtime_fixture_store_word;
+  execute_arm_translate_internal(RUNTIME_STORE_TOTAL_CYCLES, &reg[0]);
+  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+  mem_hash = runtime_update_current_memory_hash(mem_hash);
+  mem_hash = runtime_update_current_write8_hash(mem_hash);
   scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
 
   reset_runtime_fixture_state(RUNTIME_STORE_START_PC);
@@ -6113,9 +6206,11 @@ u32 function_cc read_memory32(u32 address)
 
 cpu_alert_type function_cc write_memory8(u32 address, u8 value)
 {
-  (void)address;
-  (void)value;
   g_runtime_write_calls++;
+  g_runtime_write8_calls++;
+  g_runtime_write8_addr = address;
+  g_runtime_write8_pc = reg[REG_PC];
+  g_runtime_write8_value = value;
   return CPU_ALERT_NONE;
 }
 
@@ -6252,6 +6347,8 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
     return g_runtime_load_entry;
   if (g_runtime_store_entry && pc == RUNTIME_STORE_START_PC)
     return g_runtime_store_entry;
+  if (g_runtime_store_byte_entry && pc == RUNTIME_STORE_BYTE_START_PC)
+    return g_runtime_store_byte_entry;
   if (g_runtime_half_load_entry && pc == RUNTIME_HALF_LOAD_START_PC)
     return g_runtime_half_load_entry;
   if (g_runtime_half_store_entry && pc == RUNTIME_HALF_STORE_START_PC)
@@ -6864,7 +6961,7 @@ static void command_compare(void)
 
   if (!ensure_runtime_fixture(&runtime_reason))
   {
-    put_raw("result=FAIL command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_msr_msrctrl_load_store_regoff_halfreg_blockmem_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_alert_branch_patch_bl_bx_swi_cond_pcwrite_spsr_idle_thumb_fallback");
+    put_raw("result=FAIL command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_msr_msrctrl_load_store_storebyte_regoff_halfreg_blockmem_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_alert_branch_patch_bl_bx_swi_cond_pcwrite_spsr_idle_thumb_fallback");
     put_raw(" harness_mode=");
     put_raw(RUNTIME_FIXTURE_MODE);
     put_raw(" frame_mode=synthetic mem_mode=runtime_stickybits reason=");
@@ -6890,7 +6987,7 @@ static void command_compare(void)
       rv32im.native_store != interp.native_store ||
       rv32im.native_psr != interp.native_psr)
   {
-    put_raw("result=FAIL command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_msr_msrctrl_load_store_regoff_halfreg_blockmem_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_alert_branch_patch_bl_bx_swi_cond_pcwrite_spsr_idle_thumb_fallback interp_frame_hash=");
+    put_raw("result=FAIL command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_msr_msrctrl_load_store_storebyte_regoff_halfreg_blockmem_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_alert_branch_patch_bl_bx_swi_cond_pcwrite_spsr_idle_thumb_fallback interp_frame_hash=");
     put_u32_hex(interp.frame_hash);
     put_raw(" rv32im_frame_hash=");
     put_u32_hex(rv32im.frame_hash);
@@ -6929,7 +7026,7 @@ static void command_compare(void)
     return;
   }
 
-  put_raw("result=PASS command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_msr_msrctrl_load_store_regoff_halfreg_blockmem_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_alert_branch_patch_bl_bx_swi_cond_pcwrite_spsr_idle_thumb_fallback interp_frame_hash=");
+  put_raw("result=PASS command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_msr_msrctrl_load_store_storebyte_regoff_halfreg_blockmem_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_alert_branch_patch_bl_bx_swi_cond_pcwrite_spsr_idle_thumb_fallback interp_frame_hash=");
   put_u32_hex(interp.frame_hash);
   put_raw(" rv32im_frame_hash=");
   put_u32_hex(rv32im.frame_hash);
