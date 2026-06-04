@@ -340,7 +340,7 @@ static void print_fail(const char *command, const char *reason)
 
 static void command_help(void)
 {
-  put_raw("commands=load reset backend run cont stepi stepb regs mem counters framehash compare png quit\n");
+  put_raw("commands=load reset backend run cont stepi stepb regs mem counters tracepc framehash compare png quit\n");
 }
 
 static void command_backend(char *arg)
@@ -493,6 +493,14 @@ static u32 synthetic_mem_hash(const struct harness_state *state,
   return hash;
 }
 
+static u32 synthetic_trace_pc(const struct harness_state *state, u32 index)
+{
+  u32 seed = state->loaded_hash ^ state->cycles ^
+    (state->blocks << 8) ^ (state->instructions << 1);
+
+  return 0x08000000u + ((seed + index * 4u) & 0x000003fcu);
+}
+
 static void command_stepi(char *arg)
 {
   u32 count = optional_count(arg, 1);
@@ -574,6 +582,33 @@ static void command_counters(void)
   put_raw(" frame_hash=");
   put_u32_hex(g_state.last_frame_hash);
   put_raw(" reason=state_counters\n");
+}
+
+static void command_tracepc(char *arg)
+{
+  u32 count = optional_count(arg, 8);
+  u32 i;
+  u32 hash = 2166136261u;
+
+  if (count > 16)
+    count = 16;
+
+  put_raw("tracepc backend=");
+  put_raw(backend_name());
+  put_raw(" count=");
+  put_u32_dec(count);
+  put_raw(" pcs=");
+  for (i = 0; i < count; i++)
+  {
+    u32 pc = synthetic_trace_pc(&g_state, i);
+    if (i)
+      put_chr(',');
+    put_u32_hex(pc);
+    hash = fnv1a_update_u32(hash, pc);
+  }
+  put_raw(" hash=");
+  put_u32_hex(hash);
+  put_raw(" reason=pc_trace\n");
 }
 
 static u32 crc32_update(u32 crc, const u8 *data, usize len)
@@ -931,6 +966,10 @@ static void process_line(char *line)
   else if (str_eq(cmd, "counters"))
   {
     command_counters();
+  }
+  else if (str_eq(cmd, "tracepc"))
+  {
+    command_tracepc(next_token(&cursor));
   }
   else if (str_eq(cmd, "framehash"))
   {
