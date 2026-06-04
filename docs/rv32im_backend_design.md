@@ -297,7 +297,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   handling, SWP-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, and Thumb lookup-miss fallback fixtures against a local ARM
   reference model, with
-  ninety-six runtime blocks executed, ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
+  ninety-seven runtime blocks executed, ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results, MSR CPSR flag and
   control mode/banked-LR effects, SPSR helper-write effects, and native PSR
   accounting checked,
@@ -311,7 +311,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   remaining-cycle handoff, and SMC/IRQ/HALT alert observations hashed,
   register-offset, shifted register-offset, subtract-offset, RRX load, and
   register-offset writeback load/store address/value observations checked,
-  immediate, PC-relative, register-offset, and writeback halfword
+  immediate halfword remaining-cycle handoff, PC-relative, register-offset, and writeback halfword
   signed/unsigned helper load results and store observations checked,
   halfword writeback store source/base ordering and post-index load ordering
   checked,
@@ -329,7 +329,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   direct, indirect, conditional, SWI, PC-write, SPSR-restore, patched branch,
   and direct-branch, BL, BX ARM, BX Thumb, SWI, and PC-write ADD remaining-cycle execution exercised,
   scheduler/update/HALT/idle-loop/Thumb-lookup observations hashed, with
-  unsupported-block, Thumb lookup-miss, helper load, load-to-PC, PC-relative load, direct-branch, BL, BX ARM, BX Thumb, SWI, and PC-write ADD
+  unsupported-block, Thumb lookup-miss, helper load, load-to-PC, PC-relative load, immediate halfword load, direct-branch, BL, BX ARM, BX Thumb, SWI, and PC-write ADD
   remaining-cycle lookup-misses, byte-store, block-memory, and SWP alert remaining-cycle
   lookup-misses, and SWPB remaining-cycle lookup-miss fallbacks observed
 
