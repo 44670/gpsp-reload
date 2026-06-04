@@ -301,6 +301,85 @@ static void function_cc riscv_store_spsr(u32 source, u32 psr_pfield)
   spsr[mode] = (source & store_mask) | (old_spsr & ~store_mask);
 }
 
+static u32 riscv_word_bit_count(u32 word)
+{
+  u32 count = 0;
+
+  while (word)
+  {
+    count += word & 1u;
+    word >>= 1;
+  }
+
+  return count;
+}
+
+static void function_cc riscv_arm_block_memory(u32 opcode, u32 pc)
+{
+  u32 load = (opcode >> 20) & 1u;
+  u32 writeback = (opcode >> 21) & 1u;
+  u32 sbit = (opcode >> 22) & 1u;
+  u32 up = (opcode >> 23) & 1u;
+  u32 pre_index = (opcode >> 24) & 1u;
+  u32 rn = (opcode >> 16) & 0xfu;
+  u32 reglist = opcode & 0xffffu;
+  u32 numops = riscv_word_bit_count(reglist);
+  u32 base = reg[rn];
+  s32 addr_off = up ? 4 : -4;
+  u32 endaddr = base + (u32)(addr_off * (s32)numops);
+  u32 address;
+  u32 old_cpsr = reg[REG_CPSR];
+  bool wrbck_base;
+  bool base_first;
+  bool writeback_first;
+  u32 i;
+
+  if (pre_index && up)
+    address = base + 4u;
+  else if (!pre_index && up)
+    address = base;
+  else if (pre_index)
+    address = endaddr;
+  else
+    address = endaddr + 4u;
+  address &= ~3u;
+
+  if (sbit && (!load || rn != REG_PC))
+    set_cpu_mode(MODE_USER);
+
+  wrbck_base = ((1u << rn) & reglist) != 0;
+  base_first = (((1u << rn) - 1u) & reglist) == 0;
+  writeback_first = load || !(wrbck_base && base_first);
+
+  if (writeback && writeback_first)
+    reg[rn] = endaddr;
+
+  reg[REG_PC] = pc + 4u;
+
+  for (i = 0; i < 16; i++)
+  {
+    if ((reglist >> i) & 1u)
+    {
+      if (load)
+      {
+        reg[i] = read_memory32(address);
+      }
+      else
+      {
+        u32 value = (i == REG_PC) ? reg[REG_PC] + 4u : reg[i];
+        riscv_cpu_alert |= write_memory32(address, value);
+      }
+      address += 4u;
+    }
+  }
+
+  if (writeback && !writeback_first)
+    reg[rn] = endaddr;
+
+  if (sbit && (!load || rn != REG_PC))
+    set_cpu_mode(riscv_psr_cpu_modes[old_cpsr & 0xfu]);
+}
+
 static u32 riscv_arm_expand_imm(u32 opcode)
 {
   u32 imm = opcode & 0xffu;
@@ -1441,6 +1520,43 @@ bool riscv_emit_native_arm_swap(u8 **translation_ptr_ref,
 
   *translation_ptr_ref = ptr;
   riscv_native_store_insns++;
+  return true;
+}
+
+bool riscv_emit_native_arm_block_memory(u8 **translation_ptr_ref,
+                                        riscv_jit_block_meta *meta,
+                                        u32 opcode,
+                                        u32 pc,
+                                        u32 cycles)
+{
+  u32 condition = opcode >> 28;
+  u32 reglist = opcode & 0xffffu;
+  u32 load = (opcode >> 20) & 1u;
+  u8 *ptr = *translation_ptr_ref;
+
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
+    return false;
+
+  if (condition != 0xe || (opcode & 0x0e000000u) != 0x08000000u ||
+      reglist == 0)
+  {
+    return false;
+  }
+
+  riscv_emit_li(&ptr, riscv_reg_a0, opcode);
+  riscv_emit_li(&ptr, riscv_reg_a1, pc);
+  riscv_emit_c_call(&ptr, (uintptr_t)riscv_arm_block_memory);
+  riscv_emit_adjust_cycles(&ptr, cycles + riscv_word_bit_count(reglist));
+  riscv_emit_helper_call(&ptr, meta);
+
+  if (load && (reglist & (1u << REG_PC)))
+    meta->flags |= RISCV_BLOCK_PC_WRITTEN;
+
+  *translation_ptr_ref = ptr;
+  if (load)
+    riscv_native_load_insns++;
+  else
+    riscv_native_store_insns++;
   return true;
 }
 
