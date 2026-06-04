@@ -90,6 +90,18 @@ bool riscv_emit_native_arm_bl(u8 **translation_ptr,
                               u32 opcode,
                               u32 pc,
                               u32 cycles);
+bool riscv_emit_native_arm_b_patchable(u8 **translation_ptr,
+                                       riscv_jit_block_meta *meta,
+                                       u8 **branch_source,
+                                       u32 opcode,
+                                       u32 pc,
+                                       u32 cycles);
+bool riscv_emit_native_arm_bl_patchable(u8 **translation_ptr,
+                                        riscv_jit_block_meta *meta,
+                                        u8 **branch_source,
+                                        u32 opcode,
+                                        u32 pc,
+                                        u32 cycles);
 bool riscv_emit_native_arm_bx(u8 **translation_ptr,
                               riscv_jit_block_meta *meta,
                               u32 opcode,
@@ -124,6 +136,7 @@ u32 execute_arm_translate(u32 cycles);
 u32 execute_arm_translate_internal(u32 cycles, void *regptr);
 void init_emitter(bool must_swap);
 void riscv_get_runtime_stats(riscv_runtime_stats *stats);
+void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
 
 #define generate_block_extra_vars()                                           \
   riscv_jit_block_meta *riscv_block_meta = NULL
@@ -153,8 +166,7 @@ void riscv_get_runtime_stats(riscv_runtime_stats *stats);
 #define generate_branch_patch_unconditional(dest, offset)                     \
   do                                                                          \
   {                                                                           \
-    (void)(dest);                                                             \
-    (void)(offset);                                                           \
+    riscv_patch_unconditional_branch((dest), (offset));                       \
   } while (0)
 
 #define riscv_block_kind_arm false
@@ -328,9 +340,12 @@ void riscv_get_runtime_stats(riscv_runtime_stats *stats);
 #define arm_b()                                                               \
   do                                                                          \
   {                                                                           \
-    if (riscv_emit_native_arm_b(&translation_ptr, riscv_block_meta,           \
-                                opcode, pc, cycle_count))                     \
+    if (riscv_emit_native_arm_b_patchable(                                    \
+          &translation_ptr, riscv_block_meta,                                 \
+          &block_exits[block_exit_position].branch_source,                   \
+          opcode, pc, cycle_count))                                           \
     {                                                                         \
+      block_exit_position++;                                                  \
       cycle_count = 0;                                                        \
     }                                                                         \
     else                                                                      \
@@ -342,9 +357,12 @@ void riscv_get_runtime_stats(riscv_runtime_stats *stats);
 #define arm_bl()                                                              \
   do                                                                          \
   {                                                                           \
-    if (riscv_emit_native_arm_bl(&translation_ptr, riscv_block_meta,          \
-                                 opcode, pc, cycle_count))                    \
+    if (riscv_emit_native_arm_bl_patchable(                                   \
+          &translation_ptr, riscv_block_meta,                                 \
+          &block_exits[block_exit_position].branch_source,                   \
+          opcode, pc, cycle_count))                                           \
     {                                                                         \
+      block_exit_position++;                                                  \
       cycle_count = 0;                                                        \
     }                                                                         \
     else                                                                      \
