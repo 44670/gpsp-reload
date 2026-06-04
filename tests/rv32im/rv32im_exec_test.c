@@ -88,6 +88,10 @@ static const u32 branch_indirect_op = 0xe12fff13u; /* bx r3 */
 #define SCHED_EXIT_CONTINUE 0u
 #define SCHED_EXIT_CYCLES 1u
 #define SCHED_EXIT_ALERT 2u
+#define PATCH_BRANCH_VALUE_A 0x111u
+#define PATCH_BRANCH_VALUE_B 0x222u
+#define PATCH_BRANCH_INITIAL_OFFSET 12
+#define PATCH_BRANCH_UPDATED_OFFSET 4
 
 static long syscall1(long number, long arg0)
 {
@@ -634,6 +638,26 @@ static u32 emit_scheduler_block(u8 *code)
   return (u32)(translation_ptr - code);
 }
 
+static void patch_branch_jump(u8 *code, int offset)
+{
+  u8 *translation_ptr = code;
+
+  riscv_emit_jal(riscv_reg_zero, offset);
+}
+
+static u32 emit_patchable_branch_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+
+  riscv_emit_jal(riscv_reg_zero, PATCH_BRANCH_INITIAL_OFFSET);
+  riscv_emit_addi(riscv_reg_a0, riscv_reg_zero, PATCH_BRANCH_VALUE_A);
+  riscv_emit_jalr(riscv_reg_zero, riscv_reg_ra, 0);
+  riscv_emit_addi(riscv_reg_a0, riscv_reg_zero, PATCH_BRANCH_VALUE_B);
+  riscv_emit_jalr(riscv_reg_zero, riscv_reg_ra, 0);
+
+  return (u32)(translation_ptr - code);
+}
+
 static u32 emit_fixture_block(u8 *code)
 {
   u8 *translation_ptr = code;
@@ -687,6 +711,7 @@ void _start(void)
   struct scheduler_fixture_state interp_sched_state[SCHED_CASES];
   struct scheduler_fixture_state jit_sched_state[SCHED_CASES];
   typedef void (*jit_block_fn)(void *);
+  typedef u32 (*jit_value_fn)(void);
   u8 *code = (u8 *)map_exec_page();
   u32 code_bytes;
   u32 flush_ret;
@@ -703,6 +728,11 @@ void _start(void)
   u32 interp_sched_hash;
   u32 jit_sched_hash;
   u32 sched_code_bytes;
+  u32 patch_code_bytes;
+  u32 patch_build_flush_ret;
+  u32 patch_update_flush_ret;
+  u32 patch_initial_value;
+  u32 patch_patched_value;
   unsigned i;
   unsigned j;
 
@@ -711,6 +741,49 @@ void _start(void)
     put_raw("result=FAIL command=exec_data_proc reason=mmap_failed\n");
     sys_exit(1);
   }
+
+  patch_code_bytes = emit_patchable_branch_block(code);
+  patch_build_flush_ret = (u32)syscall3(SYS_RISCV_FLUSH_ICACHE,
+                                        (long)code,
+                                        (long)(code + patch_code_bytes), 0);
+  patch_initial_value = ((jit_value_fn)code)();
+
+  patch_branch_jump(code, PATCH_BRANCH_UPDATED_OFFSET);
+  patch_update_flush_ret = (u32)syscall3(SYS_RISCV_FLUSH_ICACHE,
+                                         (long)code,
+                                         (long)(code + 4), 0);
+  patch_patched_value = ((jit_value_fn)code)();
+
+  if (patch_initial_value != PATCH_BRANCH_VALUE_B ||
+      patch_patched_value != PATCH_BRANCH_VALUE_A)
+  {
+    put_raw("result=FAIL command=exec_patch_branch initial=");
+    put_u32_hex(patch_initial_value);
+    put_raw(" patched=");
+    put_u32_hex(patch_patched_value);
+    put_raw(" expected_initial=");
+    put_u32_hex(PATCH_BRANCH_VALUE_B);
+    put_raw(" expected_patched=");
+    put_u32_hex(PATCH_BRANCH_VALUE_A);
+    put_raw(" build_flush_ret=");
+    put_u32_hex(patch_build_flush_ret);
+    put_raw(" patch_flush_ret=");
+    put_u32_hex(patch_update_flush_ret);
+    put_raw(" reason=patched_branch_mismatch\n");
+    sys_exit(1);
+  }
+
+  put_raw("result=PASS command=exec_patch_branch code_bytes=");
+  put_u32_dec(patch_code_bytes);
+  put_raw(" build_flush_ret=");
+  put_u32_hex(patch_build_flush_ret);
+  put_raw(" patch_flush_ret=");
+  put_u32_hex(patch_update_flush_ret);
+  put_raw(" initial=");
+  put_u32_hex(patch_initial_value);
+  put_raw(" patched=");
+  put_u32_hex(patch_patched_value);
+  put_raw(" reason=patched_code_equal\n");
 
   init_state(&interp_state);
   init_state(&jit_state);
