@@ -1483,7 +1483,7 @@ bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,
     return false;
 
   if (condition != 0xe || (pc_base && writeback_address) ||
-      (load && rd == REG_PC))
+      (load && rd == REG_PC && byte))
   {
     return false;
   }
@@ -1549,6 +1549,8 @@ bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,
     riscv_emit_c_call(&ptr, byte ? (uintptr_t)read_memory8
                                 : (uintptr_t)read_memory32);
     riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_a0);
+    if (rd == REG_PC)
+      meta->flags |= RISCV_BLOCK_PC_WRITTEN;
     riscv_emit_adjust_cycles(&ptr, cycles + 2u);
     riscv_native_load_insns++;
   }

@@ -375,6 +375,11 @@ typedef unsigned int usize;
   ((LOAD_WORD_BASE_CYCLES + 2u) + (LOAD_BYTE_BASE_CYCLES + 2u))
 #define LOAD_LDR_R4_R3_0X24 0xe5934024u
 #define LOAD_LDRB_R5_R3_0X25 0xe5d35025u
+#define LOAD_LDR_PC_R3_0X24 0xe593f024u
+#define LOAD_LDRB_PC_R3_0X25 0xe5d3f025u
+#define LOAD_PC_START_PC 0x08000bc0u
+#define LOAD_PC_END_PC (LOAD_PC_START_PC + 4u)
+#define LOAD_PC_CYCLES 8u
 #define PC_BASE_LOAD_START_PC 0x08000b00u
 #define PC_BASE_LOAD_WORD_PC PC_BASE_LOAD_START_PC
 #define PC_BASE_LOAD_BYTE_PC (PC_BASE_LOAD_START_PC + 4u)
@@ -388,6 +393,9 @@ typedef unsigned int usize;
 #define LOAD_BASE_ADDR 0x02000040u
 #define LOAD_WORD_ADDR (LOAD_BASE_ADDR + 0x24u)
 #define LOAD_BYTE_ADDR (LOAD_BASE_ADDR + 0x25u)
+#define LOAD_PC_BASE_ADDR 0x02000600u
+#define LOAD_PC_ADDR (LOAD_PC_BASE_ADDR + 0x24u)
+#define LOAD_PC_TARGET 0x02009000u
 #define PC_BASE_LOAD_WORD_ADDR (PC_BASE_LOAD_WORD_PC + 8u + 0x24u)
 #define PC_BASE_LOAD_BYTE_ADDR (PC_BASE_LOAD_BYTE_PC + 8u - 0x10u)
 #define LOAD_WORD_VALUE 0xa1b2c3d4u
@@ -636,6 +644,7 @@ typedef unsigned int usize;
 #define PC_BASE_HALF_LOAD_BLOCK_OFFSET 32768u
 #define PC_WRITE_MOV_BLOCK_OFFSET 33280u
 #define PC_WRITE_ADD_BLOCK_OFFSET 33792u
+#define LOAD_PC_BLOCK_OFFSET 34304u
 
 u32 reg[REG_MAX];
 u32 spsr[6];
@@ -672,6 +681,7 @@ static u8 *g_data_ext_entry;
 static u8 *g_branch_entry;
 static u8 *g_bl_entry;
 static u8 *g_load_entry;
+static u8 *g_load_pc_entry;
 static u8 *g_pc_base_load_entry;
 static u8 *g_pc_base_store_entry;
 static u8 *g_pc_base_half_load_entry;
@@ -1457,6 +1467,31 @@ static u32 build_load_block(u8 *code)
   return code_bytes;
 }
 
+static u32 build_load_pc_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_load_pc_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_access_memory(&translation_ptr, meta,
+                                           LOAD_LDR_PC_R3_0X24,
+                                           LOAD_PC_START_PC,
+                                           LOAD_PC_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=load_pc_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, LOAD_PC_START_PC,
+                            LOAD_PC_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
 static u32 build_pc_base_load_block(u8 *code)
 {
   u8 *translation_ptr = code;
@@ -2027,6 +2062,21 @@ static void expect_halfword_transfers_rejected(u8 *code)
     {
       fail_u32("halfword_reject", "accepted", rejected_opcodes[i], 0);
     }
+  }
+}
+
+static void expect_load_pc_unsupported_rejected(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  if (riscv_emit_native_arm_access_memory(&translation_ptr, meta,
+                                          LOAD_LDRB_PC_R3_0X25,
+                                          LOAD_PC_START_PC,
+                                          LOAD_PC_CYCLES))
+  {
+    fail_u32("load_pc_reject", "accepted", LOAD_LDRB_PC_R3_0X25, 0);
   }
 }
 
@@ -3286,6 +3336,67 @@ static void run_load_remaining_cycles_case(void)
   expect_stickybits_cleared("load_remaining");
 }
 
+static void expect_load_pc_helper(const char *test_name)
+{
+  if (g_read32_calls != 1)
+    fail_u32(test_name, "read32_calls", g_read32_calls, 1);
+  if (g_read32_addr != LOAD_PC_ADDR)
+    fail_u32(test_name, "read32_addr", g_read32_addr, LOAD_PC_ADDR);
+  if (g_read32_pc != LOAD_PC_START_PC)
+    fail_u32(test_name, "read32_pc", g_read32_pc, LOAD_PC_START_PC);
+}
+
+static void run_load_pc_boundary_case(void)
+{
+  reset_runtime_observations(LOAD_PC_START_PC);
+  g_lookup_entry = g_load_pc_entry;
+  reg[3] = LOAD_PC_BASE_ADDR;
+
+  execute_arm_translate_internal(LOAD_PC_CYCLES + 2u, &reg[0]);
+
+  if (reg[REG_PC] != LOAD_PC_TARGET)
+    fail_u32("load_pc_boundary", "pc", reg[REG_PC], LOAD_PC_TARGET);
+  if (g_lookup_calls != 1)
+    fail_u32("load_pc_boundary", "lookup_calls", g_lookup_calls, 1);
+  if (g_lookup_pc != LOAD_PC_START_PC)
+    fail_u32("load_pc_boundary", "lookup_pc",
+             g_lookup_pc, LOAD_PC_START_PC);
+  if (g_update_calls != 1)
+    fail_u32("load_pc_boundary", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("load_pc_boundary", "update_cycles", (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("load_pc_boundary", "execute_calls", g_execute_calls, 0);
+  expect_load_pc_helper("load_pc_boundary");
+  expect_stickybits_cleared("load_pc_boundary");
+}
+
+static void run_load_pc_remaining_case(void)
+{
+  const u32 extra_cycles = 5u;
+
+  reset_runtime_observations(LOAD_PC_START_PC);
+  g_lookup_entry = g_load_pc_entry;
+  reg[3] = LOAD_PC_BASE_ADDR;
+
+  execute_arm_translate_internal(LOAD_PC_CYCLES + 2u + extra_cycles, &reg[0]);
+
+  if (reg[REG_PC] != LOAD_PC_TARGET)
+    fail_u32("load_pc_remaining", "pc", reg[REG_PC], LOAD_PC_TARGET);
+  if (g_update_calls != 0)
+    fail_u32("load_pc_remaining", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("load_pc_remaining", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("load_pc_remaining", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != LOAD_PC_TARGET)
+    fail_u32("load_pc_remaining", "execute_pc",
+             g_execute_pc, LOAD_PC_TARGET);
+  expect_load_pc_helper("load_pc_remaining");
+  expect_stickybits_cleared("load_pc_remaining");
+}
+
 static void expect_pc_base_load_helpers(const char *test_name)
 {
   if (g_read32_calls != 1)
@@ -4248,6 +4359,8 @@ u32 function_cc read_memory32(u32 address)
   g_read32_calls++;
   g_read32_addr = address;
   g_read32_pc = reg[REG_PC];
+  if (address == LOAD_PC_ADDR)
+    return LOAD_PC_TARGET;
   if (address == REG_OFFSET_RRX_WORD_ADDR)
     return REG_OFFSET_RRX_WORD_VALUE;
   if (address == REG_OFFSET_WORD_ADDR)
@@ -4402,6 +4515,7 @@ void _start(void)
   u32 branch_code_bytes;
   u32 bl_code_bytes;
   u32 load_code_bytes;
+  u32 load_pc_code_bytes;
   u32 pc_base_load_code_bytes;
   u32 pc_base_store_code_bytes;
   u32 pc_base_half_load_code_bytes;
@@ -4610,6 +4724,7 @@ void _start(void)
   branch_code_bytes = build_branch_block(code + BRANCH_BLOCK_OFFSET);
   bl_code_bytes = build_bl_block(code + BL_BLOCK_OFFSET);
   load_code_bytes = build_load_block(code + LOAD_BLOCK_OFFSET);
+  load_pc_code_bytes = build_load_pc_block(code + LOAD_PC_BLOCK_OFFSET);
   pc_base_load_code_bytes =
     build_pc_base_load_block(code + PC_BASE_LOAD_BLOCK_OFFSET);
   store_word_code_bytes =
@@ -4673,6 +4788,7 @@ void _start(void)
   expect_psr_unsupported_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_multiply_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_multiply_long_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
+  expect_load_pc_unsupported_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   run_cycle_boundary_case();
   run_remaining_cycles_case();
   run_multiply_remaining_cycles_case();
@@ -4809,6 +4925,8 @@ void _start(void)
   run_bx_thumb_boundary_case();
   run_load_boundary_case();
   run_load_remaining_cycles_case();
+  run_load_pc_boundary_case();
+  run_load_pc_remaining_case();
   run_pc_base_load_remaining_case();
   run_half_load_remaining_cycles_case();
   run_pc_base_half_load_remaining_case();
@@ -4906,6 +5024,8 @@ void _start(void)
   put_u32_dec(bl_code_bytes);
   put_raw(" load_code_bytes=");
   put_u32_dec(load_code_bytes);
+  put_raw(" load_pc_code_bytes=");
+  put_u32_dec(load_pc_code_bytes);
   put_raw(" pc_base_load_code_bytes=");
   put_u32_dec(pc_base_load_code_bytes);
   put_raw(" pc_base_store_code_bytes=");
@@ -5022,6 +5142,8 @@ void _start(void)
   put_u32_hex((u32)g_bl_entry);
   put_raw(" load_entry=");
   put_u32_hex((u32)g_load_entry);
+  put_raw(" load_pc_entry=");
+  put_u32_hex((u32)g_load_pc_entry);
   put_raw(" pc_base_load_entry=");
   put_u32_hex((u32)g_pc_base_load_entry);
   put_raw(" pc_base_store_entry=");
