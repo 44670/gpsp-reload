@@ -4056,6 +4056,62 @@ static void run_swp_word_smc_irq_alert_case(void)
   expect_stickybits_cleared("swp_smc_irq");
 }
 
+static void run_swp_word_halt_alert_case(void)
+{
+  const u32 extra_cycles = 3u;
+
+  reset_runtime_observations(SWP_WORD_START_PC);
+  g_lookup_entry = g_swp_word_entry;
+  g_store_alert = CPU_ALERT_HALT;
+  reg[3] = SWP_WORD_ADDR;
+  reg[5] = SWP_WORD_STORE_VALUE;
+
+  execute_arm_translate_internal(SWP_WORD_TOTAL_CYCLES + extra_cycles,
+                                 &reg[0]);
+
+  if (reg[4] != SWP_WORD_OLD_VALUE)
+    fail_u32("swp_halt", "rd", reg[4], SWP_WORD_OLD_VALUE);
+  if (reg[REG_PC] != SWP_WORD_END_PC)
+    fail_u32("swp_halt", "pc", reg[REG_PC], SWP_WORD_END_PC);
+  if (g_read32_calls != 1)
+    fail_u32("swp_halt", "read32_calls", g_read32_calls, 1);
+  if (g_read32_addr != SWP_WORD_ADDR)
+    fail_u32("swp_halt", "read32_addr",
+             g_read32_addr, SWP_WORD_ADDR);
+  if (g_read32_pc != SWP_WORD_START_PC)
+    fail_u32("swp_halt", "read32_pc",
+             g_read32_pc, SWP_WORD_START_PC);
+  if (g_write32_calls != 1)
+    fail_u32("swp_halt", "write32_calls", g_write32_calls, 1);
+  if (g_write32_addr != SWP_WORD_ADDR)
+    fail_u32("swp_halt", "write32_addr",
+             g_write32_addr, SWP_WORD_ADDR);
+  if (g_write32_value != SWP_WORD_STORE_VALUE)
+    fail_u32("swp_halt", "write32_value",
+             g_write32_value, SWP_WORD_STORE_VALUE);
+  if (g_write32_pc != SWP_WORD_END_PC)
+    fail_u32("swp_halt", "write32_pc",
+             g_write32_pc, SWP_WORD_END_PC);
+  if (reg[CPU_HALT_STATE] != CPU_HALT)
+    fail_u32("swp_halt", "halt_state", reg[CPU_HALT_STATE], CPU_HALT);
+  if (g_lookup_calls != 1)
+    fail_u32("swp_halt", "lookup_calls", g_lookup_calls, 1);
+  if (g_lookup_pc != SWP_WORD_START_PC)
+    fail_u32("swp_halt", "lookup_pc", g_lookup_pc, SWP_WORD_START_PC);
+  if (g_flush_calls != 0)
+    fail_u32("swp_halt", "flush_calls", g_flush_calls, 0);
+  if (g_irq_check_calls != 0)
+    fail_u32("swp_halt", "irq_calls", g_irq_check_calls, 0);
+  if (g_update_calls != 1)
+    fail_u32("swp_halt", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != extra_cycles)
+    fail_u32("swp_halt", "update_cycles",
+             (u32)g_update_cycles, extra_cycles);
+  if (g_execute_calls != 0)
+    fail_u32("swp_halt", "execute_calls", g_execute_calls, 0);
+  expect_stickybits_cleared("swp_halt");
+}
+
 static void run_pc_write_mov_boundary_case(void)
 {
   reset_runtime_observations(PC_WRITE_MOV_START_PC);
@@ -6816,6 +6872,7 @@ void _start(void)
   run_swp_word_boundary_case();
   run_swp_byte_remaining_case();
   run_swp_word_smc_irq_alert_case();
+  run_swp_word_halt_alert_case();
   run_pc_write_mov_boundary_case();
   run_pc_write_mov_native_target_case();
   run_pc_write_add_remaining_case();
