@@ -561,6 +561,53 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
   return true;
 }
 
+static void riscv_emit_arm_memory_imm_offset(u8 **ptr_ref,
+                                             riscv_reg_number rd,
+                                             riscv_reg_number rs,
+                                             u32 offset,
+                                             bool up)
+{
+  u8 *ptr = *ptr_ref;
+  u8 *translation_ptr;
+
+  if (!offset)
+  {
+    if (rd != rs)
+    {
+      translation_ptr = ptr;
+      riscv_emit_add(rd, rs, riscv_reg_zero);
+      ptr = translation_ptr;
+    }
+    *ptr_ref = ptr;
+    return;
+  }
+
+  if (up && offset <= 2047u)
+  {
+    translation_ptr = ptr;
+    riscv_emit_addi(rd, rs, offset);
+    ptr = translation_ptr;
+  }
+  else if (!up && offset <= 2048u)
+  {
+    translation_ptr = ptr;
+    riscv_emit_addi(rd, rs, -(int)offset);
+    ptr = translation_ptr;
+  }
+  else
+  {
+    riscv_emit_li(&ptr, riscv_reg_t0, offset);
+    translation_ptr = ptr;
+    if (up)
+      riscv_emit_add(rd, rs, riscv_reg_t0);
+    else
+      riscv_emit_sub(rd, rs, riscv_reg_t0);
+    ptr = translation_ptr;
+  }
+
+  *ptr_ref = ptr;
+}
+
 static bool riscv_emit_arm_memory_reg_offset(u8 **ptr_ref, u32 opcode)
 {
   u32 rm = opcode & 0xfu;
@@ -620,6 +667,8 @@ bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,
   u32 rd = (opcode >> 12) & 0xfu;
   u32 offset = opcode & 0xfffu;
   u8 *ptr = *translation_ptr_ref;
+  bool writeback_address = writeback || !pre_index;
+  riscv_reg_number writeback_reg = riscv_reg_a0;
 
   if ((opcode & 0x0c000000u) != 0x04000000u)
   {
@@ -630,11 +679,14 @@ bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
     return false;
 
-  if (condition != 0xe || !pre_index || writeback || rn == REG_PC ||
+  if (condition != 0xe || rn == REG_PC ||
       (load && rd == REG_PC))
   {
     return false;
   }
+
+  if (register_offset && writeback_address)
+    return false;
 
   riscv_emit_arm_reg_load(&ptr, riscv_reg_a0, rn);
 
@@ -652,33 +704,28 @@ bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,
       riscv_emit_sub(riscv_reg_a0, riscv_reg_a0, riscv_reg_t0);
     ptr = translation_ptr;
   }
+  else if (!pre_index)
+  {
+    riscv_emit_arm_memory_imm_offset(&ptr, riscv_reg_t2, riscv_reg_a0,
+                                     offset, up);
+    writeback_reg = riscv_reg_t2;
+  }
   else if (offset)
   {
-    if (up && offset <= 2047u)
-    {
-      u8 *translation_ptr = ptr;
-      riscv_emit_addi(riscv_reg_a0, riscv_reg_a0, offset);
-      ptr = translation_ptr;
-    }
-    else if (!up && offset <= 2048u)
-    {
-      u8 *translation_ptr = ptr;
-      riscv_emit_addi(riscv_reg_a0, riscv_reg_a0, -(int)offset);
-      ptr = translation_ptr;
-    }
-    else
-    {
-      u8 *translation_ptr;
-
-      riscv_emit_li(&ptr, riscv_reg_t0, offset);
-      translation_ptr = ptr;
-      if (up)
-        riscv_emit_add(riscv_reg_a0, riscv_reg_a0, riscv_reg_t0);
-      else
-        riscv_emit_sub(riscv_reg_a0, riscv_reg_a0, riscv_reg_t0);
-      ptr = translation_ptr;
-    }
+    riscv_emit_arm_memory_imm_offset(&ptr, riscv_reg_a0, riscv_reg_a0,
+                                     offset, up);
   }
+
+  if (!load)
+  {
+    if (rd == REG_PC)
+      riscv_emit_li(&ptr, riscv_reg_a1, pc + 12u);
+    else
+      riscv_emit_arm_reg_load(&ptr, riscv_reg_a1, rd);
+  }
+
+  if (writeback_address)
+    riscv_emit_arm_reg_store(&ptr, rn, writeback_reg);
 
   if (load)
   {
@@ -692,11 +739,6 @@ bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,
   }
   else
   {
-    if (rd == REG_PC)
-      riscv_emit_li(&ptr, riscv_reg_a1, pc + 12u);
-    else
-      riscv_emit_arm_reg_load(&ptr, riscv_reg_a1, rd);
-
     riscv_emit_li(&ptr, riscv_reg_t0, pc + 4u);
     riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
     riscv_emit_c_call(&ptr, byte ? (uintptr_t)riscv_store_u8
