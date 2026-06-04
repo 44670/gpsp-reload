@@ -38,10 +38,21 @@ typedef unsigned int usize;
 #define RUNTIME_EXEC_MAP_BYTES 4096u
 #define RUNTIME_LOAD_BLOCK_OFFSET 512u
 #define RUNTIME_STORE_BLOCK_OFFSET 1024u
+#define RUNTIME_BRANCH_BLOCK_OFFSET 1536u
+#define RUNTIME_BRANCH_TARGET_BLOCK_OFFSET 2048u
 #define RUNTIME_START_PC 0x08000000u
 #define RUNTIME_END_PC (RUNTIME_START_PC + 4u)
 #define RUNTIME_CYCLES 7u
 #define RUNTIME_ADD_R2_R0_R1 0xe0802001u
+#define RUNTIME_BRANCH_START_PC 0x08000100u
+#define RUNTIME_BRANCH_TARGET_PC 0x0800010cu
+#define RUNTIME_BRANCH_TARGET_END_PC (RUNTIME_BRANCH_TARGET_PC + 4u)
+#define RUNTIME_BRANCH_CYCLES 9u
+#define RUNTIME_BRANCH_TARGET_CYCLES 5u
+#define RUNTIME_BRANCH_TOTAL_CYCLES \
+  (RUNTIME_BRANCH_CYCLES + RUNTIME_BRANCH_TARGET_CYCLES)
+#define RUNTIME_BRANCH_B_PLUS_12 0xea000001u
+#define RUNTIME_BRANCH_TARGET_ADD_R3_R2_R1 0xe0823001u
 #define RUNTIME_LOAD_START_PC 0x08000200u
 #define RUNTIME_LOAD_WORD_PC RUNTIME_LOAD_START_PC
 #define RUNTIME_LOAD_BYTE_PC (RUNTIME_LOAD_START_PC + 4u)
@@ -89,6 +100,7 @@ struct compare_snapshot {
   u32 blocks;
   u32 fallbacks;
   u32 native_data_proc;
+  u32 native_branch;
   u32 native_load;
   u32 native_store;
 };
@@ -110,6 +122,8 @@ static u8 *g_runtime_code;
 static u8 *g_runtime_entry;
 static u8 *g_runtime_load_entry;
 static u8 *g_runtime_store_entry;
+static u8 *g_runtime_branch_entry;
+static u8 *g_runtime_branch_target_entry;
 static u32 g_runtime_code_bytes;
 static u32 g_runtime_lookup_calls;
 static u32 g_runtime_lookup_pc;
@@ -137,6 +151,8 @@ static u32 g_runtime_bios_hook_calls;
 static u32 g_runtime_fixture_load_word;
 static u32 g_runtime_fixture_load_byte;
 static u32 g_runtime_fixture_store_word;
+static u32 g_runtime_fixture_branch_r1;
+static u32 g_runtime_fixture_branch_r2;
 
 static void render_frame(void);
 
@@ -426,6 +442,8 @@ static int build_runtime_fixture_block(const char **reason)
   u32 add_code_bytes;
   u32 load_code_bytes;
   u32 store_code_bytes;
+  u32 branch_code_bytes;
+  u32 branch_target_code_bytes;
 
   riscv_emit_block_prologue(&translation_ptr, &meta);
   g_runtime_entry = ((u8 *)meta) + block_prologue_size;
@@ -495,16 +513,65 @@ static int build_runtime_fixture_block(const char **reason)
   store_code_bytes =
     (u32)(translation_ptr - (g_runtime_code + RUNTIME_STORE_BLOCK_OFFSET));
 
-  g_runtime_code_bytes = add_code_bytes + load_code_bytes + store_code_bytes;
+  translation_ptr = g_runtime_code + RUNTIME_BRANCH_BLOCK_OFFSET;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_runtime_branch_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_b(&translation_ptr, meta,
+                               RUNTIME_BRANCH_B_PLUS_12,
+                               RUNTIME_BRANCH_START_PC,
+                               RUNTIME_BRANCH_CYCLES))
+  {
+    *reason = "runtime_branch_emit_rejected";
+    g_runtime_entry = (u8 *)0;
+    g_runtime_load_entry = (u8 *)0;
+    g_runtime_store_entry = (u8 *)0;
+    g_runtime_branch_entry = (u8 *)0;
+    return 0;
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, RUNTIME_BRANCH_START_PC,
+                            RUNTIME_BRANCH_START_PC + 4u, false);
+  branch_code_bytes =
+    (u32)(translation_ptr - (g_runtime_code + RUNTIME_BRANCH_BLOCK_OFFSET));
+
+  translation_ptr = g_runtime_code + RUNTIME_BRANCH_TARGET_BLOCK_OFFSET;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_runtime_branch_target_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       RUNTIME_BRANCH_TARGET_ADD_R3_R2_R1,
+                                       RUNTIME_BRANCH_TARGET_CYCLES))
+  {
+    *reason = "runtime_branch_target_emit_rejected";
+    g_runtime_entry = (u8 *)0;
+    g_runtime_load_entry = (u8 *)0;
+    g_runtime_store_entry = (u8 *)0;
+    g_runtime_branch_entry = (u8 *)0;
+    g_runtime_branch_target_entry = (u8 *)0;
+    return 0;
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, RUNTIME_BRANCH_TARGET_PC,
+                            RUNTIME_BRANCH_TARGET_END_PC, false);
+  branch_target_code_bytes =
+    (u32)(translation_ptr -
+          (g_runtime_code + RUNTIME_BRANCH_TARGET_BLOCK_OFFSET));
+
+  g_runtime_code_bytes = add_code_bytes + load_code_bytes + store_code_bytes +
+    branch_code_bytes + branch_target_code_bytes;
   flush_ret = syscall3(SYS_RISCV_FLUSH_ICACHE, (long)g_runtime_code,
-                       (long)(g_runtime_code + RUNTIME_STORE_BLOCK_OFFSET +
-                              store_code_bytes), 0);
+                       (long)(g_runtime_code +
+                              RUNTIME_BRANCH_TARGET_BLOCK_OFFSET +
+                              branch_target_code_bytes), 0);
   if (flush_ret != 0)
   {
     *reason = "runtime_icache_flush_failed";
     g_runtime_entry = (u8 *)0;
     g_runtime_load_entry = (u8 *)0;
     g_runtime_store_entry = (u8 *)0;
+    g_runtime_branch_entry = (u8 *)0;
+    g_runtime_branch_target_entry = (u8 *)0;
     return 0;
   }
 
@@ -513,7 +580,8 @@ static int build_runtime_fixture_block(const char **reason)
 
 static int ensure_runtime_fixture(const char **reason)
 {
-  if (g_runtime_entry && g_runtime_load_entry && g_runtime_store_entry)
+  if (g_runtime_entry && g_runtime_load_entry && g_runtime_store_entry &&
+      g_runtime_branch_entry && g_runtime_branch_target_entry)
     return 1;
 
   g_runtime_code = (u8 *)map_runtime_exec_page();
@@ -550,6 +618,16 @@ static u32 runtime_load_byte_value(const struct harness_state *state)
 static u32 runtime_store_word_value(const struct harness_state *state)
 {
   return state->loaded_hash + 0x13579bdfu;
+}
+
+static u32 runtime_branch_r1_value(const struct harness_state *state)
+{
+  return state->loaded_hash ^ 0x00000120u;
+}
+
+static u32 runtime_branch_r2_value(const struct harness_state *state)
+{
+  return state->cycles ^ 0x00000034u;
 }
 
 static u32 runtime_update_reg_hash(u32 hash, const u32 *values)
@@ -657,6 +735,8 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   u32 load_word = runtime_load_word_value(base);
   u32 load_byte = runtime_load_byte_value(base);
   u32 store_word = runtime_store_word_value(base);
+  u32 branch_r1 = runtime_branch_r1_value(base);
+  u32 branch_r2 = runtime_branch_r2_value(base);
 
   for (i = 0; i < REG_MAX; i++)
     values[i] = 0;
@@ -705,12 +785,28 @@ static void run_runtime_reference_workload(const struct harness_state *base,
                                         RUNTIME_STORE_END_PC, store_word,
                                         runtime_reference_sticky_hash());
 
+  for (i = 0; i < REG_MAX; i++)
+    values[i] = 0;
+  values[1] = branch_r1;
+  values[2] = branch_r2;
+  values[3] = branch_r1 + branch_r2;
+  values[REG_PC] = RUNTIME_BRANCH_TARGET_END_PC;
+  values[REG_CPSR] = 0;
+  values[CPU_HALT_STATE] = CPU_ACTIVE;
+  reg_hash = runtime_update_reg_hash(reg_hash, values);
+  mem_hash = runtime_update_memory_hash(mem_hash,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        runtime_reference_sticky_hash());
+
   snapshot->frame_hash = runtime_fixture_frame_hash(base);
   snapshot->reg_hash = reg_hash;
   snapshot->mem_hash = mem_hash;
-  snapshot->blocks = 3;
+  snapshot->blocks = 5;
   snapshot->fallbacks = 0;
-  snapshot->native_data_proc = 1;
+  snapshot->native_data_proc = 2;
+  snapshot->native_branch = 1;
   snapshot->native_load = 2;
   snapshot->native_store = 1;
 }
@@ -726,6 +822,8 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   g_runtime_fixture_load_word = runtime_load_word_value(base);
   g_runtime_fixture_load_byte = runtime_load_byte_value(base);
   g_runtime_fixture_store_word = runtime_store_word_value(base);
+  g_runtime_fixture_branch_r1 = runtime_branch_r1_value(base);
+  g_runtime_fixture_branch_r2 = runtime_branch_r2_value(base);
 
   riscv_get_runtime_stats(&before);
 
@@ -749,6 +847,13 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
   mem_hash = runtime_update_current_memory_hash(mem_hash);
 
+  reset_runtime_fixture_state(RUNTIME_BRANCH_START_PC);
+  reg[1] = g_runtime_fixture_branch_r1;
+  reg[2] = g_runtime_fixture_branch_r2;
+  execute_arm_translate_internal(RUNTIME_BRANCH_TOTAL_CYCLES, &reg[0]);
+  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+  mem_hash = runtime_update_current_memory_hash(mem_hash);
+
   riscv_get_runtime_stats(&after);
   snapshot->frame_hash = runtime_fixture_frame_hash(base);
   snapshot->reg_hash = reg_hash;
@@ -756,6 +861,7 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   snapshot->blocks = after.blocks_executed - before.blocks_executed;
   snapshot->fallbacks = after.interpreter_fallbacks - before.interpreter_fallbacks;
   snapshot->native_data_proc = after.native_data_proc_insns;
+  snapshot->native_branch = after.native_branch_insns;
   snapshot->native_load = after.native_load_insns;
   snapshot->native_store = after.native_store_insns;
 }
@@ -876,6 +982,10 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
     return g_runtime_load_entry;
   if (g_runtime_store_entry && pc == RUNTIME_STORE_START_PC)
     return g_runtime_store_entry;
+  if (g_runtime_branch_entry && pc == RUNTIME_BRANCH_START_PC)
+    return g_runtime_branch_entry;
+  if (g_runtime_branch_target_entry && pc == RUNTIME_BRANCH_TARGET_PC)
+    return g_runtime_branch_target_entry;
 
   return (u8 *)0;
 }
@@ -1410,7 +1520,7 @@ static void command_compare(void)
 
   if (!ensure_runtime_fixture(&runtime_reason))
   {
-    put_raw("result=FAIL command=compare workload=arm_add_load_store");
+    put_raw("result=FAIL command=compare workload=arm_add_load_store_branch");
     put_raw(" harness_mode=");
     put_raw(RUNTIME_FIXTURE_MODE);
     put_raw(" frame_mode=synthetic mem_mode=runtime_stickybits reason=");
@@ -1430,10 +1540,11 @@ static void command_compare(void)
       rv32im.blocks != interp.blocks ||
       rv32im.fallbacks != 0 ||
       rv32im.native_data_proc != interp.native_data_proc ||
+      rv32im.native_branch != interp.native_branch ||
       rv32im.native_load != interp.native_load ||
       rv32im.native_store != interp.native_store)
   {
-    put_raw("result=FAIL command=compare workload=arm_add_load_store interp_frame_hash=");
+    put_raw("result=FAIL command=compare workload=arm_add_load_store_branch interp_frame_hash=");
     put_u32_hex(interp.frame_hash);
     put_raw(" rv32im_frame_hash=");
     put_u32_hex(rv32im.frame_hash);
@@ -1451,6 +1562,8 @@ static void command_compare(void)
     put_u32_dec(rv32im.fallbacks);
     put_raw(" rv32im_native_data_proc=");
     put_u32_dec(rv32im.native_data_proc);
+    put_raw(" rv32im_native_branch=");
+    put_u32_dec(rv32im.native_branch);
     put_raw(" rv32im_native_load=");
     put_u32_dec(rv32im.native_load);
     put_raw(" rv32im_native_store=");
@@ -1464,7 +1577,7 @@ static void command_compare(void)
     return;
   }
 
-  put_raw("result=PASS command=compare workload=arm_add_load_store interp_frame_hash=");
+  put_raw("result=PASS command=compare workload=arm_add_load_store_branch interp_frame_hash=");
   put_u32_hex(interp.frame_hash);
   put_raw(" rv32im_frame_hash=");
   put_u32_hex(rv32im.frame_hash);
@@ -1482,6 +1595,8 @@ static void command_compare(void)
   put_u32_dec(rv32im.fallbacks);
   put_raw(" rv32im_native_data_proc=");
   put_u32_dec(rv32im.native_data_proc);
+  put_raw(" rv32im_native_branch=");
+  put_u32_dec(rv32im.native_branch);
   put_raw(" rv32im_native_load=");
   put_u32_dec(rv32im.native_load);
   put_raw(" rv32im_native_store=");
