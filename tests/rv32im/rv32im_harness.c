@@ -52,7 +52,10 @@ typedef unsigned int usize;
 #define RUNTIME_UNSUPPORTED_START_PC 0x08000020u
 #define RUNTIME_UNSUPPORTED_END_PC (RUNTIME_UNSUPPORTED_START_PC + 4u)
 #define RUNTIME_UNSUPPORTED_CYCLES 11u
+#define RUNTIME_THUMB_FALLBACK_START_PC 0x02001020u
+#define RUNTIME_THUMB_FALLBACK_CYCLES 13u
 #define RUNTIME_NO_UPDATE_CYCLES 0x7fffffffu
+#define RUNTIME_CPSR_T_BIT 0x20u
 #define RUNTIME_BRANCH_START_PC 0x08000100u
 #define RUNTIME_BRANCH_TARGET_PC 0x0800010cu
 #define RUNTIME_BRANCH_TARGET_END_PC (RUNTIME_BRANCH_TARGET_PC + 4u)
@@ -1165,12 +1168,32 @@ static void run_runtime_reference_workload(const struct harness_state *base,
                                                  RUNTIME_UNSUPPORTED_START_PC,
                                                  0, 0);
 
+  for (i = 0; i < REG_MAX; i++)
+    values[i] = 0;
+  values[REG_PC] = RUNTIME_THUMB_FALLBACK_START_PC;
+  values[REG_CPSR] = RUNTIME_CPSR_T_BIT;
+  values[CPU_HALT_STATE] = CPU_ACTIVE;
+  reg_hash = runtime_update_reg_hash(reg_hash, values);
+  mem_hash = runtime_update_memory_hash(mem_hash,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        runtime_reference_sticky_hash());
+  scheduler_hash = runtime_update_scheduler_hash(scheduler_hash,
+                                                 0, 0,
+                                                 1,
+                                                 0, RUNTIME_NO_UPDATE_CYCLES,
+                                                 1,
+                                                 RUNTIME_THUMB_FALLBACK_CYCLES,
+                                                 RUNTIME_THUMB_FALLBACK_START_PC,
+                                                 0, 0);
+
   snapshot->frame_hash = runtime_fixture_frame_hash(base);
   snapshot->reg_hash = reg_hash;
   snapshot->mem_hash = mem_hash;
   snapshot->scheduler_hash = scheduler_hash;
   snapshot->blocks = 11;
-  snapshot->fallbacks = 1;
+  snapshot->fallbacks = 2;
   snapshot->native_data_proc = 4;
   snapshot->native_branch = 3;
   snapshot->native_load = 2;
@@ -1260,6 +1283,13 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
 
   reset_runtime_fixture_state(RUNTIME_UNSUPPORTED_START_PC);
   execute_arm_translate_internal(RUNTIME_UNSUPPORTED_CYCLES, &reg[0]);
+  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+  mem_hash = runtime_update_current_memory_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+
+  reset_runtime_fixture_state(RUNTIME_THUMB_FALLBACK_START_PC);
+  reg[REG_CPSR] = RUNTIME_CPSR_T_BIT;
+  execute_arm_translate_internal(RUNTIME_THUMB_FALLBACK_CYCLES, &reg[0]);
   reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
   mem_hash = runtime_update_current_memory_hash(mem_hash);
   scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
@@ -1943,7 +1973,7 @@ static void command_compare(void)
 
   if (!ensure_runtime_fixture(&runtime_reason))
   {
-    put_raw("result=FAIL command=compare workload=arm_add_load_store_alert_branch_patch_bx_idle_fallback");
+    put_raw("result=FAIL command=compare workload=arm_add_load_store_alert_branch_patch_bx_idle_thumb_fallback");
     put_raw(" harness_mode=");
     put_raw(RUNTIME_FIXTURE_MODE);
     put_raw(" frame_mode=synthetic mem_mode=runtime_stickybits reason=");
@@ -1968,7 +1998,7 @@ static void command_compare(void)
       rv32im.native_load != interp.native_load ||
       rv32im.native_store != interp.native_store)
   {
-    put_raw("result=FAIL command=compare workload=arm_add_load_store_alert_branch_patch_bx_idle_fallback interp_frame_hash=");
+    put_raw("result=FAIL command=compare workload=arm_add_load_store_alert_branch_patch_bx_idle_thumb_fallback interp_frame_hash=");
     put_u32_hex(interp.frame_hash);
     put_raw(" rv32im_frame_hash=");
     put_u32_hex(rv32im.frame_hash);
@@ -2005,7 +2035,7 @@ static void command_compare(void)
     return;
   }
 
-  put_raw("result=PASS command=compare workload=arm_add_load_store_alert_branch_patch_bx_idle_fallback interp_frame_hash=");
+  put_raw("result=PASS command=compare workload=arm_add_load_store_alert_branch_patch_bx_idle_thumb_fallback interp_frame_hash=");
   put_u32_hex(interp.frame_hash);
   put_raw(" rv32im_frame_hash=");
   put_u32_hex(rv32im.frame_hash);

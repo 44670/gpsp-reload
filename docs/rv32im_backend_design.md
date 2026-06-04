@@ -259,11 +259,13 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - qemu-user harness `compare` execution of generated RV32IM
   `ADD r2, r0, r1`, `LDR`, `LDRB`, `STR`, direct-branch-to-native-target, and
   `BX r7` indirect-branch-to-native-target runtime fixtures, plus
-  store-triggered SMC/IRQ alert handling, idle-loop gate, and
-  unsupported-block fallback fixtures against a local ARM reference model, with
+  store-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
+  fallback, and Thumb lookup-miss fallback fixtures against a local ARM
+  reference model, with
   eleven runtime blocks executed, helper memory and alert observations hashed,
   direct, indirect, and patched branch execution exercised,
-  scheduler/update/idle-loop observations hashed, and one deliberate fallback
+  scheduler/update/idle-loop/Thumb-lookup observations hashed, and two
+  deliberate fallbacks
 
 Remaining first-phase gaps should stay narrow and evidence-driven:
 
@@ -272,8 +274,10 @@ Remaining first-phase gaps should stay narrow and evidence-driven:
   paths stay labeled with `harness_mode=synthetic`; the `compare` fixture is
   labeled `harness_mode=runtime_fixture` and still marks its frame hash as
   synthetic until real emulator frame output is wired in.
-- Thumb instruction lowering remains deliberately unsupported; Thumb blocks
-  must keep routing through fallback until a separate Thumb milestone exists.
+- Thumb instruction lowering remains deliberately unsupported; the harness
+  compare path now proves Thumb lookup-miss fallback only, and Thumb blocks must
+  keep routing through fallback until a separate Thumb lowering milestone
+  exists.
 - Conditional ARM opcodes are still expected to enter through the frontend's
   conditional block header rewrite, not by accepting non-AL conditions in each
   low-level emitter API.
