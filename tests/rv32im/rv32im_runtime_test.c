@@ -394,6 +394,24 @@ typedef unsigned int usize;
 #define SWI_CPSR_VALUE \
   ((SWI_INITIAL_CPSR & ~0x3fu) | MODE_SUPERVISOR | 0x80u)
 #define SWI_BUS_VALUE 0xe3a02004u
+#define SWP_WORD_START_PC 0x08000c80u
+#define SWP_BYTE_START_PC 0x08000ca0u
+#define SWP_WORD_END_PC (SWP_WORD_START_PC + 4u)
+#define SWP_BYTE_END_PC (SWP_BYTE_START_PC + 4u)
+#define SWP_WORD_BASE_CYCLES 6u
+#define SWP_BYTE_BASE_CYCLES 5u
+#define SWP_WORD_TOTAL_CYCLES (SWP_WORD_BASE_CYCLES + 3u)
+#define SWP_BYTE_TOTAL_CYCLES (SWP_BYTE_BASE_CYCLES + 3u)
+#define SWP_R4_R5_R3 0xe1034095u
+#define SWPB_R6_R7_R3 0xe1436097u
+#define SWP_R4_R15_R3 0xe103409fu
+#define SWP_BASE_ADDR 0x02000640u
+#define SWP_WORD_ADDR SWP_BASE_ADDR
+#define SWP_BYTE_ADDR (SWP_BASE_ADDR + 1u)
+#define SWP_WORD_OLD_VALUE 0x0badf00du
+#define SWP_BYTE_OLD_VALUE 0xacu
+#define SWP_WORD_STORE_VALUE 0x1234abcdu
+#define SWP_BYTE_STORE_VALUE 0x5eu
 #define DATA_EXT_R0_VALUE 0x01010101u
 #define DATA_EXT_R1_VALUE 0x80000010u
 #define DATA_EXT_R6_VALUE 0xc1010109u
@@ -698,6 +716,8 @@ typedef unsigned int usize;
 #define LOAD_PC_BLOCK_OFFSET 34304u
 #define PC_SOURCE_BLOCK_OFFSET 34816u
 #define SWI_BLOCK_OFFSET 35840u
+#define SWP_WORD_BLOCK_OFFSET 36096u
+#define SWP_BYTE_BLOCK_OFFSET 36352u
 
 u32 reg[REG_MAX];
 u32 spsr[6];
@@ -763,6 +783,8 @@ static u8 *g_pc_write_mov_entry;
 static u8 *g_pc_write_add_entry;
 static u8 *g_pc_source_entry;
 static u8 *g_swi_entry;
+static u8 *g_swp_word_entry;
+static u8 *g_swp_byte_entry;
 static u8 *g_psr_entry;
 static u8 *g_writeback_store_entry;
 static u8 *g_writeback_load_entry;
@@ -1556,6 +1578,33 @@ static u32 build_swi_block(u8 *code)
   return code_bytes;
 }
 
+static u32 build_swap_block(u8 *code, u32 opcode, u32 start_pc,
+                            u32 cycles, u8 **entry_out,
+                            const char *reject_reason)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  *entry_out = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_swap(&translation_ptr, meta,
+                                  opcode, start_pc, cycles))
+  {
+    put_raw("result=FAIL command=runtime reason=");
+    put_raw(reject_reason);
+    put_raw("\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, start_pc,
+                            start_pc + 4u, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
 static u32 build_branch_block(u8 *code)
 {
   u8 *translation_ptr = code;
@@ -2261,6 +2310,21 @@ static void expect_swi_hle_rejected(u8 *code)
                                 SWI_CYCLES))
   {
     fail_u32("swi_reject", "accepted", SWI_OPCODE_6, 0);
+  }
+}
+
+static void expect_swap_pc_rejected(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  if (riscv_emit_native_arm_swap(&translation_ptr, meta,
+                                 SWP_R4_R15_R3,
+                                 SWP_WORD_START_PC,
+                                 SWP_WORD_BASE_CYCLES))
+  {
+    fail_u32("swap_reject", "accepted", SWP_R4_R15_R3, 0);
   }
 }
 
@@ -3345,6 +3409,96 @@ static void run_swi_remaining_case(void)
   if (g_execute_pc != SWI_TARGET_PC)
     fail_u32("swi_remaining", "execute_pc", g_execute_pc, SWI_TARGET_PC);
   expect_stickybits_cleared("swi_remaining");
+}
+
+static void run_swp_word_boundary_case(void)
+{
+  reset_runtime_observations(SWP_WORD_START_PC);
+  g_lookup_entry = g_swp_word_entry;
+  reg[3] = SWP_WORD_ADDR;
+  reg[5] = SWP_WORD_STORE_VALUE;
+
+  execute_arm_translate_internal(SWP_WORD_TOTAL_CYCLES, &reg[0]);
+
+  if (reg[4] != SWP_WORD_OLD_VALUE)
+    fail_u32("swp_word_boundary", "rd", reg[4], SWP_WORD_OLD_VALUE);
+  if (reg[REG_PC] != SWP_WORD_END_PC)
+    fail_u32("swp_word_boundary", "pc", reg[REG_PC], SWP_WORD_END_PC);
+  if (g_read32_calls != 1)
+    fail_u32("swp_word_boundary", "read32_calls", g_read32_calls, 1);
+  if (g_read32_addr != SWP_WORD_ADDR)
+    fail_u32("swp_word_boundary", "read32_addr",
+             g_read32_addr, SWP_WORD_ADDR);
+  if (g_read32_pc != SWP_WORD_START_PC)
+    fail_u32("swp_word_boundary", "read32_pc",
+             g_read32_pc, SWP_WORD_START_PC);
+  if (g_write32_calls != 1)
+    fail_u32("swp_word_boundary", "write32_calls", g_write32_calls, 1);
+  if (g_write32_addr != SWP_WORD_ADDR)
+    fail_u32("swp_word_boundary", "write32_addr",
+             g_write32_addr, SWP_WORD_ADDR);
+  if (g_write32_value != SWP_WORD_STORE_VALUE)
+    fail_u32("swp_word_boundary", "write32_value",
+             g_write32_value, SWP_WORD_STORE_VALUE);
+  if (g_write32_pc != SWP_WORD_END_PC)
+    fail_u32("swp_word_boundary", "write32_pc",
+             g_write32_pc, SWP_WORD_END_PC);
+  if (g_update_calls != 1)
+    fail_u32("swp_word_boundary", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("swp_word_boundary", "update_cycles",
+             (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("swp_word_boundary", "execute_calls", g_execute_calls, 0);
+  expect_stickybits_cleared("swp_word_boundary");
+}
+
+static void run_swp_byte_remaining_case(void)
+{
+  const u32 extra_cycles = 5u;
+
+  reset_runtime_observations(SWP_BYTE_START_PC);
+  g_lookup_entry = g_swp_byte_entry;
+  reg[3] = SWP_BYTE_ADDR;
+  reg[7] = SWP_BYTE_STORE_VALUE | 0x12340000u;
+
+  execute_arm_translate_internal(SWP_BYTE_TOTAL_CYCLES + extra_cycles,
+                                 &reg[0]);
+
+  if (reg[6] != SWP_BYTE_OLD_VALUE)
+    fail_u32("swpb_remaining", "rd", reg[6], SWP_BYTE_OLD_VALUE);
+  if (reg[REG_PC] != SWP_BYTE_END_PC)
+    fail_u32("swpb_remaining", "pc", reg[REG_PC], SWP_BYTE_END_PC);
+  if (g_read8_calls != 1)
+    fail_u32("swpb_remaining", "read8_calls", g_read8_calls, 1);
+  if (g_read8_addr != SWP_BYTE_ADDR)
+    fail_u32("swpb_remaining", "read8_addr",
+             g_read8_addr, SWP_BYTE_ADDR);
+  if (g_read8_pc != SWP_BYTE_START_PC)
+    fail_u32("swpb_remaining", "read8_pc",
+             g_read8_pc, SWP_BYTE_START_PC);
+  if (g_write8_calls != 1)
+    fail_u32("swpb_remaining", "write8_calls", g_write8_calls, 1);
+  if (g_write8_addr != SWP_BYTE_ADDR)
+    fail_u32("swpb_remaining", "write8_addr",
+             g_write8_addr, SWP_BYTE_ADDR);
+  if (g_write8_value != SWP_BYTE_STORE_VALUE)
+    fail_u32("swpb_remaining", "write8_value",
+             g_write8_value, SWP_BYTE_STORE_VALUE);
+  if (g_write8_pc != SWP_BYTE_END_PC)
+    fail_u32("swpb_remaining", "write8_pc",
+             g_write8_pc, SWP_BYTE_END_PC);
+  if (g_update_calls != 0)
+    fail_u32("swpb_remaining", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("swpb_remaining", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("swpb_remaining", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != SWP_BYTE_END_PC)
+    fail_u32("swpb_remaining", "execute_pc",
+             g_execute_pc, SWP_BYTE_END_PC);
+  expect_stickybits_cleared("swpb_remaining");
 }
 
 static void run_pc_write_mov_boundary_case(void)
@@ -4662,6 +4816,8 @@ u32 function_cc read_memory32(u32 address)
   g_read32_calls++;
   g_read32_addr = address;
   g_read32_pc = reg[REG_PC];
+  if (address == SWP_WORD_ADDR)
+    return SWP_WORD_OLD_VALUE;
   if (address == LOAD_PC_ADDR)
     return LOAD_PC_TARGET;
   if (address == REG_OFFSET_RRX_WORD_ADDR)
@@ -4676,6 +4832,8 @@ u32 function_cc read_memory8(u32 address)
   g_read8_calls++;
   g_read8_addr = address;
   g_read8_pc = reg[REG_PC];
+  if (address == SWP_BYTE_ADDR)
+    return SWP_BYTE_OLD_VALUE;
   if (address == REG_OFFSET_BYTE_ADDR)
     return REG_OFFSET_BYTE_VALUE;
   if (address == SHIFTED_REG_OFFSET_BYTE_ADDR)
@@ -4821,6 +4979,8 @@ void _start(void)
   u32 reg_shift_test_code_bytes;
   u32 pc_source_code_bytes;
   u32 swi_code_bytes;
+  u32 swp_word_code_bytes;
+  u32 swp_byte_code_bytes;
   u32 pc_write_mov_code_bytes;
   u32 pc_write_add_code_bytes;
   u32 branch_code_bytes;
@@ -5023,6 +5183,18 @@ void _start(void)
   pc_source_code_bytes =
     build_pc_source_block(code + PC_SOURCE_BLOCK_OFFSET);
   swi_code_bytes = build_swi_block(code + SWI_BLOCK_OFFSET);
+  swp_word_code_bytes =
+    build_swap_block(code + SWP_WORD_BLOCK_OFFSET,
+                     SWP_R4_R5_R3, SWP_WORD_START_PC,
+                     SWP_WORD_BASE_CYCLES,
+                     &g_swp_word_entry,
+                     "swp_word_emit_rejected");
+  swp_byte_code_bytes =
+    build_swap_block(code + SWP_BYTE_BLOCK_OFFSET,
+                     SWPB_R6_R7_R3, SWP_BYTE_START_PC,
+                     SWP_BYTE_BASE_CYCLES,
+                     &g_swp_byte_entry,
+                     "swpb_emit_rejected");
   pc_write_mov_code_bytes =
     build_flag_data_block(code + PC_WRITE_MOV_BLOCK_OFFSET,
                           MOV_PC_R14, PC_WRITE_MOV_START_PC,
@@ -5102,6 +5274,7 @@ void _start(void)
   expect_multiply_long_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_load_pc_unsupported_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_swi_hle_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
+  expect_swap_pc_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   run_cycle_boundary_case();
   run_remaining_cycles_case();
   run_multiply_remaining_cycles_case();
@@ -5231,6 +5404,8 @@ void _start(void)
   run_pc_source_remaining_case();
   run_swi_boundary_case();
   run_swi_remaining_case();
+  run_swp_word_boundary_case();
+  run_swp_byte_remaining_case();
   run_pc_write_mov_boundary_case();
   run_pc_write_add_remaining_case();
   run_branch_boundary_case();
@@ -5335,6 +5510,10 @@ void _start(void)
   put_u32_dec(pc_source_code_bytes);
   put_raw(" swi_code_bytes=");
   put_u32_dec(swi_code_bytes);
+  put_raw(" swp_word_code_bytes=");
+  put_u32_dec(swp_word_code_bytes);
+  put_raw(" swp_byte_code_bytes=");
+  put_u32_dec(swp_byte_code_bytes);
   put_raw(" pc_write_mov_code_bytes=");
   put_u32_dec(pc_write_mov_code_bytes);
   put_raw(" pc_write_add_code_bytes=");
@@ -5457,6 +5636,10 @@ void _start(void)
   put_u32_hex((u32)g_pc_source_entry);
   put_raw(" swi_entry=");
   put_u32_hex((u32)g_swi_entry);
+  put_raw(" swp_word_entry=");
+  put_u32_hex((u32)g_swp_word_entry);
+  put_raw(" swp_byte_entry=");
+  put_u32_hex((u32)g_swp_byte_entry);
   put_raw(" pc_write_mov_entry=");
   put_u32_hex((u32)g_pc_write_mov_entry);
   put_raw(" pc_write_add_entry=");

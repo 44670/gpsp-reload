@@ -206,6 +206,32 @@ static u32 function_cc riscv_store_u32(u32 address, u32 value)
   return alert;
 }
 
+static u32 function_cc riscv_swap_u8(u32 address, u32 value, u32 pc)
+{
+  u32 old_value;
+  cpu_alert_type alert;
+
+  reg[REG_PC] = pc;
+  old_value = read_memory8(address);
+  reg[REG_PC] = pc + 4u;
+  alert = write_memory8(address, (u8)value);
+  riscv_cpu_alert |= alert;
+  return old_value;
+}
+
+static u32 function_cc riscv_swap_u32(u32 address, u32 value, u32 pc)
+{
+  u32 old_value;
+  cpu_alert_type alert;
+
+  reg[REG_PC] = pc;
+  old_value = read_memory32(address);
+  reg[REG_PC] = pc + 4u;
+  alert = write_memory32(address, value);
+  riscv_cpu_alert |= alert;
+  return old_value;
+}
+
 static cpu_alert_type riscv_handle_cpu_alert(void)
 {
   cpu_alert_type alert = riscv_cpu_alert;
@@ -1285,6 +1311,44 @@ bool riscv_emit_native_arm_swi(u8 **translation_ptr_ref,
   meta->flags |= RISCV_BLOCK_PC_WRITTEN;
   *translation_ptr_ref = ptr;
   riscv_native_branch_insns++;
+  return true;
+}
+
+bool riscv_emit_native_arm_swap(u8 **translation_ptr_ref,
+                                riscv_jit_block_meta *meta,
+                                u32 opcode,
+                                u32 pc,
+                                u32 cycles)
+{
+  const u32 swp_mask = ((0x1fu << 23) | (3u << 20) | (0xffu << 4));
+  const u32 swp_tag = ((2u << 23) | (9u << 4));
+  u32 condition = opcode >> 28;
+  u32 byte = (opcode >> 22) & 1u;
+  u32 rn = (opcode >> 16) & 0xfu;
+  u32 rd = (opcode >> 12) & 0xfu;
+  u32 rm = opcode & 0xfu;
+  u8 *ptr = *translation_ptr_ref;
+
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
+    return false;
+
+  if (condition != 0xe || (opcode & swp_mask) != swp_tag ||
+      rn == REG_PC || rd == REG_PC || rm == REG_PC)
+  {
+    return false;
+  }
+
+  riscv_emit_arm_reg_load(&ptr, riscv_reg_a0, rn);
+  riscv_emit_arm_reg_load(&ptr, riscv_reg_a1, rm);
+  riscv_emit_li(&ptr, riscv_reg_a2, pc);
+  riscv_emit_c_call(&ptr, byte ? (uintptr_t)riscv_swap_u8
+                              : (uintptr_t)riscv_swap_u32);
+  riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_a0);
+  riscv_emit_adjust_cycles(&ptr, cycles + 3u);
+  riscv_emit_helper_call(&ptr, meta);
+
+  *translation_ptr_ref = ptr;
+  riscv_native_store_insns++;
   return true;
 }
 
