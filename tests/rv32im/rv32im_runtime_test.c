@@ -5372,6 +5372,55 @@ static void run_block_mem_stm_boundary_case(void)
   expect_stickybits_cleared("block_stm");
 }
 
+static void run_block_mem_stm_smc_irq_alert_case(void)
+{
+  const u32 extra_cycles = 4u;
+
+  reset_runtime_observations(BLOCK_MEM_STM_START_PC);
+  g_lookup_entry = g_block_mem_stm_entry;
+  g_store_alert = CPU_ALERT_SMC | CPU_ALERT_IRQ;
+  reg[0] = BLOCK_MEM_STM_R0_VALUE;
+  reg[2] = BLOCK_MEM_STM_R2_VALUE;
+  reg[3] = BLOCK_MEM_BASE;
+  reg[5] = BLOCK_MEM_STM_R5_VALUE;
+
+  execute_arm_translate_internal(BLOCK_MEM_STM_TOTAL_CYCLES + extra_cycles,
+                                 &reg[0]);
+
+  if (g_block_write_count != BLOCK_MEM_XFER_COUNT)
+    fail_u32("block_stm_smc_irq", "write_count",
+             g_block_write_count, BLOCK_MEM_XFER_COUNT);
+  expect_block_write("block_stm_smc_irq", 0, BLOCK_MEM_BASE,
+                     BLOCK_MEM_STM_R0_VALUE);
+  expect_block_write("block_stm_smc_irq", 1, BLOCK_MEM_BASE + 4u,
+                     BLOCK_MEM_STM_R2_VALUE);
+  expect_block_write("block_stm_smc_irq", 2, BLOCK_MEM_BASE + 8u,
+                     BLOCK_MEM_STM_R5_VALUE);
+  if (reg[3] != BLOCK_MEM_BASE + 12u)
+    fail_u32("block_stm_smc_irq", "r3", reg[3], BLOCK_MEM_BASE + 12u);
+  if (reg[REG_PC] != BLOCK_MEM_STM_END_PC)
+    fail_u32("block_stm_smc_irq", "pc",
+             reg[REG_PC], BLOCK_MEM_STM_END_PC);
+  if (g_write32_pc != BLOCK_MEM_STM_END_PC)
+    fail_u32("block_stm_smc_irq", "write_pc",
+             g_write32_pc, BLOCK_MEM_STM_END_PC);
+  if (g_flush_calls != 1)
+    fail_u32("block_stm_smc_irq", "flush_calls", g_flush_calls, 1);
+  if (g_irq_check_calls != 1)
+    fail_u32("block_stm_smc_irq", "irq_calls", g_irq_check_calls, 1);
+  if (g_update_calls != 0)
+    fail_u32("block_stm_smc_irq", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("block_stm_smc_irq", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("block_stm_smc_irq", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != BLOCK_MEM_STM_END_PC)
+    fail_u32("block_stm_smc_irq", "execute_pc",
+             g_execute_pc, BLOCK_MEM_STM_END_PC);
+  expect_stickybits_cleared("block_stm_smc_irq");
+}
+
 static void run_block_mem_ldm_remaining_case(void)
 {
   const u32 extra_cycles = 5u;
@@ -6744,6 +6793,7 @@ void _start(void)
   run_msr_cpsr_control_remaining_case();
   run_msr_spsr_remaining_case();
   run_block_mem_stm_boundary_case();
+  run_block_mem_stm_smc_irq_alert_case();
   run_block_mem_ldm_remaining_case();
   run_block_mem_push_remaining_case();
   run_block_mem_ldm_pc_native_target_case();
