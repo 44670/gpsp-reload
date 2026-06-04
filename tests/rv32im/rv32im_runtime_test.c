@@ -583,6 +583,8 @@ typedef unsigned int usize;
 #define BX_THUMB_TARGET_PC (BX_THUMB_TARGET_RAW & ~1u)
 #define BX_BLOCK_OFFSET 3072u
 #define CPSR_T_BIT 0x20u
+#define PC_WRITE_MOVS_THUMB_SPSR_VALUE \
+  (CPSR_Z_BIT | CPSR_T_BIT | MODE_SUPERVISOR)
 #define HALF_LDRH_R4_R3_0X24 0xe1d342b4u
 #define HALF_LDRSB_R5_R3_0X25 0xe1d352d5u
 #define HALF_LDRSH_R6_R3_0X26 0xe1d362f6u
@@ -5115,6 +5117,62 @@ static void run_pc_write_movs_spsr_restore_case(void)
   expect_stickybits_cleared("pc_write_movs_spsr");
 }
 
+static void run_pc_write_movs_thumb_fallback_case(void)
+{
+  const u32 extra_cycles = 3u;
+  riscv_runtime_stats stats_before;
+
+  reset_runtime_observations(PC_WRITE_MOVS_START_PC);
+  g_lookup_entry = g_pc_write_movs_entry;
+  reg[14] = BX_THUMB_TARGET_PC;
+  reg[CPU_MODE] = MODE_SUPERVISOR;
+  spsr[MODE_SUPERVISOR & 0xfu] = PC_WRITE_MOVS_THUMB_SPSR_VALUE;
+  riscv_get_runtime_stats(&stats_before);
+
+  execute_arm_translate_internal(PC_WRITE_MOVS_CYCLES + extra_cycles,
+                                 &reg[0]);
+
+  if (reg[REG_PC] != BX_THUMB_TARGET_PC)
+    fail_u32("pc_write_movs_thumb", "pc",
+             reg[REG_PC], BX_THUMB_TARGET_PC);
+  if (reg[REG_CPSR] != PC_WRITE_MOVS_THUMB_SPSR_VALUE)
+    fail_u32("pc_write_movs_thumb", "cpsr",
+             reg[REG_CPSR], PC_WRITE_MOVS_THUMB_SPSR_VALUE);
+  if (reg[CPU_MODE] != MODE_SUPERVISOR)
+    fail_u32("pc_write_movs_thumb", "mode",
+             reg[CPU_MODE], MODE_SUPERVISOR);
+  if (g_irq_check_calls != 1)
+    fail_u32("pc_write_movs_thumb", "irq_calls",
+             g_irq_check_calls, 1);
+  if (g_lookup_calls != 1)
+    fail_u32("pc_write_movs_thumb", "arm_lookup_calls",
+             g_lookup_calls, 1);
+  if (g_lookup_pc != PC_WRITE_MOVS_START_PC)
+    fail_u32("pc_write_movs_thumb", "arm_lookup_pc",
+             g_lookup_pc, PC_WRITE_MOVS_START_PC);
+  if (g_thumb_lookup_calls != 1)
+    fail_u32("pc_write_movs_thumb", "thumb_lookup_calls",
+             g_thumb_lookup_calls, 1);
+  if (g_thumb_lookup_pc != BX_THUMB_TARGET_PC)
+    fail_u32("pc_write_movs_thumb", "thumb_lookup_pc",
+             g_thumb_lookup_pc, BX_THUMB_TARGET_PC);
+  if (g_update_calls != 0)
+    fail_u32("pc_write_movs_thumb", "update_calls",
+             g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("pc_write_movs_thumb", "execute_calls",
+             g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("pc_write_movs_thumb", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != BX_THUMB_TARGET_PC)
+    fail_u32("pc_write_movs_thumb", "execute_pc",
+             g_execute_pc, BX_THUMB_TARGET_PC);
+  expect_runtime_fallback_delta("pc_write_movs_thumb_stats",
+                                &stats_before, 1, 1);
+  expect_stickybits_cleared("pc_write_movs_thumb");
+}
+
 static void run_pc_write_mov_native_target_case(void)
 {
   const u32 extra_cycles = 4u;
@@ -8158,6 +8216,7 @@ void _start(void)
   run_swp_word_halt_alert_case();
   run_pc_write_mov_boundary_case();
   run_pc_write_movs_spsr_restore_case();
+  run_pc_write_movs_thumb_fallback_case();
   run_pc_write_mov_native_target_case();
   run_pc_write_add_remaining_case();
   run_branch_boundary_case();
