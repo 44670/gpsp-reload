@@ -246,8 +246,9 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - data-processing, flag-producing data-processing, multiply, long multiply,
   PSR, load/store, PC-relative load/store memory,
   register-offset load/store, writeback
-  memory, register-offset writeback memory, immediate, PC-relative, and
-  register-offset halfword memory, block memory, SWP, SWI, HLE div, and
+  memory, register-offset writeback memory, immediate, PC-relative,
+  register-offset, and writeback halfword memory, block memory, SWP, SWI,
+  HLE div, and
   PC-source
   runtime cases
 - helper-backed memory paths and CPU alert handling for SMC, IRQ, and HALT
@@ -277,7 +278,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   `LDRH`, PC-relative `LDRH`, register-offset `LDRH`,
   `LDRSB`, register-offset `LDRSB`,
   `LDRSH`, PC-relative `LDRSH`, register-offset `LDRSH`,
-  `STRH`, register-offset `STRH`,
+  post-index writeback `LDRSH`,
+  `STRH`, register-offset `STRH`, writeback `STRH`,
   `STMIA`, `LDMIA`, `STMDB sp!`, `LDMIA ... {pc}`,
   `LDMIA ... {pc}^`,
   HLE `Div`, HLE `DivArm`, PC-source data-processing/test ops,
@@ -293,7 +295,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   store-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, and Thumb lookup-miss fallback fixtures against a local ARM
   reference model, with
-  seventy-six runtime blocks executed, ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
+  seventy-eight runtime blocks executed, ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results, MSR CPSR flag and
   control mode/banked-LR effects, SPSR helper-write effects, and native PSR
   accounting checked,
@@ -306,8 +308,10 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   source-PC store, register-offset byte-store, and alert observations hashed,
   register-offset, shifted register-offset, subtract-offset, RRX load, and
   register-offset writeback load/store address/value observations checked,
-  immediate, PC-relative, and register-offset halfword signed/unsigned helper
-  load results and store observations checked,
+  immediate, PC-relative, register-offset, and writeback halfword
+  signed/unsigned helper load results and store observations checked,
+  halfword writeback store source/base ordering and post-index load ordering
+  checked,
   immediate memory writeback address/source ordering checked,
   block-memory writeback, decrement-before push, PC-loaded native target
   chaining, LDM-PC SPSR restore/update behavior, and ordered multi-word helper
