@@ -82,6 +82,10 @@
 - Keep harness output stable and machine-parseable so CI/scripts can compare
   summaries, hashes, frame PNGs, register snapshots, and failure reasons across
   interpreter and RV32IM runs.
+- When a harness path is still synthetic or fixture-backed rather than real
+  emulator execution, label the output explicitly, for example with
+  `harness_mode=synthetic` and a synthetic-specific failure/pass reason. Do not
+  present fixture parity as full interpreter-vs-RV32IM parity.
 
 ## RV32IM Semi-Milestone Commit Rule
 

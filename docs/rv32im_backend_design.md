@@ -259,6 +259,10 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 
 Remaining first-phase gaps should stay narrow and evidence-driven:
 
+- The qemu-user harness currently has synthetic/fixture-backed state, memory,
+  trace, and frame paths for protocol, PNG, and automation bring-up. Its output
+  is labeled with `harness_mode=synthetic` and synthetic-specific reasons until
+  those paths are replaced by real interpreter-vs-RV32IM emulator workloads.
 - Thumb instruction lowering remains deliberately unsupported; Thumb blocks
   must keep routing through fallback until a separate Thumb milestone exists.
 - Conditional ARM opcodes are still expected to enter through the frontend's

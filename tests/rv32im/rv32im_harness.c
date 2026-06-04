@@ -22,6 +22,7 @@ typedef unsigned int usize;
 #define FRAME_W 240
 #define FRAME_H 160
 #define FRAME_BYTES (FRAME_W * FRAME_H * 2)
+#define HARNESS_MODE "synthetic"
 #define PNG_RAW_STRIDE (FRAME_W * 3 + 1)
 #define PNG_RAW_SIZE (PNG_RAW_STRIDE * FRAME_H)
 #define ZLIB_BLOCK_MAX 65535u
@@ -322,6 +323,8 @@ static void print_summary(const char *command, const char *reason)
   put_u32_dec(g_state.instructions);
   put_raw(" frame_hash=");
   put_u32_hex(g_state.last_frame_hash);
+  put_raw(" harness_mode=");
+  put_raw(HARNESS_MODE);
   put_raw(" reason=");
   put_raw(reason);
   put_chr('\n');
@@ -333,6 +336,8 @@ static void print_fail(const char *command, const char *reason)
   put_raw(command);
   put_raw(" backend=");
   put_raw(backend_name());
+  put_raw(" harness_mode=");
+  put_raw(HARNESS_MODE);
   put_raw(" reason=");
   put_raw(reason);
   put_chr('\n');
@@ -445,7 +450,7 @@ static void command_run(char *arg)
   g_state.blocks += frames * (g_state.backend == BACKEND_RV32IM ? 128u : 0u);
   g_state.instructions += frames * 1024u;
   render_frame();
-  print_summary("run", "stub_harness");
+  print_summary("run", "synthetic_frame_workload");
 }
 
 static void command_cont(char *arg)
@@ -454,7 +459,7 @@ static void command_cont(char *arg)
   g_state.cycles += cycles;
   g_state.blocks += g_state.backend == BACKEND_RV32IM ? 1u : 0u;
   render_frame();
-  print_summary("cont", "scheduler_boundary_stub");
+  print_summary("cont", "synthetic_scheduler_boundary");
 }
 
 static u32 synthetic_reg_value(const struct harness_state *state, u32 index)
@@ -507,7 +512,7 @@ static void command_stepi(char *arg)
   g_state.instructions += count;
   g_state.cycles += count;
   render_frame();
-  print_summary("stepi", "instruction_step_stub");
+  print_summary("stepi", "synthetic_instruction_step");
 }
 
 static void command_stepb(char *arg)
@@ -516,7 +521,7 @@ static void command_stepb(char *arg)
   g_state.blocks += count;
   g_state.cycles += count * 4u;
   render_frame();
-  print_summary("stepb", "block_step_stub");
+  print_summary("stepb", "synthetic_block_step");
 }
 
 static void command_regs(void)
@@ -530,6 +535,8 @@ static void command_regs(void)
     put_chr('=');
     put_u32_hex(synthetic_reg_value(&g_state, i));
   }
+  put_raw(" harness_mode=");
+  put_raw(HARNESS_MODE);
   put_chr('\n');
 }
 
@@ -559,6 +566,8 @@ static void command_mem(char *addr_arg, char *len_arg)
     put_chr(hex_digit(value >> 4));
     put_chr(hex_digit(value));
   }
+  put_raw(" harness_mode=");
+  put_raw(HARNESS_MODE);
   put_chr('\n');
 }
 
@@ -581,7 +590,9 @@ static void command_counters(void)
   put_u32_hex(g_state.loaded_hash);
   put_raw(" frame_hash=");
   put_u32_hex(g_state.last_frame_hash);
-  put_raw(" reason=state_counters\n");
+  put_raw(" harness_mode=");
+  put_raw(HARNESS_MODE);
+  put_raw(" reason=synthetic_state_counters\n");
 }
 
 static void command_tracepc(char *arg)
@@ -608,7 +619,9 @@ static void command_tracepc(char *arg)
   }
   put_raw(" hash=");
   put_u32_hex(hash);
-  put_raw(" reason=pc_trace\n");
+  put_raw(" harness_mode=");
+  put_raw(HARNESS_MODE);
+  put_raw(" reason=synthetic_pc_trace\n");
 }
 
 static u32 crc32_update(u32 crc, const u8 *data, usize len)
@@ -784,6 +797,8 @@ static void command_framehash(void)
   put_u32_dec(FRAME_BYTES);
   put_raw(" hash=");
   put_u32_hex(g_state.last_frame_hash);
+  put_raw(" harness_mode=");
+  put_raw(HARNESS_MODE);
   put_chr('\n');
 }
 
@@ -841,7 +856,9 @@ static void command_compare(void)
     put_u32_hex(interp.mem_hash);
     put_raw(" rv32im_mem_hash=");
     put_u32_hex(rv32im.mem_hash);
-    put_raw(" reason=state_or_frame_mismatch\n");
+    put_raw(" harness_mode=");
+    put_raw(HARNESS_MODE);
+    put_raw(" reason=synthetic_state_or_frame_mismatch\n");
     return;
   }
 
@@ -857,7 +874,9 @@ static void command_compare(void)
   put_u32_hex(interp.mem_hash);
   put_raw(" rv32im_mem_hash=");
   put_u32_hex(rv32im.mem_hash);
-  put_raw(" reason=state_frame_equal\n");
+  put_raw(" harness_mode=");
+  put_raw(HARNESS_MODE);
+  put_raw(" reason=synthetic_state_frame_equal\n");
 }
 
 static void command_png(char *path)
@@ -883,6 +902,8 @@ static void command_png(char *path)
   put_u32_dec(FRAME_H);
   put_raw(" frame_hash=");
   put_u32_hex(g_state.last_frame_hash);
+  put_raw(" harness_mode=");
+  put_raw(HARNESS_MODE);
   put_raw(" path=");
   put_raw(path);
   put_chr('\n');
