@@ -10,6 +10,8 @@ EXEC_TEST := rv32im_exec_test
 RUNTIME_TEST := rv32im_runtime_test
 OUT_DIR := out
 SMOKE_PNG := $(OUT_DIR)/rv32im_harness.png
+SMOKE_LOAD := $(OUT_DIR)/rv32im_harness_load.bin
+SMOKE_LOG := $(OUT_DIR)/rv32im_harness.log
 CODEGEN_BIN := $(OUT_DIR)/rv32im_codegen.bin
 CODEGEN_REF_ELF := $(OUT_DIR)/rv32im_codegen_ref.elf
 CODEGEN_REF_BIN := $(OUT_DIR)/rv32im_codegen_ref.bin
@@ -63,6 +65,9 @@ $(RUNTIME_TEST): rv32im_runtime_test.c $(ROOT)/riscv/riscv_runtime.c \
 $(OUT_DIR):
 	mkdir -p $@
 
+$(SMOKE_LOAD): | $(OUT_DIR)
+	printf 'rv32im-harness-load-v1\n' > $@
+
 $(CODEGEN_REF_ELF): rv32im_codegen.S | $(OUT_DIR)
 	$(CLANG) --target=riscv32 -march=rv32im -mabi=ilp32 -fuse-ld=lld -nostdlib -static -Wl,--no-relax -Wl,-e,_start -Wl,-Ttext=0 -o $@ $<
 
@@ -74,8 +79,11 @@ codegen: $(CODEGEN) $(CODEGEN_REF_BIN) | $(OUT_DIR)
 	cmp $(CODEGEN_REF_BIN) $(CODEGEN_BIN)
 	@echo "RV32IM codegen test passed"
 
-smoke: $(HARNESS) $(OUT_DIR)
-	printf 'help\nbackend rv32im\nreset\nrun 2\ncont 16\nstepi 4\nstepb 3\nregs\nmem 0x02000000 16\nframehash\ncompare\npng $(SMOKE_PNG)\nquit\n' | $(QEMU_RISCV32) ./$(HARNESS)
+smoke: $(HARNESS) $(SMOKE_LOAD) $(OUT_DIR)
+	printf 'help\nload $(SMOKE_LOAD)\nbackend rv32im\nreset\nrun 2\ncont 16\nstepi 4\nstepb 3\nregs\nmem 0x02000000 16\nframehash\ncompare\npng $(SMOKE_PNG)\nquit\n' | $(QEMU_RISCV32) ./$(HARNESS) | tee $(SMOKE_LOG)
+	grep -q 'ok command=load bytes=23 hash=0x2b3be9fa' $(SMOKE_LOG)
+	grep -q 'ok command=reset backend=rv32im loaded_bytes=23 loaded_hash=0x2b3be9fa' $(SMOKE_LOG)
+	grep -q 'reason=state_frame_equal' $(SMOKE_LOG)
 	test -s $(SMOKE_PNG)
 
 abi: $(ABI_TEST)

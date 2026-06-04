@@ -410,11 +410,20 @@ static void command_load(char *path)
 static void command_reset(void)
 {
   enum harness_backend backend = g_state.backend;
+  u32 loaded_bytes = g_state.loaded_bytes;
+  u32 loaded_hash = g_state.loaded_hash;
+
   reset_state();
   g_state.backend = backend;
+  g_state.loaded_bytes = loaded_bytes;
+  g_state.loaded_hash = loaded_hash;
   render_frame();
   put_raw("ok command=reset backend=");
   put_raw(backend_name());
+  put_raw(" loaded_bytes=");
+  put_u32_dec(g_state.loaded_bytes);
+  put_raw(" loaded_hash=");
+  put_u32_hex(g_state.loaded_hash);
   put_chr('\n');
 }
 
