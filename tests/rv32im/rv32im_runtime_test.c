@@ -852,6 +852,8 @@ static u8 *g_lookup_entry;
 static u32 g_lookup_entry_pc;
 static u8 *g_lookup_next_entry;
 static u32 g_lookup_next_pc;
+static u8 *g_thumb_lookup_entry;
+static u32 g_thumb_lookup_entry_pc;
 static u8 *g_data_entry;
 static u8 *g_chain_second_entry;
 static u8 *g_unsupported_entry;
@@ -1122,6 +1124,8 @@ static void reset_runtime_observations(u32 pc)
   g_lookup_entry_pc = pc;
   g_lookup_next_entry = (u8 *)0;
   g_lookup_next_pc = 0;
+  g_thumb_lookup_entry = (u8 *)0;
+  g_thumb_lookup_entry_pc = pc;
   g_lookup_calls = 0;
   g_lookup_pc = 0;
   g_thumb_lookup_calls = 0;
@@ -2943,6 +2947,53 @@ static void run_initial_lookup_invalid_fallback_case(void)
 {
   run_initial_lookup_fallback_case("initial_lookup_invalid",
                                    INVALID_LOOKUP_ENTRY);
+}
+
+static void run_initial_thumb_lookup_fallback_case(const char *test_name,
+                                                   u8 *lookup_entry)
+{
+  const u32 cycles = BX_CYCLES + 6u;
+
+  reset_runtime_observations(BX_THUMB_TARGET_PC);
+  reg[REG_CPSR] = CPSR_T_BIT;
+  g_thumb_lookup_entry = lookup_entry;
+  g_thumb_lookup_entry_pc = BX_THUMB_TARGET_PC;
+
+  execute_arm_translate_internal(cycles, &reg[0]);
+
+  if (reg[REG_PC] != BX_THUMB_TARGET_PC)
+    fail_u32(test_name, "pc", reg[REG_PC], BX_THUMB_TARGET_PC);
+  if ((reg[REG_CPSR] & CPSR_T_BIT) != CPSR_T_BIT)
+    fail_u32(test_name, "cpsr_t",
+             reg[REG_CPSR] & CPSR_T_BIT, CPSR_T_BIT);
+  if (g_lookup_calls != 0)
+    fail_u32(test_name, "arm_lookup_calls", g_lookup_calls, 0);
+  if (g_thumb_lookup_calls != 1)
+    fail_u32(test_name, "thumb_lookup_calls", g_thumb_lookup_calls, 1);
+  if (g_thumb_lookup_pc != BX_THUMB_TARGET_PC)
+    fail_u32(test_name, "thumb_lookup_pc",
+             g_thumb_lookup_pc, BX_THUMB_TARGET_PC);
+  if (g_update_calls != 0)
+    fail_u32(test_name, "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32(test_name, "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != cycles)
+    fail_u32(test_name, "execute_cycles", g_execute_cycles, cycles);
+  if (g_execute_pc != BX_THUMB_TARGET_PC)
+    fail_u32(test_name, "execute_pc", g_execute_pc, BX_THUMB_TARGET_PC);
+  expect_stickybits_cleared(test_name);
+}
+
+static void run_initial_thumb_lookup_miss_fallback_case(void)
+{
+  run_initial_thumb_lookup_fallback_case("initial_thumb_lookup_miss",
+                                         (u8 *)0);
+}
+
+static void run_initial_thumb_lookup_invalid_fallback_case(void)
+{
+  run_initial_thumb_lookup_fallback_case("initial_thumb_lookup_invalid",
+                                         INVALID_LOOKUP_ENTRY);
 }
 
 static void run_remaining_cycles_case(void)
@@ -6450,6 +6501,9 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
 {
   g_thumb_lookup_calls++;
   g_thumb_lookup_pc = pc;
+  if (g_thumb_lookup_entry && pc == g_thumb_lookup_entry_pc)
+    return g_thumb_lookup_entry;
+
   return (u8 *)0;
 }
 
@@ -6917,6 +6971,8 @@ void _start(void)
   run_unsupported_block_fallback_case();
   run_initial_lookup_miss_fallback_case();
   run_initial_lookup_invalid_fallback_case();
+  run_initial_thumb_lookup_miss_fallback_case();
+  run_initial_thumb_lookup_invalid_fallback_case();
   run_remaining_cycles_case();
   run_invalid_relookup_fallback_case();
   run_native_chain_remaining_case();
