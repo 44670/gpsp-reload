@@ -266,7 +266,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   `ORRS`, `MOVS`, `BICS`, `MVNS`, `BIC`, `MVN`, `RSB`,
   shifted and register-shifted `EOR`/`ADD`/`ORR`/`MOV`,
   register-shifted `ANDS`/`EORS`/`MOVS`/`ORRS`/`TST`, `MRS CPSR`,
-  `MRS SPSR`, `MSR CPSR_flg`, `MSR SPSR`, `LDR`, `LDRB`, `STR`,
+  `MRS SPSR`, `MSR CPSR_flg`, `MSR CPSR_ctl`, `MSR SPSR`,
+  `LDR`, `LDRB`, `STR`,
   `LDRH`, register-offset `LDRH`, `LDRSB`, register-offset `LDRSB`,
   `LDRSH`, register-offset `LDRSH`, `STRH`, register-offset `STRH`,
   `STMIA`, `LDMIA`, `STMDB sp!`, `LDMIA ... {pc}`,
@@ -283,9 +284,10 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   store-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, and Thumb lookup-miss fallback fixtures against a local ARM
   reference model, with
-  sixty-four runtime blocks executed, ADDS/SUBS/RSBS/CMP/logical CPSR flag results and
+  sixty-five runtime blocks executed, ADDS/SUBS/RSBS/CMP/logical CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results, MSR CPSR flag and
-  SPSR helper-write effects, and native PSR accounting checked,
+  control mode/banked-LR effects, SPSR helper-write effects, and native PSR
+  accounting checked,
   multiply/accumulate, unsigned/signed long multiply, long multiply flag,
   long multiply accumulate, and long multiply accumulate flag results
   checked, carry-input data-processing, carry-input flag, logical flag, and
