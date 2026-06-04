@@ -97,6 +97,7 @@ struct compare_snapshot {
   u32 frame_hash;
   u32 reg_hash;
   u32 mem_hash;
+  u32 scheduler_hash;
   u32 blocks;
   u32 fallbacks;
   u32 native_data_proc;
@@ -695,6 +696,31 @@ static u32 runtime_update_memory_hash(u32 hash,
   return hash;
 }
 
+static u32 runtime_update_scheduler_hash(u32 hash,
+                                         u32 lookup_calls,
+                                         u32 lookup_pc,
+                                         u32 thumb_lookup_calls,
+                                         u32 update_calls,
+                                         s32 update_cycles,
+                                         u32 execute_calls,
+                                         u32 execute_cycles,
+                                         u32 execute_pc,
+                                         u32 flush_calls,
+                                         u32 irq_check_calls)
+{
+  hash = fnv1a_update_u32(hash, lookup_calls);
+  hash = fnv1a_update_u32(hash, lookup_pc);
+  hash = fnv1a_update_u32(hash, thumb_lookup_calls);
+  hash = fnv1a_update_u32(hash, update_calls);
+  hash = fnv1a_update_u32(hash, (u32)update_cycles);
+  hash = fnv1a_update_u32(hash, execute_calls);
+  hash = fnv1a_update_u32(hash, execute_cycles);
+  hash = fnv1a_update_u32(hash, execute_pc);
+  hash = fnv1a_update_u32(hash, flush_calls);
+  hash = fnv1a_update_u32(hash, irq_check_calls);
+  return hash;
+}
+
 static u32 runtime_update_current_memory_hash(u32 hash)
 {
   return runtime_update_memory_hash(hash,
@@ -711,6 +737,21 @@ static u32 runtime_update_current_memory_hash(u32 hash)
                                     g_runtime_write32_pc,
                                     g_runtime_write32_value,
                                     runtime_current_sticky_hash());
+}
+
+static u32 runtime_update_current_scheduler_hash(u32 hash)
+{
+  return runtime_update_scheduler_hash(hash,
+                                       g_runtime_lookup_calls,
+                                       g_runtime_lookup_pc,
+                                       g_runtime_thumb_lookup_calls,
+                                       g_runtime_update_calls,
+                                       g_runtime_update_cycles,
+                                       g_runtime_execute_calls,
+                                       0,
+                                       0,
+                                       g_runtime_flush_calls,
+                                       g_runtime_irq_check_calls);
 }
 
 static u32 runtime_fixture_frame_hash(const struct harness_state *state)
@@ -732,6 +773,7 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   unsigned i;
   u32 reg_hash = 2166136261u;
   u32 mem_hash = 2166136261u;
+  u32 scheduler_hash = 2166136261u;
   u32 load_word = runtime_load_word_value(base);
   u32 load_byte = runtime_load_byte_value(base);
   u32 store_word = runtime_store_word_value(base);
@@ -752,6 +794,11 @@ static void run_runtime_reference_workload(const struct harness_state *base,
                                         0, 0, 0, 0,
                                         0, 0, 0, 0,
                                         runtime_reference_sticky_hash());
+  scheduler_hash = runtime_update_scheduler_hash(scheduler_hash,
+                                                 1, RUNTIME_START_PC, 0,
+                                                 1, 0,
+                                                 0, 0, 0,
+                                                 0, 0);
 
   for (i = 0; i < REG_MAX; i++)
     values[i] = 0;
@@ -769,6 +816,11 @@ static void run_runtime_reference_workload(const struct harness_state *base,
                                         RUNTIME_LOAD_BYTE_PC, load_byte,
                                         0, 0, 0, 0,
                                         runtime_reference_sticky_hash());
+  scheduler_hash = runtime_update_scheduler_hash(scheduler_hash,
+                                                 1, RUNTIME_LOAD_START_PC, 0,
+                                                 1, 0,
+                                                 0, 0, 0,
+                                                 0, 0);
 
   for (i = 0; i < REG_MAX; i++)
     values[i] = 0;
@@ -784,6 +836,11 @@ static void run_runtime_reference_workload(const struct harness_state *base,
                                         1, RUNTIME_STORE_WORD_ADDR,
                                         RUNTIME_STORE_END_PC, store_word,
                                         runtime_reference_sticky_hash());
+  scheduler_hash = runtime_update_scheduler_hash(scheduler_hash,
+                                                 1, RUNTIME_STORE_START_PC, 0,
+                                                 1, 0,
+                                                 0, 0, 0,
+                                                 0, 0);
 
   for (i = 0; i < REG_MAX; i++)
     values[i] = 0;
@@ -799,10 +856,17 @@ static void run_runtime_reference_workload(const struct harness_state *base,
                                         0, 0, 0, 0,
                                         0, 0, 0, 0,
                                         runtime_reference_sticky_hash());
+  scheduler_hash = runtime_update_scheduler_hash(scheduler_hash,
+                                                 2,
+                                                 RUNTIME_BRANCH_TARGET_PC, 0,
+                                                 1, 0,
+                                                 0, 0, 0,
+                                                 0, 0);
 
   snapshot->frame_hash = runtime_fixture_frame_hash(base);
   snapshot->reg_hash = reg_hash;
   snapshot->mem_hash = mem_hash;
+  snapshot->scheduler_hash = scheduler_hash;
   snapshot->blocks = 5;
   snapshot->fallbacks = 0;
   snapshot->native_data_proc = 2;
@@ -818,6 +882,7 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   riscv_runtime_stats after;
   u32 reg_hash = 2166136261u;
   u32 mem_hash = 2166136261u;
+  u32 scheduler_hash = 2166136261u;
 
   g_runtime_fixture_load_word = runtime_load_word_value(base);
   g_runtime_fixture_load_byte = runtime_load_byte_value(base);
@@ -833,12 +898,14 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   execute_arm_translate_internal(RUNTIME_CYCLES, &reg[0]);
   reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
   mem_hash = runtime_update_current_memory_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
 
   reset_runtime_fixture_state(RUNTIME_LOAD_START_PC);
   reg[3] = RUNTIME_LOAD_BASE_ADDR;
   execute_arm_translate_internal(RUNTIME_LOAD_TOTAL_CYCLES, &reg[0]);
   reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
   mem_hash = runtime_update_current_memory_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
 
   reset_runtime_fixture_state(RUNTIME_STORE_START_PC);
   reg[3] = RUNTIME_STORE_BASE_ADDR;
@@ -846,6 +913,7 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   execute_arm_translate_internal(RUNTIME_STORE_TOTAL_CYCLES, &reg[0]);
   reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
   mem_hash = runtime_update_current_memory_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
 
   reset_runtime_fixture_state(RUNTIME_BRANCH_START_PC);
   reg[1] = g_runtime_fixture_branch_r1;
@@ -853,11 +921,13 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   execute_arm_translate_internal(RUNTIME_BRANCH_TOTAL_CYCLES, &reg[0]);
   reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
   mem_hash = runtime_update_current_memory_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
 
   riscv_get_runtime_stats(&after);
   snapshot->frame_hash = runtime_fixture_frame_hash(base);
   snapshot->reg_hash = reg_hash;
   snapshot->mem_hash = mem_hash;
+  snapshot->scheduler_hash = scheduler_hash;
   snapshot->blocks = after.blocks_executed - before.blocks_executed;
   snapshot->fallbacks = after.interpreter_fallbacks - before.interpreter_fallbacks;
   snapshot->native_data_proc = after.native_data_proc_insns;
@@ -1537,6 +1607,7 @@ static void command_compare(void)
   if (interp.frame_hash != rv32im.frame_hash ||
       interp.reg_hash != rv32im.reg_hash ||
       interp.mem_hash != rv32im.mem_hash ||
+      interp.scheduler_hash != rv32im.scheduler_hash ||
       rv32im.blocks != interp.blocks ||
       rv32im.fallbacks != 0 ||
       rv32im.native_data_proc != interp.native_data_proc ||
@@ -1556,6 +1627,10 @@ static void command_compare(void)
     put_u32_hex(interp.mem_hash);
     put_raw(" rv32im_mem_hash=");
     put_u32_hex(rv32im.mem_hash);
+    put_raw(" interp_scheduler_hash=");
+    put_u32_hex(interp.scheduler_hash);
+    put_raw(" rv32im_scheduler_hash=");
+    put_u32_hex(rv32im.scheduler_hash);
     put_raw(" rv32im_blocks=");
     put_u32_dec(rv32im.blocks);
     put_raw(" rv32im_fallbacks=");
@@ -1589,6 +1664,10 @@ static void command_compare(void)
   put_u32_hex(interp.mem_hash);
   put_raw(" rv32im_mem_hash=");
   put_u32_hex(rv32im.mem_hash);
+  put_raw(" interp_scheduler_hash=");
+  put_u32_hex(interp.scheduler_hash);
+  put_raw(" rv32im_scheduler_hash=");
+  put_u32_hex(rv32im.scheduler_hash);
   put_raw(" rv32im_blocks=");
   put_u32_dec(rv32im.blocks);
   put_raw(" rv32im_fallbacks=");
