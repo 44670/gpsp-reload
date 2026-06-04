@@ -544,6 +544,18 @@ static void function_cc riscv_store_spsr(u32 source, u32 psr_pfield)
   spsr[mode] = (source & store_mask) | (old_spsr & ~store_mask);
 }
 
+static void function_cc riscv_execute_spsr_restore(void)
+{
+  u32 mode = reg[CPU_MODE] & 0xfu;
+
+  if (reg[CPU_MODE] == MODE_USER || reg[CPU_MODE] == MODE_SYSTEM)
+    return;
+
+  reg[REG_CPSR] = spsr[mode];
+  set_cpu_mode(riscv_psr_cpu_modes[reg[REG_CPSR] & 0xfu]);
+  check_and_raise_interrupts();
+}
+
 static u32 riscv_word_bit_count(u32 word)
 {
   u32 count = 0;
@@ -1149,7 +1161,7 @@ bool riscv_emit_native_arm_data_proc_with_pc(u8 **translation_ptr_ref,
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
     return false;
 
-  if (condition != 0xe || (rd == REG_PC && set_flags))
+  if (condition != 0xe)
     return false;
 
   if (set_flags && !arithmetic_flags && !logical_flags)
@@ -1314,6 +1326,8 @@ bool riscv_emit_native_arm_data_proc_with_pc(u8 **translation_ptr_ref,
     riscv_emit_arm_cpsr_v_load(&ptr, riscv_reg_t4);
     riscv_emit_arm_cpsr_store_nzcv(&ptr);
   }
+  if (rd == REG_PC && set_flags)
+    riscv_emit_c_call(&ptr, (uintptr_t)riscv_execute_spsr_restore);
   riscv_emit_adjust_cycles(&ptr, cycles);
 
   *translation_ptr_ref = ptr;

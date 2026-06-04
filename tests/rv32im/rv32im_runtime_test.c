@@ -15,7 +15,7 @@ typedef unsigned int usize;
 #define PROT_EXEC 4
 #define MAP_PRIVATE 2
 #define MAP_ANONYMOUS 32
-#define EXEC_MAP_BYTES 55808u
+#define EXEC_MAP_BYTES 56320u
 
 #define BLOCK_START_PC 0x08000000u
 #define BLOCK_END_PC 0x08000004u
@@ -357,14 +357,19 @@ typedef unsigned int usize;
 #define REG_SHIFT_TEST_CPSR_VALUE (0x70000000u | CPSR_LOW_VALUE)
 #define PC_WRITE_MOV_START_PC 0x08000b80u
 #define PC_WRITE_MOV_END_PC (PC_WRITE_MOV_START_PC + 4u)
+#define PC_WRITE_MOVS_START_PC 0x08000be0u
+#define PC_WRITE_MOVS_END_PC (PC_WRITE_MOVS_START_PC + 4u)
 #define PC_WRITE_ADD_START_PC 0x08000ba0u
 #define PC_WRITE_ADD_END_PC (PC_WRITE_ADD_START_PC + 4u)
 #define PC_WRITE_MOV_CYCLES 5u
+#define PC_WRITE_MOVS_CYCLES 5u
 #define PC_WRITE_ADD_CYCLES 6u
 #define MOV_PC_R14 0xe1a0f00eu
 #define MOVS_PC_R14 0xe1b0f00eu
 #define ADD_PC_R0_0X40 0xe280f040u
 #define PC_WRITE_MOV_TARGET 0x02008000u
+#define PC_WRITE_MOVS_TARGET 0x02009000u
+#define PC_WRITE_MOVS_SPSR_VALUE (CPSR_Z_BIT | MODE_SUPERVISOR)
 #define PC_WRITE_ADD_R0_VALUE 0x02001000u
 #define PC_WRITE_ADD_TARGET 0x02001040u
 #define PC_SOURCE_START_PC 0x08000c00u
@@ -899,6 +904,7 @@ typedef unsigned int usize;
 #define SWI_PATCH_BLOCK_OFFSET 47104u
 #define CONDITIONAL_BLOCK_OFFSET 47616u
 #define CYCLE_UPDATE_BLOCK_OFFSET 54784u
+#define PC_WRITE_MOVS_BLOCK_OFFSET 55296u
 #define EXPECTED_INITIAL_ROM_WATERMARK 16u
 
 u32 reg[REG_MAX];
@@ -978,6 +984,7 @@ static u8 *g_reg_shift_flag_asr_entry;
 static u8 *g_reg_shift_flag_ror0_entry;
 static u8 *g_reg_shift_test_entry;
 static u8 *g_pc_write_mov_entry;
+static u8 *g_pc_write_movs_entry;
 static u8 *g_pc_write_add_entry;
 static u8 *g_pc_source_entry;
 static u8 *g_conditional_entry[CONDITIONAL_CONDITIONS];
@@ -3211,20 +3218,6 @@ static void expect_shifted_reg_offset_rejected(u8 *code)
   }
 }
 
-static void expect_data_proc_pc_flag_rejected(u8 *code)
-{
-  u8 *translation_ptr = code;
-  riscv_jit_block_meta *meta;
-
-  riscv_emit_block_prologue(&translation_ptr, &meta);
-  if (riscv_emit_native_arm_data_proc(&translation_ptr, meta,
-                                      MOVS_PC_R14,
-                                      PC_WRITE_MOV_CYCLES))
-  {
-    fail_u32("data_proc_pc_flag_reject", "accepted", MOVS_PC_R14, 0);
-  }
-}
-
 static void expect_psr_unsupported_rejected(u8 *code)
 {
   static const u32 rejected_opcodes[] =
@@ -5074,6 +5067,46 @@ static void run_pc_write_mov_boundary_case(void)
   if (g_execute_calls != 0)
     fail_u32("pc_write_mov_boundary", "execute_calls", g_execute_calls, 0);
   expect_stickybits_cleared("pc_write_mov_boundary");
+}
+
+static void run_pc_write_movs_spsr_restore_case(void)
+{
+  reset_runtime_observations(PC_WRITE_MOVS_START_PC);
+  g_lookup_entry = g_pc_write_movs_entry;
+  reg[14] = PC_WRITE_MOVS_TARGET;
+  reg[CPU_MODE] = MODE_SUPERVISOR;
+  spsr[MODE_SUPERVISOR & 0xfu] = PC_WRITE_MOVS_SPSR_VALUE;
+
+  execute_arm_translate_internal(PC_WRITE_MOVS_CYCLES, &reg[0]);
+
+  if (reg[REG_PC] != PC_WRITE_MOVS_TARGET)
+    fail_u32("pc_write_movs_spsr", "pc",
+             reg[REG_PC], PC_WRITE_MOVS_TARGET);
+  if (reg[REG_CPSR] != PC_WRITE_MOVS_SPSR_VALUE)
+    fail_u32("pc_write_movs_spsr", "cpsr",
+             reg[REG_CPSR], PC_WRITE_MOVS_SPSR_VALUE);
+  if (reg[CPU_MODE] != MODE_SUPERVISOR)
+    fail_u32("pc_write_movs_spsr", "mode",
+             reg[CPU_MODE], MODE_SUPERVISOR);
+  if (g_irq_check_calls != 1)
+    fail_u32("pc_write_movs_spsr", "irq_calls",
+             g_irq_check_calls, 1);
+  if (g_lookup_calls != 1)
+    fail_u32("pc_write_movs_spsr", "lookup_calls",
+             g_lookup_calls, 1);
+  if (g_lookup_pc != PC_WRITE_MOVS_START_PC)
+    fail_u32("pc_write_movs_spsr", "lookup_pc",
+             g_lookup_pc, PC_WRITE_MOVS_START_PC);
+  if (g_update_calls != 1)
+    fail_u32("pc_write_movs_spsr", "update_calls",
+             g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("pc_write_movs_spsr", "update_cycles",
+             (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("pc_write_movs_spsr", "execute_calls",
+             g_execute_calls, 0);
+  expect_stickybits_cleared("pc_write_movs_spsr");
 }
 
 static void run_pc_write_mov_native_target_case(void)
@@ -7454,6 +7487,7 @@ void _start(void)
   u32 swp_word_code_bytes;
   u32 swp_byte_code_bytes;
   u32 pc_write_mov_code_bytes;
+  u32 pc_write_movs_code_bytes;
   u32 pc_write_add_code_bytes;
   u32 branch_code_bytes;
   u32 bl_code_bytes;
@@ -7718,6 +7752,12 @@ void _start(void)
                           PC_WRITE_MOV_END_PC, PC_WRITE_MOV_CYCLES,
                           &g_pc_write_mov_entry,
                           "pc_write_mov_emit_rejected");
+  pc_write_movs_code_bytes =
+    build_flag_data_block(code + PC_WRITE_MOVS_BLOCK_OFFSET,
+                          MOVS_PC_R14, PC_WRITE_MOVS_START_PC,
+                          PC_WRITE_MOVS_END_PC, PC_WRITE_MOVS_CYCLES,
+                          &g_pc_write_movs_entry,
+                          "pc_write_movs_emit_rejected");
   pc_write_add_code_bytes =
     build_flag_data_block(code + PC_WRITE_ADD_BLOCK_OFFSET,
                           ADD_PC_R0_0X40, PC_WRITE_ADD_START_PC,
@@ -7888,7 +7928,6 @@ void _start(void)
       code + REG_OFFSET_WRITEBACK_LOAD_BLOCK_OFFSET);
   expect_halfword_transfers_rejected(code + HALF_REJECT_BLOCK_OFFSET);
   expect_shifted_reg_offset_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
-  expect_data_proc_pc_flag_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_psr_unsupported_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_multiply_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_multiply_long_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
@@ -8045,6 +8084,7 @@ void _start(void)
   run_swp_word_smc_irq_alert_case();
   run_swp_word_halt_alert_case();
   run_pc_write_mov_boundary_case();
+  run_pc_write_movs_spsr_restore_case();
   run_pc_write_mov_native_target_case();
   run_pc_write_add_remaining_case();
   run_branch_boundary_case();
@@ -8190,6 +8230,8 @@ void _start(void)
   put_u32_dec(swp_byte_code_bytes);
   put_raw(" pc_write_mov_code_bytes=");
   put_u32_dec(pc_write_mov_code_bytes);
+  put_raw(" pc_write_movs_code_bytes=");
+  put_u32_dec(pc_write_movs_code_bytes);
   put_raw(" pc_write_add_code_bytes=");
   put_u32_dec(pc_write_add_code_bytes);
   put_raw(" branch_code_bytes=");
@@ -8374,6 +8416,8 @@ void _start(void)
   put_u32_hex((u32)g_swp_byte_entry);
   put_raw(" pc_write_mov_entry=");
   put_u32_hex((u32)g_pc_write_mov_entry);
+  put_raw(" pc_write_movs_entry=");
+  put_u32_hex((u32)g_pc_write_movs_entry);
   put_raw(" pc_write_add_entry=");
   put_u32_hex((u32)g_pc_write_add_entry);
   put_raw(" branch_entry=");
