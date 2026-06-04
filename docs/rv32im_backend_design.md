@@ -261,11 +261,12 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   `BL` link-register branch-to-native-target, and `BX r7`
   indirect-branch-to-native-target runtime fixtures, SWI-to-BIOS target
   mode/bus/banked-state effects,
+  NE conditional-header taken/skipped behavior,
   store-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, and Thumb lookup-miss fallback fixtures against a local ARM
   reference model, with
-  fifteen runtime blocks executed, helper memory and alert observations hashed,
-  direct, indirect, SWI, and patched branch execution exercised,
+  seventeen runtime blocks executed, helper memory and alert observations hashed,
+  direct, indirect, conditional, SWI, and patched branch execution exercised,
   scheduler/update/idle-loop/Thumb-lookup observations hashed, and two
   deliberate fallbacks
 
