@@ -185,14 +185,26 @@ static void riscv_emit_c_call(u8 **ptr, uintptr_t function_addr)
   *ptr = translation_ptr;
 }
 
-static u32 riscv_encode_jal(riscv_reg_number rd, s32 offset)
+static u32 riscv_encode_i(riscv_opcode opcode,
+                          u32 funct3,
+                          riscv_reg_number rd,
+                          riscv_reg_number rs1,
+                          s32 imm)
 {
-  return ((((u32)offset >> 20) & 0x01) << 31) |
-         ((((u32)offset >> 1) & 0x3ff) << 21) |
-         ((((u32)offset >> 11) & 0x01) << 20) |
-         ((((u32)offset >> 12) & 0xff) << 12) |
+  return (((u32)imm & 0xfff) << 20) |
+         (((u32)rs1 & 0x1f) << 15) |
+         ((funct3 & 0x07) << 12) |
          (((u32)rd & 0x1f) << 7) |
-         riscv_opcode_jal;
+         opcode;
+}
+
+static u32 riscv_encode_u(riscv_opcode opcode,
+                          riscv_reg_number rd,
+                          u32 imm20)
+{
+  return ((imm20 & 0xfffff) << 12) |
+         (((u32)rd & 0x1f) << 7) |
+         opcode;
 }
 
 static u8 *riscv_emit_unconditional_branch_patch_site(u8 **ptr_ref)
@@ -201,6 +213,8 @@ static u8 *riscv_emit_unconditional_branch_patch_site(u8 **ptr_ref)
   u8 *source = translation_ptr;
 
   riscv_emit_nop();
+  riscv_emit_nop();
+  riscv_emit_nop();
 
   *ptr_ref = translation_ptr;
   return source;
@@ -208,13 +222,25 @@ static u8 *riscv_emit_unconditional_branch_patch_site(u8 **ptr_ref)
 
 void riscv_patch_unconditional_branch(u8 *source, const u8 *target)
 {
-  s32 offset;
+  u32 target_addr;
+  uint64_t upper;
+  s32 lower;
 
   if (!source || !target)
     return;
 
-  offset = (s32)((intptr_t)target - (intptr_t)source);
-  *((u32 *)source) = riscv_encode_jal(riscv_reg_zero, offset);
+  target_addr = (u32)(uintptr_t)target;
+  upper = ((uint64_t)target_addr + 0x800u) >> 12;
+  lower = (s32)(target_addr - (u32)(upper << 12));
+
+  ((u32 *)source)[0] =
+    riscv_encode_u(riscv_opcode_lui, riscv_reg_t6, (u32)upper);
+  ((u32 *)source)[1] =
+    riscv_encode_i(riscv_opcode_op_imm, 0x0,
+                   riscv_reg_t6, riscv_reg_t6, lower);
+  ((u32 *)source)[2] =
+    riscv_encode_i(riscv_opcode_jalr, 0x0,
+                   riscv_reg_zero, riscv_reg_t6, 0);
 }
 
 static u32 function_cc riscv_store_u8(u32 address, u32 value)

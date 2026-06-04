@@ -3199,7 +3199,7 @@ bool translate_block_arm(u32 pc, bool ram_region)
   else
     rom_translation_ptr = translation_ptr;
 
-#if defined(XTENSA_ARCH) || defined(RISCV_ARCH)
+#if defined(XTENSA_ARCH)
   (void)external_block_exits;
   (void)external_block_exit_position;
 #else
@@ -3377,7 +3377,7 @@ bool translate_block_thumb(u32 pc, bool ram_region)
   else
     rom_translation_ptr = translation_ptr;
 
-#if defined(XTENSA_ARCH) || defined(RISCV_ARCH)
+#if defined(XTENSA_ARCH)
   (void)external_block_exits;
   (void)external_block_exit_position;
 #else
