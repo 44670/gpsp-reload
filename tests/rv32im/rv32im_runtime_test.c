@@ -6341,6 +6341,81 @@ static void run_store_byte_remaining_cycles_case(void)
   expect_stickybits_cleared("store_byte_remaining");
 }
 
+static void expect_store_byte(const char *test_name, u32 pc)
+{
+  if (g_write8_calls != 1)
+    fail_u32(test_name, "write8_calls", g_write8_calls, 1);
+  if (g_write8_addr != STORE_BYTE_ADDR)
+    fail_u32(test_name, "write8_addr", g_write8_addr, STORE_BYTE_ADDR);
+  if (g_write8_value != (STORE_VALUE & 0xffu))
+    fail_u32(test_name, "write8_value",
+             g_write8_value, STORE_VALUE & 0xffu);
+  if (g_write8_pc != pc)
+    fail_u32(test_name, "write8_pc", g_write8_pc, pc);
+  if (reg[REG_PC] != pc)
+    fail_u32(test_name, "pc", reg[REG_PC], pc);
+}
+
+static void run_store_byte_smc_irq_alert_case(void)
+{
+  const u32 extra_cycles = 4u;
+
+  reset_runtime_observations(STORE_BYTE_START_PC);
+  g_lookup_entry = g_store_byte_entry;
+  g_store_alert = CPU_ALERT_SMC | CPU_ALERT_IRQ;
+  reg[3] = STORE_BASE_ADDR;
+  reg[6] = STORE_VALUE;
+
+  execute_arm_translate_internal(STORE_TOTAL_CYCLES + extra_cycles, &reg[0]);
+
+  expect_store_byte("store_byte_smc_irq", STORE_BYTE_END_PC);
+  if (g_flush_calls != 1)
+    fail_u32("store_byte_smc_irq", "flush_calls", g_flush_calls, 1);
+  if (g_irq_check_calls != 1)
+    fail_u32("store_byte_smc_irq", "irq_calls", g_irq_check_calls, 1);
+  if (g_update_calls != 0)
+    fail_u32("store_byte_smc_irq", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("store_byte_smc_irq", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("store_byte_smc_irq", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != STORE_BYTE_END_PC)
+    fail_u32("store_byte_smc_irq", "execute_pc",
+             g_execute_pc, STORE_BYTE_END_PC);
+  expect_stickybits_cleared("store_byte_smc_irq");
+}
+
+static void run_store_byte_halt_alert_case(void)
+{
+  const u32 extra_cycles = 2u;
+
+  reset_runtime_observations(STORE_BYTE_START_PC);
+  g_lookup_entry = g_store_byte_entry;
+  g_store_alert = CPU_ALERT_HALT;
+  reg[3] = STORE_BASE_ADDR;
+  reg[6] = STORE_VALUE;
+
+  execute_arm_translate_internal(STORE_TOTAL_CYCLES + extra_cycles, &reg[0]);
+
+  expect_store_byte("store_byte_halt", STORE_BYTE_END_PC);
+  if (reg[CPU_HALT_STATE] != CPU_HALT)
+    fail_u32("store_byte_halt", "halt_state",
+             reg[CPU_HALT_STATE], CPU_HALT);
+  if (g_flush_calls != 0)
+    fail_u32("store_byte_halt", "flush_calls", g_flush_calls, 0);
+  if (g_irq_check_calls != 0)
+    fail_u32("store_byte_halt", "irq_calls", g_irq_check_calls, 0);
+  if (g_update_calls != 1)
+    fail_u32("store_byte_halt", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != extra_cycles)
+    fail_u32("store_byte_halt", "update_cycles",
+             (u32)g_update_cycles, extra_cycles);
+  if (g_execute_calls != 0)
+    fail_u32("store_byte_halt", "execute_calls", g_execute_calls, 0);
+  expect_stickybits_cleared("store_byte_halt");
+}
+
 static void run_store_smc_irq_alert_case(void)
 {
   const u32 extra_cycles = 4u;
@@ -7221,6 +7296,8 @@ void _start(void)
   run_store_pc_value_case();
   run_pc_base_store_remaining_case();
   run_store_byte_remaining_cycles_case();
+  run_store_byte_smc_irq_alert_case();
+  run_store_byte_halt_alert_case();
   run_store_smc_irq_alert_case();
   run_store_halt_alert_case();
   run_half_store_smc_irq_alert_case();
