@@ -265,7 +265,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   `ADC`, `SBC`, `RSC`, `ADCS`, `SBCS`, `RSCS`, `ANDS`, `EORS`,
   `ORRS`, `MOVS`, `BICS`, `MVNS`, `BIC`, `MVN`, `RSB`,
   shifted and register-shifted `EOR`/`ADD`/`ORR`/`MOV`,
-  register-shifted `ANDS`/`EORS`/`MOVS`/`ORRS`/`TST`, `MRS CPSR`,
+  register-shifted `ANDS`/`EORS`/`MOVS`/`ORRS`/`TST`,
+  `TEQ`, `CMN`, `MRS CPSR`,
   `MRS SPSR`, `MSR CPSR_flg`, `MSR CPSR_ctl`, `MSR SPSR`,
   `LDR`, `LDRB`, `STR`,
   `LDRH`, register-offset `LDRH`, `LDRSB`, register-offset `LDRSB`,
@@ -284,7 +285,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   store-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, and Thumb lookup-miss fallback fixtures against a local ARM
   reference model, with
-  sixty-five runtime blocks executed, ADDS/SUBS/RSBS/CMP/logical CPSR flag results and
+  sixty-seven runtime blocks executed, ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results, MSR CPSR flag and
   control mode/banked-LR effects, SPSR helper-write effects, and native PSR
   accounting checked,
@@ -292,7 +293,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   long multiply accumulate, and long multiply accumulate flag results
   checked, carry-input data-processing, carry-input flag, logical flag, and
   extended shifted and register-shifted data-processing results checked,
-  register-shifted flag/test CPSR results checked,
+  register-shifted flag/test and TEQ/CMN CPSR results checked,
   helper memory and alert observations hashed,
   register-offset, shifted register-offset, subtract-offset, and RRX load
   address/value observations checked,
