@@ -15,7 +15,7 @@ typedef unsigned int usize;
 #define PROT_EXEC 4
 #define MAP_PRIVATE 2
 #define MAP_ANONYMOUS 32
-#define EXEC_MAP_BYTES 43520u
+#define EXEC_MAP_BYTES 44032u
 
 #define BLOCK_START_PC 0x08000000u
 #define BLOCK_END_PC 0x08000004u
@@ -701,9 +701,12 @@ typedef unsigned int usize;
 #define BLOCK_MEM_LDM_END_PC (BLOCK_MEM_LDM_START_PC + 4u)
 #define BLOCK_MEM_PUSH_START_PC 0x08000d60u
 #define BLOCK_MEM_PUSH_END_PC (BLOCK_MEM_PUSH_START_PC + 4u)
+#define BLOCK_MEM_LDM_PC_START_PC 0x08000d80u
+#define BLOCK_MEM_LDM_PC_END_PC (BLOCK_MEM_LDM_PC_START_PC + 4u)
 #define BLOCK_MEM_STM_CYCLES 6u
 #define BLOCK_MEM_LDM_CYCLES 7u
 #define BLOCK_MEM_PUSH_CYCLES 8u
+#define BLOCK_MEM_LDM_PC_CYCLES 7u
 #define BLOCK_MEM_XFER_COUNT 3u
 #define BLOCK_MEM_STM_TOTAL_CYCLES \
   (BLOCK_MEM_STM_CYCLES + BLOCK_MEM_XFER_COUNT)
@@ -711,16 +714,24 @@ typedef unsigned int usize;
   (BLOCK_MEM_LDM_CYCLES + BLOCK_MEM_XFER_COUNT)
 #define BLOCK_MEM_PUSH_TOTAL_CYCLES \
   (BLOCK_MEM_PUSH_CYCLES + BLOCK_MEM_XFER_COUNT)
+#define BLOCK_MEM_LDM_PC_TOTAL_CYCLES \
+  (BLOCK_MEM_LDM_PC_CYCLES + BLOCK_MEM_XFER_COUNT)
 #define STMIA_R3_WB_R0_R2_R5 0xe8a30025u
 #define LDMIA_R4_WB_R1_R6_R7 0xe8b400c2u
 #define STMDB_R13_WB_R0_R1_R14 0xe92d4003u
+#define LDMIA_R4_WB_R1_R6_PC 0xe8b48042u
 #define BLOCK_MEM_BASE 0x02000700u
+#define BLOCK_MEM_PC_BASE 0x02000780u
 #define BLOCK_MEM_STM_R0_VALUE 0x11112222u
 #define BLOCK_MEM_STM_R2_VALUE 0x33334444u
 #define BLOCK_MEM_STM_R5_VALUE 0x55556666u
 #define BLOCK_MEM_LDM_R1_VALUE 0x77778888u
 #define BLOCK_MEM_LDM_R6_VALUE 0x9999aaaau
 #define BLOCK_MEM_LDM_R7_VALUE 0xbbbbccccu
+#define BLOCK_MEM_LDM_PC_R1_VALUE 0x13572468u
+#define BLOCK_MEM_LDM_PC_R6_VALUE 0x24681357u
+#define BLOCK_MEM_LDM_PC_R3_VALUE \
+  (CHAIN_R2_VALUE + BLOCK_MEM_LDM_PC_R1_VALUE)
 #define BLOCK_MEM_PUSH_SP_START (BLOCK_MEM_BASE + 0x40u)
 #define BLOCK_MEM_PUSH_ADDR (BLOCK_MEM_PUSH_SP_START - 12u)
 #define BLOCK_MEM_PUSH_R0_VALUE 0x01020304u
@@ -821,6 +832,7 @@ typedef unsigned int usize;
 #define BRANCH_TARGET_BLOCK_OFFSET 41984u
 #define SWI_TARGET_BLOCK_OFFSET 42496u
 #define LOAD_PC_TARGET_BLOCK_OFFSET 43008u
+#define BLOCK_MEM_LDM_PC_BLOCK_OFFSET 43520u
 
 u32 reg[REG_MAX];
 u32 spsr[6];
@@ -903,6 +915,7 @@ static u8 *g_msr_spsr_entry;
 static u8 *g_block_mem_stm_entry;
 static u8 *g_block_mem_ldm_entry;
 static u8 *g_block_mem_push_entry;
+static u8 *g_block_mem_ldm_pc_entry;
 static u8 *g_hle_div_entry;
 static u8 *g_hle_divarm_entry;
 static u8 *g_writeback_store_entry;
@@ -5183,6 +5196,61 @@ static void run_block_mem_push_remaining_case(void)
   expect_stickybits_cleared("block_push");
 }
 
+static void run_block_mem_ldm_pc_native_target_case(void)
+{
+  const u32 extra_cycles = 4u;
+
+  reset_runtime_observations(BLOCK_MEM_LDM_PC_START_PC);
+  g_lookup_entry = g_block_mem_ldm_pc_entry;
+  g_lookup_next_pc = LOAD_PC_TARGET;
+  g_lookup_next_entry = g_load_pc_target_entry;
+  reg[2] = CHAIN_R2_VALUE;
+  reg[4] = BLOCK_MEM_PC_BASE;
+
+  execute_arm_translate_internal(BLOCK_MEM_LDM_PC_TOTAL_CYCLES +
+                                 LOAD_PC_TARGET_CYCLES + extra_cycles,
+                                 &reg[0]);
+
+  if (reg[1] != BLOCK_MEM_LDM_PC_R1_VALUE)
+    fail_u32("block_ldm_pc", "r1",
+             reg[1], BLOCK_MEM_LDM_PC_R1_VALUE);
+  if (reg[6] != BLOCK_MEM_LDM_PC_R6_VALUE)
+    fail_u32("block_ldm_pc", "r6",
+             reg[6], BLOCK_MEM_LDM_PC_R6_VALUE);
+  if (reg[3] != BLOCK_MEM_LDM_PC_R3_VALUE)
+    fail_u32("block_ldm_pc", "r3",
+             reg[3], BLOCK_MEM_LDM_PC_R3_VALUE);
+  if (reg[4] != BLOCK_MEM_PC_BASE + 12u)
+    fail_u32("block_ldm_pc", "r4", reg[4], BLOCK_MEM_PC_BASE + 12u);
+  if (reg[REG_PC] != LOAD_PC_TARGET_END_PC)
+    fail_u32("block_ldm_pc", "pc", reg[REG_PC], LOAD_PC_TARGET_END_PC);
+  if (g_read32_calls != BLOCK_MEM_XFER_COUNT)
+    fail_u32("block_ldm_pc", "read32_calls",
+             g_read32_calls, BLOCK_MEM_XFER_COUNT);
+  if (g_read32_addr != BLOCK_MEM_PC_BASE + 8u)
+    fail_u32("block_ldm_pc", "read32_addr",
+             g_read32_addr, BLOCK_MEM_PC_BASE + 8u);
+  if (g_read32_pc != BLOCK_MEM_LDM_PC_END_PC)
+    fail_u32("block_ldm_pc", "read32_pc",
+             g_read32_pc, BLOCK_MEM_LDM_PC_END_PC);
+  if (g_lookup_calls != 3)
+    fail_u32("block_ldm_pc", "lookup_calls", g_lookup_calls, 3);
+  if (g_lookup_pc != LOAD_PC_TARGET_END_PC)
+    fail_u32("block_ldm_pc", "lookup_pc",
+             g_lookup_pc, LOAD_PC_TARGET_END_PC);
+  if (g_update_calls != 0)
+    fail_u32("block_ldm_pc", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("block_ldm_pc", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("block_ldm_pc", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != LOAD_PC_TARGET_END_PC)
+    fail_u32("block_ldm_pc", "execute_pc",
+             g_execute_pc, LOAD_PC_TARGET_END_PC);
+  expect_stickybits_cleared("block_ldm_pc");
+}
+
 static void run_hle_div_boundary_case(void)
 {
   reset_runtime_observations(HLE_DIV_START_PC);
@@ -5645,6 +5713,12 @@ u32 function_cc read_memory32(u32 address)
     return BLOCK_MEM_LDM_R6_VALUE;
   if (address == BLOCK_MEM_BASE + 8u)
     return BLOCK_MEM_LDM_R7_VALUE;
+  if (address == BLOCK_MEM_PC_BASE)
+    return BLOCK_MEM_LDM_PC_R1_VALUE;
+  if (address == BLOCK_MEM_PC_BASE + 4u)
+    return BLOCK_MEM_LDM_PC_R6_VALUE;
+  if (address == BLOCK_MEM_PC_BASE + 8u)
+    return LOAD_PC_TARGET;
   return LOAD_WORD_VALUE;
 }
 
@@ -5863,6 +5937,7 @@ void _start(void)
   u32 block_mem_stm_code_bytes;
   u32 block_mem_ldm_code_bytes;
   u32 block_mem_push_code_bytes;
+  u32 block_mem_ldm_pc_code_bytes;
   u32 hle_div_code_bytes;
   u32 hle_divarm_code_bytes;
   u32 writeback_store_code_bytes;
@@ -6188,6 +6263,13 @@ void _start(void)
                              BLOCK_MEM_PUSH_CYCLES,
                              &g_block_mem_push_entry,
                              "block_mem_push_emit_rejected");
+  block_mem_ldm_pc_code_bytes =
+    build_block_memory_block(code + BLOCK_MEM_LDM_PC_BLOCK_OFFSET,
+                             LDMIA_R4_WB_R1_R6_PC,
+                             BLOCK_MEM_LDM_PC_START_PC,
+                             BLOCK_MEM_LDM_PC_CYCLES,
+                             &g_block_mem_ldm_pc_entry,
+                             "block_mem_ldm_pc_emit_rejected");
   hle_div_code_bytes =
     build_hle_div_block(code + HLE_DIV_BLOCK_OFFSET,
                         false,
@@ -6386,6 +6468,7 @@ void _start(void)
   run_block_mem_stm_boundary_case();
   run_block_mem_ldm_remaining_case();
   run_block_mem_push_remaining_case();
+  run_block_mem_ldm_pc_native_target_case();
   run_hle_div_boundary_case();
   run_hle_divarm_remaining_case();
   run_writeback_store_case();
@@ -6545,6 +6628,8 @@ void _start(void)
   put_u32_dec(block_mem_ldm_code_bytes);
   put_raw(" block_mem_push_code_bytes=");
   put_u32_dec(block_mem_push_code_bytes);
+  put_raw(" block_mem_ldm_pc_code_bytes=");
+  put_u32_dec(block_mem_ldm_pc_code_bytes);
   put_raw(" hle_div_code_bytes=");
   put_u32_dec(hle_div_code_bytes);
   put_raw(" hle_divarm_code_bytes=");
@@ -6697,6 +6782,8 @@ void _start(void)
   put_u32_hex((u32)g_block_mem_ldm_entry);
   put_raw(" block_mem_push_entry=");
   put_u32_hex((u32)g_block_mem_push_entry);
+  put_raw(" block_mem_ldm_pc_entry=");
+  put_u32_hex((u32)g_block_mem_ldm_pc_entry);
   put_raw(" hle_div_entry=");
   put_u32_hex((u32)g_hle_div_entry);
   put_raw(" hle_divarm_entry=");
