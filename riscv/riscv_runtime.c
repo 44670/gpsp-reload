@@ -894,7 +894,7 @@ bool riscv_emit_native_arm_multiply_long(u8 **translation_ptr_ref,
     return false;
 
   if (condition != 0xe || (opcode & 0x0f8000f0u) != 0x00800090u ||
-      (accumulate && set_flags) || rdhi == REG_PC || rdlo == REG_PC ||
+      rdhi == REG_PC || rdlo == REG_PC ||
       rm == REG_PC || rs == REG_PC)
   {
     return false;
