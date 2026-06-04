@@ -2037,6 +2037,21 @@ void init_emitter(bool must_swap)
   init_bios_hooks();
 }
 
+void riscv_get_runtime_stats(riscv_runtime_stats *stats)
+{
+  if (!stats)
+    return;
+
+  stats->blocks_emitted = riscv_blocks_emitted;
+  stats->blocks_executed = riscv_blocks_executed;
+  stats->interpreter_fallbacks = riscv_interpreter_fallbacks;
+  stats->native_data_proc_insns = riscv_native_data_proc_insns;
+  stats->native_branch_insns = riscv_native_branch_insns;
+  stats->native_load_insns = riscv_native_load_insns;
+  stats->native_store_insns = riscv_native_store_insns;
+  stats->native_psr_insns = riscv_native_psr_insns;
+}
+
 u32 execute_arm_translate(u32 cycles)
 {
   return execute_arm_translate_internal(cycles, &reg[0]);

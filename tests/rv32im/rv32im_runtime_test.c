@@ -986,6 +986,7 @@ static u32 g_block_write_addr[BLOCK_MEM_MAX_TRANSFERS];
 static u32 g_block_write_value[BLOCK_MEM_MAX_TRANSFERS];
 static cpu_alert_type g_store_alert;
 static u32 g_init_bios_hooks_calls;
+static riscv_runtime_stats g_first_emit_stats;
 
 static long syscall1(long number, long arg0)
 {
@@ -1181,10 +1182,13 @@ static void reset_runtime_observations(u32 pc)
 
 static void run_init_emitter_contract_case(void)
 {
+  riscv_runtime_stats stats;
+
   g_init_bios_hooks_calls = 0;
   rom_cache_watermark = 0xffffffffu;
 
   init_emitter(false);
+  riscv_get_runtime_stats(&stats);
 
   if (rom_cache_watermark != EXPECTED_INITIAL_ROM_WATERMARK)
     fail_u32("init_emitter_contract", "rom_cache_watermark",
@@ -1192,6 +1196,60 @@ static void run_init_emitter_contract_case(void)
   if (g_init_bios_hooks_calls != 1)
     fail_u32("init_emitter_contract", "init_bios_hooks",
              g_init_bios_hooks_calls, 1);
+  if (stats.blocks_emitted != 0)
+    fail_u32("init_emitter_contract", "blocks_emitted",
+             stats.blocks_emitted, 0);
+  if (stats.blocks_executed != 0)
+    fail_u32("init_emitter_contract", "blocks_executed",
+             stats.blocks_executed, 0);
+  if (stats.interpreter_fallbacks != 0)
+    fail_u32("init_emitter_contract", "interpreter_fallbacks",
+             stats.interpreter_fallbacks, 0);
+  if (stats.native_data_proc_insns != 0)
+    fail_u32("init_emitter_contract", "native_data_proc",
+             stats.native_data_proc_insns, 0);
+  if (stats.native_branch_insns != 0)
+    fail_u32("init_emitter_contract", "native_branch",
+             stats.native_branch_insns, 0);
+  if (stats.native_load_insns != 0)
+    fail_u32("init_emitter_contract", "native_load",
+             stats.native_load_insns, 0);
+  if (stats.native_store_insns != 0)
+    fail_u32("init_emitter_contract", "native_store",
+             stats.native_store_insns, 0);
+  if (stats.native_psr_insns != 0)
+    fail_u32("init_emitter_contract", "native_psr",
+             stats.native_psr_insns, 0);
+}
+
+static void run_first_emit_stats_case(void)
+{
+  riscv_get_runtime_stats(&g_first_emit_stats);
+
+  if (g_first_emit_stats.blocks_emitted != 1)
+    fail_u32("first_emit_stats", "blocks_emitted",
+             g_first_emit_stats.blocks_emitted, 1);
+  if (g_first_emit_stats.blocks_executed != 0)
+    fail_u32("first_emit_stats", "blocks_executed",
+             g_first_emit_stats.blocks_executed, 0);
+  if (g_first_emit_stats.interpreter_fallbacks != 0)
+    fail_u32("first_emit_stats", "interpreter_fallbacks",
+             g_first_emit_stats.interpreter_fallbacks, 0);
+  if (g_first_emit_stats.native_data_proc_insns != 1)
+    fail_u32("first_emit_stats", "native_data_proc",
+             g_first_emit_stats.native_data_proc_insns, 1);
+  if (g_first_emit_stats.native_branch_insns != 0)
+    fail_u32("first_emit_stats", "native_branch",
+             g_first_emit_stats.native_branch_insns, 0);
+  if (g_first_emit_stats.native_load_insns != 0)
+    fail_u32("first_emit_stats", "native_load",
+             g_first_emit_stats.native_load_insns, 0);
+  if (g_first_emit_stats.native_store_insns != 0)
+    fail_u32("first_emit_stats", "native_store",
+             g_first_emit_stats.native_store_insns, 0);
+  if (g_first_emit_stats.native_psr_insns != 0)
+    fail_u32("first_emit_stats", "native_psr",
+             g_first_emit_stats.native_psr_insns, 0);
 }
 
 static u32 build_data_block(u8 *code)
@@ -6836,6 +6894,7 @@ void _start(void)
   run_init_emitter_contract_case();
 
   data_code_bytes = build_data_block(code);
+  run_first_emit_stats_case();
   chain_second_code_bytes =
     build_single_data_proc_block(code + CHAIN_SECOND_BLOCK_OFFSET,
                                  ADD_R3_R2_R1,
@@ -7571,6 +7630,10 @@ void _start(void)
   put_u32_hex(rom_cache_watermark);
   put_raw(" init_bios_hooks=");
   put_u32_dec(g_init_bios_hooks_calls);
+  put_raw(" first_emit_blocks=");
+  put_u32_dec(g_first_emit_stats.blocks_emitted);
+  put_raw(" first_emit_data=");
+  put_u32_dec(g_first_emit_stats.native_data_proc_insns);
   put_raw(" data_entry=");
   put_u32_hex((u32)g_data_entry);
   put_raw(" chain_second_entry=");

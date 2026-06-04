@@ -25,6 +25,18 @@ typedef struct riscv_jit_block_meta
   u32 flags;
 } riscv_jit_block_meta;
 
+typedef struct riscv_runtime_stats
+{
+  u32 blocks_emitted;
+  u32 blocks_executed;
+  u32 interpreter_fallbacks;
+  u32 native_data_proc_insns;
+  u32 native_branch_insns;
+  u32 native_load_insns;
+  u32 native_store_insns;
+  u32 native_psr_insns;
+} riscv_runtime_stats;
+
 void riscv_emit_block_prologue(u8 **translation_ptr,
                                riscv_jit_block_meta **meta);
 void riscv_emit_block_finalize(riscv_jit_block_meta *meta,
@@ -111,6 +123,7 @@ bool riscv_emit_native_arm_access_memory(u8 **translation_ptr,
 u32 execute_arm_translate(u32 cycles);
 u32 execute_arm_translate_internal(u32 cycles, void *regptr);
 void init_emitter(bool must_swap);
+void riscv_get_runtime_stats(riscv_runtime_stats *stats);
 
 #define generate_block_extra_vars()                                           \
   riscv_jit_block_meta *riscv_block_meta = NULL
