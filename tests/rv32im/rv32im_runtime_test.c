@@ -52,6 +52,25 @@ typedef unsigned int usize;
 #define MULTIPLY_FLAG_R7_VALUE 0x80000000u
 #define MULTIPLY_FLAG_MULS_CPSR_VALUE (0x40000000u | CPSR_CV_LOW_VALUE)
 #define MULTIPLY_FLAG_MLAS_CPSR_VALUE (0x80000000u | CPSR_CV_LOW_VALUE)
+#define MULTIPLY_LONG_START_PC 0x08000980u
+#define MULTIPLY_LONG_END_PC (MULTIPLY_LONG_START_PC + 8u)
+#define MULTIPLY_LONG_UMULL_CYCLES 7u
+#define MULTIPLY_LONG_SMULL_CYCLES 6u
+#define MULTIPLY_LONG_TOTAL_CYCLES \
+  (MULTIPLY_LONG_UMULL_CYCLES + MULTIPLY_LONG_SMULL_CYCLES)
+#define MULTIPLY_LONG_UMULL_R8_R9_R1_R2 0xe0898291u
+#define MULTIPLY_LONG_SMULL_R10_R11_R3_R4 0xe0cba493u
+#define MULTIPLY_LONG_UMLAL_R8_R9_R1_R2 0xe0a98291u
+#define MULTIPLY_LONG_UMULLS_R8_R9_R1_R2 0xe0998291u
+#define MULTIPLY_LONG_UMULL_R8_R9_R15_R2 0xe089829fu
+#define MULTIPLY_LONG_UMULL_R1_VALUE 0xffffffffu
+#define MULTIPLY_LONG_UMULL_R2_VALUE 0x00000002u
+#define MULTIPLY_LONG_UMULL_LO_VALUE 0xfffffffeu
+#define MULTIPLY_LONG_UMULL_HI_VALUE 0x00000001u
+#define MULTIPLY_LONG_SMULL_R3_VALUE 0xfffffffeu
+#define MULTIPLY_LONG_SMULL_R4_VALUE 0x00000003u
+#define MULTIPLY_LONG_SMULL_LO_VALUE 0xfffffffau
+#define MULTIPLY_LONG_SMULL_HI_VALUE 0xffffffffu
 #define CARRY_DATA_START_PC 0x080000c0u
 #define CARRY_DATA_END_PC (CARRY_DATA_START_PC + 12u)
 #define CARRY_DATA_ADC_CYCLES 4u
@@ -453,6 +472,7 @@ typedef unsigned int usize;
 #define PSR_BLOCK_OFFSET 24064u
 #define MULTIPLY_FLAG_MULS_BLOCK_OFFSET 24576u
 #define MULTIPLY_FLAG_MLAS_BLOCK_OFFSET 25088u
+#define MULTIPLY_LONG_BLOCK_OFFSET 25600u
 
 u32 reg[REG_MAX];
 u32 spsr[6];
@@ -465,6 +485,7 @@ static u8 *g_data_entry;
 static u8 *g_multiply_entry;
 static u8 *g_multiply_flag_muls_entry;
 static u8 *g_multiply_flag_mlas_entry;
+static u8 *g_multiply_long_entry;
 static u8 *g_carry_data_entry;
 static u8 *g_cmp_borrow_entry;
 static u8 *g_cmp_equal_entry;
@@ -793,6 +814,40 @@ static u32 build_multiply_flag_block(u8 *code, u32 opcode, u32 start_pc,
   }
 
   riscv_emit_block_finalize(meta, &translation_ptr, start_pc, end_pc, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_multiply_long_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_multiply_long_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_multiply_long(
+        &translation_ptr, meta,
+        MULTIPLY_LONG_UMULL_R8_R9_R1_R2,
+        MULTIPLY_LONG_UMULL_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=umull_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_multiply_long(
+        &translation_ptr, meta,
+        MULTIPLY_LONG_SMULL_R10_R11_R3_R4,
+        MULTIPLY_LONG_SMULL_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=smull_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, MULTIPLY_LONG_START_PC,
+                            MULTIPLY_LONG_END_PC, false);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -1700,6 +1755,31 @@ static void expect_multiply_rejected(u8 *code)
   }
 }
 
+static void expect_multiply_long_rejected(u8 *code)
+{
+  static const u32 rejected_opcodes[] =
+  {
+    MULTIPLY_LONG_UMLAL_R8_R9_R1_R2,
+    MULTIPLY_LONG_UMULLS_R8_R9_R1_R2,
+    MULTIPLY_LONG_UMULL_R8_R9_R15_R2
+  };
+  unsigned i;
+
+  for (i = 0; i < sizeof(rejected_opcodes) / sizeof(rejected_opcodes[0]); i++)
+  {
+    u8 *translation_ptr = code;
+    riscv_jit_block_meta *meta;
+
+    riscv_emit_block_prologue(&translation_ptr, &meta);
+    if (riscv_emit_native_arm_multiply_long(&translation_ptr, meta,
+                                            rejected_opcodes[i],
+                                            MULTIPLY_LONG_UMULL_CYCLES))
+    {
+      fail_u32("multiply_long_reject", "accepted", rejected_opcodes[i], 0);
+    }
+  }
+}
+
 static void expect_stickybits_cleared(const char *test_name)
 {
   unsigned i;
@@ -1867,6 +1947,54 @@ static void run_multiply_flag_mlas_case(void)
     fail_u32("multiply_flag_mlas", "execute_pc",
              g_execute_pc, MULTIPLY_FLAG_MLAS_END_PC);
   expect_stickybits_cleared("multiply_flag_mlas");
+}
+
+static void run_multiply_long_remaining_cycles_case(void)
+{
+  const u32 extra_cycles = 6u;
+
+  reset_runtime_observations(MULTIPLY_LONG_START_PC);
+  g_lookup_entry = g_multiply_long_entry;
+  reg[1] = MULTIPLY_LONG_UMULL_R1_VALUE;
+  reg[2] = MULTIPLY_LONG_UMULL_R2_VALUE;
+  reg[3] = MULTIPLY_LONG_SMULL_R3_VALUE;
+  reg[4] = MULTIPLY_LONG_SMULL_R4_VALUE;
+  reg[REG_CPSR] = CPSR_CV_LOW_VALUE;
+
+  execute_arm_translate_internal(MULTIPLY_LONG_TOTAL_CYCLES + extra_cycles,
+                                 &reg[0]);
+
+  if (reg[8] != MULTIPLY_LONG_UMULL_LO_VALUE)
+    fail_u32("multiply_long_remaining", "r8",
+             reg[8], MULTIPLY_LONG_UMULL_LO_VALUE);
+  if (reg[9] != MULTIPLY_LONG_UMULL_HI_VALUE)
+    fail_u32("multiply_long_remaining", "r9",
+             reg[9], MULTIPLY_LONG_UMULL_HI_VALUE);
+  if (reg[10] != MULTIPLY_LONG_SMULL_LO_VALUE)
+    fail_u32("multiply_long_remaining", "r10",
+             reg[10], MULTIPLY_LONG_SMULL_LO_VALUE);
+  if (reg[11] != MULTIPLY_LONG_SMULL_HI_VALUE)
+    fail_u32("multiply_long_remaining", "r11",
+             reg[11], MULTIPLY_LONG_SMULL_HI_VALUE);
+  if (reg[REG_CPSR] != CPSR_CV_LOW_VALUE)
+    fail_u32("multiply_long_remaining", "cpsr",
+             reg[REG_CPSR], CPSR_CV_LOW_VALUE);
+  if (reg[REG_PC] != MULTIPLY_LONG_END_PC)
+    fail_u32("multiply_long_remaining", "pc",
+             reg[REG_PC], MULTIPLY_LONG_END_PC);
+  if (g_update_calls != 0)
+    fail_u32("multiply_long_remaining", "update_calls",
+             g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("multiply_long_remaining", "execute_calls",
+             g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("multiply_long_remaining", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != MULTIPLY_LONG_END_PC)
+    fail_u32("multiply_long_remaining", "execute_pc",
+             g_execute_pc, MULTIPLY_LONG_END_PC);
+  expect_stickybits_cleared("multiply_long_remaining");
 }
 
 static void expect_carry_data_results(const char *test_name)
@@ -3358,6 +3486,7 @@ void _start(void)
   u32 multiply_code_bytes;
   u32 multiply_flag_muls_code_bytes;
   u32 multiply_flag_mlas_code_bytes;
+  u32 multiply_long_code_bytes;
   u32 carry_data_code_bytes;
   u32 cmp_borrow_code_bytes;
   u32 cmp_equal_code_bytes;
@@ -3420,6 +3549,8 @@ void _start(void)
                               MULTIPLY_FLAG_MLAS_CYCLES,
                               &g_multiply_flag_mlas_entry,
                               "mlas_emit_rejected");
+  multiply_long_code_bytes =
+    build_multiply_long_block(code + MULTIPLY_LONG_BLOCK_OFFSET);
   carry_data_code_bytes =
     build_carry_data_block(code + CARRY_DATA_BLOCK_OFFSET);
   cmp_borrow_code_bytes =
@@ -3541,11 +3672,13 @@ void _start(void)
   expect_logical_data_proc_test_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_psr_unsupported_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_multiply_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
+  expect_multiply_long_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   run_cycle_boundary_case();
   run_remaining_cycles_case();
   run_multiply_remaining_cycles_case();
   run_multiply_flag_muls_case();
   run_multiply_flag_mlas_case();
+  run_multiply_long_remaining_cycles_case();
   run_carry_data_boundary_case();
   run_carry_data_remaining_cycles_case();
   run_data_test_boundary_case("cmp_borrow_boundary", g_cmp_borrow_entry,
@@ -3669,6 +3802,8 @@ void _start(void)
   put_u32_dec(multiply_flag_muls_code_bytes);
   put_raw(" multiply_flag_mlas_code_bytes=");
   put_u32_dec(multiply_flag_mlas_code_bytes);
+  put_raw(" multiply_long_code_bytes=");
+  put_u32_dec(multiply_long_code_bytes);
   put_raw(" carry_data_code_bytes=");
   put_u32_dec(carry_data_code_bytes);
   put_raw(" cmp_borrow_code_bytes=");
@@ -3751,6 +3886,8 @@ void _start(void)
   put_u32_hex((u32)g_multiply_flag_muls_entry);
   put_raw(" multiply_flag_mlas_entry=");
   put_u32_hex((u32)g_multiply_flag_mlas_entry);
+  put_raw(" multiply_long_entry=");
+  put_u32_hex((u32)g_multiply_long_entry);
   put_raw(" carry_data_entry=");
   put_u32_hex((u32)g_carry_data_entry);
   put_raw(" cmp_borrow_entry=");

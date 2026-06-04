@@ -850,6 +850,51 @@ bool riscv_emit_native_arm_multiply(u8 **translation_ptr_ref,
   return true;
 }
 
+bool riscv_emit_native_arm_multiply_long(u8 **translation_ptr_ref,
+                                         riscv_jit_block_meta *meta,
+                                         u32 opcode,
+                                         u32 cycles)
+{
+  u32 condition = opcode >> 28;
+  u32 signed_multiply = (opcode >> 22) & 1u;
+  u32 accumulate = (opcode >> 21) & 1u;
+  u32 set_flags = (opcode >> 20) & 1u;
+  u32 rdhi = (opcode >> 16) & 0xfu;
+  u32 rdlo = (opcode >> 12) & 0xfu;
+  u32 rs = (opcode >> 8) & 0xfu;
+  u32 rm = opcode & 0xfu;
+  u8 *ptr = *translation_ptr_ref;
+  u8 *translation_ptr;
+
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
+    return false;
+
+  if (condition != 0xe || (opcode & 0x0f8000f0u) != 0x00800090u ||
+      accumulate || set_flags || rdhi == REG_PC || rdlo == REG_PC ||
+      rm == REG_PC || rs == REG_PC)
+  {
+    return false;
+  }
+
+  riscv_emit_arm_reg_load(&ptr, riscv_reg_t0, rm);
+  riscv_emit_arm_reg_load(&ptr, riscv_reg_t1, rs);
+  translation_ptr = ptr;
+  riscv_emit_mul(riscv_reg_t2, riscv_reg_t0, riscv_reg_t1);
+  if (signed_multiply)
+    riscv_emit_mulh(riscv_reg_t3, riscv_reg_t0, riscv_reg_t1);
+  else
+    riscv_emit_mulhu(riscv_reg_t3, riscv_reg_t0, riscv_reg_t1);
+  ptr = translation_ptr;
+
+  riscv_emit_arm_reg_store(&ptr, rdlo, riscv_reg_t2);
+  riscv_emit_arm_reg_store(&ptr, rdhi, riscv_reg_t3);
+  riscv_emit_adjust_cycles(&ptr, cycles);
+
+  *translation_ptr_ref = ptr;
+  riscv_native_data_proc_insns++;
+  return true;
+}
+
 bool riscv_emit_native_arm_psr(u8 **translation_ptr_ref,
                                riscv_jit_block_meta *meta,
                                u32 opcode,

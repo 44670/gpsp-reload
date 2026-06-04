@@ -45,6 +45,10 @@ bool riscv_emit_native_arm_multiply(u8 **translation_ptr,
                                     riscv_jit_block_meta *meta,
                                     u32 opcode,
                                     u32 cycles);
+bool riscv_emit_native_arm_multiply_long(u8 **translation_ptr,
+                                         riscv_jit_block_meta *meta,
+                                         u32 opcode,
+                                         u32 cycles);
 bool riscv_emit_native_arm_psr(u8 **translation_ptr,
                                riscv_jit_block_meta *meta,
                                u32 opcode,
@@ -197,7 +201,22 @@ void init_emitter(bool must_swap);
   } while (0)
 
 #define arm_multiply_long(...)                                                \
-  riscv_emit_current_arm_instruction()
+  do                                                                          \
+  {                                                                           \
+    u32 riscv_multiply_long_extra_cycles =                                   \
+      (((opcode >> 22) & 1u) && !((opcode >> 21) & 1u)) ? 2u : 3u;           \
+    if (riscv_emit_native_arm_multiply_long(&translation_ptr,                \
+                                            riscv_block_meta, opcode,        \
+                                            cycle_count +                    \
+                                              riscv_multiply_long_extra_cycles)) \
+    {                                                                         \
+      cycle_count = (u32)(0u - riscv_multiply_long_extra_cycles);            \
+    }                                                                         \
+    else                                                                      \
+    {                                                                         \
+      riscv_emit_current_arm_instruction();                                   \
+    }                                                                         \
+  } while (0)
 
 #define arm_psr(...)                                                          \
   do                                                                          \
