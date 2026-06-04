@@ -15,7 +15,7 @@ typedef unsigned int usize;
 #define PROT_EXEC 4
 #define MAP_PRIVATE 2
 #define MAP_ANONYMOUS 32
-#define EXEC_MAP_BYTES 55296u
+#define EXEC_MAP_BYTES 55808u
 
 #define BLOCK_START_PC 0x08000000u
 #define BLOCK_END_PC 0x08000004u
@@ -31,6 +31,16 @@ typedef unsigned int usize;
 #define CHAIN_R1_VALUE 0x22u
 #define CHAIN_R2_VALUE (CHAIN_R0_VALUE + CHAIN_R1_VALUE)
 #define CHAIN_R3_VALUE (CHAIN_R2_VALUE + CHAIN_R1_VALUE)
+#define CYCLE_UPDATE_START_PC 0x08000e80u
+#define CYCLE_UPDATE_END_PC (CYCLE_UPDATE_START_PC + 4u)
+#define CYCLE_UPDATE_FIRST_CYCLES 3u
+#define CYCLE_UPDATE_SECOND_CYCLES 5u
+#define CYCLE_UPDATE_TOTAL_CYCLES \
+  (CYCLE_UPDATE_FIRST_CYCLES + CYCLE_UPDATE_SECOND_CYCLES)
+#define CYCLE_UPDATE_R0_VALUE 0x00000111u
+#define CYCLE_UPDATE_R1_VALUE 0x00000023u
+#define CYCLE_UPDATE_R2_VALUE \
+  (CYCLE_UPDATE_R0_VALUE + CYCLE_UPDATE_R1_VALUE)
 #define UNSUPPORTED_START_PC 0x08000020u
 #define UNSUPPORTED_END_PC (UNSUPPORTED_START_PC + 4u)
 #define UNSUPPORTED_CYCLES 11u
@@ -888,6 +898,7 @@ typedef unsigned int usize;
 #define EXTERNAL_BRANCH_TARGET_BLOCK_OFFSET 46592u
 #define SWI_PATCH_BLOCK_OFFSET 47104u
 #define CONDITIONAL_BLOCK_OFFSET 47616u
+#define CYCLE_UPDATE_BLOCK_OFFSET 54784u
 #define EXPECTED_INITIAL_ROM_WATERMARK 16u
 
 u32 reg[REG_MAX];
@@ -905,6 +916,7 @@ static u8 *g_thumb_lookup_entry;
 static u32 g_thumb_lookup_entry_pc;
 static u8 *g_data_entry;
 static u8 *g_chain_second_entry;
+static u8 *g_cycle_update_entry;
 static u8 *g_unsupported_entry;
 static u8 *g_thumb_unsupported_entry;
 static u8 *g_multiply_entry;
@@ -1418,6 +1430,40 @@ static u32 build_single_data_proc_block(u8 *code, u32 opcode, u32 start_pc,
 
   riscv_emit_block_finalize(meta, &translation_ptr, start_pc,
                             start_pc + 4u, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_cycle_update_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *riscv_block_meta;
+  u32 cycle_count = CYCLE_UPDATE_FIRST_CYCLES;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &riscv_block_meta);
+  g_cycle_update_entry = ((u8 *)riscv_block_meta) + block_prologue_size;
+
+  generate_cycle_update();
+
+  if (cycle_count != 0)
+  {
+    put_raw("result=FAIL command=runtime reason=cycle_update_pending\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, riscv_block_meta,
+                                       ADD_R2_R0_R1,
+                                       CYCLE_UPDATE_SECOND_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=cycle_update_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(riscv_block_meta, &translation_ptr,
+                            CYCLE_UPDATE_START_PC,
+                            CYCLE_UPDATE_END_PC, false);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -3279,6 +3325,39 @@ static void run_cycle_boundary_case(void)
   if (g_execute_calls != 0)
     fail_u32("cycle_boundary", "execute_calls", g_execute_calls, 0);
   expect_stickybits_cleared("cycle_boundary");
+}
+
+static void run_cycle_update_checkpoint_case(void)
+{
+  reset_runtime_observations(CYCLE_UPDATE_START_PC);
+  g_lookup_entry = g_cycle_update_entry;
+  reg[0] = CYCLE_UPDATE_R0_VALUE;
+  reg[1] = CYCLE_UPDATE_R1_VALUE;
+
+  execute_arm_translate_internal(CYCLE_UPDATE_TOTAL_CYCLES, &reg[0]);
+
+  if (reg[2] != CYCLE_UPDATE_R2_VALUE)
+    fail_u32("cycle_update_checkpoint", "r2",
+             reg[2], CYCLE_UPDATE_R2_VALUE);
+  if (reg[REG_PC] != CYCLE_UPDATE_END_PC)
+    fail_u32("cycle_update_checkpoint", "pc",
+             reg[REG_PC], CYCLE_UPDATE_END_PC);
+  if (g_lookup_calls != 1)
+    fail_u32("cycle_update_checkpoint", "lookup_calls",
+             g_lookup_calls, 1);
+  if (g_lookup_pc != CYCLE_UPDATE_START_PC)
+    fail_u32("cycle_update_checkpoint", "lookup_pc",
+             g_lookup_pc, CYCLE_UPDATE_START_PC);
+  if (g_update_calls != 1)
+    fail_u32("cycle_update_checkpoint", "update_calls",
+             g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("cycle_update_checkpoint", "update_cycles",
+             (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("cycle_update_checkpoint", "execute_calls",
+             g_execute_calls, 0);
+  expect_stickybits_cleared("cycle_update_checkpoint");
 }
 
 static void run_unsupported_block_fallback_case(void)
@@ -7334,6 +7413,7 @@ void _start(void)
   u8 *code = (u8 *)map_exec_page();
   u32 data_code_bytes;
   u32 chain_second_code_bytes;
+  u32 cycle_update_code_bytes;
   u32 unsupported_code_bytes;
   u32 thumb_unsupported_code_bytes;
   u32 multiply_code_bytes;
@@ -7429,6 +7509,8 @@ void _start(void)
   data_code_bytes = build_data_block(code);
   run_first_emit_stats_case();
   run_first_execute_stats_case();
+  cycle_update_code_bytes =
+    build_cycle_update_block(code + CYCLE_UPDATE_BLOCK_OFFSET);
   chain_second_code_bytes =
     build_single_data_proc_block(code + CHAIN_SECOND_BLOCK_OFFSET,
                                  ADD_R3_R2_R1,
@@ -7815,6 +7897,7 @@ void _start(void)
   expect_swap_pc_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_conditional_arm_ops_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   run_cycle_boundary_case();
+  run_cycle_update_checkpoint_case();
   run_unsupported_block_fallback_case();
   run_thumb_unsupported_block_fallback_case();
   run_initial_lookup_miss_fallback_case();
@@ -8025,6 +8108,8 @@ void _start(void)
   put_u32_dec(data_code_bytes);
   put_raw(" chain_second_code_bytes=");
   put_u32_dec(chain_second_code_bytes);
+  put_raw(" cycle_update_code_bytes=");
+  put_u32_dec(cycle_update_code_bytes);
   put_raw(" unsupported_code_bytes=");
   put_u32_dec(unsupported_code_bytes);
   put_raw(" thumb_unsupported_code_bytes=");
@@ -8207,6 +8292,8 @@ void _start(void)
   put_u32_hex((u32)g_data_entry);
   put_raw(" chain_second_entry=");
   put_u32_hex((u32)g_chain_second_entry);
+  put_raw(" cycle_update_entry=");
+  put_u32_hex((u32)g_cycle_update_entry);
   put_raw(" unsupported_entry=");
   put_u32_hex((u32)g_unsupported_entry);
   put_raw(" thumb_unsupported_entry=");

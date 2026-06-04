@@ -382,6 +382,17 @@ bool riscv_emit_arm_conditional_block_header(u8 **translation_ptr_ref,
   return true;
 }
 
+bool riscv_emit_cycle_update(u8 **translation_ptr_ref,
+                             riscv_jit_block_meta *meta,
+                             u32 cycles)
+{
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
+    return false;
+
+  riscv_emit_adjust_cycles(translation_ptr_ref, cycles);
+  return true;
+}
+
 static u32 function_cc riscv_store_u8(u32 address, u32 value)
 {
   cpu_alert_type alert = write_memory8(address, (u8)value);

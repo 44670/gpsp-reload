@@ -142,6 +142,9 @@ bool riscv_emit_native_arm_access_memory(u8 **translation_ptr,
                                          u32 opcode,
                                          u32 pc,
                                          u32 cycles);
+bool riscv_emit_cycle_update(u8 **translation_ptr,
+                             riscv_jit_block_meta *meta,
+                             u32 cycles);
 
 u32 execute_arm_translate(u32 cycles);
 u32 execute_arm_translate_internal(u32 cycles, void *regptr);
@@ -164,7 +167,19 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
 #define generate_cycle_update()                                               \
   do                                                                          \
   {                                                                           \
-    riscv_mark_block_unsupported(riscv_block_meta);                           \
+    if (cycle_count != 0)                                                     \
+    {                                                                         \
+      if (riscv_emit_cycle_update(&translation_ptr, riscv_block_meta,         \
+                                  cycle_count))                               \
+      {                                                                       \
+        cycle_count = 0;                                                      \
+      }                                                                       \
+      else                                                                    \
+      {                                                                       \
+        riscv_mark_block_unsupported(riscv_block_meta);                       \
+        cycle_count = 0;                                                      \
+      }                                                                       \
+    }                                                                         \
   } while (0)
 
 #define generate_branch_patch_conditional(dest, offset)                       \
