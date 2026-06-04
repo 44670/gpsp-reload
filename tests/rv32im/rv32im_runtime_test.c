@@ -15,7 +15,7 @@ typedef unsigned int usize;
 #define PROT_EXEC 4
 #define MAP_PRIVATE 2
 #define MAP_ANONYMOUS 32
-#define EXEC_MAP_BYTES 24576u
+#define EXEC_MAP_BYTES 28672u
 
 #define BLOCK_START_PC 0x08000000u
 #define BLOCK_END_PC 0x08000004u
@@ -56,22 +56,27 @@ typedef unsigned int usize;
 #define TST_SIMPLE_START_PC 0x08000100u
 #define CMN_OVERFLOW_START_PC 0x08000110u
 #define TEQ_SIMPLE_START_PC 0x08000120u
+#define TST_SHIFT_START_PC 0x080008c0u
 #define CMP_BORROW_END_PC (CMP_BORROW_START_PC + 4u)
 #define CMP_EQUAL_END_PC (CMP_EQUAL_START_PC + 4u)
 #define TST_SIMPLE_END_PC (TST_SIMPLE_START_PC + 4u)
 #define CMN_OVERFLOW_END_PC (CMN_OVERFLOW_START_PC + 4u)
 #define TEQ_SIMPLE_END_PC (TEQ_SIMPLE_START_PC + 4u)
+#define TST_SHIFT_END_PC (TST_SHIFT_START_PC + 4u)
 #define CMP_BORROW_CYCLES 4u
 #define CMP_EQUAL_CYCLES 5u
 #define TST_SIMPLE_CYCLES 4u
 #define CMN_OVERFLOW_CYCLES 6u
 #define TEQ_SIMPLE_CYCLES 5u
+#define TST_SHIFT_CYCLES 6u
 #define CMP_R0_0X20 0xe3500020u
 #define CMN_R1_0X1 0xe3710001u
 #define TST_R0_R1 0xe1100001u
 #define TEQ_R0_0XFF 0xe33000ffu
 #define TST_R0_R1_LSR4 0xe1100221u
+#define TST_R0_R1_LSL_R2 0xe1100211u
 #define CPSR_LOW_VALUE 0x9fu
+#define CPSR_V_LOW_VALUE (0x10000000u | CPSR_LOW_VALUE)
 #define CPSR_CV_LOW_VALUE (0x30000000u | CPSR_LOW_VALUE)
 #define CMP_BORROW_R0_VALUE 0x00000010u
 #define CMP_EQUAL_R0_VALUE 0x00000020u
@@ -79,11 +84,14 @@ typedef unsigned int usize;
 #define TST_SIMPLE_R1_VALUE 0x00ff0000u
 #define CMN_OVERFLOW_R1_VALUE 0x7fffffffu
 #define TEQ_SIMPLE_R0_VALUE 0x000000ffu
+#define TST_SHIFT_R0_VALUE 0x00000001u
+#define TST_SHIFT_R1_VALUE 0x00000018u
 #define CMP_BORROW_CPSR_VALUE (0x80000000u | CPSR_LOW_VALUE)
 #define CMP_EQUAL_CPSR_VALUE (0x60000000u | CPSR_LOW_VALUE)
 #define TST_SIMPLE_CPSR_VALUE CPSR_CV_LOW_VALUE
 #define CMN_OVERFLOW_CPSR_VALUE (0x90000000u | CPSR_LOW_VALUE)
 #define TEQ_SIMPLE_CPSR_VALUE (0x40000000u | CPSR_CV_LOW_VALUE)
+#define TST_SHIFT_CPSR_VALUE CPSR_CV_LOW_VALUE
 #define FLAG_SUBS_START_PC 0x08000800u
 #define FLAG_ADDS_START_PC 0x08000820u
 #define FLAG_RSBS_START_PC 0x08000840u
@@ -126,6 +134,33 @@ typedef unsigned int usize;
 #define CARRY_FLAG_ADCS_CPSR_VALUE (0x90000000u | CPSR_LOW_VALUE)
 #define CARRY_FLAG_SBCS_CPSR_VALUE (0x80000000u | CPSR_LOW_VALUE)
 #define CARRY_FLAG_RSCS_CPSR_VALUE (0x60000000u | CPSR_LOW_VALUE)
+#define LOGICAL_FLAG_START_PC 0x080008e0u
+#define LOGICAL_FLAG_END_PC (LOGICAL_FLAG_START_PC + 24u)
+#define LOGICAL_FLAG_ANDS_CYCLES 4u
+#define LOGICAL_FLAG_EORS_CYCLES 5u
+#define LOGICAL_FLAG_ORRS_CYCLES 6u
+#define LOGICAL_FLAG_MOVS_CYCLES 7u
+#define LOGICAL_FLAG_BICS_CYCLES 8u
+#define LOGICAL_FLAG_MVNS_CYCLES 9u
+#define LOGICAL_FLAG_TOTAL_CYCLES \
+  (LOGICAL_FLAG_ANDS_CYCLES + LOGICAL_FLAG_EORS_CYCLES + \
+   LOGICAL_FLAG_ORRS_CYCLES + LOGICAL_FLAG_MOVS_CYCLES + \
+   LOGICAL_FLAG_BICS_CYCLES + LOGICAL_FLAG_MVNS_CYCLES)
+#define ANDS_R6_R0_R1_LSR4 0xe0106221u
+#define EORS_R7_R0_0XFF 0xe23070ffu
+#define ORRS_R8_R0_R1 0xe1908001u
+#define MOVS_R9_R1_ROR8 0xe1b09461u
+#define BICS_R10_R0_R1 0xe1d0a001u
+#define MVNS_R11_ROT_0X80 0xe3f0b480u
+#define LOGICAL_FLAG_R0_VALUE 0x0f0f0001u
+#define LOGICAL_FLAG_R1_VALUE 0x00000018u
+#define LOGICAL_FLAG_R6_VALUE 0x00000001u
+#define LOGICAL_FLAG_R7_VALUE 0x0f0f00feu
+#define LOGICAL_FLAG_R8_VALUE 0x0f0f0019u
+#define LOGICAL_FLAG_R9_VALUE 0x18000000u
+#define LOGICAL_FLAG_R10_VALUE 0x0f0f0001u
+#define LOGICAL_FLAG_R11_VALUE 0x7fffffffu
+#define LOGICAL_FLAG_CPSR_VALUE CPSR_CV_LOW_VALUE
 #define DATA_EXT_START_PC 0x08000040u
 #define DATA_EXT_END_PC (DATA_EXT_START_PC + 28u)
 #define DATA_EXT_BIC_CYCLES 5u
@@ -370,6 +405,8 @@ typedef unsigned int usize;
 #define CARRY_FLAG_ADCS_BLOCK_OFFSET 18944u
 #define CARRY_FLAG_SBCS_BLOCK_OFFSET 19456u
 #define CARRY_FLAG_RSCS_BLOCK_OFFSET 19968u
+#define TST_SHIFT_BLOCK_OFFSET 20480u
+#define LOGICAL_FLAG_BLOCK_OFFSET 22016u
 
 u32 reg[REG_MAX];
 u32 idle_loop_target_pc;
@@ -383,6 +420,7 @@ static u8 *g_carry_data_entry;
 static u8 *g_cmp_borrow_entry;
 static u8 *g_cmp_equal_entry;
 static u8 *g_tst_simple_entry;
+static u8 *g_tst_shift_entry;
 static u8 *g_cmn_overflow_entry;
 static u8 *g_teq_simple_entry;
 static u8 *g_flag_subs_entry;
@@ -391,6 +429,7 @@ static u8 *g_flag_rsbs_entry;
 static u8 *g_carry_flag_adcs_entry;
 static u8 *g_carry_flag_sbcs_entry;
 static u8 *g_carry_flag_rscs_entry;
+static u8 *g_logical_flag_entry;
 static u8 *g_data_ext_entry;
 static u8 *g_branch_entry;
 static u8 *g_bl_entry;
@@ -767,6 +806,70 @@ static u32 build_flag_data_block(u8 *code, u32 opcode, u32 start_pc,
   }
 
   riscv_emit_block_finalize(meta, &translation_ptr, start_pc, end_pc, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_logical_flag_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_logical_flag_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       ANDS_R6_R0_R1_LSR4,
+                                       LOGICAL_FLAG_ANDS_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=ands_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       EORS_R7_R0_0XFF,
+                                       LOGICAL_FLAG_EORS_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=eors_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       ORRS_R8_R0_R1,
+                                       LOGICAL_FLAG_ORRS_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=orrs_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       MOVS_R9_R1_ROR8,
+                                       LOGICAL_FLAG_MOVS_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=movs_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       BICS_R10_R0_R1,
+                                       LOGICAL_FLAG_BICS_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=bics_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       MVNS_R11_ROT_0X80,
+                                       LOGICAL_FLAG_MVNS_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=mvns_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, LOGICAL_FLAG_START_PC,
+                            LOGICAL_FLAG_END_PC, false);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -1409,10 +1512,10 @@ static void expect_logical_data_proc_test_rejected(u8 *code)
 
   riscv_emit_block_prologue(&translation_ptr, &meta);
   if (riscv_emit_native_arm_data_proc_test(&translation_ptr, meta,
-                                           TST_R0_R1_LSR4,
+                                           TST_R0_R1_LSL_R2,
                                            CMP_BORROW_CYCLES))
   {
-    fail_u32("data_proc_test_reject", "accepted", TST_R0_R1_LSR4, 0);
+    fail_u32("data_proc_test_reject", "accepted", TST_R0_R1_LSL_R2, 0);
   }
 }
 
@@ -1735,6 +1838,56 @@ static void run_flag_data_case(const char *test_name, u8 *entry,
   }
 
   expect_stickybits_cleared(test_name);
+}
+
+static void run_logical_flag_remaining_case(void)
+{
+  const u32 extra_cycles = 7u;
+
+  reset_runtime_observations(LOGICAL_FLAG_START_PC);
+  g_lookup_entry = g_logical_flag_entry;
+  reg[0] = LOGICAL_FLAG_R0_VALUE;
+  reg[1] = LOGICAL_FLAG_R1_VALUE;
+  reg[REG_CPSR] = CPSR_V_LOW_VALUE;
+
+  execute_arm_translate_internal(LOGICAL_FLAG_TOTAL_CYCLES + extra_cycles,
+                                 &reg[0]);
+
+  if (reg[6] != LOGICAL_FLAG_R6_VALUE)
+    fail_u32("logical_flag_remaining", "r6",
+             reg[6], LOGICAL_FLAG_R6_VALUE);
+  if (reg[7] != LOGICAL_FLAG_R7_VALUE)
+    fail_u32("logical_flag_remaining", "r7",
+             reg[7], LOGICAL_FLAG_R7_VALUE);
+  if (reg[8] != LOGICAL_FLAG_R8_VALUE)
+    fail_u32("logical_flag_remaining", "r8",
+             reg[8], LOGICAL_FLAG_R8_VALUE);
+  if (reg[9] != LOGICAL_FLAG_R9_VALUE)
+    fail_u32("logical_flag_remaining", "r9",
+             reg[9], LOGICAL_FLAG_R9_VALUE);
+  if (reg[10] != LOGICAL_FLAG_R10_VALUE)
+    fail_u32("logical_flag_remaining", "r10",
+             reg[10], LOGICAL_FLAG_R10_VALUE);
+  if (reg[11] != LOGICAL_FLAG_R11_VALUE)
+    fail_u32("logical_flag_remaining", "r11",
+             reg[11], LOGICAL_FLAG_R11_VALUE);
+  if (reg[REG_CPSR] != LOGICAL_FLAG_CPSR_VALUE)
+    fail_u32("logical_flag_remaining", "cpsr",
+             reg[REG_CPSR], LOGICAL_FLAG_CPSR_VALUE);
+  if (reg[REG_PC] != LOGICAL_FLAG_END_PC)
+    fail_u32("logical_flag_remaining", "pc",
+             reg[REG_PC], LOGICAL_FLAG_END_PC);
+  if (g_update_calls != 0)
+    fail_u32("logical_flag_remaining", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("logical_flag_remaining", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("logical_flag_remaining", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != LOGICAL_FLAG_END_PC)
+    fail_u32("logical_flag_remaining", "execute_pc",
+             g_execute_pc, LOGICAL_FLAG_END_PC);
+  expect_stickybits_cleared("logical_flag_remaining");
 }
 
 static void run_data_ext_remaining_cycles_case(void)
@@ -2892,6 +3045,7 @@ void _start(void)
   u32 cmp_borrow_code_bytes;
   u32 cmp_equal_code_bytes;
   u32 tst_simple_code_bytes;
+  u32 tst_shift_code_bytes;
   u32 cmn_overflow_code_bytes;
   u32 teq_simple_code_bytes;
   u32 flag_subs_code_bytes;
@@ -2900,6 +3054,7 @@ void _start(void)
   u32 carry_flag_adcs_code_bytes;
   u32 carry_flag_sbcs_code_bytes;
   u32 carry_flag_rscs_code_bytes;
+  u32 logical_flag_code_bytes;
   u32 data_ext_code_bytes;
   u32 branch_code_bytes;
   u32 bl_code_bytes;
@@ -2947,6 +3102,11 @@ void _start(void)
                           TST_R0_R1, TST_SIMPLE_START_PC,
                           TST_SIMPLE_END_PC, TST_SIMPLE_CYCLES,
                           &g_tst_simple_entry, "tst_simple_emit_rejected");
+  tst_shift_code_bytes =
+    build_data_test_block(code + TST_SHIFT_BLOCK_OFFSET,
+                          TST_R0_R1_LSR4, TST_SHIFT_START_PC,
+                          TST_SHIFT_END_PC, TST_SHIFT_CYCLES,
+                          &g_tst_shift_entry, "tst_shift_emit_rejected");
   cmn_overflow_code_bytes =
     build_data_test_block(code + CMN_OVERFLOW_BLOCK_OFFSET,
                           CMN_R1_0X1, CMN_OVERFLOW_START_PC,
@@ -2988,6 +3148,8 @@ void _start(void)
                           RSCS_R8_R2_0X20, CARRY_FLAG_RSCS_START_PC,
                           CARRY_FLAG_RSCS_END_PC, CARRY_FLAG_RSCS_CYCLES,
                           &g_carry_flag_rscs_entry, "rscs_emit_rejected");
+  logical_flag_code_bytes =
+    build_logical_flag_block(code + LOGICAL_FLAG_BLOCK_OFFSET);
   data_ext_code_bytes = build_data_ext_block(code + DATA_EXT_BLOCK_OFFSET);
   branch_code_bytes = build_branch_block(code + BRANCH_BLOCK_OFFSET);
   bl_code_bytes = build_bl_block(code + BL_BLOCK_OFFSET);
@@ -3066,6 +3228,15 @@ void _start(void)
                                       TST_SIMPLE_R1_VALUE,
                                       CPSR_CV_LOW_VALUE,
                                       TST_SIMPLE_CPSR_VALUE);
+  run_data_test_two_reg_boundary_case("tst_shift_boundary",
+                                      g_tst_shift_entry,
+                                      TST_SHIFT_START_PC,
+                                      TST_SHIFT_END_PC,
+                                      TST_SHIFT_CYCLES, 0,
+                                      TST_SHIFT_R0_VALUE, 1,
+                                      TST_SHIFT_R1_VALUE,
+                                      CPSR_V_LOW_VALUE,
+                                      TST_SHIFT_CPSR_VALUE);
   run_data_test_remaining_case("cmn_overflow_remaining",
                                g_cmn_overflow_entry,
                                CMN_OVERFLOW_START_PC,
@@ -3116,6 +3287,7 @@ void _start(void)
                      CARRY_FLAG_RSCS_R2_VALUE, 8,
                      CARRY_FLAG_RSCS_R8_VALUE, CPSR_LOW_VALUE,
                      CARRY_FLAG_RSCS_CPSR_VALUE, 6);
+  run_logical_flag_remaining_case();
   run_data_ext_remaining_cycles_case();
   run_branch_boundary_case();
   run_branch_remaining_cycles_case();
@@ -3158,6 +3330,8 @@ void _start(void)
   put_u32_dec(cmp_equal_code_bytes);
   put_raw(" tst_simple_code_bytes=");
   put_u32_dec(tst_simple_code_bytes);
+  put_raw(" tst_shift_code_bytes=");
+  put_u32_dec(tst_shift_code_bytes);
   put_raw(" cmn_overflow_code_bytes=");
   put_u32_dec(cmn_overflow_code_bytes);
   put_raw(" teq_simple_code_bytes=");
@@ -3174,6 +3348,8 @@ void _start(void)
   put_u32_dec(carry_flag_sbcs_code_bytes);
   put_raw(" carry_flag_rscs_code_bytes=");
   put_u32_dec(carry_flag_rscs_code_bytes);
+  put_raw(" logical_flag_code_bytes=");
+  put_u32_dec(logical_flag_code_bytes);
   put_raw(" data_ext_code_bytes=");
   put_u32_dec(data_ext_code_bytes);
   put_raw(" branch_code_bytes=");
@@ -3228,6 +3404,8 @@ void _start(void)
   put_u32_hex((u32)g_cmp_equal_entry);
   put_raw(" tst_simple_entry=");
   put_u32_hex((u32)g_tst_simple_entry);
+  put_raw(" tst_shift_entry=");
+  put_u32_hex((u32)g_tst_shift_entry);
   put_raw(" cmn_overflow_entry=");
   put_u32_hex((u32)g_cmn_overflow_entry);
   put_raw(" teq_simple_entry=");
@@ -3244,6 +3422,8 @@ void _start(void)
   put_u32_hex((u32)g_carry_flag_sbcs_entry);
   put_raw(" carry_flag_rscs_entry=");
   put_u32_hex((u32)g_carry_flag_rscs_entry);
+  put_raw(" logical_flag_entry=");
+  put_u32_hex((u32)g_logical_flag_entry);
   put_raw(" data_ext_entry=");
   put_u32_hex((u32)g_data_ext_entry);
   put_raw(" branch_entry=");
