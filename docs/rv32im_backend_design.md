@@ -259,7 +259,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   `cont`, `stepi`, `stepb`, `regs`, `mem`, `counters`, `tracepc`,
   `framehash`, `compare`, `png`, and `quit`
 - qemu-user harness `compare` execution of generated RV32IM
-  `ADD r2, r0, r1`, `ADDS`, `CMP`, `MUL`, `MLA`, `UMULL`, `SMULL`,
+  `ADD r2, r0, r1`, `ADDS`, `SUBS`, `RSBS`, `CMP`, `MUL`, `MLA`,
+  `UMULL`, `SMULL`,
   `UMULLS`, `SMULLS`, `UMLAL`, `SMLAL`, `UMLALS`, `SMLALS`,
   `ADC`, `SBC`, `RSC`, `ADCS`, `SBCS`, `RSCS`, `MRS CPSR`,
   `MRS SPSR`, `MSR CPSR_flg`, `MSR SPSR`, `LDR`, `LDRB`, `STR`,
@@ -279,7 +280,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   store-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, and Thumb lookup-miss fallback fixtures against a local ARM
   reference model, with
-  fifty-three runtime blocks executed, ADDS/CMP CPSR flag results and
+  fifty-five runtime blocks executed, ADDS/SUBS/RSBS/CMP CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results, MSR CPSR flag and
   SPSR helper-write effects, and native PSR accounting checked,
   multiply/accumulate, unsigned/signed long multiply, long multiply flag,
