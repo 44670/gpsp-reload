@@ -244,8 +244,9 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - raw RV32I/M emitter encoding checks against clang/LLVM reference output
 - qemu-riscv32 ABI entry/return checks
 - data-processing, flag-producing data-processing, multiply, long multiply,
-  PSR, load/store, register-offset load, writeback memory, halfword,
-  block memory, SWP, SWI, HLE div, and PC-source
+  PSR, load/store, register-offset load, writeback memory, immediate and
+  register-offset halfword memory, block memory, SWP, SWI, HLE div, and
+  PC-source
   runtime cases
 - helper-backed memory paths and CPU alert handling for SMC, IRQ, and HALT
 - scheduler update and frame-complete exits through `update_gba()` semantics
@@ -260,7 +261,9 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - qemu-user harness `compare` execution of generated RV32IM
   `ADD r2, r0, r1`, `ADDS`, `CMP`, `MUL`, `MLA`, `MRS CPSR`,
   `MRS SPSR`, `MSR CPSR_flg`, `MSR SPSR`, `LDR`, `LDRB`, `STR`,
-  `LDRH`, `LDRSB`, `LDRSH`, `STRH`, `STMIA`, `LDMIA`,
+  `LDRH`, register-offset `LDRH`, `LDRSB`, register-offset `LDRSB`,
+  `LDRSH`, register-offset `LDRSH`, `STRH`, register-offset `STRH`,
+  `STMIA`, `LDMIA`,
   HLE `Div`, HLE `DivArm`, PC-source data-processing/test ops,
   register-offset/shifted/RRX load ops, pre/post-index writeback memory ops,
   `SWP`,
@@ -273,13 +276,14 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   store-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, and Thumb lookup-miss fallback fixtures against a local ARM
   reference model, with
-  thirty-seven runtime blocks executed, ADDS/CMP CPSR flag results and
+  thirty-nine runtime blocks executed, ADDS/CMP CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results, MSR CPSR flag and
   SPSR helper-write effects, and native PSR accounting checked,
   multiply/accumulate results checked, helper memory and alert observations hashed,
   register-offset, shifted register-offset, subtract-offset, and RRX load
   address/value observations checked,
-  halfword signed/unsigned helper load results and store observations checked,
+  immediate and register-offset halfword signed/unsigned helper load results
+  and store observations checked,
   immediate memory writeback address/source ordering checked,
   block-memory writeback and ordered multi-word helper transfers checked,
   HLE division quotient/remainder/absolute-quotient helper results checked,
