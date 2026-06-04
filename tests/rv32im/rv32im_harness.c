@@ -35,7 +35,7 @@ typedef unsigned int usize;
 #define ZLIB_BLOCK_MAX 65535u
 #define ZLIB_BLOCKS ((PNG_RAW_SIZE + ZLIB_BLOCK_MAX - 1) / ZLIB_BLOCK_MAX)
 #define ZLIB_SIZE (2 + PNG_RAW_SIZE + (ZLIB_BLOCKS * 5) + 4)
-#define RUNTIME_EXEC_MAP_BYTES 27648u
+#define RUNTIME_EXEC_MAP_BYTES 29696u
 #define RUNTIME_LOAD_BLOCK_OFFSET 512u
 #define RUNTIME_STORE_BLOCK_OFFSET 1024u
 #define RUNTIME_BRANCH_BLOCK_OFFSET 1536u
@@ -88,6 +88,7 @@ typedef unsigned int usize;
 #define RUNTIME_FLAG_SUBS_BLOCK_OFFSET 26112u
 #define RUNTIME_FLAG_RSBS_BLOCK_OFFSET 26624u
 #define RUNTIME_LOGICAL_FLAG_BLOCK_OFFSET 27136u
+#define RUNTIME_DATA_EXT_BLOCK_OFFSET 28672u
 #define RUNTIME_START_PC 0x08000000u
 #define RUNTIME_END_PC (RUNTIME_START_PC + 4u)
 #define RUNTIME_CYCLES 7u
@@ -270,6 +271,40 @@ typedef unsigned int usize;
 #define RUNTIME_LOGICAL_FLAG_R10_VALUE 0x0f0f0001u
 #define RUNTIME_LOGICAL_FLAG_R11_VALUE 0x7fffffffu
 #define RUNTIME_LOGICAL_FLAG_CPSR_VALUE RUNTIME_CPSR_CV_LOW_VALUE
+#define RUNTIME_DATA_EXT_START_PC 0x08001320u
+#define RUNTIME_DATA_EXT_END_PC (RUNTIME_DATA_EXT_START_PC + 32u)
+#define RUNTIME_DATA_EXT_BIC_CYCLES 5u
+#define RUNTIME_DATA_EXT_MVN_CYCLES 6u
+#define RUNTIME_DATA_EXT_RSB_CYCLES 3u
+#define RUNTIME_DATA_EXT_RRX_CYCLES 8u
+#define RUNTIME_DATA_EXT_LSL_CYCLES 4u
+#define RUNTIME_DATA_EXT_LSR_CYCLES 5u
+#define RUNTIME_DATA_EXT_ASR_CYCLES 6u
+#define RUNTIME_DATA_EXT_ROR_CYCLES 7u
+#define RUNTIME_DATA_EXT_TOTAL_CYCLES \
+  (RUNTIME_DATA_EXT_BIC_CYCLES + RUNTIME_DATA_EXT_MVN_CYCLES + \
+   RUNTIME_DATA_EXT_RSB_CYCLES + RUNTIME_DATA_EXT_RRX_CYCLES + \
+   RUNTIME_DATA_EXT_LSL_CYCLES + RUNTIME_DATA_EXT_LSR_CYCLES + \
+   RUNTIME_DATA_EXT_ASR_CYCLES + RUNTIME_DATA_EXT_ROR_CYCLES)
+#define RUNTIME_BIC_R9_R0_R1 0xe1c09001u
+#define RUNTIME_MVN_R10_0XFF 0xe3e0a0ffu
+#define RUNTIME_RSB_R7_R0_R1_LSR4 0xe0607221u
+#define RUNTIME_EOR_R6_R0_R1_RRX 0xe0206061u
+#define RUNTIME_ADD_R11_R0_R1_LSL2 0xe080b101u
+#define RUNTIME_ORR_R12_R0_R1_LSR4 0xe180c221u
+#define RUNTIME_MOV_R14_R1_ASR0 0xe1a0e041u
+#define RUNTIME_EOR_R8_R0_R1_ROR8 0xe0208461u
+#define RUNTIME_DATA_EXT_R0_VALUE 0x01010101u
+#define RUNTIME_DATA_EXT_R1_VALUE 0x80000010u
+#define RUNTIME_DATA_EXT_R6_VALUE 0xc1010109u
+#define RUNTIME_DATA_EXT_R7_VALUE 0x06feff00u
+#define RUNTIME_DATA_EXT_R8_VALUE 0x11810101u
+#define RUNTIME_DATA_EXT_R9_VALUE \
+  (RUNTIME_DATA_EXT_R0_VALUE & ~RUNTIME_DATA_EXT_R1_VALUE)
+#define RUNTIME_DATA_EXT_R10_VALUE (~0xffu)
+#define RUNTIME_DATA_EXT_R11_VALUE 0x01010141u
+#define RUNTIME_DATA_EXT_R12_VALUE 0x09010101u
+#define RUNTIME_DATA_EXT_R14_VALUE 0xffffffffu
 #define RUNTIME_FLAG_ADDS_START_PC 0x08000c00u
 #define RUNTIME_FLAG_ADDS_END_PC (RUNTIME_FLAG_ADDS_START_PC + 4u)
 #define RUNTIME_FLAG_ADDS_CYCLES 5u
@@ -726,6 +761,7 @@ static u8 *g_runtime_carry_flag_rscs_entry;
 static u8 *g_runtime_flag_subs_entry;
 static u8 *g_runtime_flag_rsbs_entry;
 static u8 *g_runtime_logical_flag_entry;
+static u8 *g_runtime_data_ext_entry;
 static u8 *g_runtime_flag_adds_entry;
 static u8 *g_runtime_flag_cmp_entry;
 static u8 *g_runtime_psr_entry;
@@ -832,6 +868,7 @@ static void clear_runtime_fixture_entries(void)
   g_runtime_flag_subs_entry = (u8 *)0;
   g_runtime_flag_rsbs_entry = (u8 *)0;
   g_runtime_logical_flag_entry = (u8 *)0;
+  g_runtime_data_ext_entry = (u8 *)0;
   g_runtime_flag_adds_entry = (u8 *)0;
   g_runtime_flag_cmp_entry = (u8 *)0;
   g_runtime_psr_entry = (u8 *)0;
@@ -1192,6 +1229,7 @@ static int build_runtime_fixture_block(const char **reason)
   u32 flag_subs_code_bytes;
   u32 flag_rsbs_code_bytes;
   u32 logical_flag_code_bytes;
+  u32 data_ext_code_bytes;
   u32 flag_adds_code_bytes;
   u32 flag_cmp_code_bytes;
   u32 psr_code_bytes;
@@ -2169,6 +2207,89 @@ static int build_runtime_fixture_block(const char **reason)
     (u32)(translation_ptr -
           (g_runtime_code + RUNTIME_LOGICAL_FLAG_BLOCK_OFFSET));
 
+  translation_ptr = g_runtime_code + RUNTIME_DATA_EXT_BLOCK_OFFSET;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_runtime_data_ext_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       RUNTIME_BIC_R9_R0_R1,
+                                       RUNTIME_DATA_EXT_BIC_CYCLES))
+  {
+    *reason = "runtime_data_ext_bic_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       RUNTIME_MVN_R10_0XFF,
+                                       RUNTIME_DATA_EXT_MVN_CYCLES))
+  {
+    *reason = "runtime_data_ext_mvn_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       RUNTIME_RSB_R7_R0_R1_LSR4,
+                                       RUNTIME_DATA_EXT_RSB_CYCLES))
+  {
+    *reason = "runtime_data_ext_rsb_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       RUNTIME_EOR_R6_R0_R1_RRX,
+                                       RUNTIME_DATA_EXT_RRX_CYCLES))
+  {
+    *reason = "runtime_data_ext_rrx_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       RUNTIME_ADD_R11_R0_R1_LSL2,
+                                       RUNTIME_DATA_EXT_LSL_CYCLES))
+  {
+    *reason = "runtime_data_ext_lsl_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       RUNTIME_ORR_R12_R0_R1_LSR4,
+                                       RUNTIME_DATA_EXT_LSR_CYCLES))
+  {
+    *reason = "runtime_data_ext_lsr_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       RUNTIME_MOV_R14_R1_ASR0,
+                                       RUNTIME_DATA_EXT_ASR_CYCLES))
+  {
+    *reason = "runtime_data_ext_asr_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       RUNTIME_EOR_R8_R0_R1_ROR8,
+                                       RUNTIME_DATA_EXT_ROR_CYCLES))
+  {
+    *reason = "runtime_data_ext_ror_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            RUNTIME_DATA_EXT_START_PC,
+                            RUNTIME_DATA_EXT_END_PC, false);
+  data_ext_code_bytes =
+    (u32)(translation_ptr -
+          (g_runtime_code + RUNTIME_DATA_EXT_BLOCK_OFFSET));
+
   translation_ptr = g_runtime_code + RUNTIME_FLAG_ADDS_BLOCK_OFFSET;
   riscv_emit_block_prologue(&translation_ptr, &meta);
   g_runtime_flag_adds_entry = ((u8 *)meta) + block_prologue_size;
@@ -2901,7 +3022,7 @@ static int build_runtime_fixture_block(const char **reason)
     carry_flag_adcs_code_bytes + carry_flag_sbcs_code_bytes +
     carry_flag_rscs_code_bytes +
     flag_subs_code_bytes + flag_rsbs_code_bytes +
-    logical_flag_code_bytes +
+    logical_flag_code_bytes + data_ext_code_bytes +
     flag_adds_code_bytes + flag_cmp_code_bytes +
     psr_code_bytes + msr_cpsr_flags_code_bytes + msr_spsr_code_bytes +
     half_load_code_bytes + half_store_code_bytes +
@@ -2915,8 +3036,8 @@ static int build_runtime_fixture_block(const char **reason)
     shifted_reg_offset_code_bytes + reg_offset_rrx_load_code_bytes;
   flush_ret = syscall3(SYS_RISCV_FLUSH_ICACHE, (long)g_runtime_code,
                        (long)(g_runtime_code +
-                              RUNTIME_LOGICAL_FLAG_BLOCK_OFFSET +
-                              logical_flag_code_bytes), 0);
+                              RUNTIME_DATA_EXT_BLOCK_OFFSET +
+                              data_ext_code_bytes), 0);
   if (flush_ret != 0)
   {
     *reason = "runtime_icache_flush_failed";
@@ -2948,7 +3069,7 @@ static int ensure_runtime_fixture(const char **reason)
       g_runtime_carry_flag_sbcs_entry &&
       g_runtime_carry_flag_rscs_entry &&
       g_runtime_flag_subs_entry && g_runtime_flag_rsbs_entry &&
-      g_runtime_logical_flag_entry &&
+      g_runtime_logical_flag_entry && g_runtime_data_ext_entry &&
       g_runtime_flag_adds_entry && g_runtime_flag_cmp_entry &&
       g_runtime_psr_entry &&
       g_runtime_msr_cpsr_flags_entry && g_runtime_msr_spsr_entry &&
@@ -3601,6 +3722,34 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   scheduler_hash = runtime_update_scheduler_hash(
     scheduler_hash,
     1, RUNTIME_LOGICAL_FLAG_START_PC, 0,
+    1, 0,
+    0, 0, 0,
+    0, 0);
+
+  for (i = 0; i < REG_MAX; i++)
+    values[i] = 0;
+  values[0] = RUNTIME_DATA_EXT_R0_VALUE;
+  values[1] = RUNTIME_DATA_EXT_R1_VALUE;
+  values[6] = RUNTIME_DATA_EXT_R6_VALUE;
+  values[7] = RUNTIME_DATA_EXT_R7_VALUE;
+  values[8] = RUNTIME_DATA_EXT_R8_VALUE;
+  values[9] = RUNTIME_DATA_EXT_R9_VALUE;
+  values[10] = RUNTIME_DATA_EXT_R10_VALUE;
+  values[11] = RUNTIME_DATA_EXT_R11_VALUE;
+  values[12] = RUNTIME_DATA_EXT_R12_VALUE;
+  values[14] = RUNTIME_DATA_EXT_R14_VALUE;
+  values[REG_PC] = RUNTIME_DATA_EXT_END_PC;
+  values[REG_CPSR] = RUNTIME_CPSR_C_BIT;
+  values[CPU_HALT_STATE] = CPU_ACTIVE;
+  reg_hash = runtime_update_reg_hash(reg_hash, values);
+  mem_hash = runtime_update_memory_hash(mem_hash,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        runtime_reference_sticky_hash());
+  scheduler_hash = runtime_update_scheduler_hash(
+    scheduler_hash,
+    1, RUNTIME_DATA_EXT_START_PC, 0,
     1, 0,
     0, 0, 0,
     0, 0);
@@ -4546,9 +4695,9 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   snapshot->reg_hash = reg_hash;
   snapshot->mem_hash = mem_hash;
   snapshot->scheduler_hash = scheduler_hash;
-  snapshot->blocks = 56;
+  snapshot->blocks = 57;
   snapshot->fallbacks = 2;
-  snapshot->native_data_proc = 43;
+  snapshot->native_data_proc = 51;
   snapshot->native_branch = 5;
   snapshot->native_load = 16;
   snapshot->native_store = 7;
@@ -4722,6 +4871,15 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   reg[REG_CPSR] = RUNTIME_CPSR_V_LOW_VALUE;
   execute_arm_translate_internal(RUNTIME_LOGICAL_FLAG_TOTAL_CYCLES,
                                  &reg[0]);
+  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+  mem_hash = runtime_update_current_memory_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+
+  reset_runtime_fixture_state(RUNTIME_DATA_EXT_START_PC);
+  reg[0] = RUNTIME_DATA_EXT_R0_VALUE;
+  reg[1] = RUNTIME_DATA_EXT_R1_VALUE;
+  reg[REG_CPSR] = RUNTIME_CPSR_C_BIT;
+  execute_arm_translate_internal(RUNTIME_DATA_EXT_TOTAL_CYCLES, &reg[0]);
   reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
   mem_hash = runtime_update_current_memory_hash(mem_hash);
   scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
@@ -5298,6 +5456,8 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
   if (g_runtime_logical_flag_entry &&
       pc == RUNTIME_LOGICAL_FLAG_START_PC)
     return g_runtime_logical_flag_entry;
+  if (g_runtime_data_ext_entry && pc == RUNTIME_DATA_EXT_START_PC)
+    return g_runtime_data_ext_entry;
   if (g_runtime_flag_adds_entry && pc == RUNTIME_FLAG_ADDS_START_PC)
     return g_runtime_flag_adds_entry;
   if (g_runtime_flag_cmp_entry && pc == RUNTIME_FLAG_CMP_START_PC)
@@ -5923,7 +6083,7 @@ static void command_compare(void)
 
   if (!ensure_runtime_fixture(&runtime_reason))
   {
-    put_raw("result=FAIL command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_flags_psr_msr_load_store_regoff_halfreg_blockmem_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_alert_branch_patch_bl_bx_swi_cond_spsr_idle_thumb_fallback");
+    put_raw("result=FAIL command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_flags_psr_msr_load_store_regoff_halfreg_blockmem_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_alert_branch_patch_bl_bx_swi_cond_spsr_idle_thumb_fallback");
     put_raw(" harness_mode=");
     put_raw(RUNTIME_FIXTURE_MODE);
     put_raw(" frame_mode=synthetic mem_mode=runtime_stickybits reason=");
@@ -5949,7 +6109,7 @@ static void command_compare(void)
       rv32im.native_store != interp.native_store ||
       rv32im.native_psr != interp.native_psr)
   {
-    put_raw("result=FAIL command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_flags_psr_msr_load_store_regoff_halfreg_blockmem_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_alert_branch_patch_bl_bx_swi_cond_spsr_idle_thumb_fallback interp_frame_hash=");
+    put_raw("result=FAIL command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_flags_psr_msr_load_store_regoff_halfreg_blockmem_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_alert_branch_patch_bl_bx_swi_cond_spsr_idle_thumb_fallback interp_frame_hash=");
     put_u32_hex(interp.frame_hash);
     put_raw(" rv32im_frame_hash=");
     put_u32_hex(rv32im.frame_hash);
@@ -5988,7 +6148,7 @@ static void command_compare(void)
     return;
   }
 
-  put_raw("result=PASS command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_flags_psr_msr_load_store_regoff_halfreg_blockmem_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_alert_branch_patch_bl_bx_swi_cond_spsr_idle_thumb_fallback interp_frame_hash=");
+  put_raw("result=PASS command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_flags_psr_msr_load_store_regoff_halfreg_blockmem_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_alert_branch_patch_bl_bx_swi_cond_spsr_idle_thumb_fallback interp_frame_hash=");
   put_u32_hex(interp.frame_hash);
   put_raw(" rv32im_frame_hash=");
   put_u32_hex(rv32im.frame_hash);
