@@ -381,6 +381,19 @@ typedef unsigned int usize;
 #define REG_OFFSET_BYTE_VALUE 0xa5u
 #define SHIFTED_REG_OFFSET_BYTE_VALUE 0x5au
 #define REG_OFFSET_STORE_VALUE 0x123456f2u
+#define PSR_START_PC 0x08000920u
+#define PSR_END_PC (PSR_START_PC + 8u)
+#define PSR_MRS_CPSR_CYCLES 5u
+#define PSR_MRS_SPSR_CYCLES 6u
+#define PSR_TOTAL_CYCLES (PSR_MRS_CPSR_CYCLES + PSR_MRS_SPSR_CYCLES)
+#define MRS_R6_CPSR 0xe10f6000u
+#define MRS_R7_SPSR 0xe14f7000u
+#define MRS_R15_CPSR 0xe10ff000u
+#define MSR_CPSR_R0 0xe129f000u
+#define PSR_CPSR_VALUE 0xa000009fu
+#define PSR_CPU_MODE_VALUE 0x13u
+#define PSR_SPSR_INDEX (PSR_CPU_MODE_VALUE & 0xfu)
+#define PSR_SPSR_VALUE 0x12345678u
 #define WRITEBACK_BASE_ADDR 0x02000400u
 #define WRITEBACK_STORE_ADDR (WRITEBACK_BASE_ADDR + 0x10u)
 #define WRITEBACK_POST_LOAD_ADDR WRITEBACK_BASE_ADDR
@@ -420,8 +433,10 @@ typedef unsigned int usize;
 #define TST_SHIFT_BLOCK_OFFSET 20480u
 #define LOGICAL_FLAG_BLOCK_OFFSET 22016u
 #define REG_OFFSET_RRX_LOAD_BLOCK_OFFSET 23552u
+#define PSR_BLOCK_OFFSET 24064u
 
 u32 reg[REG_MAX];
+u32 spsr[6];
 u32 idle_loop_target_pc;
 u32 rom_cache_watermark;
 u32 gamepak_sticky_bit[1024 / 32];
@@ -461,6 +476,7 @@ static u8 *g_reg_offset_load_entry;
 static u8 *g_reg_offset_store_entry;
 static u8 *g_reg_offset_rrx_load_entry;
 static u8 *g_shifted_reg_offset_entry;
+static u8 *g_psr_entry;
 static u8 *g_writeback_store_entry;
 static u8 *g_writeback_load_entry;
 static u8 *g_reg_offset_writeback_store_entry;
@@ -632,6 +648,8 @@ static void reset_runtime_observations(u32 pc)
 
   for (i = 0; i < REG_MAX; i++)
     reg[i] = 0;
+  for (i = 0; i < 6; i++)
+    spsr[i] = 0;
   for (i = 0; i < (1024 / 32); i++)
     gamepak_sticky_bit[i] = 0xffffffffu;
 
@@ -1395,6 +1413,36 @@ static u32 build_shifted_reg_offset_block(u8 *code)
   return code_bytes;
 }
 
+static u32 build_psr_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_psr_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_psr(&translation_ptr, meta,
+                                 MRS_R6_CPSR, PSR_MRS_CPSR_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=mrs_cpsr_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_psr(&translation_ptr, meta,
+                                 MRS_R7_SPSR, PSR_MRS_SPSR_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=mrs_spsr_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, PSR_START_PC,
+                            PSR_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
 static u32 build_writeback_store_block(u8 *code)
 {
   u8 *translation_ptr = code;
@@ -1564,6 +1612,30 @@ static void expect_logical_data_proc_test_rejected(u8 *code)
                                            CMP_BORROW_CYCLES))
   {
     fail_u32("data_proc_test_reject", "accepted", TST_R0_R1_LSL_R2, 0);
+  }
+}
+
+static void expect_psr_unsupported_rejected(u8 *code)
+{
+  static const u32 rejected_opcodes[] =
+  {
+    MRS_R15_CPSR,
+    MSR_CPSR_R0
+  };
+  unsigned i;
+
+  for (i = 0; i < sizeof(rejected_opcodes) / sizeof(rejected_opcodes[0]); i++)
+  {
+    u8 *translation_ptr = code;
+    riscv_jit_block_meta *meta;
+
+    riscv_emit_block_prologue(&translation_ptr, &meta);
+    if (riscv_emit_native_arm_psr(&translation_ptr, meta,
+                                  rejected_opcodes[i],
+                                  PSR_MRS_CPSR_CYCLES))
+    {
+      fail_u32("psr_reject", "accepted", rejected_opcodes[i], 0);
+    }
   }
 }
 
@@ -2661,6 +2733,43 @@ static void run_reg_offset_rrx_load_case(void)
   expect_stickybits_cleared("reg_offset_rrx");
 }
 
+static void run_psr_remaining_case(void)
+{
+  const u32 extra_cycles = 5u;
+
+  reset_runtime_observations(PSR_START_PC);
+  g_lookup_entry = g_psr_entry;
+  reg[REG_CPSR] = PSR_CPSR_VALUE;
+  reg[CPU_MODE] = PSR_CPU_MODE_VALUE;
+  spsr[PSR_SPSR_INDEX] = PSR_SPSR_VALUE;
+
+  execute_arm_translate_internal(PSR_TOTAL_CYCLES + extra_cycles, &reg[0]);
+
+  if (reg[6] != PSR_CPSR_VALUE)
+    fail_u32("psr_remaining", "r6", reg[6], PSR_CPSR_VALUE);
+  if (reg[7] != PSR_SPSR_VALUE)
+    fail_u32("psr_remaining", "r7", reg[7], PSR_SPSR_VALUE);
+  if (reg[REG_CPSR] != PSR_CPSR_VALUE)
+    fail_u32("psr_remaining", "cpsr", reg[REG_CPSR], PSR_CPSR_VALUE);
+  if (reg[CPU_MODE] != PSR_CPU_MODE_VALUE)
+    fail_u32("psr_remaining", "mode", reg[CPU_MODE], PSR_CPU_MODE_VALUE);
+  if (spsr[PSR_SPSR_INDEX] != PSR_SPSR_VALUE)
+    fail_u32("psr_remaining", "spsr",
+             spsr[PSR_SPSR_INDEX], PSR_SPSR_VALUE);
+  if (reg[REG_PC] != PSR_END_PC)
+    fail_u32("psr_remaining", "pc", reg[REG_PC], PSR_END_PC);
+  if (g_update_calls != 0)
+    fail_u32("psr_remaining", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("psr_remaining", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("psr_remaining", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != PSR_END_PC)
+    fail_u32("psr_remaining", "execute_pc", g_execute_pc, PSR_END_PC);
+  expect_stickybits_cleared("psr_remaining");
+}
+
 static void run_writeback_store_case(void)
 {
   const u32 extra_cycles = 4u;
@@ -3167,6 +3276,7 @@ void _start(void)
   u32 reg_offset_store_code_bytes;
   u32 reg_offset_rrx_load_code_bytes;
   u32 shifted_reg_offset_code_bytes;
+  u32 psr_code_bytes;
   u32 writeback_store_code_bytes;
   u32 writeback_load_code_bytes;
   u32 reg_offset_writeback_store_code_bytes;
@@ -3284,6 +3394,7 @@ void _start(void)
     build_reg_offset_rrx_load_block(code + REG_OFFSET_RRX_LOAD_BLOCK_OFFSET);
   shifted_reg_offset_code_bytes =
     build_shifted_reg_offset_block(code + SHIFTED_REG_OFFSET_BLOCK_OFFSET);
+  psr_code_bytes = build_psr_block(code + PSR_BLOCK_OFFSET);
   writeback_store_code_bytes =
     build_writeback_store_block(code + WRITEBACK_STORE_BLOCK_OFFSET);
   writeback_load_code_bytes =
@@ -3298,6 +3409,7 @@ void _start(void)
   expect_shifted_reg_offset_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_shifted_data_proc_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_logical_data_proc_test_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
+  expect_psr_unsupported_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_multiply_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   run_cycle_boundary_case();
   run_remaining_cycles_case();
@@ -3400,6 +3512,7 @@ void _start(void)
   run_reg_offset_load_remaining_cycles_case();
   run_shifted_reg_offset_load_case();
   run_reg_offset_rrx_load_case();
+  run_psr_remaining_case();
   run_writeback_store_case();
   run_writeback_post_load_case();
   run_reg_offset_writeback_store_case();
@@ -3484,6 +3597,8 @@ void _start(void)
   put_u32_dec(reg_offset_rrx_load_code_bytes);
   put_raw(" shifted_reg_offset_code_bytes=");
   put_u32_dec(shifted_reg_offset_code_bytes);
+  put_raw(" psr_code_bytes=");
+  put_u32_dec(psr_code_bytes);
   put_raw(" writeback_store_code_bytes=");
   put_u32_dec(writeback_store_code_bytes);
   put_raw(" writeback_load_code_bytes=");
@@ -3560,6 +3675,8 @@ void _start(void)
   put_u32_hex((u32)g_reg_offset_rrx_load_entry);
   put_raw(" shifted_reg_offset_entry=");
   put_u32_hex((u32)g_shifted_reg_offset_entry);
+  put_raw(" psr_entry=");
+  put_u32_hex((u32)g_psr_entry);
   put_raw(" writeback_store_entry=");
   put_u32_hex((u32)g_writeback_store_entry);
   put_raw(" writeback_load_entry=");

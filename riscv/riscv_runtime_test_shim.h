@@ -32,6 +32,7 @@ typedef enum
   REG_LR = 14,
   REG_PC = 15,
   REG_CPSR = 16,
+  CPU_MODE = 17,
   CPU_HALT_STATE = 18,
   REG_MAX = 64
 } riscv_test_reg_numbers;
@@ -42,6 +43,7 @@ typedef enum
 #define completed_frame(c) ((c) & 0x80000000)
 
 extern u32 reg[REG_MAX];
+extern u32 spsr[6];
 extern u32 idle_loop_target_pc;
 extern u32 rom_cache_watermark;
 extern u32 gamepak_sticky_bit[1024 / 32];

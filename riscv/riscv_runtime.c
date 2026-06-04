@@ -42,6 +42,7 @@ static u32 riscv_native_data_proc_insns;
 static u32 riscv_native_branch_insns;
 static u32 riscv_native_load_insns;
 static u32 riscv_native_store_insns;
+static u32 riscv_native_psr_insns;
 static cpu_alert_type riscv_cpu_alert;
 
 static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta);
@@ -843,6 +844,51 @@ bool riscv_emit_native_arm_multiply(u8 **translation_ptr_ref,
   return true;
 }
 
+bool riscv_emit_native_arm_psr(u8 **translation_ptr_ref,
+                               riscv_jit_block_meta *meta,
+                               u32 opcode,
+                               u32 cycles)
+{
+  u32 condition = opcode >> 28;
+  u32 use_spsr = (opcode >> 22) & 1u;
+  u32 rd = (opcode >> 12) & 0xfu;
+  u8 *ptr = *translation_ptr_ref;
+
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
+    return false;
+
+  if (condition != 0xe || (opcode & 0x0fbf0fffu) != 0x010f0000u ||
+      rd == REG_PC)
+  {
+    return false;
+  }
+
+  if (use_spsr)
+  {
+    u8 *translation_ptr;
+
+    riscv_emit_arm_reg_load(&ptr, riscv_reg_t0, CPU_MODE);
+    riscv_emit_li(&ptr, riscv_reg_t1, (u32)(uintptr_t)&spsr[0]);
+    translation_ptr = ptr;
+    riscv_emit_andi(riscv_reg_t0, riscv_reg_t0, 0xf);
+    riscv_emit_slli(riscv_reg_t0, riscv_reg_t0, 2);
+    riscv_emit_add(riscv_reg_t1, riscv_reg_t1, riscv_reg_t0);
+    riscv_emit_lw(riscv_reg_t0, riscv_reg_t1, 0);
+    ptr = translation_ptr;
+  }
+  else
+  {
+    riscv_emit_arm_reg_load(&ptr, riscv_reg_t0, REG_CPSR);
+  }
+
+  riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_t0);
+  riscv_emit_adjust_cycles(&ptr, cycles);
+
+  *translation_ptr_ref = ptr;
+  riscv_native_psr_insns++;
+  return true;
+}
+
 bool riscv_emit_native_arm_b(u8 **translation_ptr_ref,
                              riscv_jit_block_meta *meta,
                              u32 opcode,
@@ -1322,6 +1368,7 @@ void init_emitter(bool must_swap)
   riscv_native_branch_insns = 0;
   riscv_native_load_insns = 0;
   riscv_native_store_insns = 0;
+  riscv_native_psr_insns = 0;
   riscv_cpu_alert = CPU_ALERT_NONE;
   rom_cache_watermark = RISCV_INITIAL_ROM_WATERMARK;
   init_bios_hooks();
