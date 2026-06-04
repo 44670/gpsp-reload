@@ -292,11 +292,12 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   mode/bus/banked-state effects,
   NE conditional-header taken/skipped behavior,
   `MOV pc, r14` PC-write behavior, `MOVS pc, r14` SPSR restore behavior,
-  store-triggered SMC/IRQ alert handling, SWP-triggered SMC/IRQ alert
-  handling, idle-loop gate, unsupported-block
+  store-triggered SMC/IRQ alert handling, store/halfword/block/SWP
+  HALT-alert handling, SWP-triggered SMC/IRQ alert handling, idle-loop gate,
+  unsupported-block
   fallback, and Thumb lookup-miss fallback fixtures against a local ARM
   reference model, with
-  eighty runtime blocks executed, ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
+  eighty-five runtime blocks executed, ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results, MSR CPSR flag and
   control mode/banked-LR effects, SPSR helper-write effects, and native PSR
   accounting checked,
@@ -306,7 +307,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   extended shifted and register-shifted data-processing results checked,
   register-shifted flag/test and TEQ/CMN CPSR results checked,
   helper memory, byte-store, load-to-PC memory, PC-relative load/store memory,
-  source-PC store, register-offset byte-store, and alert observations hashed,
+  source-PC store, register-offset byte-store, and SMC/IRQ/HALT alert
+  observations hashed,
   register-offset, shifted register-offset, subtract-offset, RRX load, and
   register-offset writeback load/store address/value observations checked,
   immediate, PC-relative, register-offset, and writeback halfword
@@ -315,16 +317,17 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   checked,
   immediate memory writeback address/source ordering checked,
   block-memory writeback, decrement-before push, PC-loaded native target
-  chaining, LDM-PC SPSR restore/update behavior, and ordered multi-word helper
-  transfers checked,
+  chaining, LDM-PC SPSR restore/update behavior, ordered multi-word helper
+  transfers, and block-memory HALT update behavior checked,
   HLE division quotient/remainder/absolute-quotient helper results checked,
   PC-source `pc+8`/`pc+12` operand and shifted-register flag behavior checked,
   SWP/SWPB helper old-value/read-PC/write-PC behavior checked, including
-  SWP SMC/IRQ flush/interrupt observations, byte read/write observations,
-  and remaining-cycle handoff for `SWP` and `SWPB`,
+  SWP SMC/IRQ flush/interrupt observations, SWP HALT update behavior,
+  byte read/write observations, and remaining-cycle handoff for `SWP` and
+  `SWPB`,
   direct, indirect, conditional, SWI, PC-write, SPSR-restore, and patched
   branch execution exercised,
-  scheduler/update/idle-loop/Thumb-lookup observations hashed, with
+  scheduler/update/HALT/idle-loop/Thumb-lookup observations hashed, with
   unsupported-block, Thumb lookup-miss, SWP alert remaining-cycle lookup-miss,
   and SWPB remaining-cycle lookup-miss fallbacks observed
 
