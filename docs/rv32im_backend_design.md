@@ -269,7 +269,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   register-shifted `ANDS`/`EORS`/`MOVS`/`ORRS`/`TST`,
   `TEQ`, `CMN`, `MRS CPSR`,
   `MRS SPSR`, `MSR CPSR_flg`, `MSR CPSR_ctl`, `MSR SPSR`,
-  `LDR`, `LDRB`, PC-relative `LDR`/`LDRB`, `STR`, `STRB`,
+  `LDR`, `LDRB`, `LDR pc`, PC-relative `LDR`/`LDRB`, `STR`, `STRB`,
   `STR pc`,
   register-offset `STRB`,
   register-offset writeback `STR`, post-index register-offset `LDRB`,
@@ -290,7 +290,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   store-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, and Thumb lookup-miss fallback fixtures against a local ARM
   reference model, with
-  seventy-three runtime blocks executed, ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
+  seventy-four runtime blocks executed, ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results, MSR CPSR flag and
   control mode/banked-LR effects, SPSR helper-write effects, and native PSR
   accounting checked,
@@ -299,8 +299,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   checked, carry-input data-processing, carry-input flag, logical flag, and
   extended shifted and register-shifted data-processing results checked,
   register-shifted flag/test and TEQ/CMN CPSR results checked,
-  helper memory, byte-store, PC-relative memory, source-PC store,
-  register-offset byte-store, and alert observations hashed,
+  helper memory, byte-store, load-to-PC memory, PC-relative memory,
+  source-PC store, register-offset byte-store, and alert observations hashed,
   register-offset, shifted register-offset, subtract-offset, RRX load, and
   register-offset writeback load/store address/value observations checked,
   immediate and register-offset halfword signed/unsigned helper load results
