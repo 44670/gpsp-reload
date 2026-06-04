@@ -844,6 +844,7 @@ typedef unsigned int usize;
 #define BL_TARGET_BLOCK_OFFSET 44032u
 #define BX_ARM_TARGET_BLOCK_OFFSET 44544u
 #define THUMB_UNSUPPORTED_BLOCK_OFFSET 45056u
+#define EXPECTED_INITIAL_ROM_WATERMARK 16u
 
 u32 reg[REG_MAX];
 u32 spsr[6];
@@ -984,6 +985,7 @@ static u32 g_block_write_count;
 static u32 g_block_write_addr[BLOCK_MEM_MAX_TRANSFERS];
 static u32 g_block_write_value[BLOCK_MEM_MAX_TRANSFERS];
 static cpu_alert_type g_store_alert;
+static u32 g_init_bios_hooks_calls;
 
 static long syscall1(long number, long arg0)
 {
@@ -1175,6 +1177,21 @@ static void reset_runtime_observations(u32 pc)
   g_irq_check_calls = 0;
   g_block_write_count = 0;
   g_store_alert = CPU_ALERT_NONE;
+}
+
+static void run_init_emitter_contract_case(void)
+{
+  g_init_bios_hooks_calls = 0;
+  rom_cache_watermark = 0xffffffffu;
+
+  init_emitter(false);
+
+  if (rom_cache_watermark != EXPECTED_INITIAL_ROM_WATERMARK)
+    fail_u32("init_emitter_contract", "rom_cache_watermark",
+             rom_cache_watermark, EXPECTED_INITIAL_ROM_WATERMARK);
+  if (g_init_bios_hooks_calls != 1)
+    fail_u32("init_emitter_contract", "init_bios_hooks",
+             g_init_bios_hooks_calls, 1);
 }
 
 static u32 build_data_block(u8 *code)
@@ -6723,6 +6740,7 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
 
 void init_bios_hooks(void)
 {
+  g_init_bios_hooks_calls++;
 }
 
 void _start(void)
@@ -6814,6 +6832,8 @@ void _start(void)
     put_raw("result=FAIL command=runtime reason=mmap_failed\n");
     sys_exit(1);
   }
+
+  run_init_emitter_contract_case();
 
   data_code_bytes = build_data_block(code);
   chain_second_code_bytes =
@@ -7547,6 +7567,10 @@ void _start(void)
   put_u32_dec(reg_offset_writeback_store_code_bytes);
   put_raw(" reg_offset_writeback_load_code_bytes=");
   put_u32_dec(reg_offset_writeback_load_code_bytes);
+  put_raw(" init_rom_watermark=");
+  put_u32_hex(rom_cache_watermark);
+  put_raw(" init_bios_hooks=");
+  put_u32_dec(g_init_bios_hooks_calls);
   put_raw(" data_entry=");
   put_u32_hex((u32)g_data_entry);
   put_raw(" chain_second_entry=");
