@@ -264,6 +264,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   `LDRH`, register-offset `LDRH`, `LDRSB`, register-offset `LDRSB`,
   `LDRSH`, register-offset `LDRSH`, `STRH`, register-offset `STRH`,
   `STMIA`, `LDMIA`, `STMDB sp!`, `LDMIA ... {pc}`,
+  `LDMIA ... {pc}^`,
   HLE `Div`, HLE `DivArm`, PC-source data-processing/test ops,
   register-offset/shifted/RRX load ops, pre/post-index writeback memory ops,
   `SWP`,
@@ -276,7 +277,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   store-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, and Thumb lookup-miss fallback fixtures against a local ARM
   reference model, with
-  forty-two runtime blocks executed, ADDS/CMP CPSR flag results and
+  forty-three runtime blocks executed, ADDS/CMP CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results, MSR CPSR flag and
   SPSR helper-write effects, and native PSR accounting checked,
   multiply/accumulate results checked, helper memory and alert observations hashed,
@@ -286,7 +287,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   and store observations checked,
   immediate memory writeback address/source ordering checked,
   block-memory writeback, decrement-before push, PC-loaded native target
-  chaining, and ordered multi-word helper transfers checked,
+  chaining, LDM-PC SPSR restore/update behavior, and ordered multi-word helper
+  transfers checked,
   HLE division quotient/remainder/absolute-quotient helper results checked,
   PC-source `pc+8`/`pc+12` operand and shifted-register flag behavior checked,
   SWP helper old-value/read-PC/write-PC behavior checked,
