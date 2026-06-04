@@ -38,7 +38,7 @@ $(OUT_DIR):
 	mkdir -p $@
 
 smoke: $(HARNESS) $(OUT_DIR)
-	printf 'help\nbackend rv32im\nreset\nrun 2\ncont 16\nstepi 4\nstepb 3\nregs\nmem 0x02000000 16\nframehash\npng $(SMOKE_PNG)\nquit\n' | $(QEMU_RISCV32) ./$(HARNESS)
+	printf 'help\nbackend rv32im\nreset\nrun 2\ncont 16\nstepi 4\nstepb 3\nregs\nmem 0x02000000 16\nframehash\ncompare\npng $(SMOKE_PNG)\nquit\n' | $(QEMU_RISCV32) ./$(HARNESS)
 	test -s $(SMOKE_PNG)
 
 clean:

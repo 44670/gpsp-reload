@@ -278,7 +278,7 @@ static void render_frame(void)
     for (x = 0; x < FRAME_W; x++)
     {
       u32 r = (x + (seed >> 3) + g_state.frames) & 31u;
-      u32 g = (y + (seed >> 9) + (g_state.backend == BACKEND_RV32IM ? 9u : 0u)) & 63u;
+      u32 g = (y + (seed >> 9)) & 63u;
       u32 b = (x + y + (seed >> 17)) & 31u;
       u16 pix = (u16)((r << 11) | (g << 5) | b);
       g_frame[pos++] = (u8)(pix & 0xff);
@@ -323,7 +323,7 @@ static void print_fail(const char *command, const char *reason)
 
 static void command_help(void)
 {
-  put_raw("commands=load reset backend run cont stepi stepb regs mem framehash png quit\n");
+  put_raw("commands=load reset backend run cont stepi stepb regs mem framehash compare png quit\n");
 }
 
 static void command_backend(char *arg)
@@ -669,6 +669,40 @@ static void command_framehash(void)
   put_chr('\n');
 }
 
+static void command_compare(void)
+{
+  enum harness_backend saved_backend = g_state.backend;
+  u32 interp_hash;
+  u32 rv32im_hash;
+
+  g_state.backend = BACKEND_INTERP;
+  render_frame();
+  interp_hash = g_state.last_frame_hash;
+
+  g_state.backend = BACKEND_RV32IM;
+  render_frame();
+  rv32im_hash = g_state.last_frame_hash;
+
+  g_state.backend = saved_backend;
+  render_frame();
+
+  if (interp_hash != rv32im_hash)
+  {
+    put_raw("result=FAIL command=compare interp_frame_hash=");
+    put_u32_hex(interp_hash);
+    put_raw(" rv32im_frame_hash=");
+    put_u32_hex(rv32im_hash);
+    put_raw(" reason=frame_mismatch\n");
+    return;
+  }
+
+  put_raw("result=PASS command=compare interp_frame_hash=");
+  put_u32_hex(interp_hash);
+  put_raw(" rv32im_frame_hash=");
+  put_u32_hex(rv32im_hash);
+  put_raw(" reason=stub_equal\n");
+}
+
 static void command_png(char *path)
 {
   if (!path || !*path)
@@ -775,6 +809,10 @@ static void process_line(char *line)
   else if (str_eq(cmd, "framehash"))
   {
     command_framehash();
+  }
+  else if (str_eq(cmd, "compare"))
+  {
+    command_compare();
   }
   else if (str_eq(cmd, "png"))
   {
