@@ -70,9 +70,41 @@ typedef unsigned int usize;
 #define BX_BLOCK_OFFSET 3072u
 #define CPSR_T_BIT 0x20u
 #define HALF_LDRH_R4_R3_0X24 0xe1d342b4u
-#define HALF_STRH_R4_R3_0X24 0xe1c342b4u
-#define HALF_LDRSB_R4_R3_0X24 0xe1d342d4u
-#define HALF_LDRSH_R4_R3_0X24 0xe1d342f4u
+#define HALF_LDRSB_R5_R3_0X25 0xe1d352d5u
+#define HALF_LDRSH_R6_R3_0X26 0xe1d362f6u
+#define HALF_STRH_R7_R3_0X28 0xe1c372b8u
+#define HALF_REG_LDRH_R4_R3_R2 0xe19340b2u
+#define HALF_REG_STRH_R4_R3_R2 0xe18340b2u
+#define HALF_REG_LDRSB_R4_R3_R2 0xe19340d2u
+#define HALF_REG_LDRSH_R4_R3_R2 0xe19340f2u
+#define HALF_LOAD_START_PC 0x08000500u
+#define HALF_LDRH_PC HALF_LOAD_START_PC
+#define HALF_LDRSB_PC (HALF_LOAD_START_PC + 4u)
+#define HALF_LDRSH_PC (HALF_LOAD_START_PC + 8u)
+#define HALF_LOAD_END_PC (HALF_LOAD_START_PC + 12u)
+#define HALF_LDRH_BASE_CYCLES 4u
+#define HALF_LDRSB_BASE_CYCLES 5u
+#define HALF_LDRSH_BASE_CYCLES 6u
+#define HALF_LOAD_TOTAL_CYCLES \
+  ((HALF_LDRH_BASE_CYCLES + 2u) + (HALF_LDRSB_BASE_CYCLES + 2u) + \
+   (HALF_LDRSH_BASE_CYCLES + 2u))
+#define HALF_STORE_START_PC 0x08000540u
+#define HALF_STORE_END_PC (HALF_STORE_START_PC + 4u)
+#define HALF_STORE_BASE_CYCLES 6u
+#define HALF_STORE_TOTAL_CYCLES (HALF_STORE_BASE_CYCLES + 1u)
+#define HALF_BASE_ADDR 0x02000200u
+#define HALF_U16_ADDR (HALF_BASE_ADDR + 0x24u)
+#define HALF_S8_ADDR (HALF_BASE_ADDR + 0x25u)
+#define HALF_S16_ADDR (HALF_BASE_ADDR + 0x26u)
+#define HALF_STORE_ADDR (HALF_BASE_ADDR + 0x28u)
+#define HALF_U16_VALUE 0x000089abu
+#define HALF_S8_VALUE 0xfffffff0u
+#define HALF_S16_VALUE 0xffff8123u
+#define HALF_STORE_VALUE 0x2468ace1u
+#define HALF_STORE_U16_VALUE (HALF_STORE_VALUE & 0xffffu)
+#define HALF_LOAD_BLOCK_OFFSET 3584u
+#define HALF_STORE_BLOCK_OFFSET 4608u
+#define HALF_REJECT_BLOCK_OFFSET 5120u
 #define FRAME_COMPLETE 0x80000000u
 
 u32 reg[REG_MAX];
@@ -87,6 +119,8 @@ static u8 *g_store_word_entry;
 static u8 *g_store_byte_entry;
 static u8 *g_store_pc_entry;
 static u8 *g_bx_entry;
+static u8 *g_half_load_entry;
+static u8 *g_half_store_entry;
 static u32 g_lookup_calls;
 static u32 g_lookup_pc;
 static u32 g_update_calls;
@@ -100,6 +134,15 @@ static u32 g_read32_pc;
 static u32 g_read8_calls;
 static u32 g_read8_addr;
 static u32 g_read8_pc;
+static u32 g_read16_calls;
+static u32 g_read16_addr;
+static u32 g_read16_pc;
+static u32 g_read8s_calls;
+static u32 g_read8s_addr;
+static u32 g_read8s_pc;
+static u32 g_read16s_calls;
+static u32 g_read16s_addr;
+static u32 g_read16s_pc;
 static u32 g_write32_calls;
 static u32 g_write32_addr;
 static u32 g_write32_value;
@@ -108,6 +151,10 @@ static u32 g_write8_calls;
 static u32 g_write8_addr;
 static u32 g_write8_value;
 static u32 g_write8_pc;
+static u32 g_write16_calls;
+static u32 g_write16_addr;
+static u32 g_write16_value;
+static u32 g_write16_pc;
 static u32 g_flush_calls;
 static u32 g_irq_check_calls;
 static cpu_alert_type g_store_alert;
@@ -227,7 +274,7 @@ static void fail_u32(const char *test_name, const char *field,
 
 static void *map_exec_page(void)
 {
-  long ret = syscall6(SYS_MMAP, 0, 4096,
+  long ret = syscall6(SYS_MMAP, 0, 8192,
                       PROT_READ | PROT_WRITE | PROT_EXEC,
                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if ((u32)ret >= 0xfffff000u)
@@ -260,6 +307,15 @@ static void reset_runtime_observations(u32 pc)
   g_read8_calls = 0;
   g_read8_addr = 0;
   g_read8_pc = 0;
+  g_read16_calls = 0;
+  g_read16_addr = 0;
+  g_read16_pc = 0;
+  g_read8s_calls = 0;
+  g_read8s_addr = 0;
+  g_read8s_pc = 0;
+  g_read16s_calls = 0;
+  g_read16s_addr = 0;
+  g_read16s_pc = 0;
   g_write32_calls = 0;
   g_write32_addr = 0;
   g_write32_value = 0;
@@ -268,6 +324,10 @@ static void reset_runtime_observations(u32 pc)
   g_write8_addr = 0;
   g_write8_value = 0;
   g_write8_pc = 0;
+  g_write16_calls = 0;
+  g_write16_addr = 0;
+  g_write16_value = 0;
+  g_write16_pc = 0;
   g_flush_calls = 0;
   g_irq_check_calls = 0;
   g_store_alert = CPU_ALERT_NONE;
@@ -398,14 +458,82 @@ static u32 build_bx_block(u8 *code)
   return code_bytes;
 }
 
+static u32 build_half_load_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_half_load_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_access_memory(&translation_ptr, meta,
+                                           HALF_LDRH_R4_R3_0X24,
+                                           HALF_LDRH_PC,
+                                           HALF_LDRH_BASE_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=ldrh_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_access_memory(&translation_ptr, meta,
+                                           HALF_LDRSB_R5_R3_0X25,
+                                           HALF_LDRSB_PC,
+                                           HALF_LDRSB_BASE_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=ldrsb_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_access_memory(&translation_ptr, meta,
+                                           HALF_LDRSH_R6_R3_0X26,
+                                           HALF_LDRSH_PC,
+                                           HALF_LDRSH_BASE_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=ldrsh_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, HALF_LOAD_START_PC,
+                            HALF_LOAD_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_half_store_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_half_store_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_access_memory(&translation_ptr, meta,
+                                           HALF_STRH_R7_R3_0X28,
+                                           HALF_STORE_START_PC,
+                                           HALF_STORE_BASE_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=strh_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, HALF_STORE_START_PC,
+                            HALF_STORE_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
 static void expect_halfword_transfers_rejected(u8 *code)
 {
   static const u32 rejected_opcodes[] =
   {
-    HALF_LDRH_R4_R3_0X24,
-    HALF_STRH_R4_R3_0X24,
-    HALF_LDRSB_R4_R3_0X24,
-    HALF_LDRSH_R4_R3_0X24
+    HALF_REG_LDRH_R4_R3_R2,
+    HALF_REG_STRH_R4_R3_R2,
+    HALF_REG_LDRSB_R4_R3_R2,
+    HALF_REG_LDRSH_R4_R3_R2
   };
   unsigned i;
 
@@ -665,6 +793,103 @@ static void run_load_remaining_cycles_case(void)
   expect_stickybits_cleared("load_remaining");
 }
 
+static void expect_half_load_helpers(const char *test_name)
+{
+  if (g_read16_calls != 1)
+    fail_u32(test_name, "read16_calls", g_read16_calls, 1);
+  if (g_read16_addr != HALF_U16_ADDR)
+    fail_u32(test_name, "read16_addr", g_read16_addr, HALF_U16_ADDR);
+  if (g_read16_pc != HALF_LDRH_PC)
+    fail_u32(test_name, "read16_pc", g_read16_pc, HALF_LDRH_PC);
+  if (g_read8s_calls != 1)
+    fail_u32(test_name, "read8s_calls", g_read8s_calls, 1);
+  if (g_read8s_addr != HALF_S8_ADDR)
+    fail_u32(test_name, "read8s_addr", g_read8s_addr, HALF_S8_ADDR);
+  if (g_read8s_pc != HALF_LDRSB_PC)
+    fail_u32(test_name, "read8s_pc", g_read8s_pc, HALF_LDRSB_PC);
+  if (g_read16s_calls != 1)
+    fail_u32(test_name, "read16s_calls", g_read16s_calls, 1);
+  if (g_read16s_addr != HALF_S16_ADDR)
+    fail_u32(test_name, "read16s_addr", g_read16s_addr, HALF_S16_ADDR);
+  if (g_read16s_pc != HALF_LDRSH_PC)
+    fail_u32(test_name, "read16s_pc", g_read16s_pc, HALF_LDRSH_PC);
+}
+
+static void run_half_load_remaining_cycles_case(void)
+{
+  const u32 extra_cycles = 5u;
+
+  reset_runtime_observations(HALF_LOAD_START_PC);
+  g_lookup_entry = g_half_load_entry;
+  reg[3] = HALF_BASE_ADDR;
+
+  execute_arm_translate_internal(HALF_LOAD_TOTAL_CYCLES + extra_cycles,
+                                 &reg[0]);
+
+  if (reg[4] != HALF_U16_VALUE)
+    fail_u32("half_load_remaining", "r4", reg[4], HALF_U16_VALUE);
+  if (reg[5] != HALF_S8_VALUE)
+    fail_u32("half_load_remaining", "r5", reg[5], HALF_S8_VALUE);
+  if (reg[6] != HALF_S16_VALUE)
+    fail_u32("half_load_remaining", "r6", reg[6], HALF_S16_VALUE);
+  if (reg[REG_PC] != HALF_LOAD_END_PC)
+    fail_u32("half_load_remaining", "pc",
+             reg[REG_PC], HALF_LOAD_END_PC);
+  if (g_update_calls != 0)
+    fail_u32("half_load_remaining", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("half_load_remaining", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("half_load_remaining", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != HALF_LOAD_END_PC)
+    fail_u32("half_load_remaining", "execute_pc",
+             g_execute_pc, HALF_LOAD_END_PC);
+  expect_half_load_helpers("half_load_remaining");
+  expect_stickybits_cleared("half_load_remaining");
+}
+
+static void run_half_store_smc_irq_alert_case(void)
+{
+  const u32 extra_cycles = 4u;
+
+  reset_runtime_observations(HALF_STORE_START_PC);
+  g_lookup_entry = g_half_store_entry;
+  g_store_alert = CPU_ALERT_SMC | CPU_ALERT_IRQ;
+  reg[3] = HALF_BASE_ADDR;
+  reg[7] = HALF_STORE_VALUE;
+
+  execute_arm_translate_internal(HALF_STORE_TOTAL_CYCLES + extra_cycles,
+                                 &reg[0]);
+
+  if (g_write16_calls != 1)
+    fail_u32("half_store_smc_irq", "write16_calls", g_write16_calls, 1);
+  if (g_write16_addr != HALF_STORE_ADDR)
+    fail_u32("half_store_smc_irq", "write16_addr",
+             g_write16_addr, HALF_STORE_ADDR);
+  if (g_write16_value != HALF_STORE_U16_VALUE)
+    fail_u32("half_store_smc_irq", "write16_value",
+             g_write16_value, HALF_STORE_U16_VALUE);
+  if (g_write16_pc != HALF_STORE_END_PC)
+    fail_u32("half_store_smc_irq", "write16_pc",
+             g_write16_pc, HALF_STORE_END_PC);
+  if (reg[REG_PC] != HALF_STORE_END_PC)
+    fail_u32("half_store_smc_irq", "pc",
+             reg[REG_PC], HALF_STORE_END_PC);
+  if (g_flush_calls != 1)
+    fail_u32("half_store_smc_irq", "flush_calls", g_flush_calls, 1);
+  if (g_irq_check_calls != 1)
+    fail_u32("half_store_smc_irq", "irq_calls", g_irq_check_calls, 1);
+  if (g_update_calls != 0)
+    fail_u32("half_store_smc_irq", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("half_store_smc_irq", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("half_store_smc_irq", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  expect_stickybits_cleared("half_store_smc_irq");
+}
+
 static void expect_store_word(const char *test_name, u32 pc)
 {
   if (g_write32_calls != 1)
@@ -864,12 +1089,47 @@ u32 function_cc read_memory8(u32 address)
   return LOAD_BYTE_VALUE;
 }
 
+u32 function_cc read_memory16(u32 address)
+{
+  g_read16_calls++;
+  g_read16_addr = address;
+  g_read16_pc = reg[REG_PC];
+  return HALF_U16_VALUE;
+}
+
+u32 function_cc read_memory8s(u32 address)
+{
+  g_read8s_calls++;
+  g_read8s_addr = address;
+  g_read8s_pc = reg[REG_PC];
+  return HALF_S8_VALUE;
+}
+
+u32 function_cc read_memory16s(u32 address)
+{
+  g_read16s_calls++;
+  g_read16s_addr = address;
+  g_read16s_pc = reg[REG_PC];
+  return HALF_S16_VALUE;
+}
+
 cpu_alert_type function_cc write_memory32(u32 address, u32 value)
 {
   g_write32_calls++;
   g_write32_addr = address;
   g_write32_value = value;
   g_write32_pc = reg[REG_PC];
+  if (g_store_alert & CPU_ALERT_HALT)
+    reg[CPU_HALT_STATE] = CPU_HALT;
+  return g_store_alert;
+}
+
+cpu_alert_type function_cc write_memory16(u32 address, u16 value)
+{
+  g_write16_calls++;
+  g_write16_addr = address;
+  g_write16_value = value;
+  g_write16_pc = reg[REG_PC];
   if (g_store_alert & CPU_ALERT_HALT)
     reg[CPU_HALT_STATE] = CPU_HALT;
   return g_store_alert;
@@ -931,6 +1191,8 @@ void _start(void)
   u32 store_byte_code_bytes;
   u32 store_pc_code_bytes;
   u32 bx_code_bytes;
+  u32 half_load_code_bytes;
+  u32 half_store_code_bytes;
 
   if (!code)
   {
@@ -957,7 +1219,10 @@ void _start(void)
                       STORE_PC_START_PC,
                       &g_store_pc_entry);
   bx_code_bytes = build_bx_block(code + BX_BLOCK_OFFSET);
-  expect_halfword_transfers_rejected(code + BX_BLOCK_OFFSET + 512u);
+  half_load_code_bytes = build_half_load_block(code + HALF_LOAD_BLOCK_OFFSET);
+  half_store_code_bytes =
+    build_half_store_block(code + HALF_STORE_BLOCK_OFFSET);
+  expect_halfword_transfers_rejected(code + HALF_REJECT_BLOCK_OFFSET);
   run_cycle_boundary_case();
   run_remaining_cycles_case();
   run_branch_boundary_case();
@@ -966,12 +1231,14 @@ void _start(void)
   run_bx_thumb_boundary_case();
   run_load_boundary_case();
   run_load_remaining_cycles_case();
+  run_half_load_remaining_cycles_case();
   run_store_word_boundary_case();
   run_store_word_remaining_cycles_case();
   run_store_pc_value_case();
   run_store_byte_remaining_cycles_case();
   run_store_smc_irq_alert_case();
   run_store_halt_alert_case();
+  run_half_store_smc_irq_alert_case();
 
   put_raw("result=PASS command=runtime code_bytes=");
   put_u32_dec(data_code_bytes);
@@ -987,6 +1254,10 @@ void _start(void)
   put_u32_dec(store_pc_code_bytes);
   put_raw(" bx_code_bytes=");
   put_u32_dec(bx_code_bytes);
+  put_raw(" half_load_code_bytes=");
+  put_u32_dec(half_load_code_bytes);
+  put_raw(" half_store_code_bytes=");
+  put_u32_dec(half_store_code_bytes);
   put_raw(" data_entry=");
   put_u32_hex((u32)g_data_entry);
   put_raw(" branch_entry=");
@@ -1001,6 +1272,10 @@ void _start(void)
   put_u32_hex((u32)g_store_pc_entry);
   put_raw(" bx_entry=");
   put_u32_hex((u32)g_bx_entry);
+  put_raw(" half_load_entry=");
+  put_u32_hex((u32)g_half_load_entry);
+  put_raw(" half_store_entry=");
+  put_u32_hex((u32)g_half_store_entry);
   put_raw(" reason=state_equal\n");
   sys_exit(0);
 }

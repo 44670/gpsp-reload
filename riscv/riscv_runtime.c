@@ -176,6 +176,13 @@ static u32 function_cc riscv_store_u8(u32 address, u32 value)
   return alert;
 }
 
+static u32 function_cc riscv_store_u16(u32 address, u32 value)
+{
+  cpu_alert_type alert = write_memory16(address, (u16)value);
+  riscv_cpu_alert |= alert;
+  return alert;
+}
+
 static u32 function_cc riscv_store_u32(u32 address, u32 value)
 {
   cpu_alert_type alert = write_memory32(address, value);
@@ -437,6 +444,90 @@ bool riscv_emit_native_arm_bx(u8 **translation_ptr_ref,
   return true;
 }
 
+static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
+                                               riscv_jit_block_meta *meta,
+                                               u32 opcode,
+                                               u32 pc,
+                                               u32 cycles)
+{
+  u32 condition = opcode >> 28;
+  u32 pre_index = (opcode >> 24) & 1u;
+  u32 up = (opcode >> 23) & 1u;
+  u32 immediate_offset = (opcode >> 22) & 1u;
+  u32 writeback = (opcode >> 21) & 1u;
+  u32 load = (opcode >> 20) & 1u;
+  u32 rn = (opcode >> 16) & 0xfu;
+  u32 rd = (opcode >> 12) & 0xfu;
+  u32 mem_type = (opcode >> 5) & 0x3u;
+  u32 offset = ((opcode >> 4) & 0xf0u) | (opcode & 0x0fu);
+  u8 *ptr = *translation_ptr_ref;
+
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
+    return false;
+
+  if (condition != 0xe || (opcode & 0x0e000090u) != 0x00000090u ||
+      !immediate_offset || !pre_index || writeback || rn == REG_PC ||
+      mem_type == 0 || (load && rd == REG_PC) ||
+      (!load && mem_type != 1))
+  {
+    return false;
+  }
+
+  riscv_emit_arm_reg_load(&ptr, riscv_reg_a0, rn);
+
+  if (offset)
+  {
+    u8 *translation_ptr = ptr;
+    if (up)
+      riscv_emit_addi(riscv_reg_a0, riscv_reg_a0, offset);
+    else
+      riscv_emit_addi(riscv_reg_a0, riscv_reg_a0, -(int)offset);
+    ptr = translation_ptr;
+  }
+
+  if (load)
+  {
+    uintptr_t read_helper;
+
+    switch (mem_type)
+    {
+      case 1:
+        read_helper = (uintptr_t)read_memory16;
+        break;
+      case 2:
+        read_helper = (uintptr_t)read_memory8s;
+        break;
+      default:
+        read_helper = (uintptr_t)read_memory16s;
+        break;
+    }
+
+    riscv_emit_li(&ptr, riscv_reg_t0, pc);
+    riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
+    riscv_emit_c_call(&ptr, read_helper);
+    riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_a0);
+    riscv_emit_adjust_cycles(&ptr, cycles + 2u);
+    riscv_native_load_insns++;
+  }
+  else
+  {
+    if (rd == REG_PC)
+      riscv_emit_li(&ptr, riscv_reg_a1, pc + 12u);
+    else
+      riscv_emit_arm_reg_load(&ptr, riscv_reg_a1, rd);
+
+    riscv_emit_li(&ptr, riscv_reg_t0, pc + 4u);
+    riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
+    riscv_emit_c_call(&ptr, (uintptr_t)riscv_store_u16);
+    riscv_emit_adjust_cycles(&ptr, cycles + 1u);
+    riscv_emit_helper_call(&ptr, meta);
+    riscv_native_store_insns++;
+  }
+
+  *translation_ptr_ref = ptr;
+  return true;
+}
+
 bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,
                                          riscv_jit_block_meta *meta,
                                          u32 opcode,
@@ -455,12 +546,17 @@ bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,
   u32 offset = opcode & 0xfffu;
   u8 *ptr = *translation_ptr_ref;
 
+  if ((opcode & 0x0c000000u) != 0x04000000u)
+  {
+    return riscv_emit_native_arm_extra_memory(translation_ptr_ref, meta,
+                                             opcode, pc, cycles);
+  }
+
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
     return false;
 
-  if (condition != 0xe || (opcode & 0x0c000000u) != 0x04000000u ||
-      immediate_offset || !pre_index || writeback || rn == REG_PC ||
-      (load && rd == REG_PC))
+  if (condition != 0xe || immediate_offset || !pre_index || writeback ||
+      rn == REG_PC || (load && rd == REG_PC))
   {
     return false;
   }
