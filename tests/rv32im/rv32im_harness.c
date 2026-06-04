@@ -35,7 +35,7 @@ typedef unsigned int usize;
 #define ZLIB_BLOCK_MAX 65535u
 #define ZLIB_BLOCKS ((PNG_RAW_SIZE + ZLIB_BLOCK_MAX - 1) / ZLIB_BLOCK_MAX)
 #define ZLIB_SIZE (2 + PNG_RAW_SIZE + (ZLIB_BLOCKS * 5) + 4)
-#define RUNTIME_EXEC_MAP_BYTES 20992u
+#define RUNTIME_EXEC_MAP_BYTES 21504u
 #define RUNTIME_LOAD_BLOCK_OFFSET 512u
 #define RUNTIME_STORE_BLOCK_OFFSET 1024u
 #define RUNTIME_BRANCH_BLOCK_OFFSET 1536u
@@ -75,6 +75,7 @@ typedef unsigned int usize;
 #define RUNTIME_BLOCK_MEM_PUSH_BLOCK_OFFSET 19456u
 #define RUNTIME_BLOCK_MEM_LDM_PC_BLOCK_OFFSET 19968u
 #define RUNTIME_BLOCK_MEM_LDM_PC_S_BLOCK_OFFSET 20480u
+#define RUNTIME_MULTIPLY_LONG_BLOCK_OFFSET 20992u
 #define RUNTIME_START_PC 0x08000000u
 #define RUNTIME_END_PC (RUNTIME_START_PC + 4u)
 #define RUNTIME_CYCLES 7u
@@ -88,6 +89,26 @@ typedef unsigned int usize;
 #define RUNTIME_MULTIPLY_MUL_R4_R1_R2 0xe0040291u
 #define RUNTIME_MULTIPLY_MLA_R5_R1_R2_R3 0xe0253291u
 #define RUNTIME_CPSR_LOW_VALUE 0x9fu
+#define RUNTIME_CPSR_CV_LOW_VALUE \
+  (0x30000000u | RUNTIME_CPSR_LOW_VALUE)
+#define RUNTIME_MULTIPLY_LONG_START_PC 0x08001160u
+#define RUNTIME_MULTIPLY_LONG_END_PC \
+  (RUNTIME_MULTIPLY_LONG_START_PC + 8u)
+#define RUNTIME_MULTIPLY_LONG_UMULL_CYCLES 7u
+#define RUNTIME_MULTIPLY_LONG_SMULL_CYCLES 6u
+#define RUNTIME_MULTIPLY_LONG_TOTAL_CYCLES \
+  (RUNTIME_MULTIPLY_LONG_UMULL_CYCLES + \
+   RUNTIME_MULTIPLY_LONG_SMULL_CYCLES)
+#define RUNTIME_MULTIPLY_LONG_UMULL_R8_R9_R1_R2 0xe0898291u
+#define RUNTIME_MULTIPLY_LONG_SMULL_R10_R11_R3_R4 0xe0cba493u
+#define RUNTIME_MULTIPLY_LONG_UMULL_R1_VALUE 0xffffffffu
+#define RUNTIME_MULTIPLY_LONG_UMULL_R2_VALUE 0x00000002u
+#define RUNTIME_MULTIPLY_LONG_UMULL_LO_VALUE 0xfffffffeu
+#define RUNTIME_MULTIPLY_LONG_UMULL_HI_VALUE 0x00000001u
+#define RUNTIME_MULTIPLY_LONG_SMULL_R3_VALUE 0xfffffffeu
+#define RUNTIME_MULTIPLY_LONG_SMULL_R4_VALUE 0x00000003u
+#define RUNTIME_MULTIPLY_LONG_SMULL_LO_VALUE 0xfffffffau
+#define RUNTIME_MULTIPLY_LONG_SMULL_HI_VALUE 0xffffffffu
 #define RUNTIME_FLAG_ADDS_START_PC 0x08000c00u
 #define RUNTIME_FLAG_ADDS_END_PC (RUNTIME_FLAG_ADDS_START_PC + 4u)
 #define RUNTIME_FLAG_ADDS_CYCLES 5u
@@ -531,6 +552,7 @@ static u8 *g_runtime_cond_entry;
 static u8 *g_runtime_pc_write_movs_entry;
 static u8 *g_runtime_swp_entry;
 static u8 *g_runtime_multiply_entry;
+static u8 *g_runtime_multiply_long_entry;
 static u8 *g_runtime_flag_adds_entry;
 static u8 *g_runtime_flag_cmp_entry;
 static u8 *g_runtime_psr_entry;
@@ -624,6 +646,7 @@ static void clear_runtime_fixture_entries(void)
   g_runtime_pc_write_movs_entry = (u8 *)0;
   g_runtime_swp_entry = (u8 *)0;
   g_runtime_multiply_entry = (u8 *)0;
+  g_runtime_multiply_long_entry = (u8 *)0;
   g_runtime_flag_adds_entry = (u8 *)0;
   g_runtime_flag_cmp_entry = (u8 *)0;
   g_runtime_psr_entry = (u8 *)0;
@@ -971,6 +994,7 @@ static int build_runtime_fixture_block(const char **reason)
   u32 pc_write_movs_code_bytes;
   u32 swp_code_bytes;
   u32 multiply_code_bytes;
+  u32 multiply_long_code_bytes;
   u32 flag_adds_code_bytes;
   u32 flag_cmp_code_bytes;
   u32 psr_code_bytes;
@@ -1580,6 +1604,37 @@ static int build_runtime_fixture_block(const char **reason)
   multiply_code_bytes =
     (u32)(translation_ptr -
           (g_runtime_code + RUNTIME_MULTIPLY_BLOCK_OFFSET));
+
+  translation_ptr = g_runtime_code + RUNTIME_MULTIPLY_LONG_BLOCK_OFFSET;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_runtime_multiply_long_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_multiply_long(
+        &translation_ptr, meta,
+        RUNTIME_MULTIPLY_LONG_UMULL_R8_R9_R1_R2,
+        RUNTIME_MULTIPLY_LONG_UMULL_CYCLES))
+  {
+    *reason = "runtime_multiply_long_umull_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  if (!riscv_emit_native_arm_multiply_long(
+        &translation_ptr, meta,
+        RUNTIME_MULTIPLY_LONG_SMULL_R10_R11_R3_R4,
+        RUNTIME_MULTIPLY_LONG_SMULL_CYCLES))
+  {
+    *reason = "runtime_multiply_long_smull_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            RUNTIME_MULTIPLY_LONG_START_PC,
+                            RUNTIME_MULTIPLY_LONG_END_PC, false);
+  multiply_long_code_bytes =
+    (u32)(translation_ptr -
+          (g_runtime_code + RUNTIME_MULTIPLY_LONG_BLOCK_OFFSET));
 
   translation_ptr = g_runtime_code + RUNTIME_FLAG_ADDS_BLOCK_OFFSET;
   riscv_emit_block_prologue(&translation_ptr, &meta);
@@ -2305,8 +2360,8 @@ static int build_runtime_fixture_block(const char **reason)
     patch_branch_target_code_bytes + bl_code_bytes + bl_target_code_bytes +
     swi_code_bytes + swi_target_code_bytes + cond_code_bytes +
     pc_write_movs_code_bytes + swp_code_bytes + multiply_code_bytes +
-    flag_adds_code_bytes + flag_cmp_code_bytes + psr_code_bytes +
-    msr_cpsr_flags_code_bytes + msr_spsr_code_bytes +
+    multiply_long_code_bytes + flag_adds_code_bytes + flag_cmp_code_bytes +
+    psr_code_bytes + msr_cpsr_flags_code_bytes + msr_spsr_code_bytes +
     half_load_code_bytes + half_store_code_bytes +
     half_reg_load_code_bytes + half_reg_store_code_bytes +
     block_mem_stm_code_bytes + block_mem_ldm_code_bytes +
@@ -2318,8 +2373,8 @@ static int build_runtime_fixture_block(const char **reason)
     shifted_reg_offset_code_bytes + reg_offset_rrx_load_code_bytes;
   flush_ret = syscall3(SYS_RISCV_FLUSH_ICACHE, (long)g_runtime_code,
                        (long)(g_runtime_code +
-                              RUNTIME_BLOCK_MEM_LDM_PC_S_BLOCK_OFFSET +
-                              block_mem_ldm_pc_s_code_bytes), 0);
+                              RUNTIME_MULTIPLY_LONG_BLOCK_OFFSET +
+                              multiply_long_code_bytes), 0);
   if (flush_ret != 0)
   {
     *reason = "runtime_icache_flush_failed";
@@ -2340,8 +2395,9 @@ static int ensure_runtime_fixture(const char **reason)
       g_runtime_bl_target_entry && g_runtime_swi_entry &&
       g_runtime_swi_target_entry && g_runtime_cond_entry &&
       g_runtime_pc_write_movs_entry && g_runtime_swp_entry &&
-      g_runtime_multiply_entry && g_runtime_flag_adds_entry &&
-      g_runtime_flag_cmp_entry && g_runtime_psr_entry &&
+      g_runtime_multiply_entry && g_runtime_multiply_long_entry &&
+      g_runtime_flag_adds_entry && g_runtime_flag_cmp_entry &&
+      g_runtime_psr_entry &&
       g_runtime_msr_cpsr_flags_entry && g_runtime_msr_spsr_entry &&
       g_runtime_half_load_entry && g_runtime_half_store_entry &&
       g_runtime_half_reg_load_entry && g_runtime_half_reg_store_entry &&
@@ -2710,6 +2766,32 @@ static void run_runtime_reference_workload(const struct harness_state *base,
                                                  1, 0,
                                                  0, 0, 0,
                                                  0, 0);
+
+  for (i = 0; i < REG_MAX; i++)
+    values[i] = 0;
+  values[1] = RUNTIME_MULTIPLY_LONG_UMULL_R1_VALUE;
+  values[2] = RUNTIME_MULTIPLY_LONG_UMULL_R2_VALUE;
+  values[3] = RUNTIME_MULTIPLY_LONG_SMULL_R3_VALUE;
+  values[4] = RUNTIME_MULTIPLY_LONG_SMULL_R4_VALUE;
+  values[8] = RUNTIME_MULTIPLY_LONG_UMULL_LO_VALUE;
+  values[9] = RUNTIME_MULTIPLY_LONG_UMULL_HI_VALUE;
+  values[10] = RUNTIME_MULTIPLY_LONG_SMULL_LO_VALUE;
+  values[11] = RUNTIME_MULTIPLY_LONG_SMULL_HI_VALUE;
+  values[REG_PC] = RUNTIME_MULTIPLY_LONG_END_PC;
+  values[REG_CPSR] = RUNTIME_CPSR_CV_LOW_VALUE;
+  values[CPU_HALT_STATE] = CPU_ACTIVE;
+  reg_hash = runtime_update_reg_hash(reg_hash, values);
+  mem_hash = runtime_update_memory_hash(mem_hash,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        runtime_reference_sticky_hash());
+  scheduler_hash = runtime_update_scheduler_hash(
+    scheduler_hash,
+    1, RUNTIME_MULTIPLY_LONG_START_PC, 0,
+    1, 0,
+    0, 0, 0,
+    0, 0);
 
   for (i = 0; i < REG_MAX; i++)
     values[i] = 0;
@@ -3652,9 +3734,9 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   snapshot->reg_hash = reg_hash;
   snapshot->mem_hash = mem_hash;
   snapshot->scheduler_hash = scheduler_hash;
-  snapshot->blocks = 43;
+  snapshot->blocks = 44;
   snapshot->fallbacks = 2;
-  snapshot->native_data_proc = 21;
+  snapshot->native_data_proc = 23;
   snapshot->native_branch = 5;
   snapshot->native_load = 16;
   snapshot->native_store = 7;
@@ -3692,6 +3774,18 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   reg[2] = runtime_multiply_r2_value(base);
   reg[3] = runtime_multiply_r3_value(base);
   execute_arm_translate_internal(RUNTIME_MULTIPLY_TOTAL_CYCLES, &reg[0]);
+  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+  mem_hash = runtime_update_current_memory_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+
+  reset_runtime_fixture_state(RUNTIME_MULTIPLY_LONG_START_PC);
+  reg[1] = RUNTIME_MULTIPLY_LONG_UMULL_R1_VALUE;
+  reg[2] = RUNTIME_MULTIPLY_LONG_UMULL_R2_VALUE;
+  reg[3] = RUNTIME_MULTIPLY_LONG_SMULL_R3_VALUE;
+  reg[4] = RUNTIME_MULTIPLY_LONG_SMULL_R4_VALUE;
+  reg[REG_CPSR] = RUNTIME_CPSR_CV_LOW_VALUE;
+  execute_arm_translate_internal(RUNTIME_MULTIPLY_LONG_TOTAL_CYCLES,
+                                 &reg[0]);
   reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
   mem_hash = runtime_update_current_memory_hash(mem_hash);
   scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
@@ -4232,6 +4326,9 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
     return g_runtime_entry;
   if (g_runtime_multiply_entry && pc == RUNTIME_MULTIPLY_START_PC)
     return g_runtime_multiply_entry;
+  if (g_runtime_multiply_long_entry &&
+      pc == RUNTIME_MULTIPLY_LONG_START_PC)
+    return g_runtime_multiply_long_entry;
   if (g_runtime_flag_adds_entry && pc == RUNTIME_FLAG_ADDS_START_PC)
     return g_runtime_flag_adds_entry;
   if (g_runtime_flag_cmp_entry && pc == RUNTIME_FLAG_CMP_START_PC)
@@ -4857,7 +4954,7 @@ static void command_compare(void)
 
   if (!ensure_runtime_fixture(&runtime_reason))
   {
-    put_raw("result=FAIL command=compare workload=arm_add_multiply_flags_psr_msr_load_store_regoff_halfreg_blockmem_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_alert_branch_patch_bl_bx_swi_cond_spsr_idle_thumb_fallback");
+    put_raw("result=FAIL command=compare workload=arm_add_multiply_multiplylong_flags_psr_msr_load_store_regoff_halfreg_blockmem_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_alert_branch_patch_bl_bx_swi_cond_spsr_idle_thumb_fallback");
     put_raw(" harness_mode=");
     put_raw(RUNTIME_FIXTURE_MODE);
     put_raw(" frame_mode=synthetic mem_mode=runtime_stickybits reason=");
@@ -4883,7 +4980,7 @@ static void command_compare(void)
       rv32im.native_store != interp.native_store ||
       rv32im.native_psr != interp.native_psr)
   {
-    put_raw("result=FAIL command=compare workload=arm_add_multiply_flags_psr_msr_load_store_regoff_halfreg_blockmem_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_alert_branch_patch_bl_bx_swi_cond_spsr_idle_thumb_fallback interp_frame_hash=");
+    put_raw("result=FAIL command=compare workload=arm_add_multiply_multiplylong_flags_psr_msr_load_store_regoff_halfreg_blockmem_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_alert_branch_patch_bl_bx_swi_cond_spsr_idle_thumb_fallback interp_frame_hash=");
     put_u32_hex(interp.frame_hash);
     put_raw(" rv32im_frame_hash=");
     put_u32_hex(rv32im.frame_hash);
@@ -4922,7 +5019,7 @@ static void command_compare(void)
     return;
   }
 
-  put_raw("result=PASS command=compare workload=arm_add_multiply_flags_psr_msr_load_store_regoff_halfreg_blockmem_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_alert_branch_patch_bl_bx_swi_cond_spsr_idle_thumb_fallback interp_frame_hash=");
+  put_raw("result=PASS command=compare workload=arm_add_multiply_multiplylong_flags_psr_msr_load_store_regoff_halfreg_blockmem_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_alert_branch_patch_bl_bx_swi_cond_spsr_idle_thumb_fallback interp_frame_hash=");
   put_u32_hex(interp.frame_hash);
   put_raw(" rv32im_frame_hash=");
   put_u32_hex(rv32im.frame_hash);
