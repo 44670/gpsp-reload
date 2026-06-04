@@ -434,6 +434,7 @@ typedef unsigned int usize;
 #define RUNTIME_PSR_MRS_SPSR_CYCLES 6u
 #define RUNTIME_PSR_TOTAL_CYCLES \
   (RUNTIME_PSR_MRS_CPSR_CYCLES + RUNTIME_PSR_MRS_SPSR_CYCLES)
+#define RUNTIME_PSR_EXTRA_CYCLES 4u
 #define RUNTIME_MRS_R6_CPSR 0xe10f6000u
 #define RUNTIME_MRS_R7_SPSR 0xe14f7000u
 #define RUNTIME_PSR_CPSR_VALUE 0xa000009fu
@@ -4970,6 +4971,30 @@ static void run_runtime_reference_workload(const struct harness_state *base,
 
   for (i = 0; i < REG_MAX; i++)
     values[i] = 0;
+  values[6] = RUNTIME_PSR_CPSR_VALUE;
+  values[7] = RUNTIME_PSR_SPSR_VALUE;
+  values[REG_PC] = RUNTIME_PSR_END_PC;
+  values[REG_CPSR] = RUNTIME_PSR_CPSR_VALUE;
+  values[CPU_MODE] = RUNTIME_PSR_CPU_MODE_VALUE;
+  values[CPU_HALT_STATE] = CPU_ACTIVE;
+  reg_hash = runtime_update_reg_hash(reg_hash, values);
+  reg_hash = runtime_update_supervisor_state_hash(
+    reg_hash, 0, RUNTIME_PSR_SPSR_VALUE);
+  mem_hash = runtime_update_memory_hash(mem_hash,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        runtime_reference_sticky_hash());
+  scheduler_hash = runtime_update_scheduler_hash(
+    scheduler_hash,
+    2, RUNTIME_PSR_END_PC, 0,
+    0, RUNTIME_NO_UPDATE_CYCLES,
+    1, RUNTIME_PSR_EXTRA_CYCLES,
+    RUNTIME_PSR_END_PC,
+    0, 0);
+
+  for (i = 0; i < REG_MAX; i++)
+    values[i] = 0;
   values[REG_PC] = RUNTIME_MSR_CPSR_FLAGS_END_PC;
   values[REG_CPSR] = RUNTIME_MSR_CPSR_FLAGS_EXPECTED;
   values[CPU_MODE] = MODE_SUPERVISOR;
@@ -6853,8 +6878,8 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   snapshot->reg_hash = reg_hash;
   snapshot->mem_hash = mem_hash;
   snapshot->scheduler_hash = scheduler_hash;
-  snapshot->blocks = 105;
-  snapshot->fallbacks = 24;
+  snapshot->blocks = 106;
+  snapshot->fallbacks = 25;
   snapshot->native_data_proc = 64;
   snapshot->native_branch = 5;
   snapshot->native_load = 23;
@@ -7165,6 +7190,21 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   reg[CPU_MODE] = RUNTIME_PSR_CPU_MODE_VALUE;
   spsr[RUNTIME_PSR_CPU_MODE_VALUE & 0xfu] = RUNTIME_PSR_SPSR_VALUE;
   execute_arm_translate_internal(RUNTIME_PSR_TOTAL_CYCLES, &reg[0]);
+  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+  reg_hash = runtime_update_supervisor_state_hash(
+    reg_hash,
+    reg_mode[RUNTIME_PSR_CPU_MODE_VALUE & 0xfu][6],
+    spsr[RUNTIME_PSR_CPU_MODE_VALUE & 0xfu]);
+  mem_hash = runtime_update_current_memory_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+
+  reset_runtime_fixture_state(RUNTIME_PSR_START_PC);
+  reg[REG_CPSR] = RUNTIME_PSR_CPSR_VALUE;
+  reg[CPU_MODE] = RUNTIME_PSR_CPU_MODE_VALUE;
+  spsr[RUNTIME_PSR_CPU_MODE_VALUE & 0xfu] = RUNTIME_PSR_SPSR_VALUE;
+  execute_arm_translate_internal(RUNTIME_PSR_TOTAL_CYCLES +
+                                 RUNTIME_PSR_EXTRA_CYCLES,
+                                 &reg[0]);
   reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
   reg_hash = runtime_update_supervisor_state_hash(
     reg_hash,
@@ -8837,7 +8877,7 @@ static void command_compare(void)
 
   if (!ensure_runtime_fixture(&runtime_reason))
   {
-    put_raw("result=FAIL command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_msr_msrctrl_load_loadremain_store_storeremain_storebyte_storebyteremain_storebytealert_storehalt_pcmem_pcmemremain_loadpc_loadpcremain_pcstore_pcbasestoreremain_regoff_regoffremain_regstore_regstoreremain_regwb_halfremain_halfreg_halfregremain_halfregstoreremain_halfpc_halfpcremain_halfwb_halfhalt_blockmem_blockalert_blockhalt_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_swpalert_swphalt_swpb_alert_branchremain_branch_patch_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_cond_pcwrite_pcaddremain_spsr_idle_thumb_fallback");
+    put_raw("result=FAIL command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_psrremain_msr_msrctrl_load_loadremain_store_storeremain_storebyte_storebyteremain_storebytealert_storehalt_pcmem_pcmemremain_loadpc_loadpcremain_pcstore_pcbasestoreremain_regoff_regoffremain_regstore_regstoreremain_regwb_halfremain_halfreg_halfregremain_halfregstoreremain_halfpc_halfpcremain_halfwb_halfhalt_blockmem_blockalert_blockhalt_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_swpalert_swphalt_swpb_alert_branchremain_branch_patch_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_cond_pcwrite_pcaddremain_spsr_idle_thumb_fallback");
     put_raw(" harness_mode=");
     put_raw(RUNTIME_FIXTURE_MODE);
     put_raw(" frame_mode=synthetic mem_mode=runtime_stickybits reason=");
@@ -8863,7 +8903,7 @@ static void command_compare(void)
       rv32im.native_store != interp.native_store ||
       rv32im.native_psr != interp.native_psr)
   {
-    put_raw("result=FAIL command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_msr_msrctrl_load_loadremain_store_storeremain_storebyte_storebyteremain_storebytealert_storehalt_pcmem_pcmemremain_loadpc_loadpcremain_pcstore_pcbasestoreremain_regoff_regoffremain_regstore_regstoreremain_regwb_halfremain_halfreg_halfregremain_halfregstoreremain_halfpc_halfpcremain_halfwb_halfhalt_blockmem_blockalert_blockhalt_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_swpalert_swphalt_swpb_alert_branchremain_branch_patch_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_cond_pcwrite_pcaddremain_spsr_idle_thumb_fallback interp_frame_hash=");
+    put_raw("result=FAIL command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_psrremain_msr_msrctrl_load_loadremain_store_storeremain_storebyte_storebyteremain_storebytealert_storehalt_pcmem_pcmemremain_loadpc_loadpcremain_pcstore_pcbasestoreremain_regoff_regoffremain_regstore_regstoreremain_regwb_halfremain_halfreg_halfregremain_halfregstoreremain_halfpc_halfpcremain_halfwb_halfhalt_blockmem_blockalert_blockhalt_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_swpalert_swphalt_swpb_alert_branchremain_branch_patch_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_cond_pcwrite_pcaddremain_spsr_idle_thumb_fallback interp_frame_hash=");
     put_u32_hex(interp.frame_hash);
     put_raw(" rv32im_frame_hash=");
     put_u32_hex(rv32im.frame_hash);
@@ -8902,7 +8942,7 @@ static void command_compare(void)
     return;
   }
 
-  put_raw("result=PASS command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_msr_msrctrl_load_loadremain_store_storeremain_storebyte_storebyteremain_storebytealert_storehalt_pcmem_pcmemremain_loadpc_loadpcremain_pcstore_pcbasestoreremain_regoff_regoffremain_regstore_regstoreremain_regwb_halfremain_halfreg_halfregremain_halfregstoreremain_halfpc_halfpcremain_halfwb_halfhalt_blockmem_blockalert_blockhalt_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_swpalert_swphalt_swpb_alert_branchremain_branch_patch_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_cond_pcwrite_pcaddremain_spsr_idle_thumb_fallback interp_frame_hash=");
+  put_raw("result=PASS command=compare workload=arm_add_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_psrremain_msr_msrctrl_load_loadremain_store_storeremain_storebyte_storebyteremain_storebytealert_storehalt_pcmem_pcmemremain_loadpc_loadpcremain_pcstore_pcbasestoreremain_regoff_regoffremain_regstore_regstoreremain_regwb_halfremain_halfreg_halfregremain_halfregstoreremain_halfpc_halfpcremain_halfwb_halfhalt_blockmem_blockalert_blockhalt_blockpush_blockpc_blockspsr_hle_pcsrc_writeback_swp_swpalert_swphalt_swpb_alert_branchremain_branch_patch_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_cond_pcwrite_pcaddremain_spsr_idle_thumb_fallback interp_frame_hash=");
   put_u32_hex(interp.frame_hash);
   put_raw(" rv32im_frame_hash=");
   put_u32_hex(rv32im.frame_hash);
