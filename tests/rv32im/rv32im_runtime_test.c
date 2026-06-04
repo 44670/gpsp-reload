@@ -30,6 +30,9 @@ typedef unsigned int usize;
 #define CHAIN_R1_VALUE 0x22u
 #define CHAIN_R2_VALUE (CHAIN_R0_VALUE + CHAIN_R1_VALUE)
 #define CHAIN_R3_VALUE (CHAIN_R2_VALUE + CHAIN_R1_VALUE)
+#define UNSUPPORTED_START_PC 0x08000020u
+#define UNSUPPORTED_END_PC (UNSUPPORTED_START_PC + 4u)
+#define UNSUPPORTED_CYCLES 11u
 #define MULTIPLY_START_PC 0x08000080u
 #define MULTIPLY_END_PC (MULTIPLY_START_PC + 8u)
 #define MULTIPLY_MUL_CYCLES 5u
@@ -807,6 +810,7 @@ typedef unsigned int usize;
 #define HLE_DIV_BLOCK_OFFSET 39936u
 #define HLE_DIVARM_BLOCK_OFFSET 40448u
 #define CHAIN_SECOND_BLOCK_OFFSET 40960u
+#define UNSUPPORTED_BLOCK_OFFSET 41472u
 
 u32 reg[REG_MAX];
 u32 spsr[6];
@@ -821,6 +825,7 @@ static u8 *g_lookup_next_entry;
 static u32 g_lookup_next_pc;
 static u8 *g_data_entry;
 static u8 *g_chain_second_entry;
+static u8 *g_unsupported_entry;
 static u8 *g_multiply_entry;
 static u8 *g_multiply_flag_muls_entry;
 static u8 *g_multiply_flag_mlas_entry;
@@ -1173,6 +1178,22 @@ static u32 build_single_data_proc_block(u8 *code, u32 opcode, u32 start_pc,
 
   riscv_emit_block_finalize(meta, &translation_ptr, start_pc,
                             start_pc + 4u, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_unsupported_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_unsupported_entry = ((u8 *)meta) + block_prologue_size;
+  riscv_mark_block_unsupported(meta);
+  riscv_emit_block_finalize(meta, &translation_ptr, UNSUPPORTED_START_PC,
+                            UNSUPPORTED_END_PC, false);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -2681,6 +2702,34 @@ static void run_cycle_boundary_case(void)
   if (g_execute_calls != 0)
     fail_u32("cycle_boundary", "execute_calls", g_execute_calls, 0);
   expect_stickybits_cleared("cycle_boundary");
+}
+
+static void run_unsupported_block_fallback_case(void)
+{
+  reset_runtime_observations(UNSUPPORTED_START_PC);
+  g_lookup_entry = g_unsupported_entry;
+
+  execute_arm_translate_internal(UNSUPPORTED_CYCLES, &reg[0]);
+
+  if (reg[REG_PC] != UNSUPPORTED_START_PC)
+    fail_u32("unsupported_fallback", "pc",
+             reg[REG_PC], UNSUPPORTED_START_PC);
+  if (g_lookup_calls != 1)
+    fail_u32("unsupported_fallback", "lookup_calls", g_lookup_calls, 1);
+  if (g_lookup_pc != UNSUPPORTED_START_PC)
+    fail_u32("unsupported_fallback", "lookup_pc",
+             g_lookup_pc, UNSUPPORTED_START_PC);
+  if (g_update_calls != 0)
+    fail_u32("unsupported_fallback", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("unsupported_fallback", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != UNSUPPORTED_CYCLES)
+    fail_u32("unsupported_fallback", "execute_cycles",
+             g_execute_cycles, UNSUPPORTED_CYCLES);
+  if (g_execute_pc != UNSUPPORTED_START_PC)
+    fail_u32("unsupported_fallback", "execute_pc",
+             g_execute_pc, UNSUPPORTED_START_PC);
+  expect_stickybits_cleared("unsupported_fallback");
 }
 
 static void run_remaining_cycles_case(void)
@@ -5603,6 +5652,7 @@ void _start(void)
   u8 *code = (u8 *)map_exec_page();
   u32 data_code_bytes;
   u32 chain_second_code_bytes;
+  u32 unsupported_code_bytes;
   u32 multiply_code_bytes;
   u32 multiply_flag_muls_code_bytes;
   u32 multiply_flag_mlas_code_bytes;
@@ -5688,6 +5738,8 @@ void _start(void)
                                  CHAIN_SECOND_CYCLES,
                                  &g_chain_second_entry,
                                  "chain_second_emit_rejected");
+  unsupported_code_bytes =
+    build_unsupported_block(code + UNSUPPORTED_BLOCK_OFFSET);
   multiply_code_bytes = build_multiply_block(code + MULTIPLY_BLOCK_OFFSET);
   multiply_flag_muls_code_bytes =
     build_multiply_flag_block(code + MULTIPLY_FLAG_MULS_BLOCK_OFFSET,
@@ -6003,6 +6055,7 @@ void _start(void)
   expect_swi_hle_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_swap_pc_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   run_cycle_boundary_case();
+  run_unsupported_block_fallback_case();
   run_remaining_cycles_case();
   run_native_chain_remaining_case();
   run_update_pc_change_chain_case();
@@ -6186,6 +6239,8 @@ void _start(void)
   put_u32_dec(data_code_bytes);
   put_raw(" chain_second_code_bytes=");
   put_u32_dec(chain_second_code_bytes);
+  put_raw(" unsupported_code_bytes=");
+  put_u32_dec(unsupported_code_bytes);
   put_raw(" multiply_code_bytes=");
   put_u32_dec(multiply_code_bytes);
   put_raw(" multiply_flag_muls_code_bytes=");
@@ -6330,6 +6385,8 @@ void _start(void)
   put_u32_hex((u32)g_data_entry);
   put_raw(" chain_second_entry=");
   put_u32_hex((u32)g_chain_second_entry);
+  put_raw(" unsupported_entry=");
+  put_u32_hex((u32)g_unsupported_entry);
   put_raw(" multiply_entry=");
   put_u32_hex((u32)g_multiply_entry);
   put_raw(" multiply_flag_muls_entry=");
