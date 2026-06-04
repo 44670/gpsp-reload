@@ -112,6 +112,12 @@ bool riscv_emit_native_arm_swi(u8 **translation_ptr,
                                u32 opcode,
                                u32 pc,
                                u32 cycles);
+bool riscv_emit_native_arm_swi_patchable(u8 **translation_ptr,
+                                         riscv_jit_block_meta *meta,
+                                         u8 **branch_source,
+                                         u32 opcode,
+                                         u32 pc,
+                                         u32 cycles);
 bool riscv_emit_native_arm_hle_div(u8 **translation_ptr,
                                    riscv_jit_block_meta *meta,
                                    bool divarm,
@@ -388,9 +394,12 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
 #define arm_swi()                                                             \
   do                                                                          \
   {                                                                           \
-    if (riscv_emit_native_arm_swi(&translation_ptr, riscv_block_meta,         \
-                                  opcode, pc, cycle_count))                   \
+    if (riscv_emit_native_arm_swi_patchable(                                  \
+          &translation_ptr, riscv_block_meta,                                 \
+          &block_exits[block_exit_position].branch_source,                   \
+          opcode, pc, cycle_count))                                           \
     {                                                                         \
+      block_exit_position++;                                                  \
       cycle_count = 0;                                                        \
     }                                                                         \
     else                                                                      \

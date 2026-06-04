@@ -15,7 +15,7 @@ typedef unsigned int usize;
 #define PROT_EXEC 4
 #define MAP_PRIVATE 2
 #define MAP_ANONYMOUS 32
-#define EXEC_MAP_BYTES 49152u
+#define EXEC_MAP_BYTES 50176u
 
 #define BLOCK_START_PC 0x08000000u
 #define BLOCK_END_PC 0x08000004u
@@ -874,6 +874,7 @@ typedef unsigned int usize;
 #define INTERNAL_BRANCH_BLOCK_OFFSET 45568u
 #define EXTERNAL_BRANCH_BLOCK_OFFSET 46080u
 #define EXTERNAL_BRANCH_TARGET_BLOCK_OFFSET 46592u
+#define SWI_PATCH_BLOCK_OFFSET 47104u
 #define EXPECTED_INITIAL_ROM_WATERMARK 16u
 
 u32 reg[REG_MAX];
@@ -955,6 +956,7 @@ static u8 *g_pc_write_mov_entry;
 static u8 *g_pc_write_add_entry;
 static u8 *g_pc_source_entry;
 static u8 *g_swi_entry;
+static u8 *g_swi_patch_entry;
 static u8 *g_swi_target_entry;
 static u8 *g_swp_word_entry;
 static u8 *g_swp_byte_entry;
@@ -1982,6 +1984,40 @@ static u32 build_swi_block(u8 *code)
 
   riscv_emit_block_finalize(meta, &translation_ptr, SWI_START_PC,
                             SWI_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_swi_patch_block(u8 *code, u8 *target_entry)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u8 *branch_source;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_swi_patch_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_swi_patchable(&translation_ptr, meta,
+                                           &branch_source,
+                                           SWI_OPCODE_5,
+                                           SWI_START_PC,
+                                           SWI_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=swi_patch_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!branch_source)
+  {
+    put_raw("result=FAIL command=runtime reason=swi_patch_no_patch\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, SWI_START_PC,
+                            SWI_END_PC, false);
+  riscv_patch_unconditional_branch(branch_source, target_entry);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -4525,6 +4561,50 @@ static void run_swi_native_target_case(void)
     fail_u32("swi_native_target", "execute_pc",
              g_execute_pc, SWI_TARGET_END_PC);
   expect_stickybits_cleared("swi_native_target");
+}
+
+static void run_swi_patched_target_case(void)
+{
+  reset_runtime_observations(SWI_START_PC);
+  set_cpu_mode_inputs();
+  g_lookup_entry = g_swi_patch_entry;
+  reg[1] = CHAIN_R1_VALUE;
+  reg[2] = CHAIN_R2_VALUE;
+
+  execute_arm_translate_internal(SWI_CYCLES + SWI_TARGET_CYCLES, &reg[0]);
+
+  if (reg[REG_PC] != SWI_TARGET_END_PC)
+    fail_u32("swi_patched_target", "pc",
+             reg[REG_PC], SWI_TARGET_END_PC);
+  if (reg[3] != CHAIN_R3_VALUE)
+    fail_u32("swi_patched_target", "r3", reg[3], CHAIN_R3_VALUE);
+  if (reg[REG_LR] != SWI_LINK_PC)
+    fail_u32("swi_patched_target", "lr", reg[REG_LR], SWI_LINK_PC);
+  if (reg[REG_CPSR] != SWI_CPSR_VALUE)
+    fail_u32("swi_patched_target", "cpsr", reg[REG_CPSR], SWI_CPSR_VALUE);
+  if (reg[CPU_MODE] != MODE_SUPERVISOR)
+    fail_u32("swi_patched_target", "mode", reg[CPU_MODE], MODE_SUPERVISOR);
+  if (reg[REG_BUS_VALUE] != SWI_BUS_VALUE)
+    fail_u32("swi_patched_target", "bus", reg[REG_BUS_VALUE], SWI_BUS_VALUE);
+  if (reg_mode[MODE_SUPERVISOR & 0xfu][6] != SWI_LINK_PC)
+    fail_u32("swi_patched_target", "supervisor_lr",
+             reg_mode[MODE_SUPERVISOR & 0xfu][6], SWI_LINK_PC);
+  if (spsr[MODE_SUPERVISOR & 0xfu] != SWI_INITIAL_CPSR)
+    fail_u32("swi_patched_target", "supervisor_spsr",
+             spsr[MODE_SUPERVISOR & 0xfu], SWI_INITIAL_CPSR);
+  if (g_lookup_calls != 1)
+    fail_u32("swi_patched_target", "lookup_calls", g_lookup_calls, 1);
+  if (g_lookup_pc != SWI_START_PC)
+    fail_u32("swi_patched_target", "lookup_pc",
+             g_lookup_pc, SWI_START_PC);
+  if (g_update_calls != 1)
+    fail_u32("swi_patched_target", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("swi_patched_target", "update_cycles",
+             (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("swi_patched_target", "execute_calls", g_execute_calls, 0);
+  expect_stickybits_cleared("swi_patched_target");
 }
 
 static void run_swp_word_boundary_case(void)
@@ -7123,6 +7203,7 @@ void _start(void)
   u32 reg_shift_test_code_bytes;
   u32 pc_source_code_bytes;
   u32 swi_code_bytes;
+  u32 swi_patch_code_bytes;
   u32 swi_target_code_bytes;
   u32 swp_word_code_bytes;
   u32 swp_byte_code_bytes;
@@ -7366,6 +7447,9 @@ void _start(void)
                                  SWI_TARGET_CYCLES,
                                  &g_swi_target_entry,
                                  "swi_target_emit_rejected");
+  swi_patch_code_bytes =
+    build_swi_patch_block(code + SWI_PATCH_BLOCK_OFFSET,
+                          g_swi_target_entry);
   swp_word_code_bytes =
     build_swap_block(code + SWP_WORD_BLOCK_OFFSET,
                      SWP_R4_R5_R3, SWP_WORD_START_PC,
@@ -7703,6 +7787,7 @@ void _start(void)
   run_swi_boundary_case();
   run_swi_remaining_case();
   run_swi_native_target_case();
+  run_swi_patched_target_case();
   run_swp_word_boundary_case();
   run_swp_byte_remaining_case();
   run_swp_word_smc_irq_alert_case();
@@ -7839,6 +7924,8 @@ void _start(void)
   put_u32_dec(pc_source_code_bytes);
   put_raw(" swi_code_bytes=");
   put_u32_dec(swi_code_bytes);
+  put_raw(" swi_patch_code_bytes=");
+  put_u32_dec(swi_patch_code_bytes);
   put_raw(" swi_target_code_bytes=");
   put_u32_dec(swi_target_code_bytes);
   put_raw(" swp_word_code_bytes=");
@@ -8017,6 +8104,8 @@ void _start(void)
   put_u32_hex((u32)g_pc_source_entry);
   put_raw(" swi_entry=");
   put_u32_hex((u32)g_swi_entry);
+  put_raw(" swi_patch_entry=");
+  put_u32_hex((u32)g_swi_patch_entry);
   put_raw(" swi_target_entry=");
   put_u32_hex((u32)g_swi_target_entry);
   put_raw(" swp_word_entry=");
