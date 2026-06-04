@@ -708,6 +708,22 @@ typedef unsigned int usize;
 #define BLOCK_MEM_PUSH_R1_VALUE 0x11121314u
 #define BLOCK_MEM_PUSH_LR_VALUE 0x21222324u
 #define BLOCK_MEM_MAX_TRANSFERS 8u
+#define HLE_DIV_START_PC 0x08000d80u
+#define HLE_DIV_END_PC (HLE_DIV_START_PC + 4u)
+#define HLE_DIVARM_START_PC 0x08000da0u
+#define HLE_DIVARM_END_PC (HLE_DIVARM_START_PC + 4u)
+#define HLE_DIV_CYCLES 73u
+#define HLE_DIVARM_CYCLES 75u
+#define HLE_DIV_R0_VALUE 0xfffffb2eu
+#define HLE_DIV_R1_VALUE 10u
+#define HLE_DIV_QUOTIENT 0xffffff85u
+#define HLE_DIV_REMAINDER 0xfffffffcu
+#define HLE_DIV_ABS_QUOTIENT 123u
+#define HLE_DIVARM_R0_VALUE 0xfffffffdu
+#define HLE_DIVARM_R1_VALUE 10u
+#define HLE_DIVARM_QUOTIENT 0xfffffffdu
+#define HLE_DIVARM_REMAINDER 1u
+#define HLE_DIVARM_ABS_QUOTIENT 3u
 #define WRITEBACK_BASE_ADDR 0x02000400u
 #define WRITEBACK_STORE_ADDR (WRITEBACK_BASE_ADDR + 0x10u)
 #define WRITEBACK_POST_LOAD_ADDR WRITEBACK_BASE_ADDR
@@ -778,6 +794,8 @@ typedef unsigned int usize;
 #define BLOCK_MEM_STM_BLOCK_OFFSET 38400u
 #define BLOCK_MEM_LDM_BLOCK_OFFSET 38912u
 #define BLOCK_MEM_PUSH_BLOCK_OFFSET 39424u
+#define HLE_DIV_BLOCK_OFFSET 39936u
+#define HLE_DIVARM_BLOCK_OFFSET 40448u
 
 u32 reg[REG_MAX];
 u32 spsr[6];
@@ -852,6 +870,8 @@ static u8 *g_msr_spsr_entry;
 static u8 *g_block_mem_stm_entry;
 static u8 *g_block_mem_ldm_entry;
 static u8 *g_block_mem_push_entry;
+static u8 *g_hle_div_entry;
+static u8 *g_hle_divarm_entry;
 static u8 *g_writeback_store_entry;
 static u8 *g_writeback_load_entry;
 static u8 *g_reg_offset_writeback_store_entry;
@@ -2262,6 +2282,31 @@ static u32 build_block_memory_block(u8 *code, u32 opcode, u32 pc, u32 cycles,
 
   if (!riscv_emit_native_arm_block_memory(&translation_ptr, meta,
                                           opcode, pc, cycles))
+  {
+    put_raw("result=FAIL command=runtime reason=");
+    put_raw(reject_reason);
+    put_raw("\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, pc, pc + 4u, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_hle_div_block(u8 *code, bool divarm, u32 pc, u32 cycles,
+                               u8 **entry, const char *reject_reason)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  *entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_hle_div(&translation_ptr, meta,
+                                     divarm, cycles))
   {
     put_raw("result=FAIL command=runtime reason=");
     put_raw(reject_reason);
@@ -4776,6 +4821,64 @@ static void run_block_mem_push_remaining_case(void)
   expect_stickybits_cleared("block_push");
 }
 
+static void run_hle_div_boundary_case(void)
+{
+  reset_runtime_observations(HLE_DIV_START_PC);
+  g_lookup_entry = g_hle_div_entry;
+  reg[0] = HLE_DIV_R0_VALUE;
+  reg[1] = HLE_DIV_R1_VALUE;
+
+  execute_arm_translate_internal(HLE_DIV_CYCLES, &reg[0]);
+
+  if (reg[0] != HLE_DIV_QUOTIENT)
+    fail_u32("hle_div", "r0", reg[0], HLE_DIV_QUOTIENT);
+  if (reg[1] != HLE_DIV_REMAINDER)
+    fail_u32("hle_div", "r1", reg[1], HLE_DIV_REMAINDER);
+  if (reg[3] != HLE_DIV_ABS_QUOTIENT)
+    fail_u32("hle_div", "r3", reg[3], HLE_DIV_ABS_QUOTIENT);
+  if (reg[REG_PC] != HLE_DIV_END_PC)
+    fail_u32("hle_div", "pc", reg[REG_PC], HLE_DIV_END_PC);
+  if (g_update_calls != 1)
+    fail_u32("hle_div", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("hle_div", "update_cycles", (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("hle_div", "execute_calls", g_execute_calls, 0);
+  expect_stickybits_cleared("hle_div");
+}
+
+static void run_hle_divarm_remaining_case(void)
+{
+  const u32 extra_cycles = 6u;
+
+  reset_runtime_observations(HLE_DIVARM_START_PC);
+  g_lookup_entry = g_hle_divarm_entry;
+  reg[0] = HLE_DIVARM_R0_VALUE;
+  reg[1] = HLE_DIVARM_R1_VALUE;
+
+  execute_arm_translate_internal(HLE_DIVARM_CYCLES + extra_cycles, &reg[0]);
+
+  if (reg[0] != HLE_DIVARM_QUOTIENT)
+    fail_u32("hle_divarm", "r0", reg[0], HLE_DIVARM_QUOTIENT);
+  if (reg[1] != HLE_DIVARM_REMAINDER)
+    fail_u32("hle_divarm", "r1", reg[1], HLE_DIVARM_REMAINDER);
+  if (reg[3] != HLE_DIVARM_ABS_QUOTIENT)
+    fail_u32("hle_divarm", "r3", reg[3], HLE_DIVARM_ABS_QUOTIENT);
+  if (reg[REG_PC] != HLE_DIVARM_END_PC)
+    fail_u32("hle_divarm", "pc", reg[REG_PC], HLE_DIVARM_END_PC);
+  if (g_update_calls != 0)
+    fail_u32("hle_divarm", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("hle_divarm", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("hle_divarm", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != HLE_DIVARM_END_PC)
+    fail_u32("hle_divarm", "execute_pc", g_execute_pc,
+             HLE_DIVARM_END_PC);
+  expect_stickybits_cleared("hle_divarm");
+}
+
 static void run_writeback_store_case(void)
 {
   const u32 extra_cycles = 4u;
@@ -5376,6 +5479,8 @@ void _start(void)
   u32 block_mem_stm_code_bytes;
   u32 block_mem_ldm_code_bytes;
   u32 block_mem_push_code_bytes;
+  u32 hle_div_code_bytes;
+  u32 hle_divarm_code_bytes;
   u32 writeback_store_code_bytes;
   u32 writeback_load_code_bytes;
   u32 reg_offset_writeback_store_code_bytes;
@@ -5669,6 +5774,20 @@ void _start(void)
                              BLOCK_MEM_PUSH_CYCLES,
                              &g_block_mem_push_entry,
                              "block_mem_push_emit_rejected");
+  hle_div_code_bytes =
+    build_hle_div_block(code + HLE_DIV_BLOCK_OFFSET,
+                        false,
+                        HLE_DIV_START_PC,
+                        HLE_DIV_CYCLES,
+                        &g_hle_div_entry,
+                        "hle_div_emit_rejected");
+  hle_divarm_code_bytes =
+    build_hle_div_block(code + HLE_DIVARM_BLOCK_OFFSET,
+                        true,
+                        HLE_DIVARM_START_PC,
+                        HLE_DIVARM_CYCLES,
+                        &g_hle_divarm_entry,
+                        "hle_divarm_emit_rejected");
   writeback_store_code_bytes =
     build_writeback_store_block(code + WRITEBACK_STORE_BLOCK_OFFSET);
   writeback_load_code_bytes =
@@ -5846,6 +5965,8 @@ void _start(void)
   run_block_mem_stm_boundary_case();
   run_block_mem_ldm_remaining_case();
   run_block_mem_push_remaining_case();
+  run_hle_div_boundary_case();
+  run_hle_divarm_remaining_case();
   run_writeback_store_case();
   run_writeback_post_load_case();
   run_reg_offset_writeback_store_case();
@@ -5993,6 +6114,10 @@ void _start(void)
   put_u32_dec(block_mem_ldm_code_bytes);
   put_raw(" block_mem_push_code_bytes=");
   put_u32_dec(block_mem_push_code_bytes);
+  put_raw(" hle_div_code_bytes=");
+  put_u32_dec(hle_div_code_bytes);
+  put_raw(" hle_divarm_code_bytes=");
+  put_u32_dec(hle_divarm_code_bytes);
   put_raw(" writeback_store_code_bytes=");
   put_u32_dec(writeback_store_code_bytes);
   put_raw(" writeback_load_code_bytes=");
@@ -6131,6 +6256,10 @@ void _start(void)
   put_u32_hex((u32)g_block_mem_ldm_entry);
   put_raw(" block_mem_push_entry=");
   put_u32_hex((u32)g_block_mem_push_entry);
+  put_raw(" hle_div_entry=");
+  put_u32_hex((u32)g_hle_div_entry);
+  put_raw(" hle_divarm_entry=");
+  put_u32_hex((u32)g_hle_divarm_entry);
   put_raw(" writeback_store_entry=");
   put_u32_hex((u32)g_writeback_store_entry);
   put_raw(" writeback_load_entry=");

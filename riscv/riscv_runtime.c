@@ -380,6 +380,37 @@ static void function_cc riscv_arm_block_memory(u32 opcode, u32 pc)
     set_cpu_mode(riscv_psr_cpu_modes[old_cpsr & 0xfu]);
 }
 
+static void function_cc riscv_hle_div(u32 divarm)
+{
+  s32 numerator = (s32)(divarm ? reg[1] : reg[0]);
+  s32 denominator = (s32)(divarm ? reg[0] : reg[1]);
+  s32 quotient;
+  s32 remainder;
+  u32 quotient_u32;
+
+  if (denominator == 0)
+  {
+    quotient = 0;
+    remainder = numerator;
+  }
+  else if (((u32)numerator == 0x80000000u) && (denominator == -1))
+  {
+    quotient = (s32)0x80000000u;
+    remainder = 0;
+  }
+  else
+  {
+    quotient = numerator / denominator;
+    remainder = numerator % denominator;
+  }
+
+  quotient_u32 = (u32)quotient;
+  reg[0] = quotient_u32;
+  reg[1] = (u32)remainder;
+  reg[3] = (quotient_u32 & 0x80000000u) ?
+    (0u - quotient_u32) : quotient_u32;
+}
+
 static u32 riscv_arm_expand_imm(u32 opcode)
 {
   u32 imm = opcode & 0xffu;
@@ -1482,6 +1513,25 @@ bool riscv_emit_native_arm_swi(u8 **translation_ptr_ref,
   meta->flags |= RISCV_BLOCK_PC_WRITTEN;
   *translation_ptr_ref = ptr;
   riscv_native_branch_insns++;
+  return true;
+}
+
+bool riscv_emit_native_arm_hle_div(u8 **translation_ptr_ref,
+                                   riscv_jit_block_meta *meta,
+                                   bool divarm,
+                                   u32 cycles)
+{
+  u8 *ptr = *translation_ptr_ref;
+
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
+    return false;
+
+  riscv_emit_li(&ptr, riscv_reg_a0, divarm ? 1u : 0u);
+  riscv_emit_c_call(&ptr, (uintptr_t)riscv_hle_div);
+  riscv_emit_adjust_cycles(&ptr, cycles);
+
+  *translation_ptr_ref = ptr;
+  riscv_native_data_proc_insns++;
   return true;
 }
 

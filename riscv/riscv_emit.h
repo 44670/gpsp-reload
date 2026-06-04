@@ -88,6 +88,10 @@ bool riscv_emit_native_arm_swi(u8 **translation_ptr,
                                u32 opcode,
                                u32 pc,
                                u32 cycles);
+bool riscv_emit_native_arm_hle_div(u8 **translation_ptr,
+                                   riscv_jit_block_meta *meta,
+                                   bool divarm,
+                                   u32 cycles);
 bool riscv_emit_native_arm_swap(u8 **translation_ptr,
                                 riscv_jit_block_meta *meta,
                                 u32 opcode,
@@ -364,11 +368,33 @@ void init_emitter(bool must_swap);
     }                                                                         \
   } while (0)
 
+#define riscv_emit_arm_hle_div(divarm_value)                                  \
+  do                                                                          \
+  {                                                                           \
+    if (riscv_emit_native_arm_hle_div(&translation_ptr,                       \
+                                      riscv_block_meta,                       \
+                                      (divarm_value), cycle_count))           \
+    {                                                                         \
+      cycle_count = 0;                                                        \
+    }                                                                         \
+    else                                                                      \
+    {                                                                         \
+      riscv_emit_current_arm_instruction();                                   \
+    }                                                                         \
+  } while (0)
+
+#define riscv_emit_thumb_hle_div(divarm_value)                                \
+  do                                                                          \
+  {                                                                           \
+    (void)(divarm_value);                                                     \
+    riscv_emit_current_thumb_instruction();                                   \
+  } while (0)
+
 #define arm_hle_div(cpu_mode)                                                 \
-  riscv_emit_current_##cpu_mode##_instruction()
+  riscv_emit_##cpu_mode##_hle_div(false)
 
 #define arm_hle_div_arm(cpu_mode)                                             \
-  riscv_emit_current_##cpu_mode##_instruction()
+  riscv_emit_##cpu_mode##_hle_div(true)
 
 #define thumb_shift(...)                                                      \
   riscv_emit_current_thumb_instruction()
