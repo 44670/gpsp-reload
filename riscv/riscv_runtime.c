@@ -633,6 +633,9 @@ static void function_cc riscv_arm_block_memory(u32 opcode, u32 pc)
 
   if (sbit && (!load || rn != REG_PC))
     set_cpu_mode(riscv_psr_cpu_modes[old_cpsr & 0xfu]);
+
+  if (sbit && load && (reglist & (1u << REG_PC)))
+    riscv_execute_spsr_restore();
 }
 
 static void function_cc riscv_hle_div(u32 divarm)
