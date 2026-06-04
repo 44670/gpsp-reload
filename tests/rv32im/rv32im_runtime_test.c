@@ -437,7 +437,10 @@ typedef unsigned int usize;
 #define DATA_EXT_R14_VALUE 0xffffffffu
 #define BRANCH_START_PC 0x08000100u
 #define BRANCH_TARGET_PC 0x0800010cu
+#define BRANCH_TARGET_END_PC (BRANCH_TARGET_PC + 4u)
 #define BRANCH_CYCLES 9u
+#define BRANCH_TARGET_CYCLES 5u
+#define BRANCH_CHAIN_TOTAL_CYCLES (BRANCH_CYCLES + BRANCH_TARGET_CYCLES)
 #define BRANCH_B_PLUS_12 0xea000001u
 #define BRANCH_BLOCK_OFFSET 512u
 #define BL_START_PC 0x08000180u
@@ -811,6 +814,7 @@ typedef unsigned int usize;
 #define HLE_DIVARM_BLOCK_OFFSET 40448u
 #define CHAIN_SECOND_BLOCK_OFFSET 40960u
 #define UNSUPPORTED_BLOCK_OFFSET 41472u
+#define BRANCH_TARGET_BLOCK_OFFSET 41984u
 
 u32 reg[REG_MAX];
 u32 spsr[6];
@@ -851,6 +855,7 @@ static u8 *g_carry_flag_rscs_entry;
 static u8 *g_logical_flag_entry;
 static u8 *g_data_ext_entry;
 static u8 *g_branch_entry;
+static u8 *g_branch_target_entry;
 static u8 *g_bl_entry;
 static u8 *g_load_entry;
 static u8 *g_load_pc_entry;
@@ -3945,6 +3950,43 @@ static void run_branch_remaining_cycles_case(void)
   expect_stickybits_cleared("branch_remaining");
 }
 
+static void run_branch_native_target_case(void)
+{
+  const u32 extra_cycles = 4u;
+
+  reset_runtime_observations(BRANCH_START_PC);
+  g_lookup_entry = g_branch_entry;
+  g_lookup_next_pc = BRANCH_TARGET_PC;
+  g_lookup_next_entry = g_branch_target_entry;
+  reg[1] = CHAIN_R1_VALUE;
+  reg[2] = CHAIN_R2_VALUE;
+
+  execute_arm_translate_internal(BRANCH_CHAIN_TOTAL_CYCLES + extra_cycles,
+                                 &reg[0]);
+
+  if (reg[3] != CHAIN_R3_VALUE)
+    fail_u32("branch_native_target", "r3", reg[3], CHAIN_R3_VALUE);
+  if (reg[REG_PC] != BRANCH_TARGET_END_PC)
+    fail_u32("branch_native_target", "pc",
+             reg[REG_PC], BRANCH_TARGET_END_PC);
+  if (g_lookup_calls != 3)
+    fail_u32("branch_native_target", "lookup_calls", g_lookup_calls, 3);
+  if (g_lookup_pc != BRANCH_TARGET_END_PC)
+    fail_u32("branch_native_target", "lookup_pc",
+             g_lookup_pc, BRANCH_TARGET_END_PC);
+  if (g_update_calls != 0)
+    fail_u32("branch_native_target", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("branch_native_target", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("branch_native_target", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != BRANCH_TARGET_END_PC)
+    fail_u32("branch_native_target", "execute_pc",
+             g_execute_pc, BRANCH_TARGET_END_PC);
+  expect_stickybits_cleared("branch_native_target");
+}
+
 static void run_branch_idle_loop_case(void)
 {
   const u32 extra_cycles = 5u;
@@ -5700,6 +5742,7 @@ void _start(void)
   u32 store_byte_code_bytes;
   u32 store_pc_code_bytes;
   u32 bx_code_bytes;
+  u32 branch_target_code_bytes;
   u32 half_load_code_bytes;
   u32 half_store_code_bytes;
   u32 half_reg_load_code_bytes;
@@ -5931,6 +5974,13 @@ void _start(void)
                           &g_pc_write_add_entry,
                           "pc_write_add_emit_rejected");
   branch_code_bytes = build_branch_block(code + BRANCH_BLOCK_OFFSET);
+  branch_target_code_bytes =
+    build_single_data_proc_block(code + BRANCH_TARGET_BLOCK_OFFSET,
+                                 ADD_R3_R2_R1,
+                                 BRANCH_TARGET_PC,
+                                 BRANCH_TARGET_CYCLES,
+                                 &g_branch_target_entry,
+                                 "branch_target_emit_rejected");
   bl_code_bytes = build_bl_block(code + BL_BLOCK_OFFSET);
   load_code_bytes = build_load_block(code + LOAD_BLOCK_OFFSET);
   load_pc_code_bytes = build_load_pc_block(code + LOAD_PC_BLOCK_OFFSET);
@@ -6192,6 +6242,7 @@ void _start(void)
   run_pc_write_add_remaining_case();
   run_branch_boundary_case();
   run_branch_remaining_cycles_case();
+  run_branch_native_target_case();
   run_branch_idle_loop_case();
   run_bl_boundary_case();
   run_bl_remaining_cycles_case();
@@ -6315,6 +6366,8 @@ void _start(void)
   put_u32_dec(pc_write_add_code_bytes);
   put_raw(" branch_code_bytes=");
   put_u32_dec(branch_code_bytes);
+  put_raw(" branch_target_code_bytes=");
+  put_u32_dec(branch_target_code_bytes);
   put_raw(" bl_code_bytes=");
   put_u32_dec(bl_code_bytes);
   put_raw(" load_code_bytes=");
@@ -6461,6 +6514,8 @@ void _start(void)
   put_u32_hex((u32)g_pc_write_add_entry);
   put_raw(" branch_entry=");
   put_u32_hex((u32)g_branch_entry);
+  put_raw(" branch_target_entry=");
+  put_u32_hex((u32)g_branch_target_entry);
   put_raw(" bl_entry=");
   put_u32_hex((u32)g_bl_entry);
   put_raw(" load_entry=");
