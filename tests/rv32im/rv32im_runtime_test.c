@@ -35,6 +35,22 @@ typedef unsigned int usize;
 #define MULTIPLY_R3_VALUE 0x80000000u
 #define MULTIPLY_R4_VALUE 0x12341234u
 #define MULTIPLY_R5_VALUE 0x92341234u
+#define CARRY_DATA_START_PC 0x080000c0u
+#define CARRY_DATA_END_PC (CARRY_DATA_START_PC + 12u)
+#define CARRY_DATA_ADC_CYCLES 4u
+#define CARRY_DATA_SBC_CYCLES 5u
+#define CARRY_DATA_RSC_CYCLES 6u
+#define CARRY_DATA_TOTAL_CYCLES \
+  (CARRY_DATA_ADC_CYCLES + CARRY_DATA_SBC_CYCLES + \
+   CARRY_DATA_RSC_CYCLES)
+#define ADC_R6_R0_0X20 0xe2a06020u
+#define SBC_R7_R0_0X20 0xe2c07020u
+#define RSC_R8_R0_0X20 0xe2e08020u
+#define CPSR_C_BIT 0x20000000u
+#define CARRY_DATA_R0_VALUE 0x00000100u
+#define CARRY_DATA_R6_VALUE 0x00000121u
+#define CARRY_DATA_R7_VALUE 0x000000e0u
+#define CARRY_DATA_R8_VALUE 0xffffff20u
 #define DATA_EXT_START_PC 0x08000040u
 #define DATA_EXT_END_PC (DATA_EXT_START_PC + 28u)
 #define DATA_EXT_BIC_CYCLES 5u
@@ -267,6 +283,7 @@ typedef unsigned int usize;
 #define REG_OFFSET_WRITEBACK_LOAD_BLOCK_OFFSET 10752u
 #define FRAME_COMPLETE 0x80000000u
 #define IDLE_LOOP_DISABLED 0xffffffffu
+#define CARRY_DATA_BLOCK_OFFSET 14336u
 
 u32 reg[REG_MAX];
 u32 idle_loop_target_pc;
@@ -276,6 +293,7 @@ u32 gamepak_sticky_bit[1024 / 32];
 static u8 *g_lookup_entry;
 static u8 *g_data_entry;
 static u8 *g_multiply_entry;
+static u8 *g_carry_data_entry;
 static u8 *g_data_ext_entry;
 static u8 *g_branch_entry;
 static u8 *g_bl_entry;
@@ -560,6 +578,46 @@ static u32 build_multiply_block(u8 *code)
 
   riscv_emit_block_finalize(meta, &translation_ptr, MULTIPLY_START_PC,
                             MULTIPLY_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_carry_data_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_carry_data_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       ADC_R6_R0_0X20,
+                                       CARRY_DATA_ADC_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=adc_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       SBC_R7_R0_0X20,
+                                       CARRY_DATA_SBC_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=sbc_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       RSC_R8_R0_0X20,
+                                       CARRY_DATA_RSC_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=rsc_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, CARRY_DATA_START_PC,
+                            CARRY_DATA_END_PC, false);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -1311,6 +1369,71 @@ static void run_multiply_remaining_cycles_case(void)
     fail_u32("multiply_remaining", "execute_pc",
              g_execute_pc, MULTIPLY_END_PC);
   expect_stickybits_cleared("multiply_remaining");
+}
+
+static void expect_carry_data_results(const char *test_name)
+{
+  if (reg[6] != CARRY_DATA_R6_VALUE)
+    fail_u32(test_name, "r6", reg[6], CARRY_DATA_R6_VALUE);
+  if (reg[7] != CARRY_DATA_R7_VALUE)
+    fail_u32(test_name, "r7", reg[7], CARRY_DATA_R7_VALUE);
+  if (reg[8] != CARRY_DATA_R8_VALUE)
+    fail_u32(test_name, "r8", reg[8], CARRY_DATA_R8_VALUE);
+  if (reg[REG_CPSR] != CPSR_C_BIT)
+    fail_u32(test_name, "cpsr", reg[REG_CPSR], CPSR_C_BIT);
+  if (reg[REG_PC] != CARRY_DATA_END_PC)
+    fail_u32(test_name, "pc", reg[REG_PC], CARRY_DATA_END_PC);
+}
+
+static void run_carry_data_boundary_case(void)
+{
+  reset_runtime_observations(CARRY_DATA_START_PC);
+  g_lookup_entry = g_carry_data_entry;
+  reg[0] = CARRY_DATA_R0_VALUE;
+  reg[REG_CPSR] = CPSR_C_BIT;
+
+  execute_arm_translate_internal(CARRY_DATA_TOTAL_CYCLES, &reg[0]);
+
+  expect_carry_data_results("carry_data_boundary");
+  if (g_lookup_calls != 1)
+    fail_u32("carry_data_boundary", "lookup_calls", g_lookup_calls, 1);
+  if (g_lookup_pc != CARRY_DATA_START_PC)
+    fail_u32("carry_data_boundary", "lookup_pc",
+             g_lookup_pc, CARRY_DATA_START_PC);
+  if (g_update_calls != 1)
+    fail_u32("carry_data_boundary", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("carry_data_boundary", "update_cycles",
+             (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("carry_data_boundary", "execute_calls", g_execute_calls, 0);
+  expect_stickybits_cleared("carry_data_boundary");
+}
+
+static void run_carry_data_remaining_cycles_case(void)
+{
+  const u32 extra_cycles = 5u;
+
+  reset_runtime_observations(CARRY_DATA_START_PC);
+  g_lookup_entry = g_carry_data_entry;
+  reg[0] = CARRY_DATA_R0_VALUE;
+  reg[REG_CPSR] = CPSR_C_BIT;
+
+  execute_arm_translate_internal(CARRY_DATA_TOTAL_CYCLES + extra_cycles,
+                                 &reg[0]);
+
+  expect_carry_data_results("carry_data_remaining");
+  if (g_update_calls != 0)
+    fail_u32("carry_data_remaining", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("carry_data_remaining", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("carry_data_remaining", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != CARRY_DATA_END_PC)
+    fail_u32("carry_data_remaining", "execute_pc",
+             g_execute_pc, CARRY_DATA_END_PC);
+  expect_stickybits_cleared("carry_data_remaining");
 }
 
 static void run_data_ext_remaining_cycles_case(void)
@@ -2464,6 +2587,7 @@ void _start(void)
   u8 *code = (u8 *)map_exec_page();
   u32 data_code_bytes;
   u32 multiply_code_bytes;
+  u32 carry_data_code_bytes;
   u32 data_ext_code_bytes;
   u32 branch_code_bytes;
   u32 bl_code_bytes;
@@ -2494,6 +2618,8 @@ void _start(void)
 
   data_code_bytes = build_data_block(code);
   multiply_code_bytes = build_multiply_block(code + MULTIPLY_BLOCK_OFFSET);
+  carry_data_code_bytes =
+    build_carry_data_block(code + CARRY_DATA_BLOCK_OFFSET);
   data_ext_code_bytes = build_data_ext_block(code + DATA_EXT_BLOCK_OFFSET);
   branch_code_bytes = build_branch_block(code + BRANCH_BLOCK_OFFSET);
   bl_code_bytes = build_bl_block(code + BL_BLOCK_OFFSET);
@@ -2548,6 +2674,8 @@ void _start(void)
   run_cycle_boundary_case();
   run_remaining_cycles_case();
   run_multiply_remaining_cycles_case();
+  run_carry_data_boundary_case();
+  run_carry_data_remaining_cycles_case();
   run_data_ext_remaining_cycles_case();
   run_branch_boundary_case();
   run_branch_remaining_cycles_case();
@@ -2582,6 +2710,8 @@ void _start(void)
   put_u32_dec(data_code_bytes);
   put_raw(" multiply_code_bytes=");
   put_u32_dec(multiply_code_bytes);
+  put_raw(" carry_data_code_bytes=");
+  put_u32_dec(carry_data_code_bytes);
   put_raw(" data_ext_code_bytes=");
   put_u32_dec(data_ext_code_bytes);
   put_raw(" branch_code_bytes=");
@@ -2628,6 +2758,8 @@ void _start(void)
   put_u32_hex((u32)g_data_entry);
   put_raw(" multiply_entry=");
   put_u32_hex((u32)g_multiply_entry);
+  put_raw(" carry_data_entry=");
+  put_u32_hex((u32)g_carry_data_entry);
   put_raw(" data_ext_entry=");
   put_u32_hex((u32)g_data_ext_entry);
   put_raw(" branch_entry=");
