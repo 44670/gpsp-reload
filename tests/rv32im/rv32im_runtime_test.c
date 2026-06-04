@@ -5189,6 +5189,50 @@ static void run_half_store_smc_irq_alert_case(void)
   expect_stickybits_cleared("half_store_smc_irq");
 }
 
+static void run_half_store_halt_alert_case(void)
+{
+  const u32 extra_cycles = 3u;
+
+  reset_runtime_observations(HALF_STORE_START_PC);
+  g_lookup_entry = g_half_store_entry;
+  g_store_alert = CPU_ALERT_HALT;
+  reg[3] = HALF_BASE_ADDR;
+  reg[7] = HALF_STORE_VALUE;
+
+  execute_arm_translate_internal(HALF_STORE_TOTAL_CYCLES + extra_cycles,
+                                 &reg[0]);
+
+  if (g_write16_calls != 1)
+    fail_u32("half_store_halt", "write16_calls", g_write16_calls, 1);
+  if (g_write16_addr != HALF_STORE_ADDR)
+    fail_u32("half_store_halt", "write16_addr",
+             g_write16_addr, HALF_STORE_ADDR);
+  if (g_write16_value != HALF_STORE_U16_VALUE)
+    fail_u32("half_store_halt", "write16_value",
+             g_write16_value, HALF_STORE_U16_VALUE);
+  if (g_write16_pc != HALF_STORE_END_PC)
+    fail_u32("half_store_halt", "write16_pc",
+             g_write16_pc, HALF_STORE_END_PC);
+  if (reg[REG_PC] != HALF_STORE_END_PC)
+    fail_u32("half_store_halt", "pc",
+             reg[REG_PC], HALF_STORE_END_PC);
+  if (reg[CPU_HALT_STATE] != CPU_HALT)
+    fail_u32("half_store_halt", "halt_state",
+             reg[CPU_HALT_STATE], CPU_HALT);
+  if (g_flush_calls != 0)
+    fail_u32("half_store_halt", "flush_calls", g_flush_calls, 0);
+  if (g_irq_check_calls != 0)
+    fail_u32("half_store_halt", "irq_calls", g_irq_check_calls, 0);
+  if (g_update_calls != 1)
+    fail_u32("half_store_halt", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != extra_cycles)
+    fail_u32("half_store_halt", "update_cycles",
+             (u32)g_update_cycles, extra_cycles);
+  if (g_execute_calls != 0)
+    fail_u32("half_store_halt", "execute_calls", g_execute_calls, 0);
+  expect_stickybits_cleared("half_store_halt");
+}
+
 static void run_half_reg_load_remaining_cycles_case(void)
 {
   const u32 extra_cycles = 4u;
@@ -7301,6 +7345,7 @@ void _start(void)
   run_store_smc_irq_alert_case();
   run_store_halt_alert_case();
   run_half_store_smc_irq_alert_case();
+  run_half_store_halt_alert_case();
   run_half_reg_store_remaining_cycles_case();
   run_half_writeback_store_case();
   run_half_post_load_case();
