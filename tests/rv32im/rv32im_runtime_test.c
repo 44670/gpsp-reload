@@ -15,7 +15,7 @@ typedef unsigned int usize;
 #define PROT_EXEC 4
 #define MAP_PRIVATE 2
 #define MAP_ANONYMOUS 32
-#define EXEC_MAP_BYTES 20480u
+#define EXEC_MAP_BYTES 24576u
 
 #define BLOCK_START_PC 0x08000000u
 #define BLOCK_END_PC 0x08000004u
@@ -106,6 +106,26 @@ typedef unsigned int usize;
 #define FLAG_SUBS_CPSR_VALUE (0x80000000u | CPSR_LOW_VALUE)
 #define FLAG_ADDS_CPSR_VALUE (0x90000000u | CPSR_LOW_VALUE)
 #define FLAG_RSBS_CPSR_VALUE (0x60000000u | CPSR_LOW_VALUE)
+#define CARRY_FLAG_ADCS_START_PC 0x08000860u
+#define CARRY_FLAG_SBCS_START_PC 0x08000880u
+#define CARRY_FLAG_RSCS_START_PC 0x080008a0u
+#define CARRY_FLAG_ADCS_END_PC (CARRY_FLAG_ADCS_START_PC + 4u)
+#define CARRY_FLAG_SBCS_END_PC (CARRY_FLAG_SBCS_START_PC + 4u)
+#define CARRY_FLAG_RSCS_END_PC (CARRY_FLAG_RSCS_START_PC + 4u)
+#define CARRY_FLAG_ADCS_CYCLES 4u
+#define CARRY_FLAG_SBCS_CYCLES 5u
+#define CARRY_FLAG_RSCS_CYCLES 6u
+#define SBCS_R7_R1_0X20 0xe2d17020u
+#define RSCS_R8_R2_0X20 0xe2f28020u
+#define CARRY_FLAG_ADCS_R0_VALUE 0x7fffffffu
+#define CARRY_FLAG_SBCS_R1_VALUE 0x00000020u
+#define CARRY_FLAG_RSCS_R2_VALUE 0x0000001fu
+#define CARRY_FLAG_ADCS_R6_VALUE 0x80000020u
+#define CARRY_FLAG_SBCS_R7_VALUE 0xffffffffu
+#define CARRY_FLAG_RSCS_R8_VALUE 0x00000000u
+#define CARRY_FLAG_ADCS_CPSR_VALUE (0x90000000u | CPSR_LOW_VALUE)
+#define CARRY_FLAG_SBCS_CPSR_VALUE (0x80000000u | CPSR_LOW_VALUE)
+#define CARRY_FLAG_RSCS_CPSR_VALUE (0x60000000u | CPSR_LOW_VALUE)
 #define DATA_EXT_START_PC 0x08000040u
 #define DATA_EXT_END_PC (DATA_EXT_START_PC + 28u)
 #define DATA_EXT_BIC_CYCLES 5u
@@ -347,6 +367,9 @@ typedef unsigned int usize;
 #define FLAG_SUBS_BLOCK_OFFSET 17408u
 #define FLAG_ADDS_BLOCK_OFFSET 17920u
 #define FLAG_RSBS_BLOCK_OFFSET 18432u
+#define CARRY_FLAG_ADCS_BLOCK_OFFSET 18944u
+#define CARRY_FLAG_SBCS_BLOCK_OFFSET 19456u
+#define CARRY_FLAG_RSCS_BLOCK_OFFSET 19968u
 
 u32 reg[REG_MAX];
 u32 idle_loop_target_pc;
@@ -365,6 +388,9 @@ static u8 *g_teq_simple_entry;
 static u8 *g_flag_subs_entry;
 static u8 *g_flag_adds_entry;
 static u8 *g_flag_rsbs_entry;
+static u8 *g_carry_flag_adcs_entry;
+static u8 *g_carry_flag_sbcs_entry;
+static u8 *g_carry_flag_rscs_entry;
 static u8 *g_data_ext_entry;
 static u8 *g_branch_entry;
 static u8 *g_bl_entry;
@@ -1390,20 +1416,6 @@ static void expect_logical_data_proc_test_rejected(u8 *code)
   }
 }
 
-static void expect_carry_flag_data_proc_rejected(u8 *code)
-{
-  u8 *translation_ptr = code;
-  riscv_jit_block_meta *meta;
-
-  riscv_emit_block_prologue(&translation_ptr, &meta);
-  if (riscv_emit_native_arm_data_proc(&translation_ptr, meta,
-                                      ADCS_R6_R0_0X20,
-                                      FLAG_ADDS_CYCLES))
-  {
-    fail_u32("carry_flag_data_reject", "accepted", ADCS_R6_R0_0X20, 0);
-  }
-}
-
 static void expect_multiply_rejected(u8 *code)
 {
   u8 *translation_ptr = code;
@@ -1680,12 +1692,13 @@ static void run_flag_data_case(const char *test_name, u8 *entry,
                                u32 start_pc, u32 end_pc, u32 cycles,
                                u32 reg_index, u32 reg_value,
                                u32 rd_index, u32 expected_rd,
-                               u32 expected_cpsr, u32 extra_cycles)
+                               u32 initial_cpsr, u32 expected_cpsr,
+                               u32 extra_cycles)
 {
   reset_runtime_observations(start_pc);
   g_lookup_entry = entry;
   reg[reg_index] = reg_value;
-  reg[REG_CPSR] = CPSR_LOW_VALUE;
+  reg[REG_CPSR] = initial_cpsr;
 
   execute_arm_translate_internal(cycles + extra_cycles, &reg[0]);
 
@@ -2884,6 +2897,9 @@ void _start(void)
   u32 flag_subs_code_bytes;
   u32 flag_adds_code_bytes;
   u32 flag_rsbs_code_bytes;
+  u32 carry_flag_adcs_code_bytes;
+  u32 carry_flag_sbcs_code_bytes;
+  u32 carry_flag_rscs_code_bytes;
   u32 data_ext_code_bytes;
   u32 branch_code_bytes;
   u32 bl_code_bytes;
@@ -2957,6 +2973,21 @@ void _start(void)
                           RSBS_R8_R2_0X0, FLAG_RSBS_START_PC,
                           FLAG_RSBS_END_PC, FLAG_RSBS_CYCLES,
                           &g_flag_rsbs_entry, "rsbs_emit_rejected");
+  carry_flag_adcs_code_bytes =
+    build_flag_data_block(code + CARRY_FLAG_ADCS_BLOCK_OFFSET,
+                          ADCS_R6_R0_0X20, CARRY_FLAG_ADCS_START_PC,
+                          CARRY_FLAG_ADCS_END_PC, CARRY_FLAG_ADCS_CYCLES,
+                          &g_carry_flag_adcs_entry, "adcs_emit_rejected");
+  carry_flag_sbcs_code_bytes =
+    build_flag_data_block(code + CARRY_FLAG_SBCS_BLOCK_OFFSET,
+                          SBCS_R7_R1_0X20, CARRY_FLAG_SBCS_START_PC,
+                          CARRY_FLAG_SBCS_END_PC, CARRY_FLAG_SBCS_CYCLES,
+                          &g_carry_flag_sbcs_entry, "sbcs_emit_rejected");
+  carry_flag_rscs_code_bytes =
+    build_flag_data_block(code + CARRY_FLAG_RSCS_BLOCK_OFFSET,
+                          RSCS_R8_R2_0X20, CARRY_FLAG_RSCS_START_PC,
+                          CARRY_FLAG_RSCS_END_PC, CARRY_FLAG_RSCS_CYCLES,
+                          &g_carry_flag_rscs_entry, "rscs_emit_rejected");
   data_ext_code_bytes = build_data_ext_block(code + DATA_EXT_BLOCK_OFFSET);
   branch_code_bytes = build_branch_block(code + BRANCH_BLOCK_OFFSET);
   bl_code_bytes = build_bl_block(code + BL_BLOCK_OFFSET);
@@ -3008,7 +3039,6 @@ void _start(void)
   expect_shifted_reg_offset_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_shifted_data_proc_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_logical_data_proc_test_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
-  expect_carry_flag_data_proc_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_multiply_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   run_cycle_boundary_case();
   run_remaining_cycles_case();
@@ -3055,15 +3085,37 @@ void _start(void)
   run_flag_data_case("flag_subs_boundary", g_flag_subs_entry,
                      FLAG_SUBS_START_PC, FLAG_SUBS_END_PC,
                      FLAG_SUBS_CYCLES, 0, FLAG_SUBS_R0_VALUE,
-                     6, FLAG_SUBS_R6_VALUE, FLAG_SUBS_CPSR_VALUE, 0);
+                     6, FLAG_SUBS_R6_VALUE, CPSR_LOW_VALUE,
+                     FLAG_SUBS_CPSR_VALUE, 0);
   run_flag_data_case("flag_adds_remaining", g_flag_adds_entry,
                      FLAG_ADDS_START_PC, FLAG_ADDS_END_PC,
                      FLAG_ADDS_CYCLES, 1, FLAG_ADDS_R1_VALUE,
-                     7, FLAG_ADDS_R7_VALUE, FLAG_ADDS_CPSR_VALUE, 5);
+                     7, FLAG_ADDS_R7_VALUE, CPSR_LOW_VALUE,
+                     FLAG_ADDS_CPSR_VALUE, 5);
   run_flag_data_case("flag_rsbs_remaining", g_flag_rsbs_entry,
                      FLAG_RSBS_START_PC, FLAG_RSBS_END_PC,
                      FLAG_RSBS_CYCLES, 2, FLAG_RSBS_R2_VALUE,
-                     8, FLAG_RSBS_R8_VALUE, FLAG_RSBS_CPSR_VALUE, 6);
+                     8, FLAG_RSBS_R8_VALUE, CPSR_LOW_VALUE,
+                     FLAG_RSBS_CPSR_VALUE, 6);
+  run_flag_data_case("carry_flag_adcs_boundary", g_carry_flag_adcs_entry,
+                     CARRY_FLAG_ADCS_START_PC, CARRY_FLAG_ADCS_END_PC,
+                     CARRY_FLAG_ADCS_CYCLES, 0,
+                     CARRY_FLAG_ADCS_R0_VALUE, 6,
+                     CARRY_FLAG_ADCS_R6_VALUE,
+                     CPSR_C_BIT | CPSR_LOW_VALUE,
+                     CARRY_FLAG_ADCS_CPSR_VALUE, 0);
+  run_flag_data_case("carry_flag_sbcs_remaining", g_carry_flag_sbcs_entry,
+                     CARRY_FLAG_SBCS_START_PC, CARRY_FLAG_SBCS_END_PC,
+                     CARRY_FLAG_SBCS_CYCLES, 1,
+                     CARRY_FLAG_SBCS_R1_VALUE, 7,
+                     CARRY_FLAG_SBCS_R7_VALUE, CPSR_LOW_VALUE,
+                     CARRY_FLAG_SBCS_CPSR_VALUE, 5);
+  run_flag_data_case("carry_flag_rscs_remaining", g_carry_flag_rscs_entry,
+                     CARRY_FLAG_RSCS_START_PC, CARRY_FLAG_RSCS_END_PC,
+                     CARRY_FLAG_RSCS_CYCLES, 2,
+                     CARRY_FLAG_RSCS_R2_VALUE, 8,
+                     CARRY_FLAG_RSCS_R8_VALUE, CPSR_LOW_VALUE,
+                     CARRY_FLAG_RSCS_CPSR_VALUE, 6);
   run_data_ext_remaining_cycles_case();
   run_branch_boundary_case();
   run_branch_remaining_cycles_case();
@@ -3116,6 +3168,12 @@ void _start(void)
   put_u32_dec(flag_adds_code_bytes);
   put_raw(" flag_rsbs_code_bytes=");
   put_u32_dec(flag_rsbs_code_bytes);
+  put_raw(" carry_flag_adcs_code_bytes=");
+  put_u32_dec(carry_flag_adcs_code_bytes);
+  put_raw(" carry_flag_sbcs_code_bytes=");
+  put_u32_dec(carry_flag_sbcs_code_bytes);
+  put_raw(" carry_flag_rscs_code_bytes=");
+  put_u32_dec(carry_flag_rscs_code_bytes);
   put_raw(" data_ext_code_bytes=");
   put_u32_dec(data_ext_code_bytes);
   put_raw(" branch_code_bytes=");
@@ -3180,6 +3238,12 @@ void _start(void)
   put_u32_hex((u32)g_flag_adds_entry);
   put_raw(" flag_rsbs_entry=");
   put_u32_hex((u32)g_flag_rsbs_entry);
+  put_raw(" carry_flag_adcs_entry=");
+  put_u32_hex((u32)g_carry_flag_adcs_entry);
+  put_raw(" carry_flag_sbcs_entry=");
+  put_u32_hex((u32)g_carry_flag_sbcs_entry);
+  put_raw(" carry_flag_rscs_entry=");
+  put_u32_hex((u32)g_carry_flag_rscs_entry);
   put_raw(" data_ext_entry=");
   put_u32_hex((u32)g_data_ext_entry);
   put_raw(" branch_entry=");
