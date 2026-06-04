@@ -285,7 +285,6 @@ typedef unsigned int usize;
 #define REG_SHIFT_ORR_R9_R0_R1_LSR_R3 0xe1809331u
 #define REG_SHIFT_MOV_R10_R1_ASR_R4 0xe1a0a451u
 #define REG_SHIFT_EOR_R11_R0_R1_ROR_R5 0xe020b571u
-#define REG_SHIFT_EOR_R8_R0_R1_LSL_R15 0xe0208f11u
 #define REG_SHIFT_DATA_R0_VALUE 0x01010101u
 #define REG_SHIFT_DATA_R1_VALUE 0x80000010u
 #define REG_SHIFT_DATA_R2_VALUE 4u
@@ -315,7 +314,6 @@ typedef unsigned int usize;
 #define REG_SHIFT_EORS_R7_R0_R1_LSR_R3 0xe0307331u
 #define REG_SHIFT_MOVS_R8_R1_ASR_R4 0xe1b08451u
 #define REG_SHIFT_ORRS_R9_R0_R1_ROR_R5 0xe1909571u
-#define REG_SHIFT_TST_R0_R1_LSL_R15 0xe1100f11u
 #define REG_SHIFT_FLAG_R0_VALUE 0x80000001u
 #define REG_SHIFT_FLAG_R1_VALUE 0x80000001u
 #define REG_SHIFT_FLAG_R2_VALUE 32u
@@ -343,6 +341,48 @@ typedef unsigned int usize;
 #define PC_WRITE_MOV_TARGET 0x02008000u
 #define PC_WRITE_ADD_R0_VALUE 0x02001000u
 #define PC_WRITE_ADD_TARGET 0x02001040u
+#define PC_SOURCE_START_PC 0x08000c00u
+#define PC_SOURCE_ADD_PC PC_SOURCE_START_PC
+#define PC_SOURCE_MOV_PC (PC_SOURCE_START_PC + 4u)
+#define PC_SOURCE_EOR_IMM_PC (PC_SOURCE_START_PC + 8u)
+#define PC_SOURCE_EOR_REG_RM_PC (PC_SOURCE_START_PC + 12u)
+#define PC_SOURCE_EOR_REG_RS_PC (PC_SOURCE_START_PC + 16u)
+#define PC_SOURCE_TST_PC (PC_SOURCE_START_PC + 20u)
+#define PC_SOURCE_TST_REG_PC (PC_SOURCE_START_PC + 24u)
+#define PC_SOURCE_END_PC (PC_SOURCE_START_PC + 28u)
+#define PC_SOURCE_ADD_CYCLES 4u
+#define PC_SOURCE_MOV_CYCLES 5u
+#define PC_SOURCE_EOR_IMM_CYCLES 6u
+#define PC_SOURCE_EOR_REG_RM_CYCLES 7u
+#define PC_SOURCE_EOR_REG_RS_CYCLES 8u
+#define PC_SOURCE_TST_CYCLES 5u
+#define PC_SOURCE_TST_REG_CYCLES 6u
+#define PC_SOURCE_TOTAL_CYCLES \
+  (PC_SOURCE_ADD_CYCLES + PC_SOURCE_MOV_CYCLES + \
+   PC_SOURCE_EOR_IMM_CYCLES + PC_SOURCE_EOR_REG_RM_CYCLES + \
+   PC_SOURCE_EOR_REG_RS_CYCLES + PC_SOURCE_TST_CYCLES + \
+   PC_SOURCE_TST_REG_CYCLES)
+#define PC_SOURCE_ADD_R6_PC_0X20 0xe28f6020u
+#define PC_SOURCE_MOV_R7_PC 0xe1a0700fu
+#define PC_SOURCE_EOR_R8_R0_PC_LSL2 0xe020810fu
+#define PC_SOURCE_EOR_R9_R0_PC_LSL_R2 0xe020921fu
+#define PC_SOURCE_EOR_R10_R0_R1_LSL_PC 0xe020af11u
+#define PC_SOURCE_TST_R0_PC 0xe110000fu
+#define PC_SOURCE_TST_R0_R1_LSL_PC 0xe1100f11u
+#define PC_SOURCE_R0_VALUE 0x01010101u
+#define PC_SOURCE_R1_VALUE 0x00000003u
+#define PC_SOURCE_R2_VALUE 4u
+#define PC_SOURCE_R6_VALUE (PC_SOURCE_ADD_PC + 8u + 0x20u)
+#define PC_SOURCE_R7_VALUE (PC_SOURCE_MOV_PC + 8u)
+#define PC_SOURCE_R8_VALUE \
+  (PC_SOURCE_R0_VALUE ^ ((PC_SOURCE_EOR_IMM_PC + 8u) << 2))
+#define PC_SOURCE_R9_VALUE \
+  (PC_SOURCE_R0_VALUE ^ \
+   ((PC_SOURCE_EOR_REG_RM_PC + 12u) << PC_SOURCE_R2_VALUE))
+#define PC_SOURCE_R10_VALUE \
+  (PC_SOURCE_R0_VALUE ^ \
+   (PC_SOURCE_R1_VALUE << ((PC_SOURCE_EOR_REG_RS_PC + 8u) & 0xffu)))
+#define PC_SOURCE_CPSR_VALUE (0x70000000u | CPSR_LOW_VALUE)
 #define DATA_EXT_R0_VALUE 0x01010101u
 #define DATA_EXT_R1_VALUE 0x80000010u
 #define DATA_EXT_R6_VALUE 0xc1010109u
@@ -645,6 +685,7 @@ typedef unsigned int usize;
 #define PC_WRITE_MOV_BLOCK_OFFSET 33280u
 #define PC_WRITE_ADD_BLOCK_OFFSET 33792u
 #define LOAD_PC_BLOCK_OFFSET 34304u
+#define PC_SOURCE_BLOCK_OFFSET 34816u
 
 u32 reg[REG_MAX];
 u32 spsr[6];
@@ -707,6 +748,7 @@ static u8 *g_reg_shift_flag_ror0_entry;
 static u8 *g_reg_shift_test_entry;
 static u8 *g_pc_write_mov_entry;
 static u8 *g_pc_write_add_entry;
+static u8 *g_pc_source_entry;
 static u8 *g_psr_entry;
 static u8 *g_writeback_store_entry;
 static u8 *g_writeback_load_entry;
@@ -1382,6 +1424,92 @@ static u32 build_reg_shift_data_block(u8 *code)
 
   riscv_emit_block_finalize(meta, &translation_ptr, REG_SHIFT_DATA_START_PC,
                             REG_SHIFT_DATA_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_pc_source_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_pc_source_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_data_proc_with_pc(
+        &translation_ptr, meta,
+        PC_SOURCE_ADD_R6_PC_0X20,
+        PC_SOURCE_ADD_PC,
+        PC_SOURCE_ADD_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=pc_source_add_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_data_proc_with_pc(
+        &translation_ptr, meta,
+        PC_SOURCE_MOV_R7_PC,
+        PC_SOURCE_MOV_PC,
+        PC_SOURCE_MOV_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=pc_source_mov_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_data_proc_with_pc(
+        &translation_ptr, meta,
+        PC_SOURCE_EOR_R8_R0_PC_LSL2,
+        PC_SOURCE_EOR_IMM_PC,
+        PC_SOURCE_EOR_IMM_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=pc_source_eor_imm_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_data_proc_with_pc(
+        &translation_ptr, meta,
+        PC_SOURCE_EOR_R9_R0_PC_LSL_R2,
+        PC_SOURCE_EOR_REG_RM_PC,
+        PC_SOURCE_EOR_REG_RM_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=pc_source_eor_rm_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_data_proc_with_pc(
+        &translation_ptr, meta,
+        PC_SOURCE_EOR_R10_R0_R1_LSL_PC,
+        PC_SOURCE_EOR_REG_RS_PC,
+        PC_SOURCE_EOR_REG_RS_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=pc_source_eor_rs_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_data_proc_test_with_pc(
+        &translation_ptr, meta,
+        PC_SOURCE_TST_R0_PC,
+        PC_SOURCE_TST_PC,
+        PC_SOURCE_TST_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=pc_source_tst_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_data_proc_test_with_pc(
+        &translation_ptr, meta,
+        PC_SOURCE_TST_R0_R1_LSL_PC,
+        PC_SOURCE_TST_REG_PC,
+        PC_SOURCE_TST_REG_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=pc_source_tst_reg_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, PC_SOURCE_START_PC,
+                            PC_SOURCE_END_PC, false);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -2096,21 +2224,6 @@ static void expect_shifted_reg_offset_rejected(u8 *code)
   }
 }
 
-static void expect_shifted_data_proc_rejected(u8 *code)
-{
-  u8 *translation_ptr = code;
-  riscv_jit_block_meta *meta;
-
-  riscv_emit_block_prologue(&translation_ptr, &meta);
-  if (riscv_emit_native_arm_data_proc(&translation_ptr, meta,
-                                      REG_SHIFT_EOR_R8_R0_R1_LSL_R15,
-                                      DATA_EXT_ROR_CYCLES))
-  {
-    fail_u32("data_proc_reject", "accepted",
-             REG_SHIFT_EOR_R8_R0_R1_LSL_R15, 0);
-  }
-}
-
 static void expect_data_proc_pc_flag_rejected(u8 *code)
 {
   u8 *translation_ptr = code;
@@ -2122,21 +2235,6 @@ static void expect_data_proc_pc_flag_rejected(u8 *code)
                                       PC_WRITE_MOV_CYCLES))
   {
     fail_u32("data_proc_pc_flag_reject", "accepted", MOVS_PC_R14, 0);
-  }
-}
-
-static void expect_logical_data_proc_test_rejected(u8 *code)
-{
-  u8 *translation_ptr = code;
-  riscv_jit_block_meta *meta;
-
-  riscv_emit_block_prologue(&translation_ptr, &meta);
-  if (riscv_emit_native_arm_data_proc_test(&translation_ptr, meta,
-                                           REG_SHIFT_TST_R0_R1_LSL_R15,
-                                           CMP_BORROW_CYCLES))
-  {
-    fail_u32("data_proc_test_reject", "accepted",
-             REG_SHIFT_TST_R0_R1_LSL_R15, 0);
   }
 }
 
@@ -3042,6 +3140,81 @@ static void run_reg_shift_test_remaining_case(void)
     fail_u32("reg_shift_test", "execute_pc",
              g_execute_pc, REG_SHIFT_TEST_END_PC);
   expect_stickybits_cleared("reg_shift_test");
+}
+
+static void setup_pc_source_inputs(void)
+{
+  reg[0] = PC_SOURCE_R0_VALUE;
+  reg[1] = PC_SOURCE_R1_VALUE;
+  reg[2] = PC_SOURCE_R2_VALUE;
+  reg[REG_CPSR] = CPSR_CV_LOW_VALUE;
+}
+
+static void expect_pc_source_results(const char *test_name)
+{
+  if (reg[6] != PC_SOURCE_R6_VALUE)
+    fail_u32(test_name, "r6", reg[6], PC_SOURCE_R6_VALUE);
+  if (reg[7] != PC_SOURCE_R7_VALUE)
+    fail_u32(test_name, "r7", reg[7], PC_SOURCE_R7_VALUE);
+  if (reg[8] != PC_SOURCE_R8_VALUE)
+    fail_u32(test_name, "r8", reg[8], PC_SOURCE_R8_VALUE);
+  if (reg[9] != PC_SOURCE_R9_VALUE)
+    fail_u32(test_name, "r9", reg[9], PC_SOURCE_R9_VALUE);
+  if (reg[10] != PC_SOURCE_R10_VALUE)
+    fail_u32(test_name, "r10", reg[10], PC_SOURCE_R10_VALUE);
+  if (reg[REG_CPSR] != PC_SOURCE_CPSR_VALUE)
+    fail_u32(test_name, "cpsr", reg[REG_CPSR], PC_SOURCE_CPSR_VALUE);
+  if (reg[REG_PC] != PC_SOURCE_END_PC)
+    fail_u32(test_name, "pc", reg[REG_PC], PC_SOURCE_END_PC);
+}
+
+static void run_pc_source_boundary_case(void)
+{
+  reset_runtime_observations(PC_SOURCE_START_PC);
+  g_lookup_entry = g_pc_source_entry;
+  setup_pc_source_inputs();
+
+  execute_arm_translate_internal(PC_SOURCE_TOTAL_CYCLES, &reg[0]);
+
+  expect_pc_source_results("pc_source_boundary");
+  if (g_lookup_calls != 1)
+    fail_u32("pc_source_boundary", "lookup_calls", g_lookup_calls, 1);
+  if (g_lookup_pc != PC_SOURCE_START_PC)
+    fail_u32("pc_source_boundary", "lookup_pc",
+             g_lookup_pc, PC_SOURCE_START_PC);
+  if (g_update_calls != 1)
+    fail_u32("pc_source_boundary", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("pc_source_boundary", "update_cycles",
+             (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("pc_source_boundary", "execute_calls", g_execute_calls, 0);
+  expect_stickybits_cleared("pc_source_boundary");
+}
+
+static void run_pc_source_remaining_case(void)
+{
+  const u32 extra_cycles = 5u;
+
+  reset_runtime_observations(PC_SOURCE_START_PC);
+  g_lookup_entry = g_pc_source_entry;
+  setup_pc_source_inputs();
+
+  execute_arm_translate_internal(PC_SOURCE_TOTAL_CYCLES + extra_cycles,
+                                 &reg[0]);
+
+  expect_pc_source_results("pc_source_remaining");
+  if (g_update_calls != 0)
+    fail_u32("pc_source_remaining", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("pc_source_remaining", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("pc_source_remaining", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != PC_SOURCE_END_PC)
+    fail_u32("pc_source_remaining", "execute_pc",
+             g_execute_pc, PC_SOURCE_END_PC);
+  expect_stickybits_cleared("pc_source_remaining");
 }
 
 static void run_pc_write_mov_boundary_case(void)
@@ -4510,6 +4683,7 @@ void _start(void)
   u32 reg_shift_flag_asr_code_bytes;
   u32 reg_shift_flag_ror0_code_bytes;
   u32 reg_shift_test_code_bytes;
+  u32 pc_source_code_bytes;
   u32 pc_write_mov_code_bytes;
   u32 pc_write_add_code_bytes;
   u32 branch_code_bytes;
@@ -4709,6 +4883,8 @@ void _start(void)
                           REG_SHIFT_TEST_END_PC, REG_SHIFT_TEST_CYCLES,
                           &g_reg_shift_test_entry,
                           "reg_shift_tst_emit_rejected");
+  pc_source_code_bytes =
+    build_pc_source_block(code + PC_SOURCE_BLOCK_OFFSET);
   pc_write_mov_code_bytes =
     build_flag_data_block(code + PC_WRITE_MOV_BLOCK_OFFSET,
                           MOV_PC_R14, PC_WRITE_MOV_START_PC,
@@ -4782,9 +4958,7 @@ void _start(void)
       code + REG_OFFSET_WRITEBACK_LOAD_BLOCK_OFFSET);
   expect_halfword_transfers_rejected(code + HALF_REJECT_BLOCK_OFFSET);
   expect_shifted_reg_offset_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
-  expect_shifted_data_proc_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_data_proc_pc_flag_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
-  expect_logical_data_proc_test_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_psr_unsupported_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_multiply_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_multiply_long_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
@@ -4914,6 +5088,8 @@ void _start(void)
                           REG_SHIFT_FLAG_R9_VALUE,
                           REG_SHIFT_FLAG_ROR0_CPSR_VALUE, 5);
   run_reg_shift_test_remaining_case();
+  run_pc_source_boundary_case();
+  run_pc_source_remaining_case();
   run_pc_write_mov_boundary_case();
   run_pc_write_add_remaining_case();
   run_branch_boundary_case();
@@ -5014,6 +5190,8 @@ void _start(void)
   put_u32_dec(reg_shift_flag_ror0_code_bytes);
   put_raw(" reg_shift_test_code_bytes=");
   put_u32_dec(reg_shift_test_code_bytes);
+  put_raw(" pc_source_code_bytes=");
+  put_u32_dec(pc_source_code_bytes);
   put_raw(" pc_write_mov_code_bytes=");
   put_u32_dec(pc_write_mov_code_bytes);
   put_raw(" pc_write_add_code_bytes=");
@@ -5132,6 +5310,8 @@ void _start(void)
   put_u32_hex((u32)g_reg_shift_flag_ror0_entry);
   put_raw(" reg_shift_test_entry=");
   put_u32_hex((u32)g_reg_shift_test_entry);
+  put_raw(" pc_source_entry=");
+  put_u32_hex((u32)g_pc_source_entry);
   put_raw(" pc_write_mov_entry=");
   put_u32_hex((u32)g_pc_write_mov_entry);
   put_raw(" pc_write_add_entry=");

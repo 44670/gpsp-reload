@@ -128,6 +128,15 @@ static void riscv_emit_arm_reg_store(u8 **ptr, u32 reg_index,
   *ptr = translation_ptr;
 }
 
+static void riscv_emit_arm_reg_or_pc_load(u8 **ptr, riscv_reg_number rd,
+                                          u32 reg_index, u32 pc_value)
+{
+  if (reg_index == REG_PC)
+    riscv_emit_li(ptr, rd, pc_value);
+  else
+    riscv_emit_arm_reg_load(ptr, rd, reg_index);
+}
+
 static void riscv_emit_arm_memory_imm_offset(u8 **ptr_ref,
                                              riscv_reg_number rd,
                                              riscv_reg_number rs,
@@ -308,7 +317,8 @@ void riscv_mark_block_unsupported(riscv_jit_block_meta *meta)
 static void riscv_emit_arm_cpsr_c_load(u8 **ptr_ref, riscv_reg_number rd);
 static void riscv_emit_arm_cpsr_v_load(u8 **ptr_ref, riscv_reg_number rd);
 
-static bool riscv_emit_arm_data_proc_operand2(u8 **ptr_ref, u32 opcode)
+static bool riscv_emit_arm_data_proc_operand2(u8 **ptr_ref, u32 opcode,
+                                              u32 pc)
 {
   u32 imm_op = (opcode >> 25) & 1u;
   u32 rm = opcode & 0xfu;
@@ -325,13 +335,10 @@ static bool riscv_emit_arm_data_proc_operand2(u8 **ptr_ref, u32 opcode)
     return true;
   }
 
-  if (((opcode >> 4) & 1u) || rm == REG_PC)
+  if ((opcode >> 4) & 1u)
   {
-    if (!((opcode >> 4) & 1u) || rm == REG_PC || rs == REG_PC)
-      return false;
-
-    riscv_emit_arm_reg_load(&ptr, riscv_reg_t1, rm);
-    riscv_emit_arm_reg_load(&ptr, riscv_reg_t3, rs);
+    riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t1, rm, pc + 12u);
+    riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t3, rs, pc + 8u);
     translation_ptr = ptr;
     riscv_emit_andi(riscv_reg_t3, riscv_reg_t3, 0xff);
 
@@ -372,7 +379,7 @@ static bool riscv_emit_arm_data_proc_operand2(u8 **ptr_ref, u32 opcode)
     return true;
   }
 
-  riscv_emit_arm_reg_load(&ptr, riscv_reg_t1, rm);
+  riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t1, rm, pc + 8u);
   translation_ptr = ptr;
 
   switch (shift_type)
@@ -440,7 +447,8 @@ static void riscv_emit_arm_cpsr_v_load(u8 **ptr_ref, riscv_reg_number rd)
 }
 
 static bool riscv_emit_arm_data_proc_operand2_with_carry(u8 **ptr_ref,
-                                                         u32 opcode)
+                                                         u32 opcode,
+                                                         u32 pc)
 {
   u32 imm_op = (opcode >> 25) & 1u;
   u32 rm = opcode & 0xfu;
@@ -469,13 +477,10 @@ static bool riscv_emit_arm_data_proc_operand2_with_carry(u8 **ptr_ref,
     return true;
   }
 
-  if (((opcode >> 4) & 1u) || rm == REG_PC)
+  if ((opcode >> 4) & 1u)
   {
-    if (!((opcode >> 4) & 1u) || rm == REG_PC || rs == REG_PC)
-      return false;
-
-    riscv_emit_arm_reg_load(&ptr, riscv_reg_t1, rm);
-    riscv_emit_arm_reg_load(&ptr, riscv_reg_t4, rs);
+    riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t1, rm, pc + 12u);
+    riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t4, rs, pc + 8u);
     riscv_emit_arm_cpsr_c_load(&ptr, riscv_reg_t6);
     translation_ptr = ptr;
     riscv_emit_andi(riscv_reg_t4, riscv_reg_t4, 0xff);
@@ -571,7 +576,7 @@ static bool riscv_emit_arm_data_proc_operand2_with_carry(u8 **ptr_ref,
     return true;
   }
 
-  riscv_emit_arm_reg_load(&ptr, riscv_reg_t1, rm);
+  riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t1, rm, pc + 8u);
   translation_ptr = ptr;
 
   switch (shift_type)
@@ -691,10 +696,11 @@ static void riscv_emit_arm_cpsr_store_long_nzcv(u8 **ptr_ref)
   *ptr_ref = ptr;
 }
 
-bool riscv_emit_native_arm_data_proc(u8 **translation_ptr_ref,
-                                     riscv_jit_block_meta *meta,
-                                     u32 opcode,
-                                     u32 cycles)
+bool riscv_emit_native_arm_data_proc_with_pc(u8 **translation_ptr_ref,
+                                             riscv_jit_block_meta *meta,
+                                             u32 opcode,
+                                             u32 pc,
+                                             u32 cycles)
 {
   u32 condition = opcode >> 28;
   u32 op = (opcode >> 21) & 0xfu;
@@ -718,9 +724,6 @@ bool riscv_emit_native_arm_data_proc(u8 **translation_ptr_ref,
   if (set_flags && !arithmetic_flags && !logical_flags)
     return false;
 
-  if (op != 0xd && op != 0xf && rn == REG_PC)
-    return false;
-
   if (op != 0x0 && op != 0x1 && op != 0x2 &&
       op != 0x3 && op != 0x4 && op != 0x5 &&
       op != 0x6 && op != 0x7 && op != 0xc &&
@@ -730,14 +733,14 @@ bool riscv_emit_native_arm_data_proc(u8 **translation_ptr_ref,
   }
 
   if (op != 0xd && op != 0xf)
-    riscv_emit_arm_reg_load(&ptr, riscv_reg_t0, rn);
+    riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t0, rn, pc + 8u);
 
   if (logical_flags)
   {
-    if (!riscv_emit_arm_data_proc_operand2_with_carry(&ptr, opcode))
+    if (!riscv_emit_arm_data_proc_operand2_with_carry(&ptr, opcode, pc))
       return false;
   }
-  else if (!riscv_emit_arm_data_proc_operand2(&ptr, opcode))
+  else if (!riscv_emit_arm_data_proc_operand2(&ptr, opcode, pc))
   {
     return false;
   }
@@ -887,10 +890,20 @@ bool riscv_emit_native_arm_data_proc(u8 **translation_ptr_ref,
   return true;
 }
 
-bool riscv_emit_native_arm_data_proc_test(u8 **translation_ptr_ref,
-                                          riscv_jit_block_meta *meta,
-                                          u32 opcode,
-                                          u32 cycles)
+bool riscv_emit_native_arm_data_proc(u8 **translation_ptr_ref,
+                                     riscv_jit_block_meta *meta,
+                                     u32 opcode,
+                                     u32 cycles)
+{
+  return riscv_emit_native_arm_data_proc_with_pc(translation_ptr_ref, meta,
+                                                opcode, 0, cycles);
+}
+
+bool riscv_emit_native_arm_data_proc_test_with_pc(u8 **translation_ptr_ref,
+                                                  riscv_jit_block_meta *meta,
+                                                  u32 opcode,
+                                                  u32 pc,
+                                                  u32 cycles)
 {
   u32 condition = opcode >> 28;
   u32 op = (opcode >> 21) & 0xfu;
@@ -902,20 +915,20 @@ bool riscv_emit_native_arm_data_proc_test(u8 **translation_ptr_ref,
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
     return false;
 
-  if (condition != 0xe || !set_flags || rn == REG_PC)
+  if (condition != 0xe || !set_flags)
     return false;
 
   if (!logical_test && op != 0xa && op != 0xb)
     return false;
 
-  riscv_emit_arm_reg_load(&ptr, riscv_reg_t0, rn);
+  riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t0, rn, pc + 8u);
 
   if (logical_test)
   {
-    if (!riscv_emit_arm_data_proc_operand2_with_carry(&ptr, opcode))
+    if (!riscv_emit_arm_data_proc_operand2_with_carry(&ptr, opcode, pc))
       return false;
   }
-  else if (!riscv_emit_arm_data_proc_operand2(&ptr, opcode))
+  else if (!riscv_emit_arm_data_proc_operand2(&ptr, opcode, pc))
   {
     return false;
   }
@@ -966,6 +979,16 @@ bool riscv_emit_native_arm_data_proc_test(u8 **translation_ptr_ref,
   *translation_ptr_ref = ptr;
   riscv_native_data_proc_insns++;
   return true;
+}
+
+bool riscv_emit_native_arm_data_proc_test(u8 **translation_ptr_ref,
+                                          riscv_jit_block_meta *meta,
+                                          u32 opcode,
+                                          u32 cycles)
+{
+  return riscv_emit_native_arm_data_proc_test_with_pc(translation_ptr_ref,
+                                                     meta, opcode, 0,
+                                                     cycles);
 }
 
 bool riscv_emit_native_arm_multiply(u8 **translation_ptr_ref,

@@ -37,10 +37,20 @@ bool riscv_emit_native_arm_data_proc(u8 **translation_ptr,
                                      riscv_jit_block_meta *meta,
                                      u32 opcode,
                                      u32 cycles);
+bool riscv_emit_native_arm_data_proc_with_pc(u8 **translation_ptr,
+                                             riscv_jit_block_meta *meta,
+                                             u32 opcode,
+                                             u32 pc,
+                                             u32 cycles);
 bool riscv_emit_native_arm_data_proc_test(u8 **translation_ptr,
                                           riscv_jit_block_meta *meta,
                                           u32 opcode,
                                           u32 cycles);
+bool riscv_emit_native_arm_data_proc_test_with_pc(u8 **translation_ptr,
+                                                  riscv_jit_block_meta *meta,
+                                                  u32 opcode,
+                                                  u32 pc,
+                                                  u32 cycles);
 bool riscv_emit_native_arm_multiply(u8 **translation_ptr,
                                     riscv_jit_block_meta *meta,
                                     u32 opcode,
@@ -153,9 +163,9 @@ void init_emitter(bool must_swap);
 #define arm_data_proc(...)                                                    \
   do                                                                          \
   {                                                                           \
-    if (riscv_emit_native_arm_data_proc(&translation_ptr,                     \
-                                        riscv_block_meta, opcode,             \
-                                        cycle_count))                         \
+    if (riscv_emit_native_arm_data_proc_with_pc(&translation_ptr,             \
+                                                riscv_block_meta, opcode,     \
+                                                pc, cycle_count))             \
     {                                                                         \
       cycle_count = 0;                                                        \
     }                                                                         \
@@ -168,9 +178,10 @@ void init_emitter(bool must_swap);
 #define arm_data_proc_test(...)                                               \
   do                                                                          \
   {                                                                           \
-    if (riscv_emit_native_arm_data_proc_test(&translation_ptr,                \
-                                             riscv_block_meta, opcode,        \
-                                             cycle_count))                    \
+    if (riscv_emit_native_arm_data_proc_test_with_pc(&translation_ptr,        \
+                                                     riscv_block_meta,        \
+                                                     opcode, pc,              \
+                                                     cycle_count))            \
     {                                                                         \
       cycle_count = 0;                                                        \
     }                                                                         \
