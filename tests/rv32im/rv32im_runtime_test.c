@@ -15,7 +15,7 @@ typedef unsigned int usize;
 #define PROT_EXEC 4
 #define MAP_PRIVATE 2
 #define MAP_ANONYMOUS 32
-#define EXEC_MAP_BYTES 44032u
+#define EXEC_MAP_BYTES 44544u
 
 #define BLOCK_START_PC 0x08000000u
 #define BLOCK_END_PC 0x08000004u
@@ -447,8 +447,10 @@ typedef unsigned int usize;
 #define BRANCH_BLOCK_OFFSET 512u
 #define BL_START_PC 0x08000180u
 #define BL_TARGET_PC 0x08000190u
+#define BL_TARGET_END_PC (BL_TARGET_PC + 4u)
 #define BL_LINK_PC (BL_START_PC + 4u)
 #define BL_CYCLES 10u
+#define BL_TARGET_CYCLES 5u
 #define BL_PLUS_16 0xeb000002u
 #define BL_BLOCK_OFFSET 768u
 #define LOAD_START_PC 0x08000200u
@@ -833,6 +835,7 @@ typedef unsigned int usize;
 #define SWI_TARGET_BLOCK_OFFSET 42496u
 #define LOAD_PC_TARGET_BLOCK_OFFSET 43008u
 #define BLOCK_MEM_LDM_PC_BLOCK_OFFSET 43520u
+#define BL_TARGET_BLOCK_OFFSET 44032u
 
 u32 reg[REG_MAX];
 u32 spsr[6];
@@ -875,6 +878,7 @@ static u8 *g_data_ext_entry;
 static u8 *g_branch_entry;
 static u8 *g_branch_target_entry;
 static u8 *g_bl_entry;
+static u8 *g_bl_target_entry;
 static u8 *g_load_entry;
 static u8 *g_load_pc_entry;
 static u8 *g_load_pc_target_entry;
@@ -4173,6 +4177,45 @@ static void run_bl_remaining_cycles_case(void)
   expect_stickybits_cleared("bl_remaining");
 }
 
+static void run_bl_native_target_case(void)
+{
+  const u32 extra_cycles = 4u;
+
+  reset_runtime_observations(BL_START_PC);
+  g_lookup_entry = g_bl_entry;
+  g_lookup_next_pc = BL_TARGET_PC;
+  g_lookup_next_entry = g_bl_target_entry;
+  reg[1] = CHAIN_R1_VALUE;
+  reg[2] = CHAIN_R2_VALUE;
+
+  execute_arm_translate_internal(BL_CYCLES + BL_TARGET_CYCLES +
+                                 extra_cycles, &reg[0]);
+
+  if (reg[REG_LR] != BL_LINK_PC)
+    fail_u32("bl_native_target", "lr", reg[REG_LR], BL_LINK_PC);
+  if (reg[3] != CHAIN_R3_VALUE)
+    fail_u32("bl_native_target", "r3", reg[3], CHAIN_R3_VALUE);
+  if (reg[REG_PC] != BL_TARGET_END_PC)
+    fail_u32("bl_native_target", "pc",
+             reg[REG_PC], BL_TARGET_END_PC);
+  if (g_lookup_calls != 3)
+    fail_u32("bl_native_target", "lookup_calls", g_lookup_calls, 3);
+  if (g_lookup_pc != BL_TARGET_END_PC)
+    fail_u32("bl_native_target", "lookup_pc",
+             g_lookup_pc, BL_TARGET_END_PC);
+  if (g_update_calls != 0)
+    fail_u32("bl_native_target", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("bl_native_target", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("bl_native_target", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != BL_TARGET_END_PC)
+    fail_u32("bl_native_target", "execute_pc",
+             g_execute_pc, BL_TARGET_END_PC);
+  expect_stickybits_cleared("bl_native_target");
+}
+
 static void run_bx_arm_remaining_cycles_case(void)
 {
   const u32 extra_cycles = 6u;
@@ -5951,6 +5994,7 @@ void _start(void)
   u32 pc_write_add_code_bytes;
   u32 branch_code_bytes;
   u32 bl_code_bytes;
+  u32 bl_target_code_bytes;
   u32 load_code_bytes;
   u32 load_pc_code_bytes;
   u32 load_pc_target_code_bytes;
@@ -6209,6 +6253,13 @@ void _start(void)
                                  &g_branch_target_entry,
                                  "branch_target_emit_rejected");
   bl_code_bytes = build_bl_block(code + BL_BLOCK_OFFSET);
+  bl_target_code_bytes =
+    build_single_data_proc_block(code + BL_TARGET_BLOCK_OFFSET,
+                                 ADD_R3_R2_R1,
+                                 BL_TARGET_PC,
+                                 BL_TARGET_CYCLES,
+                                 &g_bl_target_entry,
+                                 "bl_target_emit_rejected");
   load_code_bytes = build_load_block(code + LOAD_BLOCK_OFFSET);
   load_pc_code_bytes = build_load_pc_block(code + LOAD_PC_BLOCK_OFFSET);
   load_pc_target_code_bytes =
@@ -6489,6 +6540,7 @@ void _start(void)
   run_branch_idle_loop_case();
   run_bl_boundary_case();
   run_bl_remaining_cycles_case();
+  run_bl_native_target_case();
   run_bx_arm_remaining_cycles_case();
   run_bx_thumb_boundary_case();
   run_bx_thumb_remaining_cycles_case();
@@ -6617,6 +6669,8 @@ void _start(void)
   put_u32_dec(branch_target_code_bytes);
   put_raw(" bl_code_bytes=");
   put_u32_dec(bl_code_bytes);
+  put_raw(" bl_target_code_bytes=");
+  put_u32_dec(bl_target_code_bytes);
   put_raw(" load_code_bytes=");
   put_u32_dec(load_code_bytes);
   put_raw(" load_pc_code_bytes=");
@@ -6771,6 +6825,8 @@ void _start(void)
   put_u32_hex((u32)g_branch_target_entry);
   put_raw(" bl_entry=");
   put_u32_hex((u32)g_bl_entry);
+  put_raw(" bl_target_entry=");
+  put_u32_hex((u32)g_bl_target_entry);
   put_raw(" load_entry=");
   put_u32_hex((u32)g_load_entry);
   put_raw(" load_pc_entry=");
