@@ -3951,6 +3951,48 @@ static void run_pc_write_mov_boundary_case(void)
   expect_stickybits_cleared("pc_write_mov_boundary");
 }
 
+static void run_pc_write_mov_native_target_case(void)
+{
+  const u32 extra_cycles = 4u;
+
+  reset_runtime_observations(PC_WRITE_MOV_START_PC);
+  g_lookup_entry = g_pc_write_mov_entry;
+  g_lookup_next_pc = LOAD_PC_TARGET;
+  g_lookup_next_entry = g_load_pc_target_entry;
+  reg[1] = CHAIN_R1_VALUE;
+  reg[2] = CHAIN_R2_VALUE;
+  reg[14] = LOAD_PC_TARGET;
+
+  execute_arm_translate_internal(PC_WRITE_MOV_CYCLES +
+                                 LOAD_PC_TARGET_CYCLES + extra_cycles,
+                                 &reg[0]);
+
+  if (reg[REG_PC] != LOAD_PC_TARGET_END_PC)
+    fail_u32("pc_write_mov_native_target", "pc",
+             reg[REG_PC], LOAD_PC_TARGET_END_PC);
+  if (reg[3] != CHAIN_R3_VALUE)
+    fail_u32("pc_write_mov_native_target", "r3", reg[3], CHAIN_R3_VALUE);
+  if (g_lookup_calls != 3)
+    fail_u32("pc_write_mov_native_target", "lookup_calls",
+             g_lookup_calls, 3);
+  if (g_lookup_pc != LOAD_PC_TARGET_END_PC)
+    fail_u32("pc_write_mov_native_target", "lookup_pc",
+             g_lookup_pc, LOAD_PC_TARGET_END_PC);
+  if (g_update_calls != 0)
+    fail_u32("pc_write_mov_native_target", "update_calls",
+             g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("pc_write_mov_native_target", "execute_calls",
+             g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("pc_write_mov_native_target", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != LOAD_PC_TARGET_END_PC)
+    fail_u32("pc_write_mov_native_target", "execute_pc",
+             g_execute_pc, LOAD_PC_TARGET_END_PC);
+  expect_stickybits_cleared("pc_write_mov_native_target");
+}
+
 static void run_pc_write_add_remaining_case(void)
 {
   const u32 extra_cycles = 5u;
@@ -6439,6 +6481,7 @@ void _start(void)
   run_swp_word_boundary_case();
   run_swp_byte_remaining_case();
   run_pc_write_mov_boundary_case();
+  run_pc_write_mov_native_target_case();
   run_pc_write_add_remaining_case();
   run_branch_boundary_case();
   run_branch_remaining_cycles_case();
