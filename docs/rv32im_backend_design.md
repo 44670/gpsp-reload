@@ -297,7 +297,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   handling, SWP-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, and Thumb lookup-miss fallback fixtures against a local ARM
   reference model, with
-  one hundred two runtime blocks executed, ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
+  one hundred three runtime blocks executed, ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results, MSR CPSR flag and
   control mode/banked-LR effects, SPSR helper-write effects, and native PSR
   accounting checked,
@@ -307,7 +307,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   extended shifted and register-shifted data-processing results checked,
   register-shifted flag/test and TEQ/CMN CPSR results checked,
   helper memory, helper load, load-to-PC, PC-relative load, and register-offset load remaining-cycle handoffs, PC-relative store memory,
-  source-PC store, word-store and register-offset byte-store remaining-cycle handoffs, byte-store SMC/IRQ
+  source-PC store, word-store, byte-store, and register-offset byte-store remaining-cycle handoffs, byte-store SMC/IRQ
   remaining-cycle handoff, and SMC/IRQ/HALT alert observations hashed,
   register-offset, shifted register-offset, subtract-offset, RRX load, and
   register-offset writeback load/store address/value observations checked,
@@ -330,7 +330,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   and direct-branch, BL, BX ARM, BX Thumb, SWI, and PC-write ADD remaining-cycle execution exercised,
   scheduler/update/HALT/idle-loop/Thumb-lookup observations hashed, with
   unsupported-block, Thumb lookup-miss, helper load, load-to-PC, PC-relative load, word store, register-offset load/store, immediate/PC-relative/register-offset halfword load, direct-branch, BL, BX ARM, BX Thumb, SWI, and PC-write ADD
-  remaining-cycle lookup-misses, byte-store, block-memory, and SWP alert remaining-cycle
+  remaining-cycle lookup-misses, byte-store normal/alert, block-memory, and SWP alert remaining-cycle
   lookup-misses, and SWPB remaining-cycle lookup-miss fallbacks observed
 
 Remaining first-phase gaps should stay narrow and evidence-driven:
