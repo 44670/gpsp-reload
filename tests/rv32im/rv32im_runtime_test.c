@@ -1285,6 +1285,45 @@ static void run_first_execute_stats_case(void)
              g_first_execute_stats.native_data_proc_insns, 1);
 }
 
+static void expect_runtime_fallback_delta(const char *test_name,
+                                          const riscv_runtime_stats *before,
+                                          u32 blocks_executed_delta,
+                                          u32 interpreter_fallback_delta)
+{
+  riscv_runtime_stats after;
+
+  riscv_get_runtime_stats(&after);
+
+  if (after.blocks_emitted != before->blocks_emitted)
+    fail_u32(test_name, "blocks_emitted",
+             after.blocks_emitted, before->blocks_emitted);
+  if ((after.blocks_executed - before->blocks_executed) !=
+      blocks_executed_delta)
+    fail_u32(test_name, "blocks_executed_delta",
+             after.blocks_executed - before->blocks_executed,
+             blocks_executed_delta);
+  if ((after.interpreter_fallbacks - before->interpreter_fallbacks) !=
+      interpreter_fallback_delta)
+    fail_u32(test_name, "interpreter_fallback_delta",
+             after.interpreter_fallbacks - before->interpreter_fallbacks,
+             interpreter_fallback_delta);
+  if (after.native_data_proc_insns != before->native_data_proc_insns)
+    fail_u32(test_name, "native_data_proc",
+             after.native_data_proc_insns, before->native_data_proc_insns);
+  if (after.native_branch_insns != before->native_branch_insns)
+    fail_u32(test_name, "native_branch",
+             after.native_branch_insns, before->native_branch_insns);
+  if (after.native_load_insns != before->native_load_insns)
+    fail_u32(test_name, "native_load",
+             after.native_load_insns, before->native_load_insns);
+  if (after.native_store_insns != before->native_store_insns)
+    fail_u32(test_name, "native_store",
+             after.native_store_insns, before->native_store_insns);
+  if (after.native_psr_insns != before->native_psr_insns)
+    fail_u32(test_name, "native_psr",
+             after.native_psr_insns, before->native_psr_insns);
+}
+
 static u32 build_data_block(u8 *code)
 {
   u8 *translation_ptr = code;
@@ -3010,8 +3049,11 @@ static void run_cycle_boundary_case(void)
 
 static void run_unsupported_block_fallback_case(void)
 {
+  riscv_runtime_stats stats_before;
+
   reset_runtime_observations(UNSUPPORTED_START_PC);
   g_lookup_entry = g_unsupported_entry;
+  riscv_get_runtime_stats(&stats_before);
 
   execute_arm_translate_internal(UNSUPPORTED_CYCLES, &reg[0]);
 
@@ -3033,15 +3075,20 @@ static void run_unsupported_block_fallback_case(void)
   if (g_execute_pc != UNSUPPORTED_START_PC)
     fail_u32("unsupported_fallback", "execute_pc",
              g_execute_pc, UNSUPPORTED_START_PC);
+  expect_runtime_fallback_delta("unsupported_fallback_stats",
+                                &stats_before, 1, 1);
   expect_stickybits_cleared("unsupported_fallback");
 }
 
 static void run_thumb_unsupported_block_fallback_case(void)
 {
+  riscv_runtime_stats stats_before;
+
   reset_runtime_observations(THUMB_UNSUPPORTED_START_PC);
   reg[REG_CPSR] = CPSR_T_BIT;
   g_thumb_lookup_entry = g_thumb_unsupported_entry;
   g_thumb_lookup_entry_pc = THUMB_UNSUPPORTED_START_PC;
+  riscv_get_runtime_stats(&stats_before);
 
   execute_arm_translate_internal(THUMB_UNSUPPORTED_CYCLES, &reg[0]);
 
@@ -3072,6 +3119,8 @@ static void run_thumb_unsupported_block_fallback_case(void)
   if (g_execute_pc != THUMB_UNSUPPORTED_START_PC)
     fail_u32("thumb_unsupported_fallback", "execute_pc",
              g_execute_pc, THUMB_UNSUPPORTED_START_PC);
+  expect_runtime_fallback_delta("thumb_unsupported_fallback_stats",
+                                &stats_before, 1, 1);
   expect_stickybits_cleared("thumb_unsupported_fallback");
 }
 
@@ -3079,11 +3128,13 @@ static void run_initial_lookup_fallback_case(const char *test_name,
                                              u8 *lookup_entry)
 {
   const u32 cycles = BLOCK_CYCLES + 7u;
+  riscv_runtime_stats stats_before;
 
   reset_runtime_observations(BLOCK_START_PC);
   g_lookup_entry = lookup_entry;
   reg[0] = CHAIN_R0_VALUE;
   reg[1] = CHAIN_R1_VALUE;
+  riscv_get_runtime_stats(&stats_before);
 
   execute_arm_translate_internal(cycles, &reg[0]);
 
@@ -3103,6 +3154,7 @@ static void run_initial_lookup_fallback_case(const char *test_name,
     fail_u32(test_name, "execute_cycles", g_execute_cycles, cycles);
   if (g_execute_pc != BLOCK_START_PC)
     fail_u32(test_name, "execute_pc", g_execute_pc, BLOCK_START_PC);
+  expect_runtime_fallback_delta(test_name, &stats_before, 0, 1);
   expect_stickybits_cleared(test_name);
 }
 
@@ -3121,11 +3173,13 @@ static void run_initial_thumb_lookup_fallback_case(const char *test_name,
                                                    u8 *lookup_entry)
 {
   const u32 cycles = BX_CYCLES + 6u;
+  riscv_runtime_stats stats_before;
 
   reset_runtime_observations(BX_THUMB_TARGET_PC);
   reg[REG_CPSR] = CPSR_T_BIT;
   g_thumb_lookup_entry = lookup_entry;
   g_thumb_lookup_entry_pc = BX_THUMB_TARGET_PC;
+  riscv_get_runtime_stats(&stats_before);
 
   execute_arm_translate_internal(cycles, &reg[0]);
 
@@ -3149,6 +3203,7 @@ static void run_initial_thumb_lookup_fallback_case(const char *test_name,
     fail_u32(test_name, "execute_cycles", g_execute_cycles, cycles);
   if (g_execute_pc != BX_THUMB_TARGET_PC)
     fail_u32(test_name, "execute_pc", g_execute_pc, BX_THUMB_TARGET_PC);
+  expect_runtime_fallback_delta(test_name, &stats_before, 0, 1);
   expect_stickybits_cleared(test_name);
 }
 
@@ -3197,6 +3252,7 @@ static void run_remaining_cycles_case(void)
 static void run_invalid_relookup_fallback_case(void)
 {
   const u32 extra_cycles = 5u;
+  riscv_runtime_stats stats_before;
 
   reset_runtime_observations(BLOCK_START_PC);
   g_lookup_entry = g_data_entry;
@@ -3204,6 +3260,7 @@ static void run_invalid_relookup_fallback_case(void)
   g_lookup_next_entry = INVALID_LOOKUP_ENTRY;
   reg[0] = CHAIN_R0_VALUE;
   reg[1] = CHAIN_R1_VALUE;
+  riscv_get_runtime_stats(&stats_before);
 
   execute_arm_translate_internal(BLOCK_CYCLES + extra_cycles, &reg[0]);
 
@@ -3225,6 +3282,8 @@ static void run_invalid_relookup_fallback_case(void)
   if (g_execute_pc != BLOCK_END_PC)
     fail_u32("invalid_relookup", "execute_pc",
              g_execute_pc, BLOCK_END_PC);
+  expect_runtime_fallback_delta("invalid_relookup_stats",
+                                &stats_before, 1, 1);
   expect_stickybits_cleared("invalid_relookup");
 }
 

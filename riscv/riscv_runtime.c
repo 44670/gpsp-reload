@@ -2078,6 +2078,7 @@ u32 execute_arm_translate_internal(u32 cycles, void *regptr)
 
   if (!entry_data || entry_data == RISCV_INVALID_BLOCK_ENTRY)
   {
+    riscv_interpreter_fallbacks++;
     execute_arm(cycles);
     riscv_cycles_remaining = 0;
     return 0;
