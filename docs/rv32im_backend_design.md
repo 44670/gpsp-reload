@@ -297,9 +297,9 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   handling, SWP-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, and Thumb lookup-miss fallback fixtures against a local ARM
   reference model, with
-  one hundred six runtime blocks executed, ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
-  low-bit preservation checked, MRS CPSR/SPSR read results and remaining-cycle handoff, MSR CPSR flag and
-  control mode/banked-LR effects, SPSR helper-write effects, and native PSR
+  one hundred seven runtime blocks executed, ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
+  low-bit preservation checked, MRS CPSR/SPSR read results and remaining-cycle handoff, MSR CPSR flag remaining-cycle handoff,
+  MSR CPSR control mode/banked-LR effects, SPSR helper-write effects, and native PSR
   accounting checked,
   multiply/accumulate, unsigned/signed long multiply, long multiply flag,
   long multiply accumulate, and long multiply accumulate flag results
@@ -329,7 +329,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   direct, indirect, conditional, SWI, PC-write, SPSR-restore, patched branch,
   and direct-branch, BL, BX ARM, BX Thumb, SWI, and PC-write ADD remaining-cycle execution exercised,
   scheduler/update/HALT/idle-loop/Thumb-lookup observations hashed, with
-  unsupported-block, Thumb lookup-miss, helper load, load-to-PC, PC-relative load/store, PSR read, word store, register-offset load/store, immediate/PC-relative/register-offset halfword load, register-offset halfword store, direct-branch, BL, BX ARM, BX Thumb, SWI, and PC-write ADD
+  unsupported-block, Thumb lookup-miss, helper load, load-to-PC, PC-relative load/store, PSR read/write, word store, register-offset load/store, immediate/PC-relative/register-offset halfword load, register-offset halfword store, direct-branch, BL, BX ARM, BX Thumb, SWI, and PC-write ADD
   remaining-cycle lookup-misses, byte-store normal/alert, block-memory, and SWP alert remaining-cycle
   lookup-misses, and SWPB remaining-cycle lookup-miss fallbacks observed
 
