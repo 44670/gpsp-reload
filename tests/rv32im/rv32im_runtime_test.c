@@ -21,6 +21,15 @@ typedef unsigned int usize;
 #define BLOCK_END_PC 0x08000004u
 #define BLOCK_CYCLES 7u
 #define ADD_R2_R0_R1 0xe0802001u
+#define CHAIN_SECOND_START_PC BLOCK_END_PC
+#define CHAIN_SECOND_END_PC (CHAIN_SECOND_START_PC + 4u)
+#define CHAIN_SECOND_CYCLES 5u
+#define CHAIN_TOTAL_CYCLES (BLOCK_CYCLES + CHAIN_SECOND_CYCLES)
+#define ADD_R3_R2_R1 0xe0823001u
+#define CHAIN_R0_VALUE 0x11u
+#define CHAIN_R1_VALUE 0x22u
+#define CHAIN_R2_VALUE (CHAIN_R0_VALUE + CHAIN_R1_VALUE)
+#define CHAIN_R3_VALUE (CHAIN_R2_VALUE + CHAIN_R1_VALUE)
 #define MULTIPLY_START_PC 0x08000080u
 #define MULTIPLY_END_PC (MULTIPLY_START_PC + 8u)
 #define MULTIPLY_MUL_CYCLES 5u
@@ -796,6 +805,7 @@ typedef unsigned int usize;
 #define BLOCK_MEM_PUSH_BLOCK_OFFSET 39424u
 #define HLE_DIV_BLOCK_OFFSET 39936u
 #define HLE_DIVARM_BLOCK_OFFSET 40448u
+#define CHAIN_SECOND_BLOCK_OFFSET 40960u
 
 u32 reg[REG_MAX];
 u32 spsr[6];
@@ -805,7 +815,11 @@ u32 rom_cache_watermark;
 u32 gamepak_sticky_bit[1024 / 32];
 
 static u8 *g_lookup_entry;
+static u32 g_lookup_entry_pc;
+static u8 *g_lookup_next_entry;
+static u32 g_lookup_next_pc;
 static u8 *g_data_entry;
+static u8 *g_chain_second_entry;
 static u8 *g_multiply_entry;
 static u8 *g_multiply_flag_muls_entry;
 static u8 *g_multiply_flag_mlas_entry;
@@ -1057,6 +1071,10 @@ static void reset_runtime_observations(u32 pc)
   reg[REG_CPSR] = 0;
   reg[CPU_HALT_STATE] = CPU_ACTIVE;
   idle_loop_target_pc = IDLE_LOOP_DISABLED;
+  g_lookup_entry = (u8 *)0;
+  g_lookup_entry_pc = pc;
+  g_lookup_next_entry = (u8 *)0;
+  g_lookup_next_pc = 0;
   g_lookup_calls = 0;
   g_lookup_pc = 0;
   g_update_calls = 0;
@@ -1115,6 +1133,33 @@ static u32 build_data_block(u8 *code)
 
   riscv_emit_block_finalize(meta, &translation_ptr, BLOCK_START_PC,
                             BLOCK_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_single_data_proc_block(u8 *code, u32 opcode, u32 start_pc,
+                                        u32 cycles, u8 **entry,
+                                        const char *reject_reason)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  *entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       opcode, cycles))
+  {
+    put_raw("result=FAIL command=runtime reason=");
+    put_raw(reject_reason);
+    put_raw("\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, start_pc,
+                            start_pc + 4u, false);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -2653,6 +2698,44 @@ static void run_remaining_cycles_case(void)
   if (g_execute_pc != BLOCK_END_PC)
     fail_u32("remaining_cycles", "execute_pc", g_execute_pc, BLOCK_END_PC);
   expect_stickybits_cleared("remaining_cycles");
+}
+
+static void run_native_chain_remaining_case(void)
+{
+  const u32 extra_cycles = 3u;
+
+  reset_runtime_observations(BLOCK_START_PC);
+  g_lookup_entry = g_data_entry;
+  g_lookup_next_pc = CHAIN_SECOND_START_PC;
+  g_lookup_next_entry = g_chain_second_entry;
+  reg[0] = CHAIN_R0_VALUE;
+  reg[1] = CHAIN_R1_VALUE;
+
+  execute_arm_translate_internal(CHAIN_TOTAL_CYCLES + extra_cycles,
+                                 &reg[0]);
+
+  if (reg[2] != CHAIN_R2_VALUE)
+    fail_u32("native_chain", "r2", reg[2], CHAIN_R2_VALUE);
+  if (reg[3] != CHAIN_R3_VALUE)
+    fail_u32("native_chain", "r3", reg[3], CHAIN_R3_VALUE);
+  if (reg[REG_PC] != CHAIN_SECOND_END_PC)
+    fail_u32("native_chain", "pc", reg[REG_PC], CHAIN_SECOND_END_PC);
+  if (g_lookup_calls != 3)
+    fail_u32("native_chain", "lookup_calls", g_lookup_calls, 3);
+  if (g_lookup_pc != CHAIN_SECOND_END_PC)
+    fail_u32("native_chain", "lookup_pc",
+             g_lookup_pc, CHAIN_SECOND_END_PC);
+  if (g_update_calls != 0)
+    fail_u32("native_chain", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("native_chain", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("native_chain", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != CHAIN_SECOND_END_PC)
+    fail_u32("native_chain", "execute_pc",
+             g_execute_pc, CHAIN_SECOND_END_PC);
+  expect_stickybits_cleared("native_chain");
 }
 
 static void run_multiply_remaining_cycles_case(void)
@@ -5398,7 +5481,14 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
 {
   g_lookup_calls++;
   g_lookup_pc = pc;
-  return g_lookup_entry;
+
+  if (g_lookup_next_entry && pc == g_lookup_next_pc)
+    return g_lookup_next_entry;
+
+  if (g_lookup_entry && pc == g_lookup_entry_pc)
+    return g_lookup_entry;
+
+  return (u8 *)0;
 }
 
 u8 function_cc *block_lookup_address_thumb(u32 pc)
@@ -5415,6 +5505,7 @@ void _start(void)
 {
   u8 *code = (u8 *)map_exec_page();
   u32 data_code_bytes;
+  u32 chain_second_code_bytes;
   u32 multiply_code_bytes;
   u32 multiply_flag_muls_code_bytes;
   u32 multiply_flag_mlas_code_bytes;
@@ -5493,6 +5584,13 @@ void _start(void)
   }
 
   data_code_bytes = build_data_block(code);
+  chain_second_code_bytes =
+    build_single_data_proc_block(code + CHAIN_SECOND_BLOCK_OFFSET,
+                                 ADD_R3_R2_R1,
+                                 CHAIN_SECOND_START_PC,
+                                 CHAIN_SECOND_CYCLES,
+                                 &g_chain_second_entry,
+                                 "chain_second_emit_rejected");
   multiply_code_bytes = build_multiply_block(code + MULTIPLY_BLOCK_OFFSET);
   multiply_flag_muls_code_bytes =
     build_multiply_flag_block(code + MULTIPLY_FLAG_MULS_BLOCK_OFFSET,
@@ -5809,6 +5907,7 @@ void _start(void)
   expect_swap_pc_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   run_cycle_boundary_case();
   run_remaining_cycles_case();
+  run_native_chain_remaining_case();
   run_multiply_remaining_cycles_case();
   run_multiply_flag_muls_case();
   run_multiply_flag_mlas_case();
@@ -5986,6 +6085,8 @@ void _start(void)
 
   put_raw("result=PASS command=runtime code_bytes=");
   put_u32_dec(data_code_bytes);
+  put_raw(" chain_second_code_bytes=");
+  put_u32_dec(chain_second_code_bytes);
   put_raw(" multiply_code_bytes=");
   put_u32_dec(multiply_code_bytes);
   put_raw(" multiply_flag_muls_code_bytes=");
@@ -6128,6 +6229,8 @@ void _start(void)
   put_u32_dec(reg_offset_writeback_load_code_bytes);
   put_raw(" data_entry=");
   put_u32_hex((u32)g_data_entry);
+  put_raw(" chain_second_entry=");
+  put_u32_hex((u32)g_chain_second_entry);
   put_raw(" multiply_entry=");
   put_u32_hex((u32)g_multiply_entry);
   put_raw(" multiply_flag_muls_entry=");

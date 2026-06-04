@@ -247,6 +247,41 @@ static cpu_alert_type riscv_handle_cpu_alert(void)
   return alert;
 }
 
+static void riscv_run_interpreter_remainder(void)
+{
+  if (riscv_cycles_remaining > 0)
+  {
+    execute_arm((u32)riscv_cycles_remaining);
+    riscv_cycles_remaining = 0;
+  }
+}
+
+static u8 *riscv_lookup_current_block(void)
+{
+  if (reg[REG_CPSR] & 0x20)
+    return block_lookup_address_thumb(reg[REG_PC] & ~1u);
+
+  return block_lookup_address_arm(reg[REG_PC] & ~0x03);
+}
+
+static u8 *riscv_lookup_or_fallback(void)
+{
+  u8 *entry;
+
+  if (riscv_cycles_remaining <= 0)
+    return NULL;
+
+  entry = riscv_lookup_current_block();
+  if (!entry || entry == RISCV_INVALID_BLOCK_ENTRY)
+  {
+    riscv_interpreter_fallbacks++;
+    riscv_run_interpreter_remainder();
+    return NULL;
+  }
+
+  return entry;
+}
+
 static void function_cc riscv_execute_swi_arm(u32 pc)
 {
   reg[REG_BUS_VALUE] = 0xe3a02004u;
@@ -451,10 +486,14 @@ static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta)
   u32 update_ret;
   cpu_alert_type alert = CPU_ALERT_NONE;
 
-  (void)meta;
-
   riscv_blocks_executed++;
-  riscv_interpreter_fallbacks++;
+
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
+  {
+    riscv_interpreter_fallbacks++;
+    riscv_run_interpreter_remainder();
+    return NULL;
+  }
 
   if (riscv_cpu_alert != CPU_ALERT_NONE)
     alert = riscv_handle_cpu_alert();
@@ -475,13 +514,7 @@ static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta)
     riscv_cycles_remaining = (s32)cycles_to_run(update_ret);
   }
 
-  if (riscv_cycles_remaining > 0)
-  {
-    execute_arm((u32)riscv_cycles_remaining);
-    riscv_cycles_remaining = 0;
-  }
-
-  return NULL;
+  return riscv_lookup_or_fallback();
 }
 
 void riscv_emit_block_prologue(u8 **translation_ptr,
@@ -2035,7 +2068,11 @@ u32 execute_arm_translate_internal(u32 cycles, void *regptr)
     return 0;
   }
 
-  entry = (riscv_jit_block_fn)entry_data;
-  (void)entry();
+  do
+  {
+    entry = (riscv_jit_block_fn)entry_data;
+    entry_data = entry();
+  } while (entry_data && entry_data != RISCV_INVALID_BLOCK_ENTRY);
+
   return 0;
 }
