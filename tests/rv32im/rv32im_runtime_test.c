@@ -756,6 +756,7 @@ typedef unsigned int usize;
 #define REG_OFFSET_WRITEBACK_STORE_BLOCK_OFFSET 10240u
 #define REG_OFFSET_WRITEBACK_LOAD_BLOCK_OFFSET 10752u
 #define FRAME_COMPLETE 0x80000000u
+#define PC_CHANGED 0x40000000u
 #define IDLE_LOOP_DISABLED 0xffffffffu
 #define CARRY_DATA_BLOCK_OFFSET 14336u
 #define CMP_BORROW_BLOCK_OFFSET 14848u
@@ -894,6 +895,10 @@ static u32 g_lookup_calls;
 static u32 g_lookup_pc;
 static u32 g_update_calls;
 static s32 g_update_cycles;
+static u32 g_update_first_return;
+static u32 g_update_later_return;
+static u32 g_update_first_pc_changed;
+static u32 g_update_first_pc;
 static u32 g_execute_calls;
 static u32 g_execute_cycles;
 static u32 g_execute_pc;
@@ -1079,6 +1084,10 @@ static void reset_runtime_observations(u32 pc)
   g_lookup_pc = 0;
   g_update_calls = 0;
   g_update_cycles = 0x7fffffff;
+  g_update_first_return = FRAME_COMPLETE;
+  g_update_later_return = FRAME_COMPLETE;
+  g_update_first_pc_changed = 0;
+  g_update_first_pc = 0;
   g_execute_calls = 0;
   g_execute_cycles = 0;
   g_execute_pc = 0;
@@ -2736,6 +2745,42 @@ static void run_native_chain_remaining_case(void)
     fail_u32("native_chain", "execute_pc",
              g_execute_pc, CHAIN_SECOND_END_PC);
   expect_stickybits_cleared("native_chain");
+}
+
+static void run_update_pc_change_chain_case(void)
+{
+  reset_runtime_observations(BLOCK_START_PC);
+  g_lookup_entry = g_data_entry;
+  g_lookup_next_pc = CHAIN_SECOND_START_PC;
+  g_lookup_next_entry = g_chain_second_entry;
+  g_update_first_return = PC_CHANGED | CHAIN_SECOND_CYCLES;
+  g_update_later_return = FRAME_COMPLETE;
+  g_update_first_pc_changed = 1;
+  g_update_first_pc = CHAIN_SECOND_START_PC;
+  reg[0] = CHAIN_R0_VALUE;
+  reg[1] = CHAIN_R1_VALUE;
+
+  execute_arm_translate_internal(BLOCK_CYCLES, &reg[0]);
+
+  if (reg[2] != CHAIN_R2_VALUE)
+    fail_u32("update_pc_chain", "r2", reg[2], CHAIN_R2_VALUE);
+  if (reg[3] != CHAIN_R3_VALUE)
+    fail_u32("update_pc_chain", "r3", reg[3], CHAIN_R3_VALUE);
+  if (reg[REG_PC] != CHAIN_SECOND_END_PC)
+    fail_u32("update_pc_chain", "pc", reg[REG_PC], CHAIN_SECOND_END_PC);
+  if (g_lookup_calls != 2)
+    fail_u32("update_pc_chain", "lookup_calls", g_lookup_calls, 2);
+  if (g_lookup_pc != CHAIN_SECOND_START_PC)
+    fail_u32("update_pc_chain", "lookup_pc",
+             g_lookup_pc, CHAIN_SECOND_START_PC);
+  if (g_update_calls != 2)
+    fail_u32("update_pc_chain", "update_calls", g_update_calls, 2);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("update_pc_chain", "update_cycles",
+             (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("update_pc_chain", "execute_calls", g_execute_calls, 0);
+  expect_stickybits_cleared("update_pc_chain");
 }
 
 static void run_multiply_remaining_cycles_case(void)
@@ -5474,7 +5519,16 @@ u32 function_cc update_gba(int remaining_cycles)
 {
   g_update_calls++;
   g_update_cycles = remaining_cycles;
-  return FRAME_COMPLETE;
+
+  if (g_update_calls == 1)
+  {
+    if (g_update_first_pc_changed)
+      reg[REG_PC] = g_update_first_pc;
+
+    return g_update_first_return;
+  }
+
+  return g_update_later_return;
 }
 
 u8 function_cc *block_lookup_address_arm(u32 pc)
@@ -5908,6 +5962,7 @@ void _start(void)
   run_cycle_boundary_case();
   run_remaining_cycles_case();
   run_native_chain_remaining_case();
+  run_update_pc_change_chain_case();
   run_multiply_remaining_cycles_case();
   run_multiply_flag_muls_case();
   run_multiply_flag_mlas_case();
