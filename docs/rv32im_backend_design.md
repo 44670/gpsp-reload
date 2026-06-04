@@ -258,11 +258,12 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   `framehash`, `compare`, `png`, and `quit`
 - qemu-user harness `compare` execution of generated RV32IM
   `ADD r2, r0, r1`, `LDR`, `LDRB`, `STR`, direct-branch-to-native-target, and
-  `BX r7` indirect-branch-to-native-target runtime fixtures, plus
+  `BL` link-register branch-to-native-target, and `BX r7`
+  indirect-branch-to-native-target runtime fixtures, plus
   store-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, and Thumb lookup-miss fallback fixtures against a local ARM
   reference model, with
-  eleven runtime blocks executed, helper memory and alert observations hashed,
+  thirteen runtime blocks executed, helper memory and alert observations hashed,
   direct, indirect, and patched branch execution exercised,
   scheduler/update/idle-loop/Thumb-lookup observations hashed, and two
   deliberate fallbacks
