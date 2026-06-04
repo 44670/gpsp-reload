@@ -354,6 +354,31 @@ static bool riscv_emit_arm_data_proc_operand2(u8 **ptr_ref, u32 opcode)
   return true;
 }
 
+static bool riscv_emit_arm_data_proc_operand2_preserve_carry(u8 **ptr_ref,
+                                                             u32 opcode)
+{
+  u32 imm = (opcode >> 25) & 1u;
+  u32 rm = opcode & 0xfu;
+  u8 *ptr = *ptr_ref;
+
+  if (imm)
+  {
+    if ((opcode >> 8) & 0xfu)
+      return false;
+
+    riscv_emit_li(&ptr, riscv_reg_t1, opcode & 0xffu);
+    *ptr_ref = ptr;
+    return true;
+  }
+
+  if (((opcode >> 4) & 0xffu) || rm == REG_PC)
+    return false;
+
+  riscv_emit_arm_reg_load(&ptr, riscv_reg_t1, rm);
+  *ptr_ref = ptr;
+  return true;
+}
+
 bool riscv_emit_native_arm_data_proc(u8 **translation_ptr_ref,
                                      riscv_jit_block_meta *meta,
                                      u32 opcode,
@@ -471,6 +496,7 @@ bool riscv_emit_native_arm_data_proc_test(u8 **translation_ptr_ref,
   u32 op = (opcode >> 21) & 0xfu;
   u32 set_flags = (opcode >> 20) & 1u;
   u32 rn = (opcode >> 16) & 0xfu;
+  u32 logical_test = (op == 0x8 || op == 0x9);
   u8 *ptr = *translation_ptr_ref;
 
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
@@ -479,17 +505,33 @@ bool riscv_emit_native_arm_data_proc_test(u8 **translation_ptr_ref,
   if (condition != 0xe || !set_flags || rn == REG_PC)
     return false;
 
-  if (op != 0xa && op != 0xb)
+  if (!logical_test && op != 0xa && op != 0xb)
     return false;
 
   riscv_emit_arm_reg_load(&ptr, riscv_reg_t0, rn);
-  if (!riscv_emit_arm_data_proc_operand2(&ptr, opcode))
+
+  if (logical_test)
+  {
+    if (!riscv_emit_arm_data_proc_operand2_preserve_carry(&ptr, opcode))
+      return false;
+  }
+  else if (!riscv_emit_arm_data_proc_operand2(&ptr, opcode))
+  {
     return false;
+  }
 
   {
     u8 *translation_ptr = ptr;
 
-    if (op == 0xa)
+    if (op == 0x8)
+    {
+      riscv_emit_and(riscv_reg_t2, riscv_reg_t0, riscv_reg_t1);
+    }
+    else if (op == 0x9)
+    {
+      riscv_emit_xor(riscv_reg_t2, riscv_reg_t0, riscv_reg_t1);
+    }
+    else if (op == 0xa)
     {
       riscv_emit_sub(riscv_reg_t2, riscv_reg_t0, riscv_reg_t1);
       riscv_emit_sltu(riscv_reg_t3, riscv_reg_t0, riscv_reg_t1);
@@ -506,17 +548,11 @@ bool riscv_emit_native_arm_data_proc_test(u8 **translation_ptr_ref,
       riscv_emit_xor(riscv_reg_t6, riscv_reg_t0, riscv_reg_t2);
     }
 
-    riscv_emit_and(riscv_reg_t4, riscv_reg_t4, riscv_reg_t6);
-    riscv_emit_srli(riscv_reg_t4, riscv_reg_t4, 31);
-    riscv_emit_slli(riscv_reg_t4, riscv_reg_t4, 28);
-    riscv_emit_srli(riscv_reg_t5, riscv_reg_t2, 31);
-    riscv_emit_slli(riscv_reg_t5, riscv_reg_t5, 31);
-    riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
-    riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t2, 1);
-    riscv_emit_slli(riscv_reg_t5, riscv_reg_t5, 30);
-    riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
-    riscv_emit_slli(riscv_reg_t3, riscv_reg_t3, 29);
-    riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t3);
+    if (!logical_test)
+    {
+      riscv_emit_and(riscv_reg_t4, riscv_reg_t4, riscv_reg_t6);
+      riscv_emit_srli(riscv_reg_t4, riscv_reg_t4, 31);
+    }
 
     ptr = translation_ptr;
   }
@@ -526,6 +562,23 @@ bool riscv_emit_native_arm_data_proc_test(u8 **translation_ptr_ref,
   {
     u8 *translation_ptr = ptr;
 
+    if (logical_test)
+    {
+      riscv_emit_srli(riscv_reg_t3, riscv_reg_t6, 29);
+      riscv_emit_andi(riscv_reg_t3, riscv_reg_t3, 1);
+      riscv_emit_srli(riscv_reg_t4, riscv_reg_t6, 28);
+      riscv_emit_andi(riscv_reg_t4, riscv_reg_t4, 1);
+    }
+
+    riscv_emit_slli(riscv_reg_t4, riscv_reg_t4, 28);
+    riscv_emit_srli(riscv_reg_t5, riscv_reg_t2, 31);
+    riscv_emit_slli(riscv_reg_t5, riscv_reg_t5, 31);
+    riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
+    riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t2, 1);
+    riscv_emit_slli(riscv_reg_t5, riscv_reg_t5, 30);
+    riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
+    riscv_emit_slli(riscv_reg_t3, riscv_reg_t3, 29);
+    riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t3);
     riscv_emit_andi(riscv_reg_t6, riscv_reg_t6, 0xff);
     riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t6);
 
