@@ -22,7 +22,7 @@ typedef struct riscv_jit_block_meta
   u32 start_pc;
   u32 end_pc;
   u32 thumb;
-  u32 reserved;
+  u32 flags;
 } riscv_jit_block_meta;
 
 void riscv_emit_block_prologue(u8 **translation_ptr,
@@ -32,6 +32,11 @@ void riscv_emit_block_finalize(riscv_jit_block_meta *meta,
                                u32 block_start_pc,
                                u32 block_end_pc,
                                bool thumb_mode);
+void riscv_mark_block_unsupported(riscv_jit_block_meta *meta);
+bool riscv_emit_native_arm_data_proc(u8 **translation_ptr,
+                                     riscv_jit_block_meta *meta,
+                                     u32 opcode,
+                                     u32 cycles);
 
 u32 execute_arm_translate(u32 cycles);
 u32 execute_arm_translate_internal(u32 cycles, void *regptr);
@@ -52,6 +57,7 @@ void init_emitter(bool must_swap);
 #define generate_cycle_update()                                               \
   do                                                                          \
   {                                                                           \
+    riscv_mark_block_unsupported(riscv_block_meta);                           \
   } while (0)
 
 #define generate_branch_patch_conditional(dest, offset)                       \
@@ -79,18 +85,21 @@ void init_emitter(bool must_swap);
 #define riscv_emit_current_arm_instruction()                                  \
   do                                                                          \
   {                                                                           \
+    riscv_mark_block_unsupported(riscv_block_meta);                           \
     cycle_count = 0;                                                          \
   } while (0)
 
 #define riscv_emit_current_thumb_instruction()                                \
   do                                                                          \
   {                                                                           \
+    riscv_mark_block_unsupported(riscv_block_meta);                           \
     cycle_count = 0;                                                          \
   } while (0)
 
 #define arm_conditional_block_header()                                        \
   do                                                                          \
   {                                                                           \
+    riscv_mark_block_unsupported(riscv_block_meta);                           \
   } while (0)
 
 #define emit_trace_arm_instruction(pc)                                        \
@@ -106,13 +115,25 @@ void init_emitter(bool must_swap);
   } while (0)
 
 #define arm_data_proc(...)                                                    \
-  riscv_emit_current_arm_instruction()
+  do                                                                          \
+  {                                                                           \
+    if (riscv_emit_native_arm_data_proc(&translation_ptr,                     \
+                                        riscv_block_meta, opcode,             \
+                                        cycle_count))                         \
+    {                                                                         \
+      cycle_count = 0;                                                        \
+    }                                                                         \
+    else                                                                      \
+    {                                                                         \
+      riscv_emit_current_arm_instruction();                                   \
+    }                                                                         \
+  } while (0)
 
 #define arm_data_proc_test(...)                                               \
   riscv_emit_current_arm_instruction()
 
 #define arm_data_proc_unary(...)                                              \
-  riscv_emit_current_arm_instruction()
+  arm_data_proc(__VA_ARGS__)
 
 #define arm_multiply(...)                                                     \
   riscv_emit_current_arm_instruction()
@@ -207,11 +228,13 @@ void init_emitter(bool must_swap);
 #define thumb_process_cheats()                                                \
   do                                                                          \
   {                                                                           \
+    riscv_mark_block_unsupported(riscv_block_meta);                           \
   } while (0)
 
 #define arm_process_cheats()                                                  \
   do                                                                          \
   {                                                                           \
+    riscv_mark_block_unsupported(riscv_block_meta);                           \
   } while (0)
 
 #define thumb_swi()                                                           \
