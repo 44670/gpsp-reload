@@ -11210,9 +11210,84 @@ static void command_stepi(char *arg)
   print_summary("stepi", "synthetic_instruction_step");
 }
 
-static void command_stepb(char *arg)
+static void command_stepb(char *arg, char *mode_arg)
 {
-  u32 count = optional_count(arg, 1);
+  char *count_arg = arg;
+  u32 runtime_mode = 0;
+  u32 count;
+  u32 i;
+  u32 hash;
+
+  if (arg && str_eq(arg, "runtime"))
+  {
+    runtime_mode = 1;
+    count_arg = mode_arg;
+  }
+  else if (mode_arg && str_eq(mode_arg, "runtime"))
+  {
+    runtime_mode = 1;
+  }
+  else if (mode_arg && *mode_arg)
+  {
+    print_fail("stepb", "unknown_step_mode");
+    return;
+  }
+
+  count = optional_count(count_arg, 1);
+  if (count > 16)
+    count = 16;
+
+  if (runtime_mode)
+  {
+    const char *runtime_reason = "runtime_unknown";
+    u32 stored_count;
+    u32 last_pc = 0xffffffffu;
+
+    if (!capture_runtime_lookup_trace(&runtime_reason))
+    {
+      put_raw("result=FAIL command=stepb backend=");
+      put_raw(backend_name());
+      put_raw(" harness_mode=");
+      put_raw(RUNTIME_FIXTURE_MODE);
+      put_raw(" step_mode=runtime_lookup reason=");
+      put_raw(runtime_reason);
+      put_chr('\n');
+      return;
+    }
+
+    stored_count = runtime_trace_stored_count();
+    if (count > stored_count)
+      count = stored_count;
+    if (count)
+      last_pc = g_runtime_trace_pcs[count - 1u];
+    hash = runtime_trace_hash(count);
+
+    put_raw("result=PASS command=stepb backend=");
+    put_raw(backend_name());
+    put_raw(" count=");
+    put_u32_dec(count);
+    put_raw(" total=");
+    put_u32_dec(g_runtime_trace_count);
+    put_raw(" stored=");
+    put_u32_dec(stored_count);
+    put_raw(" pcs=");
+    for (i = 0; i < count; i++)
+    {
+      if (i)
+        put_chr(',');
+      put_u32_hex(g_runtime_trace_pcs[i]);
+    }
+    put_raw(" last_pc=");
+    put_u32_hex(last_pc);
+    put_raw(" hash=");
+    put_u32_hex(hash);
+    put_raw(" harness_mode=");
+    put_raw(RUNTIME_FIXTURE_MODE);
+    put_raw(" step_mode=runtime_lookup trace_encoding=thumb_lowbit");
+    put_raw(" reason=runtime_block_steps\n");
+    return;
+  }
+
   g_state.blocks += count;
   g_state.cycles += count * 4u;
   render_frame();
@@ -12302,7 +12377,8 @@ static void process_line(char *line)
   }
   else if (str_eq(cmd, "stepb"))
   {
-    command_stepb(next_token(&cursor));
+    char *arg = next_token(&cursor);
+    command_stepb(arg, next_token(&cursor));
   }
   else if (str_eq(cmd, "regs"))
   {

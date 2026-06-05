@@ -268,6 +268,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - explicit runtime-snapshot `counters runtime` dump for selected-backend
   block/fallback/native counters plus state, memory, scheduler, and snapshot
   hashes
+- explicit RV32IM `stepb runtime [count]` block-step prefix from the runtime
+  lookup trace, with Thumb lookups tagged in bit 0
 - explicit RV32IM `tracepc runtime [count]` lookup trace from the runtime
   workload, with Thumb lookups tagged in bit 0
 - explicit RV32IM `bp <pc> runtime` lookup-breakpoint query against the
@@ -374,15 +376,16 @@ Remaining first-phase gaps should stay narrow and evidence-driven:
   `regs runtime`, `mem <addr> <len> runtime`,
   `mem <addr> <len> runtime-bytes`,
   `watchio <addr> <len> runtime`, `counters runtime`,
-  `tracepc runtime`, `bp <pc> runtime`, `framehash runtime`, and
-  `png <path> runtime` fixture paths are labeled
+  `stepb runtime <count>`, `tracepc runtime`, `bp <pc> runtime`,
+  `framehash runtime`, and `png <path> runtime` fixture paths are labeled
   `harness_mode=runtime_fixture`; the snapshot commands derive output from the
   runtime state/memory/scheduler/native-counter snapshot, `mem ... runtime`
   and `watchio ... runtime` record actual RV32IM helper memory/IO events,
   `mem ... runtime-bytes` records a bounded shadow-memory byte view of actual
-  RV32IM helper writes, `tracepc runtime` records actual RV32IM lookup PCs, and
-  `bp ... runtime` reports hit/miss against those lookup PCs. Full addressable
-  emulator RAM/IO dumps and real emulator frame output are still not wired in.
+  RV32IM helper writes, `stepb ... runtime` and `tracepc runtime` record actual
+  RV32IM lookup PCs, and `bp ... runtime` reports hit/miss against those lookup
+  PCs. Full addressable emulator RAM/IO dumps and real emulator frame output
+  are still not wired in.
 - Thumb instruction lowering remains deliberately unsupported; the harness
   compare path now proves Thumb lookup-miss/invalid fallback and unsupported
   Thumb block fallback only, and Thumb blocks must keep routing through
