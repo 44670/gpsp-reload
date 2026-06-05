@@ -2630,8 +2630,6 @@ static int run_runtime_reject_audit(const char **reason,
   };
   static const runtime_access_memory_reject_case load_pc_cases[] =
   {
-    { RUNTIME_LOAD_LDRB_PC_R3_0X25, RUNTIME_LOAD_PC_START_PC,
-      RUNTIME_LOAD_PC_CYCLES, "runtime_reject_ldr_byte_pc_accepted" },
     { RUNTIME_HALF_LDRH_PC_R3_0X24, RUNTIME_HALF_LDRH_PC,
       RUNTIME_HALF_LDRH_BASE_CYCLES,
       "runtime_reject_ldrh_pc_accepted" },

@@ -2283,7 +2283,8 @@ bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,
     return false;
 
   if (condition != 0xe || (pc_base && writeback_address) ||
-      (load && rd == REG_PC && byte))
+      (load && rd == REG_PC && byte &&
+       (writeback_address || register_offset)))
   {
     return false;
   }

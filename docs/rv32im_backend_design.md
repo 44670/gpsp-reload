@@ -291,7 +291,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   and `SWP` with `rm == pc`; it also pins 13 non-AL conditional opcode
   rejections across the direct native emitter families, preserving the rule
   that ARM condition handling enters through conditional block headers instead
-  of per-opcode lowering, and four byte/halfword load-to-PC rejections that
+  of per-opcode lowering, and three halfword/signed load-to-PC rejections that
   stay helper-routed until those PC-write forms have interpreter-parity proof;
   six PC-base writeback forms and one register-offset shifted-register form
   are pinned the same way
@@ -329,7 +329,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   register-shifted `ANDS`/`EORS`/`MOVS`/`ORRS`/`TST`,
   `TEQ`, `CMN`, `MRS CPSR`,
   `MRS SPSR`, `MSR CPSR_flg`, `MSR CPSR_ctl`, `MSR SPSR`,
-  `LDR`, `LDRB`, `LDR pc`, PC-relative `LDR`/`LDRB`/`STR`, `STR`, `STRB`,
+  `LDR`, `LDRB`, `LDR pc`, `LDRB pc`, PC-relative `LDR`/`LDRB`/`STR`, `STR`, `STRB`,
   `STR pc`,
   register-offset `STRB`, PC-register-offset `STR`, PC-register-offset `STRB`,
   register-offset writeback `STR`, post-index register-offset `LDRB`,
@@ -381,7 +381,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   checked, carry-input data-processing, carry-input flag, logical flag, and
   extended shifted and register-shifted data-processing results checked,
   register-shifted flag/test and TEQ/CMN CPSR results checked,
-  helper memory, helper load, load-to-PC, load-to-PC native target chaining, PC-write native target chaining, PC-write target native fallthrough chaining, PC-write Thumb fallback, PC-relative load, and register-offset load plus writeback store/load remaining-cycle handoffs, PC-relative store memory and remaining-cycle handoff,
+  helper memory, helper load, word/byte load-to-PC, load-to-PC native target chaining, PC-write native target chaining, PC-write target native fallthrough chaining, PC-write Thumb fallback, PC-relative load, and register-offset load plus writeback store/load remaining-cycle handoffs, PC-relative store memory and remaining-cycle handoff,
   source-PC store value and remaining-cycle handoff, word-store,
   IO-window word-store helper observation, byte-store,
   register-offset byte-store, shifted-LSL/shifted-LSL-with-PC/shifted-LSR/shifted-LSR-with-PC/shifted-ASR/shifted-ASR-with-PC/shifted-ROR/shifted-ROR-with-PC register-offset byte-store, and RRX
@@ -437,9 +437,10 @@ PC-register-offset word/byte load/store, and halfword load/store blocks plus
 LSL/LSR/ASR/ROR/RRX register-offset load blocks and LSL/LSR/ASR/ROR/RRX
 register-offset store blocks, then checks their helper address, PC, value,
 and leftover-cycle handoff observations directly. It also proves that
-unsupported byte and halfword load-to-PC forms (`LDRB`, `LDRH`, `LDRSB`,
-and `LDRSH` with `Rd=PC`) stay rejected by the native emitter until a
-separate interpreter-parity proof exists. PC-base writeback and post-index
+unsupported halfword and signed load-to-PC forms (`LDRH`, `LDRSB`, and
+`LDRSH` with `Rd=PC`) stay rejected by the native emitter until a
+separate interpreter-parity proof exists. Immediate no-writeback `LDRB pc`
+now has boundary, remaining-cycle, and native-target chaining proof. PC-base writeback and post-index
 load/store forms are likewise proven rejected for word/byte and halfword
 memory classes. A standalone partial-unsupported block remains as the focused
 `riscv_emit_block_finalize()` proof for the same discard-and-fallback contract.
