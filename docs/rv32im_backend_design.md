@@ -262,7 +262,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 | CPU alerts, cache flush, IRQ, HALT, idle-loop gate | native+compare | Runtime snapshots, `sched runtime`, and `fallbacks runtime` cover SMC/IRQ/HALT consumption, RAM flush, IRQ checks, HALT updates, and idle-loop gate exits. |
 | Scheduler exits, update_gba(), frame completion, fallback buckets | native+compare | `run runtime`, `cont runtime`, `sched runtime`, `counters runtime`, and `compare` pin update/refill, PC-change, frame-complete, fallback source breakdown, and snapshot hashes. |
 | Mixed contract chain across semantic boundaries | native+compare | `mixed` runs native data processing, helper-backed load, PC-writing load into a native target, alerting helper-backed store, scheduler refill, and deliberate fallback without resetting state. It pins register, memory, scheduler, trace, instruction-step, memory-event, scheduler-event, fallback-event, shadow-memory, counter, code-byte, and runtime-frame evidence. |
-| Armwrestler ARM Test0 external ROM | interpreter+frontend JIT compare | `make -C tests/rv32im armwrestler` loads `/home/john/ref/armwrestler-gba-fixed/armwrestler-gba-fixed.gba`, patches only each loaded copy for deterministic `TESTNUM`, `VSync`, and `DrawResult` result capture, runs ARM Test0 under the host `cpu.cc` interpreter and under `cpu_threaded.c` plus generated RV32IM in `qemu-riscv32`, and requires 15 results, failure mask `0`, native blocks/code bytes/nonzero native counters, ROM trace PCs, and zero RV32IM interpreter fallbacks. This is ARM Test0 coverage, not full Armwrestler/Thumbwrestler coverage. |
+| Armwrestler ARM Tests 0-4 external ROM | interpreter+frontend JIT compare | `make -C tests/rv32im armwrestler` loads `/home/john/ref/armwrestler-gba-fixed/armwrestler-gba-fixed.gba`, patches only each loaded copy for deterministic `TESTNUM`, `VSync`, and `DrawResult` result capture, runs ARM Tests 0-4 under the host `cpu.cc` interpreter and under `cpu_threaded.c` plus generated RV32IM in `qemu-riscv32`, and requires 59 results, failure mask `0`, native blocks/code bytes/nonzero native counters, ROM trace PCs, and zero RV32IM interpreter fallbacks. Tests 5-9 are Armwrestler stubs in this ROM; Thumbwrestler coverage is not included. |
 | Thumb instruction lowering | helper fallback | Current harness proves Thumb lookup miss/invalid and unsupported-block fallback only; Thumb native lowering is deliberately out of first-phase scope. |
 
 Next milestone selection comes from this table: move from the new mixed-chain
@@ -274,8 +274,9 @@ debugged from exact qemu-user logs and pinned counters.
 - top-level unix libretro core build with `HAVE_DYNAREC=1` and
   `CPU_ARCH=riscv`, proving the production `cpu_threaded.c` / RV32IM runtime
   integration still compiles and links outside the standalone qemu-user shim
-- wider Armwrestler coverage beyond ARM Test0, using the same
-  interpreter-vs-RV32IM result-signal comparison and native execution evidence
+- wider external-ROM coverage beyond the ARM-side Armwrestler suite, using the
+  same interpreter-vs-RV32IM result-signal comparison and native execution
+  evidence
 - data-processing, flag-producing data-processing, multiply, long multiply,
   PSR, load/store, PC-relative load/store memory,
   register-offset load/store, PC-register-offset word/byte load/store, shifted-LSL/LSR/ASR/ROR
@@ -526,12 +527,14 @@ The first external-ROM interpreter-vs-RV32IM gate is now
 `make -C tests/rv32im armwrestler`. It builds a host interpreter runner linked
 with `cpu.cc` and a freestanding RV32 qemu-user binary linked with
 `cpu_threaded.c` and `riscv/riscv_runtime.c`. Both load the local Armwrestler
-ROM and patch only their in-memory copy to select ARM Test0 and record
+ROM and patch only their in-memory copy to run ARM Tests 0-4 and record
 `DrawResult` arguments into IWRAM. The target requires both sides to report
-15 results and failure mask `0`; the RV32IM side additionally must report
+59 results and failure mask `0`; the RV32IM side additionally must report
 native blocks, generated code bytes, nonzero native counters, ROM trace PCs,
-and zero interpreter fallbacks. `armwrestler-jit` remains available as the
-single-side frontend/JIT diagnostic subtarget.
+and zero interpreter fallbacks. The RV32 runner uses the same banked-register
+mode switching contract as `cpu.cc` so native MSR/SWI paths are tested against
+real ARM mode behavior. `armwrestler-jit` remains available as the single-side
+frontend/JIT diagnostic subtarget.
 
 Do not widen scope into Thumb native lowering, compressed RISC-V emission,
 guest register caching, performance tuning, or ESP32-specific work before a

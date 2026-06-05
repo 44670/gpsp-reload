@@ -20,12 +20,17 @@ extern "C" {
 #define ARM_VSYNC_PC 0x080004c4u
 #define ARM_DRAW_RESULT_PC 0x08000634u
 #define ARM_TESTNUM_MOV_PC 0x0800032cu
-#define ARMWRESTLER_TEST0 0u
-#define ARMWRESTLER_TEST0_RESULTS 15u
-#define RESULT_BASE 0x03000100u
+#define ARMWRESTLER_ARM_TESTS 5u
+#define ARMWRESTLER_ARM_TOTAL_RESULTS 59u
+#define RESULT_BASE 0x03000300u
 #define FRAME_COMPLETE 0x80000000u
 #define RUN_CYCLES 200000u
 #define RUN_CHUNKS 64u
+
+static const u32 g_arm_test_ids[ARMWRESTLER_ARM_TESTS] =
+  { 0u, 1u, 2u, 3u, 4u };
+static const u32 g_arm_test_results[ARMWRESTLER_ARM_TESTS] =
+  { 15u, 6u, 16u, 10u, 12u };
 
 static u8 g_rom[ROM_MAX_BYTES];
 static u8 g_rom_open_bus[ROM_PAGE_BYTES];
@@ -33,6 +38,8 @@ static u32 g_rom_size;
 static u32 g_update_calls;
 static u32 g_read32_calls;
 static u32 g_write32_calls;
+static u32 g_total_observed_results;
+static u32 g_total_failure_mask;
 
 u32 gamepak_sticky_bit[1024 / 32];
 u32 gamepak_size;
@@ -109,6 +116,11 @@ static u32 load32(const u8 *base, u32 offset)
          ((u32)base[offset + 3u] << 24);
 }
 
+static u32 ror32(u32 value, u32 shift)
+{
+  return shift ? (value >> shift) | (value << (32u - shift)) : value;
+}
+
 static void store16(u8 *base, u32 offset, u16 value)
 {
   base[offset] = (u8)value;
@@ -143,16 +155,23 @@ static void patch_word(u32 pc, u32 value)
   store32(g_rom, pc - ROM_BASE, value);
 }
 
+static void patch_test_id(u32 test_id)
+{
+  patch_word(ARM_TESTNUM_MOV_PC, 0xe3a00000u | test_id);
+}
+
 static void patch_loaded_rom(void)
 {
   static const u32 draw_result_patch[] =
   {
-    0xe3a03403u, 0xe2833c01u, 0xe593c000u, 0xe28cc001u,
-    0xe583c000u, 0xe593c004u, 0xe18cc001u, 0xe583c004u,
-    0xe5830008u, 0xe583100cu, 0xe5832010u, 0xe1a0f00eu,
+    0xe3a03403u, 0xe2833c03u, 0xe593c000u, 0xe28cc001u,
+    0xe583c000u, 0xe5830008u, 0xe583100cu, 0xe5832010u,
+    0xe20100ffu, 0xe5932004u, 0xe1822000u, 0xe5832004u,
+    0xe5932014u,
+    0xe15c0002u, 0xba000001u, 0xe3a0200au, 0xe50322f8u,
+    0xe1a0f00eu,
   };
 
-  patch_word(ARM_TESTNUM_MOV_PC, 0xe3a00000u | ARMWRESTLER_TEST0);
   patch_word(ARM_VSYNC_PC, 0xe1a0f00eu);
   for (u32 i = 0; i < sizeof(draw_result_patch) / sizeof(draw_result_patch[0]); i++)
     patch_word(ARM_DRAW_RESULT_PC + i * 4u, draw_result_patch[i]);
@@ -176,6 +195,16 @@ static void init_memory_map(void)
     memory_map_read[address >> 15] =
       offset < ROM_MAX_BYTES ? g_rom + offset : g_rom_open_bus;
   }
+}
+
+static void clear_runtime_memory(void)
+{
+  std::memset(ewram, 0, sizeof(ewram));
+  std::memset(iwram, 0, sizeof(iwram));
+  std::memset(io_registers, 0, sizeof(io_registers));
+  std::memset(vram, 0, sizeof(vram));
+  std::memset(palette_ram, 0, sizeof(palette_ram));
+  std::memset(oam_ram, 0, sizeof(oam_ram));
 }
 
 static u8 *addr_ptr(u32 address, u32 size)
@@ -234,7 +263,8 @@ u32 function_cc read_memory16(u32 address)
 {
   if ((address & 0x0fffffffu) == 0x0000130u)
     return 0x03ffu;
-  return load16(addr_ptr(address, 2), 0);
+  u32 value = load16(addr_ptr(address & ~1u, 2), 0);
+  return (address & 1u) ? ror32(value, 8) : value;
 }
 
 u16 function_cc read_memory16_signed(u32 address)
@@ -250,7 +280,8 @@ u32 function_cc read_memory16s(u32 address)
 u32 function_cc read_memory32(u32 address)
 {
   g_read32_calls++;
-  return load32(addr_ptr(address, 4), 0);
+  u32 rotate = (address & 3u) * 8u;
+  return ror32(load32(addr_ptr(address & ~3u, 4), 0), rotate);
 }
 
 cpu_alert_type function_cc write_memory8(u32 address, u8 value)
@@ -284,15 +315,75 @@ static u32 result_word(u32 offset)
   return load32(iwram + 0x8000u, (RESULT_BASE - IWRAM_BASE) + offset);
 }
 
-static void print_summary(const char *result, const char *reason)
+static void init_armwrestler_cpu_state(void)
 {
-  std::printf("result=%s command=armwrestler-interp test=arm0 "
+  init_cpu();
+  reg[REG_SP] = 0x03007f00u;
+  reg[REG_PC] = ARM_MAIN_PC;
+  reg[REG_CPSR] = 0x0000001fu;
+  reg[CPU_MODE] = MODE_SYSTEM;
+  reg[CPU_HALT_STATE] = CPU_ACTIVE;
+}
+
+static void print_summary(const char *result, u32 test_id,
+                          u32 expected_results, const char *reason)
+{
+  std::printf("result=%s command=armwrestler-interp-test test=arm%u "
               "expected_results=%u observed_results=%u failure_mask=0x%08x "
+              "last_label=0x%08x last_mask=0x%08x last_type=%u "
               "read32_calls=%u write32_calls=%u update_calls=%u "
               "harness_mode=armwrestler_interpreter reason=%s\n",
-              result, ARMWRESTLER_TEST0_RESULTS, result_word(0),
-              result_word(4), g_read32_calls, g_write32_calls,
+              result, test_id, expected_results, result_word(0),
+              result_word(4), result_word(8), result_word(12),
+              result_word(16), g_read32_calls, g_write32_calls,
               g_update_calls, reason);
+}
+
+static void print_aggregate_summary(const char *result, const char *reason)
+{
+  std::printf("result=%s command=armwrestler-interp test=all "
+              "expected_results=%u observed_results=%u failure_mask=0x%08x "
+              "tests=%u read32_calls=%u write32_calls=%u update_calls=%u "
+              "harness_mode=armwrestler_interpreter reason=%s\n",
+              result, ARMWRESTLER_ARM_TOTAL_RESULTS, g_total_observed_results,
+              g_total_failure_mask, ARMWRESTLER_ARM_TESTS, g_read32_calls,
+              g_write32_calls, g_update_calls, reason);
+}
+
+static bool run_armwrestler_test(u32 test_id, u32 expected_results)
+{
+  patch_test_id(test_id);
+  clear_runtime_memory();
+  store32(iwram + 0x8000u, (RESULT_BASE - IWRAM_BASE) + 20u,
+          expected_results);
+  init_memory_map();
+  init_armwrestler_cpu_state();
+
+  for (u32 i = 0; i < RUN_CHUNKS; i++)
+  {
+    execute_arm(RUN_CYCLES);
+    if (result_word(0) >= expected_results)
+      break;
+  }
+
+  g_total_observed_results += result_word(0);
+  g_total_failure_mask |= result_word(4);
+
+  if (result_word(0) < expected_results)
+  {
+    print_summary("FAIL", test_id, expected_results, "result_timeout");
+    return false;
+  }
+  if (result_word(4) != 0)
+  {
+    print_summary("FAIL", test_id, expected_results,
+                  "armwrestler_reported_bad");
+    return false;
+  }
+
+  print_summary("PASS", test_id, expected_results,
+                "armwrestler_arm_test_interpreter_passed");
+  return true;
 }
 
 int main(void)
@@ -305,32 +396,23 @@ int main(void)
   }
 
   patch_loaded_rom();
-  init_memory_map();
-  init_cpu();
-  reg[REG_SP] = 0x03007f00u;
-  reg[REG_PC] = ARM_MAIN_PC;
-  reg[REG_CPSR] = 0x0000001fu;
-  reg[CPU_MODE] = MODE_SYSTEM;
-  reg[CPU_HALT_STATE] = CPU_ACTIVE;
 
-  for (u32 i = 0; i < RUN_CHUNKS; i++)
+  for (u32 i = 0; i < ARMWRESTLER_ARM_TESTS; i++)
   {
-    execute_arm(RUN_CYCLES);
-    if (result_word(0) >= ARMWRESTLER_TEST0_RESULTS)
-      break;
+    if (!run_armwrestler_test(g_arm_test_ids[i], g_arm_test_results[i]))
+    {
+      print_aggregate_summary("FAIL", "armwrestler_arm_all_interpreter_failed");
+      return 1;
+    }
   }
 
-  if (result_word(0) < ARMWRESTLER_TEST0_RESULTS)
+  if (g_total_observed_results != ARMWRESTLER_ARM_TOTAL_RESULTS ||
+      g_total_failure_mask != 0)
   {
-    print_summary("FAIL", "result_timeout");
-    return 1;
-  }
-  if (result_word(4) != 0)
-  {
-    print_summary("FAIL", "armwrestler_reported_bad");
+    print_aggregate_summary("FAIL", "armwrestler_arm_all_interpreter_mismatch");
     return 1;
   }
 
-  print_summary("PASS", "armwrestler_arm0_interpreter_passed");
+  print_aggregate_summary("PASS", "armwrestler_arm_all_interpreter_passed");
   return 0;
 }
