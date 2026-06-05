@@ -297,7 +297,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   handling, SWP-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, ARM lookup-miss/invalid fallback, Thumb lookup-miss/invalid fallback, and Thumb unsupported-block fallback fixtures against a local ARM
   reference model, with
-  one hundred sixty runtime blocks executed, basic data-processing remaining-cycle and invalid re-lookup fallback handoffs,
+  one hundred sixty two runtime blocks executed, basic data-processing remaining-cycle and invalid re-lookup fallback handoffs,
   ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results and remaining-cycle handoff, MSR CPSR flag remaining-cycle handoff,
   MSR CPSR control mode/banked-LR effects and remaining-cycle handoff, SPSR helper-write effects and remaining-cycle handoff, and native PSR
@@ -307,7 +307,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   checked, carry-input data-processing, carry-input flag, logical flag, and
   extended shifted and register-shifted data-processing results checked,
   register-shifted flag/test and TEQ/CMN CPSR results checked,
-  helper memory, helper load, load-to-PC, load-to-PC native target chaining, PC-relative load, and register-offset load plus writeback store/load remaining-cycle handoffs, PC-relative store memory and remaining-cycle handoff,
+  helper memory, helper load, load-to-PC, load-to-PC native target chaining, PC-write native target chaining, PC-relative load, and register-offset load plus writeback store/load remaining-cycle handoffs, PC-relative store memory and remaining-cycle handoff,
   source-PC store value and remaining-cycle handoff, word-store, byte-store, and register-offset byte-store remaining-cycle handoffs, byte-store SMC/IRQ
   remaining-cycle handoff, and SMC/IRQ/HALT alert observations hashed,
   register-offset, shifted register-offset, subtract-offset, RRX load, and
