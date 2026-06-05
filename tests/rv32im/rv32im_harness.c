@@ -786,6 +786,7 @@ typedef unsigned int usize;
 #define RUNTIME_LOAD_PC_EXTRA_CYCLES 5u
 #define RUNTIME_LOAD_PC_NATIVE_EXTRA_CYCLES 4u
 #define RUNTIME_LOAD_LDR_PC_R3_0X24 0xe593f024u
+#define RUNTIME_LOAD_LDRB_PC_R3_0X25 0xe5d3f025u
 #define RUNTIME_LOAD_BASE_ADDR 0x02000040u
 #define RUNTIME_LOAD_WORD_ADDR (RUNTIME_LOAD_BASE_ADDR + 0x24u)
 #define RUNTIME_LOAD_BYTE_ADDR (RUNTIME_LOAD_BASE_ADDR + 0x25u)
@@ -891,6 +892,9 @@ typedef unsigned int usize;
 #define RUNTIME_HALF_LDRH_R4_R3_0X24 0xe1d342b4u
 #define RUNTIME_HALF_LDRSB_R5_R3_0X25 0xe1d352d5u
 #define RUNTIME_HALF_LDRSH_R6_R3_0X26 0xe1d362f6u
+#define RUNTIME_HALF_LDRH_PC_R3_0X24 0xe1d3f2b4u
+#define RUNTIME_HALF_LDRSB_PC_R3_0X25 0xe1d3f2d5u
+#define RUNTIME_HALF_LDRSH_PC_R3_0X26 0xe1d3f2f6u
 #define RUNTIME_HALF_STRH_R7_R3_0X28 0xe1c372b8u
 #define RUNTIME_PC_BASE_HALF_LDRH_R8_PC_0X24 0xe1df82b4u
 #define RUNTIME_PC_BASE_HALF_LDRSB_R7_PC_0X25 0xe1df72d5u
@@ -2432,6 +2436,14 @@ typedef struct runtime_cond_pc_cycles_reject_case
   const char *accepted_reason;
 } runtime_cond_pc_cycles_reject_case;
 
+typedef struct runtime_access_memory_reject_case
+{
+  u32 opcode;
+  u32 pc;
+  u32 cycles;
+  const char *accepted_reason;
+} runtime_access_memory_reject_case;
+
 static u32 runtime_opcode_with_condition(u32 opcode, u32 condition)
 {
   return (opcode & 0x0fffffffu) | (condition << 28);
@@ -2512,10 +2524,21 @@ static int runtime_expect_swap_rejected(const char **reason, u32 opcode,
     reason, riscv_emit_native_arm_swap, opcode, pc, cycles, accepted_reason);
 }
 
+static int runtime_expect_access_memory_rejected(const char **reason,
+                                                 u32 opcode, u32 pc,
+                                                 u32 cycles,
+                                                 const char *accepted_reason)
+{
+  return runtime_expect_opcode_pc_cycles_rejected(
+    reason, riscv_emit_native_arm_access_memory, opcode, pc, cycles,
+    accepted_reason);
+}
+
 static int run_runtime_reject_audit(const char **reason,
                                     u32 *total_rejections,
                                     u32 *psr_rejections,
-                                    u32 *conditional_rejections)
+                                    u32 *conditional_rejections,
+                                    u32 *load_pc_rejections)
 {
   static const runtime_cond_cycles_reject_case conditional_cycles_cases[] =
   {
@@ -2562,11 +2585,26 @@ static int run_runtime_reject_audit(const char **reason,
       RUNTIME_HALF_LOAD_START_PC, RUNTIME_HALF_LDRH_BASE_CYCLES,
       "runtime_reject_cond_extra_memory_accepted" }
   };
+  static const runtime_access_memory_reject_case load_pc_cases[] =
+  {
+    { RUNTIME_LOAD_LDRB_PC_R3_0X25, RUNTIME_LOAD_PC_START_PC,
+      RUNTIME_LOAD_PC_CYCLES, "runtime_reject_ldr_byte_pc_accepted" },
+    { RUNTIME_HALF_LDRH_PC_R3_0X24, RUNTIME_HALF_LDRH_PC,
+      RUNTIME_HALF_LDRH_BASE_CYCLES,
+      "runtime_reject_ldrh_pc_accepted" },
+    { RUNTIME_HALF_LDRSB_PC_R3_0X25, RUNTIME_HALF_LDRSB_PC,
+      RUNTIME_HALF_LDRSB_BASE_CYCLES,
+      "runtime_reject_ldrsb_pc_accepted" },
+    { RUNTIME_HALF_LDRSH_PC_R3_0X26, RUNTIME_HALF_LDRSH_PC,
+      RUNTIME_HALF_LDRSH_BASE_CYCLES,
+      "runtime_reject_ldrsh_pc_accepted" }
+  };
   u32 i;
 
   *total_rejections = 0;
   *psr_rejections = 0;
   *conditional_rejections = 0;
+  *load_pc_rejections = 0;
 
   if (!runtime_expect_psr_rejected(
         reason, RUNTIME_MRS_R15_CPSR, RUNTIME_PSR_MRS_CPSR_CYCLES,
@@ -2652,6 +2690,21 @@ static int run_runtime_reject_audit(const char **reason,
     }
     (*total_rejections)++;
     (*conditional_rejections)++;
+  }
+
+  for (i = 0; i < ARRAY_SIZE(load_pc_cases); i++)
+  {
+    const runtime_access_memory_reject_case *test_case =
+      &load_pc_cases[i];
+
+    if (!runtime_expect_access_memory_rejected(
+          reason, test_case->opcode, test_case->pc, test_case->cycles,
+          test_case->accepted_reason))
+    {
+      return 0;
+    }
+    (*total_rejections)++;
+    (*load_pc_rejections)++;
   }
 
   *reason = "runtime_rejections_preserved";
@@ -14497,6 +14550,7 @@ static void command_rejects(char *mode)
   u32 total_rejections = 0;
   u32 psr_rejections = 0;
   u32 conditional_rejections = 0;
+  u32 load_pc_rejections = 0;
 
   if (mode && *mode && !str_eq(mode, "runtime"))
   {
@@ -14516,7 +14570,8 @@ static void command_rejects(char *mode)
   }
 
   if (!run_runtime_reject_audit(&runtime_reason, &total_rejections,
-                                &psr_rejections, &conditional_rejections))
+                                &psr_rejections, &conditional_rejections,
+                                &load_pc_rejections))
   {
     put_raw("result=FAIL command=rejects backend=");
     put_raw(backend_name());
@@ -14526,6 +14581,8 @@ static void command_rejects(char *mode)
     put_u32_dec(psr_rejections);
     put_raw(" conditional=");
     put_u32_dec(conditional_rejections);
+    put_raw(" load_pc=");
+    put_u32_dec(load_pc_rejections);
     put_raw(" harness_mode=");
     put_raw(RUNTIME_FIXTURE_MODE);
     put_raw(" reject_mode=emitter_contract reason=");
@@ -14542,6 +14599,8 @@ static void command_rejects(char *mode)
   put_u32_dec(psr_rejections);
   put_raw(" conditional=");
   put_u32_dec(conditional_rejections);
+  put_raw(" load_pc=");
+  put_u32_dec(load_pc_rejections);
   put_raw(" opcodes=mrs_r15_cpsr,msr_cpsr_r15,mul_r15,umull_r15,");
   put_raw("hle_swi,swp_r15");
   put_raw(" harness_mode=");
