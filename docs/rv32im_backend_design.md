@@ -411,7 +411,10 @@ load and positive/negative halfword store, PC-register-offset word/byte store, s
 PC-register-offset word/byte load/store, and halfword load/store blocks plus
 LSL/LSR/ASR/ROR/RRX register-offset load blocks and LSL/LSR/ASR/ROR/RRX
 register-offset store blocks, then checks their helper address, PC, value,
-and leftover-cycle handoff observations directly.
+and leftover-cycle handoff observations directly. It also proves that
+unsupported byte and halfword load-to-PC forms (`LDRB`, `LDRH`, `LDRSB`,
+and `LDRSH` with `Rd=PC`) stay rejected by the native emitter until a
+separate interpreter-parity proof exists.
 
 Remaining first-phase gaps should stay narrow and evidence-driven:
 

@@ -588,6 +588,9 @@ typedef unsigned int usize;
 #define HALF_LDRH_R4_R3_0X24 0xe1d342b4u
 #define HALF_LDRSB_R5_R3_0X25 0xe1d352d5u
 #define HALF_LDRSH_R6_R3_0X26 0xe1d362f6u
+#define HALF_LDRH_PC_R3_0X24 0xe1d3f2b4u
+#define HALF_LDRSB_PC_R3_0X25 0xe1d3f2d5u
+#define HALF_LDRSH_PC_R3_0X26 0xe1d3f2f6u
 #define HALF_STRH_R7_R3_0X28 0xe1c372b8u
 #define HALF_REG_LDRH_R4_R3_R2 0xe19340b2u
 #define HALF_REG_STRH_R4_R3_R2 0xe18340b2u
@@ -4000,16 +4003,42 @@ static void expect_conditional_arm_ops_rejected(u8 *code)
 
 static void expect_load_pc_unsupported_rejected(u8 *code)
 {
-  u8 *translation_ptr = code;
-  riscv_jit_block_meta *meta;
-
-  riscv_emit_block_prologue(&translation_ptr, &meta);
-  if (riscv_emit_native_arm_access_memory(&translation_ptr, meta,
-                                          LOAD_LDRB_PC_R3_0X25,
-                                          LOAD_PC_START_PC,
-                                          LOAD_PC_CYCLES))
+  static const u32 rejected_opcodes[] =
   {
-    fail_u32("load_pc_reject", "accepted", LOAD_LDRB_PC_R3_0X25, 0);
+    LOAD_LDRB_PC_R3_0X25,
+    HALF_LDRH_PC_R3_0X24,
+    HALF_LDRSB_PC_R3_0X25,
+    HALF_LDRSH_PC_R3_0X26
+  };
+  static const u32 rejected_pcs[] =
+  {
+    LOAD_PC_START_PC,
+    HALF_LDRH_PC,
+    HALF_LDRSB_PC,
+    HALF_LDRSH_PC
+  };
+  static const u32 rejected_cycles[] =
+  {
+    LOAD_PC_CYCLES,
+    HALF_LDRH_BASE_CYCLES,
+    HALF_LDRSB_BASE_CYCLES,
+    HALF_LDRSH_BASE_CYCLES
+  };
+  unsigned i;
+
+  for (i = 0; i < sizeof(rejected_opcodes) / sizeof(rejected_opcodes[0]); i++)
+  {
+    u8 *translation_ptr = code;
+    riscv_jit_block_meta *meta;
+
+    riscv_emit_block_prologue(&translation_ptr, &meta);
+    if (riscv_emit_native_arm_access_memory(&translation_ptr, meta,
+                                            rejected_opcodes[i],
+                                            rejected_pcs[i],
+                                            rejected_cycles[i]))
+    {
+      fail_u32("load_pc_reject", "accepted", rejected_opcodes[i], 0);
+    }
   }
 }
 
