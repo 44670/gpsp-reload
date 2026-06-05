@@ -414,7 +414,9 @@ register-offset store blocks, then checks their helper address, PC, value,
 and leftover-cycle handoff observations directly. It also proves that
 unsupported byte and halfword load-to-PC forms (`LDRB`, `LDRH`, `LDRSB`,
 and `LDRSH` with `Rd=PC`) stay rejected by the native emitter until a
-separate interpreter-parity proof exists.
+separate interpreter-parity proof exists. PC-base writeback and post-index
+load/store forms are likewise proven rejected for word/byte and halfword
+memory classes.
 
 Remaining first-phase gaps should stay narrow and evidence-driven:
 

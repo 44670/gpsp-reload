@@ -536,6 +536,10 @@ typedef unsigned int usize;
   ((PC_BASE_LOAD_WORD_CYCLES + 2u) + (PC_BASE_LOAD_BYTE_CYCLES + 2u))
 #define PC_BASE_LDR_R4_PC_0X24 0xe59f4024u
 #define PC_BASE_LDRB_R5_PC_NEG_0X10 0xe55f5010u
+#define PC_BASE_LDR_R4_PC_POST_0X24 \
+  (PC_BASE_LDR_R4_PC_0X24 & ~0x01000000u)
+#define PC_BASE_LDRB_R5_PC_NEG_0X10_WB \
+  (PC_BASE_LDRB_R5_PC_NEG_0X10 | 0x00200000u)
 #define LOAD_BASE_ADDR 0x02000040u
 #define LOAD_WORD_ADDR (LOAD_BASE_ADDR + 0x24u)
 #define LOAD_BYTE_ADDR (LOAD_BASE_ADDR + 0x25u)
@@ -563,6 +567,8 @@ typedef unsigned int usize;
 #define STORE_STRB_R6_R3_0X29 0xe5c36029u
 #define STORE_STR_R15_R3_0X2C 0xe583f02cu
 #define PC_BASE_STR_R6_PC_0X20 0xe58f6020u
+#define PC_BASE_STR_R6_PC_0X20_WB \
+  (PC_BASE_STR_R6_PC_0X20 | 0x00200000u)
 #define STORE_BASE_ADDR 0x02000100u
 #define STORE_WORD_ADDR (STORE_BASE_ADDR + 0x28u)
 #define STORE_BYTE_ADDR (STORE_BASE_ADDR + 0x29u)
@@ -608,6 +614,12 @@ typedef unsigned int usize;
 #define PC_BASE_HALF_LDRSH_R9_PC_0X26 0xe1df92f6u
 #define PC_BASE_HALF_STRH_R10_PC_0X22 0xe1cfa2b2u
 #define PC_BASE_HALF_STRH_R10_PC_NEG_0X22 0xe14fa2b2u
+#define PC_BASE_HALF_LDRH_R8_PC_0X24_WB \
+  (PC_BASE_HALF_LDRH_R8_PC_0X24 | 0x00200000u)
+#define PC_BASE_HALF_LDRSB_R7_PC_POST_0X25 \
+  (PC_BASE_HALF_LDRSB_R7_PC_0X25 & ~0x01000000u)
+#define PC_BASE_HALF_STRH_R10_PC_0X22_WB \
+  (PC_BASE_HALF_STRH_R10_PC_0X22 | 0x00200000u)
 #define HALF_REG_STRH_R9_R3_NEG_R2 0xe10390b2u
 #define HALF_REG_LDRH_R4_R3_R2_WB 0xe1b340b2u
 #define HALF_WRITEBACK_STRH_R3_R3_0X10_WB 0xe1e331b0u
@@ -4038,6 +4050,53 @@ static void expect_load_pc_unsupported_rejected(u8 *code)
                                             rejected_cycles[i]))
     {
       fail_u32("load_pc_reject", "accepted", rejected_opcodes[i], 0);
+    }
+  }
+}
+
+static void expect_pc_base_writeback_rejected(u8 *code)
+{
+  static const u32 rejected_opcodes[] =
+  {
+    PC_BASE_LDR_R4_PC_POST_0X24,
+    PC_BASE_LDRB_R5_PC_NEG_0X10_WB,
+    PC_BASE_STR_R6_PC_0X20_WB,
+    PC_BASE_HALF_LDRH_R8_PC_0X24_WB,
+    PC_BASE_HALF_LDRSB_R7_PC_POST_0X25,
+    PC_BASE_HALF_STRH_R10_PC_0X22_WB
+  };
+  static const u32 rejected_pcs[] =
+  {
+    PC_BASE_LOAD_WORD_PC,
+    PC_BASE_LOAD_BYTE_PC,
+    PC_BASE_STORE_START_PC,
+    PC_BASE_HALF_LDRH_PC,
+    PC_BASE_HALF_LDRSB_PC,
+    PC_BASE_HALF_STORE_START_PC
+  };
+  static const u32 rejected_cycles[] =
+  {
+    PC_BASE_LOAD_WORD_CYCLES,
+    PC_BASE_LOAD_BYTE_CYCLES,
+    STORE_BASE_CYCLES,
+    HALF_LDRH_BASE_CYCLES,
+    HALF_LDRSB_BASE_CYCLES,
+    HALF_STORE_BASE_CYCLES
+  };
+  unsigned i;
+
+  for (i = 0; i < sizeof(rejected_opcodes) / sizeof(rejected_opcodes[0]); i++)
+  {
+    u8 *translation_ptr = code;
+    riscv_jit_block_meta *meta;
+
+    riscv_emit_block_prologue(&translation_ptr, &meta);
+    if (riscv_emit_native_arm_access_memory(&translation_ptr, meta,
+                                            rejected_opcodes[i],
+                                            rejected_pcs[i],
+                                            rejected_cycles[i]))
+    {
+      fail_u32("pc_base_wb_reject", "accepted", rejected_opcodes[i], 0);
     }
   }
 }
@@ -10209,6 +10268,7 @@ void _start(void)
   expect_multiply_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_multiply_long_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_load_pc_unsupported_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
+  expect_pc_base_writeback_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_swi_hle_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_swap_pc_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_conditional_arm_ops_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
