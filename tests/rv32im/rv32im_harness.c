@@ -83,6 +83,7 @@ typedef unsigned int usize;
 #define ZLIB_BLOCKS ((PNG_RAW_SIZE + ZLIB_BLOCK_MAX - 1) / ZLIB_BLOCK_MAX)
 #define ZLIB_SIZE (2 + PNG_RAW_SIZE + (ZLIB_BLOCKS * 5) + 4)
 #define RUNTIME_TRACE_MAX 512u
+#define RUNTIME_STEPI_MAX 512u
 #define RUNTIME_MEM_EVENT_MAX 256u
 #define RUNTIME_SCHED_EVENT_MAX 256u
 #define RUNTIME_FALLBACK_EVENT_MAX 256u
@@ -1591,6 +1592,9 @@ static char g_line[512];
 static u32 g_runtime_trace_enabled;
 static u32 g_runtime_trace_count;
 static u32 g_runtime_trace_pcs[RUNTIME_TRACE_MAX];
+static u32 g_runtime_stepi_enabled;
+static u32 g_runtime_stepi_count;
+static u32 g_runtime_stepi_pcs[RUNTIME_STEPI_MAX];
 static u32 g_runtime_mem_event_enabled;
 static u32 g_runtime_mem_event_count;
 static u32 g_runtime_mem_event_kind[RUNTIME_MEM_EVENT_MAX];
@@ -1875,6 +1879,30 @@ void riscv_note_runtime_fallback(u32 kind, u32 pc, u32 thumb,
     g_runtime_fallback_event_cycles[index] = cycles_remaining;
   }
   g_runtime_fallback_event_count++;
+}
+
+void riscv_note_runtime_block_execute(u32 start_pc, u32 end_pc, u32 thumb)
+{
+  u32 step = thumb ? 2u : 4u;
+  u32 pc = start_pc;
+  u32 stop_pc = end_pc;
+  u32 emitted = 0;
+
+  if (!g_runtime_stepi_enabled)
+    return;
+
+  if (stop_pc <= pc)
+    stop_pc = pc + step;
+
+  while (pc < stop_pc && emitted < 64u)
+  {
+    u32 index = g_runtime_stepi_count;
+    if (index < RUNTIME_STEPI_MAX)
+      g_runtime_stepi_pcs[index] = pc | (thumb ? 1u : 0u);
+    g_runtime_stepi_count++;
+    pc += step;
+    emitted++;
+  }
 }
 
 static void clear_runtime_cond_entries(void)
@@ -13816,6 +13844,32 @@ static void runtime_trace_record(u32 pc, u32 is_thumb)
   g_runtime_trace_count++;
 }
 
+static void runtime_stepi_reset(void)
+{
+  u32 i;
+
+  g_runtime_stepi_count = 0;
+  for (i = 0; i < RUNTIME_STEPI_MAX; i++)
+    g_runtime_stepi_pcs[i] = 0;
+}
+
+static u32 runtime_stepi_stored_count(void)
+{
+  return g_runtime_stepi_count < RUNTIME_STEPI_MAX ?
+    g_runtime_stepi_count : RUNTIME_STEPI_MAX;
+}
+
+static u32 runtime_stepi_hash(u32 count)
+{
+  u32 i;
+  u32 hash = 2166136261u;
+
+  hash = fnv1a_update_u32(hash, g_runtime_stepi_count);
+  for (i = 0; i < count; i++)
+    hash = fnv1a_update_u32(hash, g_runtime_stepi_pcs[i]);
+  return hash;
+}
+
 static u32 runtime_trace_stored_count(void)
 {
   return g_runtime_trace_count < RUNTIME_TRACE_MAX ?
@@ -14486,6 +14540,8 @@ static void reset_state(void)
   g_state.last_frame_hash = 0;
   g_runtime_trace_enabled = 0;
   runtime_trace_reset();
+  g_runtime_stepi_enabled = 0;
+  runtime_stepi_reset();
   g_runtime_mem_event_enabled = 0;
   runtime_mem_event_reset();
   g_runtime_sched_event_enabled = 0;
@@ -15012,6 +15068,7 @@ static u32 synthetic_trace_pc(const struct harness_state *state, u32 index)
   return 0x08000000u + ((seed + index * 4u) & 0x000003fcu);
 }
 
+static int capture_runtime_instruction_trace(const char **reason);
 static int capture_runtime_lookup_trace(const char **reason);
 static int capture_runtime_memory_events(const char **reason);
 static int capture_runtime_fallback_events(const char **reason);
@@ -15120,9 +15177,86 @@ static void command_runtime_event_range(const char *command,
   put_chr('\n');
 }
 
-static void command_stepi(char *arg)
+static void command_stepi(char *arg, char *mode_arg)
 {
-  u32 count = optional_count(arg, 1);
+  char *count_arg = arg;
+  u32 runtime_mode = 0;
+  u32 count;
+  u32 i;
+  u32 hash;
+
+  if (arg && str_eq(arg, "runtime"))
+  {
+    runtime_mode = 1;
+    count_arg = mode_arg;
+  }
+  else if (mode_arg && str_eq(mode_arg, "runtime"))
+  {
+    runtime_mode = 1;
+  }
+  else if (mode_arg && *mode_arg)
+  {
+    print_fail("stepi", "unknown_step_mode");
+    return;
+  }
+
+  count = optional_count(count_arg, 1);
+  if (count > 32)
+    count = 32;
+
+  if (runtime_mode)
+  {
+    const char *runtime_reason = "runtime_unknown";
+    u32 stored_count;
+    u32 last_pc = 0xffffffffu;
+
+    if (!capture_runtime_instruction_trace(&runtime_reason))
+    {
+      put_raw("result=FAIL command=stepi backend=");
+      put_raw(backend_name());
+      put_raw(" harness_mode=");
+      put_raw(RUNTIME_FIXTURE_MODE);
+      put_raw(" step_mode=runtime_native_instruction reason=");
+      put_raw(runtime_reason);
+      put_chr('\n');
+      return;
+    }
+
+    stored_count = runtime_stepi_stored_count();
+    if (count > stored_count)
+      count = stored_count;
+    if (count)
+      last_pc = g_runtime_stepi_pcs[count - 1u];
+    hash = runtime_stepi_hash(count);
+
+    put_raw("result=PASS command=stepi backend=");
+    put_raw(backend_name());
+    put_raw(" count=");
+    put_u32_dec(count);
+    put_raw(" total=");
+    put_u32_dec(g_runtime_stepi_count);
+    put_raw(" stored=");
+    put_u32_dec(stored_count);
+    put_raw(" pcs=");
+    for (i = 0; i < count; i++)
+    {
+      if (i)
+        put_chr(',');
+      put_u32_hex(g_runtime_stepi_pcs[i]);
+    }
+    put_raw(" last_pc=");
+    put_u32_hex(last_pc);
+    put_raw(" hash=");
+    put_u32_hex(hash);
+    put_raw(" harness_mode=");
+    put_raw(RUNTIME_FIXTURE_MODE);
+    put_raw(" step_mode=runtime_native_instruction");
+    put_raw(" trace_source=native_block_metadata");
+    put_raw(" trace_encoding=thumb_lowbit");
+    put_raw(" reason=runtime_instruction_steps\n");
+    return;
+  }
+
   g_state.instructions += count;
   g_state.cycles += count;
   render_frame();
@@ -16093,6 +16227,28 @@ static int capture_runtime_lookup_trace(const char **reason)
   return 1;
 }
 
+static int capture_runtime_instruction_trace(const char **reason)
+{
+  struct harness_state saved_state = g_state;
+  struct compare_snapshot snapshot;
+
+  if (saved_state.backend != BACKEND_RV32IM)
+  {
+    *reason = "runtime_stepi_requires_rv32im";
+    return 0;
+  }
+
+  if (!ensure_runtime_fixture(reason))
+    return 0;
+
+  runtime_stepi_reset();
+  g_runtime_stepi_enabled = 1;
+  run_runtime_rv32im_workload(&saved_state, &snapshot);
+  g_runtime_stepi_enabled = 0;
+  g_state = saved_state;
+  return 1;
+}
+
 static int capture_runtime_memory_events(const char **reason)
 {
   struct harness_state saved_state = g_state;
@@ -16519,7 +16675,8 @@ static void process_line(char *line)
   }
   else if (str_eq(cmd, "stepi"))
   {
-    command_stepi(next_token(&cursor));
+    char *arg = next_token(&cursor);
+    command_stepi(arg, next_token(&cursor));
   }
   else if (str_eq(cmd, "stepb"))
   {

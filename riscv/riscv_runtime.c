@@ -64,6 +64,16 @@ void riscv_note_runtime_fallback(u32 kind, u32 pc, u32 thumb,
   (void)cycles_remaining;
 }
 
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((weak))
+#endif
+void riscv_note_runtime_block_execute(u32 start_pc, u32 end_pc, u32 thumb)
+{
+  (void)start_pc;
+  (void)end_pc;
+  (void)thumb;
+}
+
 static u8 *riscv_align_ptr(u8 *ptr)
 {
   uintptr_t value = (uintptr_t)ptr;
@@ -783,6 +793,9 @@ static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta)
     riscv_run_interpreter_remainder();
     return NULL;
   }
+
+  riscv_note_runtime_block_execute(meta->start_pc, meta->end_pc,
+                                   meta->thumb);
 
   if (riscv_cpu_alert != CPU_ALERT_NONE)
     alert = riscv_handle_cpu_alert();

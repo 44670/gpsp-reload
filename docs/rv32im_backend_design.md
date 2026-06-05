@@ -272,6 +272,9 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - explicit RV32IM `cont runtime [offset]` command that reports a bounded
   scheduler-boundary window from the runtime workload using the same event
   encoding as `sched runtime`
+- explicit RV32IM `stepi runtime [count]` command that reports a bounded
+  guest-PC prefix expanded from executed native block metadata, tagged with
+  the same Thumb low-bit encoding as the lookup trace
 - explicit runtime-snapshot `framehash runtime` and `png <path> runtime`
   artifact paths derived from the selected backend's compare snapshot
 - explicit runtime-snapshot `regs runtime` dump for the selected backend's
@@ -454,6 +457,7 @@ Remaining first-phase gaps should stay narrow and evidence-driven:
   paths stay labeled with `harness_mode=synthetic`; the `run runtime`,
   `compare`,
   `cont runtime <offset>`,
+  `stepi runtime <count>`,
   `regs runtime`, `mem <addr> <len> runtime <offset>`,
   `mem <addr> <len> runtime-bytes`,
   `watchio <addr> <len> runtime <offset>`, `counters runtime`,
@@ -466,8 +470,10 @@ Remaining first-phase gaps should stay narrow and evidence-driven:
   runtime state/memory/scheduler/native-counter snapshot, `mem ... runtime`
   and `watchio ... runtime` record bounded windows of actual RV32IM helper
   memory/IO events, `mem ... runtime-bytes` records a bounded shadow-memory
-  byte view of actual RV32IM helper writes, `stepb ... runtime` records the
-  lookup prefix, `sched runtime ...` records a bounded window of actual
+  byte view of actual RV32IM helper writes, `stepi ... runtime` records a
+  bounded guest-PC prefix from executed native block metadata,
+  `stepb ... runtime` records the lookup prefix,
+  `sched runtime ...` records a bounded window of actual
   scheduler/update boundary observations,
   `fallbacks runtime ...` records the runtime fallback kind/PC/result window,
   `tracepc runtime ...` records a bounded window of actual RV32IM lookup PCs,
