@@ -289,7 +289,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   direct-branch-to-native-target, and
   `BL` link-register branch-to-native-target, and `BX r7`
   indirect-branch-to-native-target runtime fixtures, SWI-to-BIOS target
-  mode/bus/banked-state effects,
+  mode/bus/banked-state effects, patchable SWI-to-native-target chaining,
   conditional-header truth-table taken/skipped behavior for ARM conditions `0..13`,
   `MOV pc, r14` PC-write behavior, `MOVS pc, r14` SPSR restore behavior,
   store-triggered SMC/IRQ alert handling, byte-store SMC/IRQ alert handling,
@@ -297,7 +297,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   handling, SWP-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, ARM lookup-miss/invalid fallback, Thumb lookup-miss/invalid fallback, and Thumb unsupported-block fallback fixtures against a local ARM
   reference model, with
-  one hundred fifty six runtime blocks executed, basic data-processing remaining-cycle and invalid re-lookup fallback handoffs,
+  one hundred fifty seven runtime blocks executed, basic data-processing remaining-cycle and invalid re-lookup fallback handoffs,
   ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results and remaining-cycle handoff, MSR CPSR flag remaining-cycle handoff,
   MSR CPSR control mode/banked-LR effects and remaining-cycle handoff, SPSR helper-write effects and remaining-cycle handoff, and native PSR
