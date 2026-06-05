@@ -260,7 +260,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - SPSR restore for `Rd=PC,S=1` data-processing writes and `LDM ... {pc}^`
 - scriptable qemu-user harness commands for `load`, `reset`, `backend`, `run`,
   `cont`, `stepi`, `stepb`, `regs`, `mem`, `watchio`, `counters`,
-  `tracepc`, `bp`, `framehash`, `compare`, `png`, and `quit`
+  `sched`, `tracepc`, `bp`, `framehash`, `compare`, `png`, and `quit`
 - explicit runtime-snapshot `framehash runtime` and `png <path> runtime`
   artifact paths derived from the selected backend's compare snapshot
 - explicit runtime-snapshot `regs runtime` dump for the selected backend's
@@ -268,6 +268,9 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - explicit runtime-snapshot `counters runtime` dump for selected-backend
   block/fallback/native counters plus state, memory, scheduler, and snapshot
   hashes
+- explicit RV32IM `sched runtime [offset]` dump for scheduler-boundary events
+  observed during the runtime workload, including lookup, update, interpreter
+  remainder, flush, and IRQ-check counters
 - explicit RV32IM `stepb runtime [count]` block-step prefix from the runtime
   lookup trace, with Thumb lookups tagged in bit 0
 - explicit RV32IM `tracepc runtime [count] [offset]` lookup trace window from
@@ -376,6 +379,7 @@ Remaining first-phase gaps should stay narrow and evidence-driven:
   `regs runtime`, `mem <addr> <len> runtime <offset>`,
   `mem <addr> <len> runtime-bytes`,
   `watchio <addr> <len> runtime <offset>`, `counters runtime`,
+  `sched runtime <offset>`,
   `stepb runtime <count>`, `tracepc runtime <count> <offset>`,
   `bp <pc> runtime`,
   `framehash runtime`, and `png <path> runtime` fixture paths are labeled
@@ -384,7 +388,8 @@ Remaining first-phase gaps should stay narrow and evidence-driven:
   and `watchio ... runtime` record bounded windows of actual RV32IM helper
   memory/IO events, `mem ... runtime-bytes` records a bounded shadow-memory
   byte view of actual RV32IM helper writes, `stepb ... runtime` records the
-  lookup prefix,
+  lookup prefix, `sched runtime ...` records a bounded window of actual
+  scheduler/update boundary observations,
   `tracepc runtime ...` records a bounded window of actual RV32IM lookup PCs,
   and `bp ... runtime` reports hit/miss against those lookup PCs. Full
   addressable emulator RAM/IO dumps and real emulator frame output are still

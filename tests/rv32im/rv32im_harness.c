@@ -63,6 +63,7 @@ typedef unsigned int usize;
 #define ZLIB_SIZE (2 + PNG_RAW_SIZE + (ZLIB_BLOCKS * 5) + 4)
 #define RUNTIME_TRACE_MAX 256u
 #define RUNTIME_MEM_EVENT_MAX 256u
+#define RUNTIME_SCHED_EVENT_MAX 256u
 #define RUNTIME_EXEC_MAP_BYTES 55296u
 #define RUNTIME_LOAD_BLOCK_OFFSET 512u
 #define RUNTIME_STORE_BLOCK_OFFSET 1024u
@@ -1186,6 +1187,18 @@ static u32 g_runtime_mem_event_kind[RUNTIME_MEM_EVENT_MAX];
 static u32 g_runtime_mem_event_addr[RUNTIME_MEM_EVENT_MAX];
 static u32 g_runtime_mem_event_pc[RUNTIME_MEM_EVENT_MAX];
 static u32 g_runtime_mem_event_value[RUNTIME_MEM_EVENT_MAX];
+static u32 g_runtime_sched_event_enabled;
+static u32 g_runtime_sched_event_count;
+static u32 g_runtime_sched_event_lookup_calls[RUNTIME_SCHED_EVENT_MAX];
+static u32 g_runtime_sched_event_lookup_pc[RUNTIME_SCHED_EVENT_MAX];
+static u32 g_runtime_sched_event_thumb_calls[RUNTIME_SCHED_EVENT_MAX];
+static u32 g_runtime_sched_event_update_calls[RUNTIME_SCHED_EVENT_MAX];
+static u32 g_runtime_sched_event_update_cycles[RUNTIME_SCHED_EVENT_MAX];
+static u32 g_runtime_sched_event_execute_calls[RUNTIME_SCHED_EVENT_MAX];
+static u32 g_runtime_sched_event_execute_cycles[RUNTIME_SCHED_EVENT_MAX];
+static u32 g_runtime_sched_event_execute_pc[RUNTIME_SCHED_EVENT_MAX];
+static u32 g_runtime_sched_event_flush_calls[RUNTIME_SCHED_EVENT_MAX];
+static u32 g_runtime_sched_event_irq_calls[RUNTIME_SCHED_EVENT_MAX];
 static u32 g_runtime_shadow_enabled;
 static u32 g_runtime_shadow_write_bytes;
 static u8 g_runtime_shadow_mem[RUNTIME_SHADOW_SIZE];
@@ -1350,6 +1363,30 @@ static u32 g_runtime_fixture_store_word;
 static u32 g_runtime_fixture_swp_old_word;
 static u32 g_runtime_fixture_branch_r1;
 static u32 g_runtime_fixture_branch_r2;
+
+static void runtime_sched_event_record(void)
+{
+  u32 index;
+
+  if (!g_runtime_sched_event_enabled)
+    return;
+
+  index = g_runtime_sched_event_count;
+  if (index < RUNTIME_SCHED_EVENT_MAX)
+  {
+    g_runtime_sched_event_lookup_calls[index] = g_runtime_lookup_calls;
+    g_runtime_sched_event_lookup_pc[index] = g_runtime_lookup_pc;
+    g_runtime_sched_event_thumb_calls[index] = g_runtime_thumb_lookup_calls;
+    g_runtime_sched_event_update_calls[index] = g_runtime_update_calls;
+    g_runtime_sched_event_update_cycles[index] = (u32)g_runtime_update_cycles;
+    g_runtime_sched_event_execute_calls[index] = g_runtime_execute_calls;
+    g_runtime_sched_event_execute_cycles[index] = g_runtime_execute_cycles;
+    g_runtime_sched_event_execute_pc[index] = g_runtime_execute_pc;
+    g_runtime_sched_event_flush_calls[index] = g_runtime_flush_calls;
+    g_runtime_sched_event_irq_calls[index] = g_runtime_irq_check_calls;
+  }
+  g_runtime_sched_event_count++;
+}
 
 static void clear_runtime_cond_entries(void)
 {
@@ -5022,6 +5059,7 @@ static u32 runtime_update_current_block_mem32_hash(u32 hash)
 
 static u32 runtime_update_current_scheduler_hash(u32 hash)
 {
+  runtime_sched_event_record();
   return runtime_update_scheduler_hash(hash,
                                        g_runtime_lookup_calls,
                                        g_runtime_lookup_pc,
@@ -10495,6 +10533,54 @@ static u32 runtime_mem_event_stored_count(void)
     g_runtime_mem_event_count : RUNTIME_MEM_EVENT_MAX;
 }
 
+static void runtime_sched_event_reset(void)
+{
+  u32 i;
+
+  g_runtime_sched_event_count = 0;
+  for (i = 0; i < RUNTIME_SCHED_EVENT_MAX; i++)
+  {
+    g_runtime_sched_event_lookup_calls[i] = 0;
+    g_runtime_sched_event_lookup_pc[i] = 0;
+    g_runtime_sched_event_thumb_calls[i] = 0;
+    g_runtime_sched_event_update_calls[i] = 0;
+    g_runtime_sched_event_update_cycles[i] = 0;
+    g_runtime_sched_event_execute_calls[i] = 0;
+    g_runtime_sched_event_execute_cycles[i] = 0;
+    g_runtime_sched_event_execute_pc[i] = 0;
+    g_runtime_sched_event_flush_calls[i] = 0;
+    g_runtime_sched_event_irq_calls[i] = 0;
+  }
+}
+
+static u32 runtime_sched_event_stored_count(void)
+{
+  return g_runtime_sched_event_count < RUNTIME_SCHED_EVENT_MAX ?
+    g_runtime_sched_event_count : RUNTIME_SCHED_EVENT_MAX;
+}
+
+static u32 runtime_sched_event_hash(u32 count)
+{
+  u32 i;
+  u32 hash = 2166136261u;
+
+  hash = fnv1a_update_u32(hash, g_runtime_sched_event_count);
+  for (i = 0; i < count; i++)
+  {
+    hash = fnv1a_update_u32(hash, g_runtime_sched_event_lookup_calls[i]);
+    hash = fnv1a_update_u32(hash, g_runtime_sched_event_lookup_pc[i]);
+    hash = fnv1a_update_u32(hash, g_runtime_sched_event_thumb_calls[i]);
+    hash = fnv1a_update_u32(hash, g_runtime_sched_event_update_calls[i]);
+    hash = fnv1a_update_u32(hash, g_runtime_sched_event_update_cycles[i]);
+    hash = fnv1a_update_u32(hash, g_runtime_sched_event_execute_calls[i]);
+    hash = fnv1a_update_u32(hash, g_runtime_sched_event_execute_cycles[i]);
+    hash = fnv1a_update_u32(hash, g_runtime_sched_event_execute_pc[i]);
+    hash = fnv1a_update_u32(hash, g_runtime_sched_event_flush_calls[i]);
+    hash = fnv1a_update_u32(hash, g_runtime_sched_event_irq_calls[i]);
+  }
+  return hash;
+}
+
 static const char *runtime_mem_event_kind_name(u32 kind)
 {
   switch (kind)
@@ -10874,6 +10960,8 @@ static void reset_state(void)
   runtime_trace_reset();
   g_runtime_mem_event_enabled = 0;
   runtime_mem_event_reset();
+  g_runtime_sched_event_enabled = 0;
+  runtime_sched_event_reset();
   g_runtime_shadow_enabled = 0;
   runtime_shadow_reset();
 }
@@ -10986,7 +11074,7 @@ static void print_fail(const char *command, const char *reason)
 
 static void command_help(void)
 {
-  put_raw("commands=load reset backend run cont stepi stepb regs mem watchio counters tracepc bp framehash compare png quit\n");
+  put_raw("commands=load reset backend run cont stepi stepb regs mem watchio counters sched tracepc bp framehash compare png quit\n");
 }
 
 static void command_backend(char *arg)
@@ -11125,6 +11213,7 @@ static int capture_runtime_snapshot(struct compare_snapshot *snapshot,
                                     const char **reason);
 static int capture_runtime_lookup_trace(const char **reason);
 static int capture_runtime_memory_events(const char **reason);
+static int capture_runtime_scheduler_events(const char **reason);
 static int capture_runtime_shadow_memory(const char **reason);
 
 static void command_runtime_event_range(const char *command,
@@ -11639,6 +11728,85 @@ static void command_counters(char *mode)
   put_raw(" reason=synthetic_state_counters\n");
 }
 
+static void command_sched(char *mode, char *offset_arg)
+{
+  if (mode && str_eq(mode, "runtime"))
+  {
+    const char *runtime_reason = "runtime_unknown";
+    u32 stored_count;
+    u32 offset;
+    u32 printed = 0;
+    u32 hash;
+    u32 i;
+
+    if (!capture_runtime_scheduler_events(&runtime_reason))
+    {
+      put_raw("result=FAIL command=sched backend=");
+      put_raw(backend_name());
+      put_raw(" harness_mode=");
+      put_raw(RUNTIME_FIXTURE_MODE);
+      put_raw(" sched_mode=runtime_scheduler reason=");
+      put_raw(runtime_reason);
+      put_chr('\n');
+      return;
+    }
+
+    stored_count = runtime_sched_event_stored_count();
+    offset = optional_count(offset_arg, 0);
+    if (offset > stored_count)
+      offset = stored_count;
+    hash = runtime_sched_event_hash(stored_count);
+
+    put_raw("result=PASS command=sched backend=");
+    put_raw(backend_name());
+    put_raw(" total=");
+    put_u32_dec(g_runtime_sched_event_count);
+    put_raw(" stored=");
+    put_u32_dec(stored_count);
+    put_raw(" offset=");
+    put_u32_dec(offset);
+    put_raw(" events=");
+    for (i = offset; i < stored_count && printed < 8; i++)
+    {
+      if (printed)
+        put_chr(',');
+      put_chr('l');
+      put_u32_dec(g_runtime_sched_event_lookup_calls[i]);
+      put_chr('@');
+      put_u32_hex(g_runtime_sched_event_lookup_pc[i]);
+      put_raw(":t");
+      put_u32_dec(g_runtime_sched_event_thumb_calls[i]);
+      put_raw(":u");
+      put_u32_dec(g_runtime_sched_event_update_calls[i]);
+      put_raw(":uc");
+      put_u32_hex(g_runtime_sched_event_update_cycles[i]);
+      put_raw(":e");
+      put_u32_dec(g_runtime_sched_event_execute_calls[i]);
+      put_chr('@');
+      put_u32_hex(g_runtime_sched_event_execute_pc[i]);
+      put_raw(":ec");
+      put_u32_dec(g_runtime_sched_event_execute_cycles[i]);
+      put_raw(":f");
+      put_u32_dec(g_runtime_sched_event_flush_calls[i]);
+      put_raw(":i");
+      put_u32_dec(g_runtime_sched_event_irq_calls[i]);
+      printed++;
+    }
+    put_raw(" printed=");
+    put_u32_dec(printed);
+    put_raw(" hash=");
+    put_u32_hex(hash);
+    put_raw(" harness_mode=");
+    put_raw(RUNTIME_FIXTURE_MODE);
+    put_raw(" sched_mode=runtime_scheduler");
+    put_raw(" event_encoding=l@pc:t:u:uc:e@pc:ec:f:i");
+    put_raw(" reason=runtime_scheduler_events\n");
+    return;
+  }
+
+  print_fail("sched", "sched_requires_runtime");
+}
+
 static void command_tracepc(char *arg, char *mode_arg, char *offset_arg)
 {
   char *count_arg = arg;
@@ -12089,6 +12257,28 @@ static int capture_runtime_memory_events(const char **reason)
   return 1;
 }
 
+static int capture_runtime_scheduler_events(const char **reason)
+{
+  struct harness_state saved_state = g_state;
+  struct compare_snapshot snapshot;
+
+  if (saved_state.backend != BACKEND_RV32IM)
+  {
+    *reason = "runtime_sched_requires_rv32im";
+    return 0;
+  }
+
+  if (!ensure_runtime_fixture(reason))
+    return 0;
+
+  runtime_sched_event_reset();
+  g_runtime_sched_event_enabled = 1;
+  run_runtime_rv32im_workload(&saved_state, &snapshot);
+  g_runtime_sched_event_enabled = 0;
+  g_state = saved_state;
+  return 1;
+}
+
 static int capture_runtime_shadow_memory(const char **reason)
 {
   struct harness_state saved_state = g_state;
@@ -12459,6 +12649,11 @@ static void process_line(char *line)
   else if (str_eq(cmd, "counters"))
   {
     command_counters(next_token(&cursor));
+  }
+  else if (str_eq(cmd, "sched"))
+  {
+    char *mode = next_token(&cursor);
+    command_sched(mode, next_token(&cursor));
   }
   else if (str_eq(cmd, "tracepc"))
   {
