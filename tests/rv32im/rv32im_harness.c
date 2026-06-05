@@ -42,6 +42,7 @@ typedef unsigned int usize;
   "loadpc_loadpcremain_loadpcnative_loadbytepc_loadbytepcremain_" \
   "loadbytepcnative_loadhalfpc_loadhalfpcremain_loadhalfpcnative_" \
   "loadsignedbytepc_loadsignedbytepcremain_loadsignedbytepcnative_" \
+  "loadsignedhalfpc_loadsignedhalfpcremain_loadsignedhalfpcnative_" \
   "pcstore_pcstoreremain_" \
   "pcbasestoreremain_storealert_storealertchain_storehalt_" \
   "regoff_regoffremain_" \
@@ -91,7 +92,7 @@ typedef unsigned int usize;
 #define RUNTIME_SCHED_EVENT_MAX 256u
 #define RUNTIME_FALLBACK_EVENT_MAX 256u
 #define RUNTIME_REJECT_CODE_BYTES 512u
-#define RUNTIME_EXEC_MAP_BYTES 74752u
+#define RUNTIME_EXEC_MAP_BYTES 75776u
 #define RUNTIME_LOAD_BLOCK_OFFSET 512u
 #define RUNTIME_STORE_BLOCK_OFFSET 1024u
 #define RUNTIME_BRANCH_BLOCK_OFFSET 1536u
@@ -219,6 +220,8 @@ typedef unsigned int usize;
 #define RUNTIME_LOAD_HALF_PC_TARGET_BLOCK_OFFSET 73216u
 #define RUNTIME_LOAD_SIGNED_BYTE_PC_BLOCK_OFFSET 73728u
 #define RUNTIME_LOAD_SIGNED_BYTE_PC_TARGET_BLOCK_OFFSET 74240u
+#define RUNTIME_LOAD_SIGNED_HALF_PC_BLOCK_OFFSET 74752u
+#define RUNTIME_LOAD_SIGNED_HALF_PC_TARGET_BLOCK_OFFSET 75264u
 #define RUNTIME_START_PC 0x08000000u
 #define RUNTIME_END_PC (RUNTIME_START_PC + 4u)
 #define RUNTIME_CYCLES 7u
@@ -853,6 +856,22 @@ typedef unsigned int usize;
   (RUNTIME_LOAD_SIGNED_BYTE_PC_TARGET + 4u)
 #define RUNTIME_LOAD_SIGNED_BYTE_PC_TARGET_CYCLES 5u
 #define RUNTIME_LOAD_SIGNED_BYTE_PC_TARGET_ADD_R3_R2_R1 0xe0823001u
+#define RUNTIME_LOAD_SIGNED_HALF_PC_START_PC 0x08001a40u
+#define RUNTIME_LOAD_SIGNED_HALF_PC_END_PC \
+  (RUNTIME_LOAD_SIGNED_HALF_PC_START_PC + 4u)
+#define RUNTIME_LOAD_SIGNED_HALF_PC_CYCLES 6u
+#define RUNTIME_LOAD_SIGNED_HALF_PC_TOTAL_CYCLES \
+  (RUNTIME_LOAD_SIGNED_HALF_PC_CYCLES + 2u)
+#define RUNTIME_LOAD_SIGNED_HALF_PC_EXTRA_CYCLES 5u
+#define RUNTIME_LOAD_SIGNED_HALF_PC_NATIVE_EXTRA_CYCLES 4u
+#define RUNTIME_LOAD_SIGNED_HALF_PC_BASE_ADDR 0x02000700u
+#define RUNTIME_LOAD_SIGNED_HALF_PC_ADDR \
+  (RUNTIME_LOAD_SIGNED_HALF_PC_BASE_ADDR + 0x26u)
+#define RUNTIME_LOAD_SIGNED_HALF_PC_TARGET 0xffff8120u
+#define RUNTIME_LOAD_SIGNED_HALF_PC_TARGET_END_PC \
+  (RUNTIME_LOAD_SIGNED_HALF_PC_TARGET + 4u)
+#define RUNTIME_LOAD_SIGNED_HALF_PC_TARGET_CYCLES 5u
+#define RUNTIME_LOAD_SIGNED_HALF_PC_TARGET_ADD_R3_R2_R1 0xe0823001u
 #define RUNTIME_PC_BASE_LOAD_WORD_ADDR \
   (RUNTIME_PC_BASE_LOAD_WORD_PC + 8u + 0x24u)
 #define RUNTIME_PC_BASE_LOAD_BYTE_ADDR \
@@ -1790,6 +1809,9 @@ static u32 g_runtime_load_half_pc_target_lookup;
 static u8 *g_runtime_load_signed_byte_pc_entry;
 static u8 *g_runtime_load_signed_byte_pc_target_entry;
 static u32 g_runtime_load_signed_byte_pc_target_lookup;
+static u8 *g_runtime_load_signed_half_pc_entry;
+static u8 *g_runtime_load_signed_half_pc_target_entry;
+static u32 g_runtime_load_signed_half_pc_target_lookup;
 static u8 *g_runtime_writeback_store_entry;
 static u8 *g_runtime_writeback_load_entry;
 static u8 *g_runtime_reg_offset_load_entry;
@@ -2078,6 +2100,9 @@ static void clear_runtime_fixture_entries(void)
   g_runtime_load_signed_byte_pc_entry = (u8 *)0;
   g_runtime_load_signed_byte_pc_target_entry = (u8 *)0;
   g_runtime_load_signed_byte_pc_target_lookup = 0;
+  g_runtime_load_signed_half_pc_entry = (u8 *)0;
+  g_runtime_load_signed_half_pc_target_entry = (u8 *)0;
+  g_runtime_load_signed_half_pc_target_lookup = 0;
   g_runtime_writeback_store_entry = (u8 *)0;
   g_runtime_writeback_load_entry = (u8 *)0;
   g_runtime_reg_offset_load_entry = (u8 *)0;
@@ -2390,6 +2415,7 @@ static void reset_runtime_fixture_state(u32 pc)
   g_runtime_load_byte_pc_target_lookup = 0;
   g_runtime_load_half_pc_target_lookup = 0;
   g_runtime_load_signed_byte_pc_target_lookup = 0;
+  g_runtime_load_signed_half_pc_target_lookup = 0;
   g_runtime_store_alert_chain_target_lookup = 0;
   g_runtime_cond_fallthrough_target_lookup = 0;
   g_runtime_cond_lookup_condition = RUNTIME_COND_NE;
@@ -2938,6 +2964,8 @@ static int build_runtime_fixture_block(const char **reason)
   u32 load_half_pc_target_code_bytes;
   u32 load_signed_byte_pc_code_bytes;
   u32 load_signed_byte_pc_target_code_bytes;
+  u32 load_signed_half_pc_code_bytes;
+  u32 load_signed_half_pc_target_code_bytes;
   u32 writeback_store_code_bytes;
   u32 writeback_load_code_bytes;
   u32 reg_offset_load_code_bytes;
@@ -5707,6 +5735,52 @@ static int build_runtime_fixture_block(const char **reason)
           (g_runtime_code +
            RUNTIME_LOAD_SIGNED_BYTE_PC_TARGET_BLOCK_OFFSET));
 
+  translation_ptr = g_runtime_code + RUNTIME_LOAD_SIGNED_HALF_PC_BLOCK_OFFSET;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_runtime_load_signed_half_pc_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_access_memory(
+        &translation_ptr, meta, RUNTIME_HALF_LDRSH_PC_R3_0X26,
+        RUNTIME_LOAD_SIGNED_HALF_PC_START_PC,
+        RUNTIME_LOAD_SIGNED_HALF_PC_CYCLES))
+  {
+    *reason = "runtime_load_signed_half_pc_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            RUNTIME_LOAD_SIGNED_HALF_PC_START_PC,
+                            RUNTIME_LOAD_SIGNED_HALF_PC_END_PC, false);
+  load_signed_half_pc_code_bytes =
+    (u32)(translation_ptr -
+          (g_runtime_code + RUNTIME_LOAD_SIGNED_HALF_PC_BLOCK_OFFSET));
+
+  translation_ptr =
+    g_runtime_code + RUNTIME_LOAD_SIGNED_HALF_PC_TARGET_BLOCK_OFFSET;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_runtime_load_signed_half_pc_target_entry =
+    ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_data_proc(
+        &translation_ptr, meta,
+        RUNTIME_LOAD_SIGNED_HALF_PC_TARGET_ADD_R3_R2_R1,
+        RUNTIME_LOAD_SIGNED_HALF_PC_TARGET_CYCLES))
+  {
+    *reason = "runtime_load_signed_half_pc_target_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            RUNTIME_LOAD_SIGNED_HALF_PC_TARGET,
+                            RUNTIME_LOAD_SIGNED_HALF_PC_TARGET_END_PC,
+                            false);
+  load_signed_half_pc_target_code_bytes =
+    (u32)(translation_ptr -
+          (g_runtime_code +
+           RUNTIME_LOAD_SIGNED_HALF_PC_TARGET_BLOCK_OFFSET));
+
   translation_ptr = g_runtime_code + RUNTIME_PC_BASE_STORE_BLOCK_OFFSET;
   riscv_emit_block_prologue(&translation_ptr, &meta);
   g_runtime_pc_base_store_entry = ((u8 *)meta) + block_prologue_size;
@@ -6451,6 +6525,8 @@ static int build_runtime_fixture_block(const char **reason)
     load_half_pc_code_bytes + load_half_pc_target_code_bytes +
     load_signed_byte_pc_code_bytes +
     load_signed_byte_pc_target_code_bytes +
+    load_signed_half_pc_code_bytes +
+    load_signed_half_pc_target_code_bytes +
     pc_source_code_bytes + writeback_store_code_bytes +
     writeback_load_code_bytes + reg_offset_load_code_bytes +
     reg_offset_pc_load_code_bytes +
@@ -6585,6 +6661,8 @@ static int ensure_runtime_fixture(const char **reason)
       g_runtime_load_half_pc_target_entry &&
       g_runtime_load_signed_byte_pc_entry &&
       g_runtime_load_signed_byte_pc_target_entry &&
+      g_runtime_load_signed_half_pc_entry &&
+      g_runtime_load_signed_half_pc_target_entry &&
       g_runtime_writeback_store_entry &&
       g_runtime_writeback_load_entry && g_runtime_reg_offset_load_entry &&
       g_runtime_reg_offset_pc_load_entry &&
@@ -8380,6 +8458,94 @@ static void run_runtime_reference_workload(const struct harness_state *base,
     0, RUNTIME_NO_UPDATE_CYCLES,
     1, RUNTIME_LOAD_SIGNED_BYTE_PC_NATIVE_EXTRA_CYCLES,
     RUNTIME_LOAD_SIGNED_BYTE_PC_TARGET_END_PC,
+    0, 0);
+
+  for (i = 0; i < REG_MAX; i++)
+    values[i] = 0;
+  values[3] = RUNTIME_LOAD_SIGNED_HALF_PC_BASE_ADDR;
+  values[REG_PC] = RUNTIME_LOAD_SIGNED_HALF_PC_TARGET;
+  values[REG_CPSR] = 0;
+  values[CPU_HALT_STATE] = CPU_ACTIVE;
+  reg_hash = runtime_update_reg_hash(reg_hash, values);
+  mem_hash = runtime_update_memory_hash(
+    mem_hash,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    runtime_reference_sticky_hash());
+  mem_hash = runtime_update_half_memory_hash(
+    mem_hash,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    1, RUNTIME_LOAD_SIGNED_HALF_PC_ADDR,
+    RUNTIME_LOAD_SIGNED_HALF_PC_START_PC,
+    RUNTIME_LOAD_SIGNED_HALF_PC_TARGET,
+    0, 0, 0, 0);
+  scheduler_hash = runtime_update_scheduler_hash(
+    scheduler_hash,
+    1, RUNTIME_LOAD_SIGNED_HALF_PC_START_PC, 0,
+    1, 0,
+    0, 0, 0,
+    0, 0);
+
+  for (i = 0; i < REG_MAX; i++)
+    values[i] = 0;
+  values[3] = RUNTIME_LOAD_SIGNED_HALF_PC_BASE_ADDR;
+  values[REG_PC] = RUNTIME_LOAD_SIGNED_HALF_PC_TARGET;
+  values[REG_CPSR] = 0;
+  values[CPU_HALT_STATE] = CPU_ACTIVE;
+  reg_hash = runtime_update_reg_hash(reg_hash, values);
+  mem_hash = runtime_update_memory_hash(
+    mem_hash,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    runtime_reference_sticky_hash());
+  mem_hash = runtime_update_half_memory_hash(
+    mem_hash,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    1, RUNTIME_LOAD_SIGNED_HALF_PC_ADDR,
+    RUNTIME_LOAD_SIGNED_HALF_PC_START_PC,
+    RUNTIME_LOAD_SIGNED_HALF_PC_TARGET,
+    0, 0, 0, 0);
+  scheduler_hash = runtime_update_scheduler_hash(
+    scheduler_hash,
+    2, RUNTIME_LOAD_SIGNED_HALF_PC_TARGET, 0,
+    0, RUNTIME_NO_UPDATE_CYCLES,
+    1, RUNTIME_LOAD_SIGNED_HALF_PC_EXTRA_CYCLES,
+    RUNTIME_LOAD_SIGNED_HALF_PC_TARGET,
+    0, 0);
+
+  for (i = 0; i < REG_MAX; i++)
+    values[i] = 0;
+  values[1] = branch_r1;
+  values[2] = branch_r2;
+  values[3] = branch_r1 + branch_r2;
+  values[REG_PC] = RUNTIME_LOAD_SIGNED_HALF_PC_TARGET_END_PC;
+  values[REG_CPSR] = 0;
+  values[CPU_HALT_STATE] = CPU_ACTIVE;
+  reg_hash = runtime_update_reg_hash(reg_hash, values);
+  mem_hash = runtime_update_memory_hash(
+    mem_hash,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    runtime_reference_sticky_hash());
+  mem_hash = runtime_update_half_memory_hash(
+    mem_hash,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    1, RUNTIME_LOAD_SIGNED_HALF_PC_ADDR,
+    RUNTIME_LOAD_SIGNED_HALF_PC_START_PC,
+    RUNTIME_LOAD_SIGNED_HALF_PC_TARGET,
+    0, 0, 0, 0);
+  scheduler_hash = runtime_update_scheduler_hash(
+    scheduler_hash,
+    3, RUNTIME_LOAD_SIGNED_HALF_PC_TARGET_END_PC, 0,
+    0, RUNTIME_NO_UPDATE_CYCLES,
+    1, RUNTIME_LOAD_SIGNED_HALF_PC_NATIVE_EXTRA_CYCLES,
+    RUNTIME_LOAD_SIGNED_HALF_PC_TARGET_END_PC,
     0, 0);
 
   for (i = 0; i < REG_MAX; i++)
@@ -11957,14 +12123,14 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   snapshot->reg_hash = reg_hash;
   snapshot->mem_hash = mem_hash;
   snapshot->scheduler_hash = scheduler_hash;
-  snapshot->blocks = 254;
-  snapshot->fallbacks = 77;
+  snapshot->blocks = 258;
+  snapshot->fallbacks = 79;
   snapshot->initial_lookup_fallbacks = 4;
-  snapshot->relookup_fallbacks = 70;
+  snapshot->relookup_fallbacks = 72;
   snapshot->unsupported_fallbacks = 3;
-  snapshot->native_data_proc = 93;
+  snapshot->native_data_proc = 94;
   snapshot->native_branch = 7;
-  snapshot->native_load = 43;
+  snapshot->native_load = 44;
   snapshot->native_store = 32;
   snapshot->native_psr = 5;
   runtime_store_snapshot_regs(snapshot, values, 0, 0);
@@ -12554,6 +12720,42 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
     RUNTIME_LOAD_SIGNED_BYTE_PC_NATIVE_EXTRA_CYCLES,
     &reg[0]);
   g_runtime_load_signed_byte_pc_target_lookup = 0;
+  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+  mem_hash = runtime_update_current_memory_hash(mem_hash);
+  mem_hash = runtime_update_current_half_memory_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+
+  reset_runtime_fixture_state(RUNTIME_LOAD_SIGNED_HALF_PC_START_PC);
+  reg[3] = RUNTIME_LOAD_SIGNED_HALF_PC_BASE_ADDR;
+  execute_arm_translate_internal(RUNTIME_LOAD_SIGNED_HALF_PC_TOTAL_CYCLES,
+                                 &reg[0]);
+  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+  mem_hash = runtime_update_current_memory_hash(mem_hash);
+  mem_hash = runtime_update_current_half_memory_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+
+  reset_runtime_fixture_state(RUNTIME_LOAD_SIGNED_HALF_PC_START_PC);
+  reg[3] = RUNTIME_LOAD_SIGNED_HALF_PC_BASE_ADDR;
+  execute_arm_translate_internal(
+    RUNTIME_LOAD_SIGNED_HALF_PC_TOTAL_CYCLES +
+    RUNTIME_LOAD_SIGNED_HALF_PC_EXTRA_CYCLES,
+    &reg[0]);
+  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+  mem_hash = runtime_update_current_memory_hash(mem_hash);
+  mem_hash = runtime_update_current_half_memory_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+
+  reset_runtime_fixture_state(RUNTIME_LOAD_SIGNED_HALF_PC_START_PC);
+  g_runtime_load_signed_half_pc_target_lookup = 1;
+  reg[1] = g_runtime_fixture_branch_r1;
+  reg[2] = g_runtime_fixture_branch_r2;
+  reg[3] = RUNTIME_LOAD_SIGNED_HALF_PC_BASE_ADDR;
+  execute_arm_translate_internal(
+    RUNTIME_LOAD_SIGNED_HALF_PC_TOTAL_CYCLES +
+    RUNTIME_LOAD_SIGNED_HALF_PC_TARGET_CYCLES +
+    RUNTIME_LOAD_SIGNED_HALF_PC_NATIVE_EXTRA_CYCLES,
+    &reg[0]);
+  g_runtime_load_signed_half_pc_target_lookup = 0;
   reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
   mem_hash = runtime_update_current_memory_hash(mem_hash);
   mem_hash = runtime_update_current_half_memory_hash(mem_hash);
@@ -14215,6 +14417,8 @@ u32 function_cc read_memory16s(u32 address)
     value = RUNTIME_HALF_S16_VALUE;
   else if (address == RUNTIME_HALF_WRITEBACK_LOAD_ADDR)
     value = RUNTIME_HALF_S16_VALUE;
+  else if (address == RUNTIME_LOAD_SIGNED_HALF_PC_ADDR)
+    value = RUNTIME_LOAD_SIGNED_HALF_PC_TARGET;
   g_runtime_read16s_value = value;
   runtime_mem_event_record(RUNTIME_MEM_EVENT_R16S, address, reg[REG_PC], value);
   return value;
@@ -14817,6 +15021,13 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
       g_runtime_load_signed_byte_pc_target_entry &&
       pc == RUNTIME_LOAD_SIGNED_BYTE_PC_TARGET)
     return g_runtime_load_signed_byte_pc_target_entry;
+  if (g_runtime_load_signed_half_pc_entry &&
+      pc == RUNTIME_LOAD_SIGNED_HALF_PC_START_PC)
+    return g_runtime_load_signed_half_pc_entry;
+  if (g_runtime_load_signed_half_pc_target_lookup &&
+      g_runtime_load_signed_half_pc_target_entry &&
+      pc == RUNTIME_LOAD_SIGNED_HALF_PC_TARGET)
+    return g_runtime_load_signed_half_pc_target_entry;
   if (g_runtime_store_entry && pc == RUNTIME_STORE_START_PC)
     return g_runtime_store_entry;
   if (g_runtime_store_alert_chain_target_lookup &&

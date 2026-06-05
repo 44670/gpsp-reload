@@ -443,11 +443,10 @@ proof for the same boundary, remaining-cycle, and native-target chaining
 behavior. Immediate no-writeback `LDRSB pc` now has standalone and qemu-user
 compare proof for the same boundary, remaining-cycle, and native-target
 chaining behavior with a sign-extended PC target. Immediate no-writeback
-`LDRSH pc` now has standalone proof for the same boundary, remaining-cycle,
-and native-target chaining behavior with a sign-extended PC target; qemu-user
-compare coverage should follow before widening that form. PC-base writeback
-and post-index load/store forms are likewise proven rejected for word/byte and
-halfword memory classes. A
+`LDRSH pc` now has standalone and qemu-user compare proof for the same
+boundary, remaining-cycle, and native-target chaining behavior with a
+sign-extended PC target. PC-base writeback and post-index load/store forms are
+likewise proven rejected for word/byte and halfword memory classes. A
 standalone partial-unsupported block remains as the focused
 `riscv_emit_block_finalize()` proof for the same discard-and-fallback contract.
 A standalone patch-site
