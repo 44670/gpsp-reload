@@ -3367,236 +3367,9 @@ static u32 build_shifted_reg_offset_block(u8 *code)
   return code_bytes;
 }
 
-static u32 build_shifted_reg_offset_store_block(u8 *code)
-{
-  u8 *translation_ptr = code;
-  riscv_jit_block_meta *meta;
-  u32 code_bytes;
-
-  riscv_emit_block_prologue(&translation_ptr, &meta);
-  g_shifted_reg_offset_store_entry = ((u8 *)meta) + block_prologue_size;
-
-  if (!riscv_emit_native_arm_access_memory(
-        &translation_ptr, meta,
-        SHIFTED_REG_OFFSET_STRB_R9_R3_R2_LSL2,
-        SHIFTED_REG_OFFSET_STORE_START_PC,
-        REG_OFFSET_STORE_BASE_CYCLES))
-  {
-    put_raw("result=FAIL command=runtime reason=shifted_reg_strb_rejected\n");
-    sys_exit(1);
-  }
-
-  riscv_emit_block_finalize(meta, &translation_ptr,
-                            SHIFTED_REG_OFFSET_STORE_START_PC,
-                            SHIFTED_REG_OFFSET_STORE_END_PC, false);
-  code_bytes = (u32)(translation_ptr - code);
-  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
-  return code_bytes;
-}
-
-static u32 build_shifted_reg_offset_pc_store_block(u8 *code)
-{
-  u8 *translation_ptr = code;
-  riscv_jit_block_meta *meta;
-  u32 code_bytes;
-
-  riscv_emit_block_prologue(&translation_ptr, &meta);
-  g_shifted_reg_offset_pc_store_entry = ((u8 *)meta) + block_prologue_size;
-
-  if (!riscv_emit_native_arm_access_memory(
-        &translation_ptr, meta,
-        SHIFTED_REG_OFFSET_STRB_R9_R3_R15_LSL2,
-        SHIFTED_REG_OFFSET_PC_STORE_START_PC,
-        REG_OFFSET_STORE_BASE_CYCLES))
-  {
-    put_raw("result=FAIL command=runtime "
-            "reason=shifted_reg_pc_strb_rejected\n");
-    sys_exit(1);
-  }
-
-  riscv_emit_block_finalize(meta, &translation_ptr,
-                            SHIFTED_REG_OFFSET_PC_STORE_START_PC,
-                            SHIFTED_REG_OFFSET_PC_STORE_END_PC, false);
-  code_bytes = (u32)(translation_ptr - code);
-  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
-  return code_bytes;
-}
-
-static u32 build_shifted_reg_offset_pc_lsr_block(u8 *code)
-{
-  u8 *translation_ptr = code;
-  riscv_jit_block_meta *meta;
-  u32 code_bytes;
-
-  riscv_emit_block_prologue(&translation_ptr, &meta);
-  g_shifted_reg_offset_pc_lsr_entry = ((u8 *)meta) + block_prologue_size;
-
-  if (!riscv_emit_native_arm_access_memory(
-        &translation_ptr, meta,
-        SHIFTED_REG_OFFSET_LDRB_R11_R3_R15_LSR1,
-        SHIFTED_REG_OFFSET_PC_LSR_START_PC,
-        SHIFTED_REG_OFFSET_CYCLES))
-  {
-    put_raw("result=FAIL command=runtime "
-            "reason=shifted_reg_pc_lsr_emit_rejected\n");
-    sys_exit(1);
-  }
-
-  riscv_emit_block_finalize(meta, &translation_ptr,
-                            SHIFTED_REG_OFFSET_PC_LSR_START_PC,
-                            SHIFTED_REG_OFFSET_PC_LSR_END_PC, false);
-  code_bytes = (u32)(translation_ptr - code);
-  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
-  return code_bytes;
-}
-
-static u32 build_shifted_reg_offset_pc_lsr_store_block(u8 *code)
-{
-  u8 *translation_ptr = code;
-  riscv_jit_block_meta *meta;
-  u32 code_bytes;
-
-  riscv_emit_block_prologue(&translation_ptr, &meta);
-  g_shifted_reg_offset_pc_lsr_store_entry =
-    ((u8 *)meta) + block_prologue_size;
-
-  if (!riscv_emit_native_arm_access_memory(
-        &translation_ptr, meta,
-        SHIFTED_REG_OFFSET_STRB_R9_R3_R15_LSR1,
-        SHIFTED_REG_OFFSET_PC_LSR_STORE_START_PC,
-        REG_OFFSET_STORE_BASE_CYCLES))
-  {
-    put_raw("result=FAIL command=runtime "
-            "reason=shifted_reg_pc_lsr_strb_rejected\n");
-    sys_exit(1);
-  }
-
-  riscv_emit_block_finalize(meta, &translation_ptr,
-                            SHIFTED_REG_OFFSET_PC_LSR_STORE_START_PC,
-                            SHIFTED_REG_OFFSET_PC_LSR_STORE_END_PC, false);
-  code_bytes = (u32)(translation_ptr - code);
-  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
-  return code_bytes;
-}
-
-static u32 build_shifted_reg_offset_pc_asr_block(u8 *code)
-{
-  u8 *translation_ptr = code;
-  riscv_jit_block_meta *meta;
-  u32 code_bytes;
-
-  riscv_emit_block_prologue(&translation_ptr, &meta);
-  g_shifted_reg_offset_pc_asr_entry = ((u8 *)meta) + block_prologue_size;
-
-  if (!riscv_emit_native_arm_access_memory(
-        &translation_ptr, meta,
-        SHIFTED_REG_OFFSET_LDRB_R11_R3_R15_ASR2,
-        SHIFTED_REG_OFFSET_PC_ASR_START_PC,
-        SHIFTED_REG_OFFSET_CYCLES))
-  {
-    put_raw("result=FAIL command=runtime "
-            "reason=shifted_reg_pc_asr_emit_rejected\n");
-    sys_exit(1);
-  }
-
-  riscv_emit_block_finalize(meta, &translation_ptr,
-                            SHIFTED_REG_OFFSET_PC_ASR_START_PC,
-                            SHIFTED_REG_OFFSET_PC_ASR_END_PC, false);
-  code_bytes = (u32)(translation_ptr - code);
-  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
-  return code_bytes;
-}
-
-static u32 build_shifted_reg_offset_pc_asr_store_block(u8 *code)
-{
-  u8 *translation_ptr = code;
-  riscv_jit_block_meta *meta;
-  u32 code_bytes;
-
-  riscv_emit_block_prologue(&translation_ptr, &meta);
-  g_shifted_reg_offset_pc_asr_store_entry =
-    ((u8 *)meta) + block_prologue_size;
-
-  if (!riscv_emit_native_arm_access_memory(
-        &translation_ptr, meta,
-        SHIFTED_REG_OFFSET_STRB_R9_R3_R15_ASR2,
-        SHIFTED_REG_OFFSET_PC_ASR_STORE_START_PC,
-        REG_OFFSET_STORE_BASE_CYCLES))
-  {
-    put_raw("result=FAIL command=runtime "
-            "reason=shifted_reg_pc_asr_strb_rejected\n");
-    sys_exit(1);
-  }
-
-  riscv_emit_block_finalize(meta, &translation_ptr,
-                            SHIFTED_REG_OFFSET_PC_ASR_STORE_START_PC,
-                            SHIFTED_REG_OFFSET_PC_ASR_STORE_END_PC, false);
-  code_bytes = (u32)(translation_ptr - code);
-  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
-  return code_bytes;
-}
-
-static u32 build_shifted_reg_offset_pc_ror_block(u8 *code)
-{
-  u8 *translation_ptr = code;
-  riscv_jit_block_meta *meta;
-  u32 code_bytes;
-
-  riscv_emit_block_prologue(&translation_ptr, &meta);
-  g_shifted_reg_offset_pc_ror_entry = ((u8 *)meta) + block_prologue_size;
-
-  if (!riscv_emit_native_arm_access_memory(
-        &translation_ptr, meta,
-        SHIFTED_REG_OFFSET_LDRB_R11_R3_R15_ROR1,
-        SHIFTED_REG_OFFSET_PC_ROR_START_PC,
-        SHIFTED_REG_OFFSET_CYCLES))
-  {
-    put_raw("result=FAIL command=runtime "
-            "reason=shifted_reg_pc_ror_emit_rejected\n");
-    sys_exit(1);
-  }
-
-  riscv_emit_block_finalize(meta, &translation_ptr,
-                            SHIFTED_REG_OFFSET_PC_ROR_START_PC,
-                            SHIFTED_REG_OFFSET_PC_ROR_END_PC, false);
-  code_bytes = (u32)(translation_ptr - code);
-  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
-  return code_bytes;
-}
-
-static u32 build_shifted_reg_offset_pc_ror_store_block(u8 *code)
-{
-  u8 *translation_ptr = code;
-  riscv_jit_block_meta *meta;
-  u32 code_bytes;
-
-  riscv_emit_block_prologue(&translation_ptr, &meta);
-  g_shifted_reg_offset_pc_ror_store_entry =
-    ((u8 *)meta) + block_prologue_size;
-
-  if (!riscv_emit_native_arm_access_memory(
-        &translation_ptr, meta,
-        SHIFTED_REG_OFFSET_STRB_R9_R3_R15_ROR1,
-        SHIFTED_REG_OFFSET_PC_ROR_STORE_START_PC,
-        REG_OFFSET_STORE_BASE_CYCLES))
-  {
-    put_raw("result=FAIL command=runtime "
-            "reason=shifted_reg_pc_ror_strb_rejected\n");
-    sys_exit(1);
-  }
-
-  riscv_emit_block_finalize(meta, &translation_ptr,
-                            SHIFTED_REG_OFFSET_PC_ROR_STORE_START_PC,
-                            SHIFTED_REG_OFFSET_PC_ROR_STORE_END_PC, false);
-  code_bytes = (u32)(translation_ptr - code);
-  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
-  return code_bytes;
-}
-
-static u32 build_shifted_reg_offset_pc_word_block(u8 *code, u32 opcode,
-                                                  u32 start_pc, u32 end_pc,
-                                                  u32 cycles, u8 **entry,
-                                                  const char *reject_reason)
+static u32 build_single_memory_block(u8 *code, u32 opcode, u32 start_pc,
+                                     u32 end_pc, u32 cycles, u8 **entry,
+                                     const char *reject_reason)
 {
   u8 *translation_ptr = code;
   riscv_jit_block_meta *meta;
@@ -3618,169 +3391,181 @@ static u32 build_shifted_reg_offset_pc_word_block(u8 *code, u32 opcode,
   return code_bytes;
 }
 
+static u32 build_shifted_reg_offset_store_block(u8 *code)
+{
+  return build_single_memory_block(
+    code,
+    SHIFTED_REG_OFFSET_STRB_R9_R3_R2_LSL2,
+    SHIFTED_REG_OFFSET_STORE_START_PC,
+    SHIFTED_REG_OFFSET_STORE_END_PC,
+    REG_OFFSET_STORE_BASE_CYCLES,
+    &g_shifted_reg_offset_store_entry,
+    "result=FAIL command=runtime reason=shifted_reg_strb_rejected\n");
+}
+
+static u32 build_shifted_reg_offset_pc_store_block(u8 *code)
+{
+  return build_single_memory_block(
+    code,
+    SHIFTED_REG_OFFSET_STRB_R9_R3_R15_LSL2,
+    SHIFTED_REG_OFFSET_PC_STORE_START_PC,
+    SHIFTED_REG_OFFSET_PC_STORE_END_PC,
+    REG_OFFSET_STORE_BASE_CYCLES,
+    &g_shifted_reg_offset_pc_store_entry,
+    "result=FAIL command=runtime reason=shifted_reg_pc_strb_rejected\n");
+}
+
+static u32 build_shifted_reg_offset_pc_lsr_block(u8 *code)
+{
+  return build_single_memory_block(
+    code,
+    SHIFTED_REG_OFFSET_LDRB_R11_R3_R15_LSR1,
+    SHIFTED_REG_OFFSET_PC_LSR_START_PC,
+    SHIFTED_REG_OFFSET_PC_LSR_END_PC,
+    SHIFTED_REG_OFFSET_CYCLES,
+    &g_shifted_reg_offset_pc_lsr_entry,
+    "result=FAIL command=runtime reason=shifted_reg_pc_lsr_emit_rejected\n");
+}
+
+static u32 build_shifted_reg_offset_pc_lsr_store_block(u8 *code)
+{
+  return build_single_memory_block(
+    code,
+    SHIFTED_REG_OFFSET_STRB_R9_R3_R15_LSR1,
+    SHIFTED_REG_OFFSET_PC_LSR_STORE_START_PC,
+    SHIFTED_REG_OFFSET_PC_LSR_STORE_END_PC,
+    REG_OFFSET_STORE_BASE_CYCLES,
+    &g_shifted_reg_offset_pc_lsr_store_entry,
+    "result=FAIL command=runtime reason=shifted_reg_pc_lsr_strb_rejected\n");
+}
+
+static u32 build_shifted_reg_offset_pc_asr_block(u8 *code)
+{
+  return build_single_memory_block(
+    code,
+    SHIFTED_REG_OFFSET_LDRB_R11_R3_R15_ASR2,
+    SHIFTED_REG_OFFSET_PC_ASR_START_PC,
+    SHIFTED_REG_OFFSET_PC_ASR_END_PC,
+    SHIFTED_REG_OFFSET_CYCLES,
+    &g_shifted_reg_offset_pc_asr_entry,
+    "result=FAIL command=runtime reason=shifted_reg_pc_asr_emit_rejected\n");
+}
+
+static u32 build_shifted_reg_offset_pc_asr_store_block(u8 *code)
+{
+  return build_single_memory_block(
+    code,
+    SHIFTED_REG_OFFSET_STRB_R9_R3_R15_ASR2,
+    SHIFTED_REG_OFFSET_PC_ASR_STORE_START_PC,
+    SHIFTED_REG_OFFSET_PC_ASR_STORE_END_PC,
+    REG_OFFSET_STORE_BASE_CYCLES,
+    &g_shifted_reg_offset_pc_asr_store_entry,
+    "result=FAIL command=runtime reason=shifted_reg_pc_asr_strb_rejected\n");
+}
+
+static u32 build_shifted_reg_offset_pc_ror_block(u8 *code)
+{
+  return build_single_memory_block(
+    code,
+    SHIFTED_REG_OFFSET_LDRB_R11_R3_R15_ROR1,
+    SHIFTED_REG_OFFSET_PC_ROR_START_PC,
+    SHIFTED_REG_OFFSET_PC_ROR_END_PC,
+    SHIFTED_REG_OFFSET_CYCLES,
+    &g_shifted_reg_offset_pc_ror_entry,
+    "result=FAIL command=runtime reason=shifted_reg_pc_ror_emit_rejected\n");
+}
+
+static u32 build_shifted_reg_offset_pc_ror_store_block(u8 *code)
+{
+  return build_single_memory_block(
+    code,
+    SHIFTED_REG_OFFSET_STRB_R9_R3_R15_ROR1,
+    SHIFTED_REG_OFFSET_PC_ROR_STORE_START_PC,
+    SHIFTED_REG_OFFSET_PC_ROR_STORE_END_PC,
+    REG_OFFSET_STORE_BASE_CYCLES,
+    &g_shifted_reg_offset_pc_ror_store_entry,
+    "result=FAIL command=runtime reason=shifted_reg_pc_ror_strb_rejected\n");
+}
+
+static u32 build_shifted_reg_offset_pc_word_block(u8 *code, u32 opcode,
+                                                  u32 start_pc, u32 end_pc,
+                                                  u32 cycles, u8 **entry,
+                                                  const char *reject_reason)
+{
+  return build_single_memory_block(code, opcode, start_pc, end_pc, cycles,
+                                   entry, reject_reason);
+}
+
 static u32 build_shifted_reg_offset_lsr_block(u8 *code)
 {
-  u8 *translation_ptr = code;
-  riscv_jit_block_meta *meta;
-  u32 code_bytes;
-
-  riscv_emit_block_prologue(&translation_ptr, &meta);
-  g_shifted_reg_offset_lsr_entry = ((u8 *)meta) + block_prologue_size;
-
-  if (!riscv_emit_native_arm_access_memory(
-        &translation_ptr, meta,
-        SHIFTED_REG_OFFSET_LDRB_R10_R3_R2_LSR1,
-        SHIFTED_REG_OFFSET_LSR_START_PC,
-        SHIFTED_REG_OFFSET_CYCLES))
-  {
-    put_raw("result=FAIL command=runtime reason=shifted_reg_lsr_rejected\n");
-    sys_exit(1);
-  }
-
-  riscv_emit_block_finalize(meta, &translation_ptr,
-                            SHIFTED_REG_OFFSET_LSR_START_PC,
-                            SHIFTED_REG_OFFSET_LSR_END_PC, false);
-  code_bytes = (u32)(translation_ptr - code);
-  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
-  return code_bytes;
+  return build_single_memory_block(
+    code,
+    SHIFTED_REG_OFFSET_LDRB_R10_R3_R2_LSR1,
+    SHIFTED_REG_OFFSET_LSR_START_PC,
+    SHIFTED_REG_OFFSET_LSR_END_PC,
+    SHIFTED_REG_OFFSET_CYCLES,
+    &g_shifted_reg_offset_lsr_entry,
+    "result=FAIL command=runtime reason=shifted_reg_lsr_rejected\n");
 }
 
 static u32 build_shifted_reg_offset_lsr_store_block(u8 *code)
 {
-  u8 *translation_ptr = code;
-  riscv_jit_block_meta *meta;
-  u32 code_bytes;
-
-  riscv_emit_block_prologue(&translation_ptr, &meta);
-  g_shifted_reg_offset_lsr_store_entry = ((u8 *)meta) + block_prologue_size;
-
-  if (!riscv_emit_native_arm_access_memory(
-        &translation_ptr, meta,
-        SHIFTED_REG_OFFSET_STRB_R9_R3_R2_LSR1,
-        SHIFTED_REG_OFFSET_LSR_STORE_START_PC,
-        REG_OFFSET_STORE_BASE_CYCLES))
-  {
-    put_raw("result=FAIL command=runtime "
-            "reason=shifted_reg_lsr_strb_rejected\n");
-    sys_exit(1);
-  }
-
-  riscv_emit_block_finalize(meta, &translation_ptr,
-                            SHIFTED_REG_OFFSET_LSR_STORE_START_PC,
-                            SHIFTED_REG_OFFSET_LSR_STORE_END_PC, false);
-  code_bytes = (u32)(translation_ptr - code);
-  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
-  return code_bytes;
+  return build_single_memory_block(
+    code,
+    SHIFTED_REG_OFFSET_STRB_R9_R3_R2_LSR1,
+    SHIFTED_REG_OFFSET_LSR_STORE_START_PC,
+    SHIFTED_REG_OFFSET_LSR_STORE_END_PC,
+    REG_OFFSET_STORE_BASE_CYCLES,
+    &g_shifted_reg_offset_lsr_store_entry,
+    "result=FAIL command=runtime reason=shifted_reg_lsr_strb_rejected\n");
 }
 
 static u32 build_shifted_reg_offset_asr_store_block(u8 *code)
 {
-  u8 *translation_ptr = code;
-  riscv_jit_block_meta *meta;
-  u32 code_bytes;
-
-  riscv_emit_block_prologue(&translation_ptr, &meta);
-  g_shifted_reg_offset_asr_store_entry = ((u8 *)meta) + block_prologue_size;
-
-  if (!riscv_emit_native_arm_access_memory(
-        &translation_ptr, meta,
-        SHIFTED_REG_OFFSET_STRB_R9_R3_R2_ASR2,
-        SHIFTED_REG_OFFSET_ASR_STORE_START_PC,
-        REG_OFFSET_STORE_BASE_CYCLES))
-  {
-    put_raw("result=FAIL command=runtime "
-            "reason=shifted_reg_asr_strb_rejected\n");
-    sys_exit(1);
-  }
-
-  riscv_emit_block_finalize(meta, &translation_ptr,
-                            SHIFTED_REG_OFFSET_ASR_STORE_START_PC,
-                            SHIFTED_REG_OFFSET_ASR_STORE_END_PC, false);
-  code_bytes = (u32)(translation_ptr - code);
-  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
-  return code_bytes;
+  return build_single_memory_block(
+    code,
+    SHIFTED_REG_OFFSET_STRB_R9_R3_R2_ASR2,
+    SHIFTED_REG_OFFSET_ASR_STORE_START_PC,
+    SHIFTED_REG_OFFSET_ASR_STORE_END_PC,
+    REG_OFFSET_STORE_BASE_CYCLES,
+    &g_shifted_reg_offset_asr_store_entry,
+    "result=FAIL command=runtime reason=shifted_reg_asr_strb_rejected\n");
 }
 
 static u32 build_shifted_reg_offset_ror_store_block(u8 *code)
 {
-  u8 *translation_ptr = code;
-  riscv_jit_block_meta *meta;
-  u32 code_bytes;
-
-  riscv_emit_block_prologue(&translation_ptr, &meta);
-  g_shifted_reg_offset_ror_store_entry = ((u8 *)meta) + block_prologue_size;
-
-  if (!riscv_emit_native_arm_access_memory(
-        &translation_ptr, meta,
-        SHIFTED_REG_OFFSET_STRB_R9_R3_R2_ROR1,
-        SHIFTED_REG_OFFSET_ROR_STORE_START_PC,
-        REG_OFFSET_STORE_BASE_CYCLES))
-  {
-    put_raw("result=FAIL command=runtime "
-            "reason=shifted_reg_ror_strb_rejected\n");
-    sys_exit(1);
-  }
-
-  riscv_emit_block_finalize(meta, &translation_ptr,
-                            SHIFTED_REG_OFFSET_ROR_STORE_START_PC,
-                            SHIFTED_REG_OFFSET_ROR_STORE_END_PC, false);
-  code_bytes = (u32)(translation_ptr - code);
-  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
-  return code_bytes;
+  return build_single_memory_block(
+    code,
+    SHIFTED_REG_OFFSET_STRB_R9_R3_R2_ROR1,
+    SHIFTED_REG_OFFSET_ROR_STORE_START_PC,
+    SHIFTED_REG_OFFSET_ROR_STORE_END_PC,
+    REG_OFFSET_STORE_BASE_CYCLES,
+    &g_shifted_reg_offset_ror_store_entry,
+    "result=FAIL command=runtime reason=shifted_reg_ror_strb_rejected\n");
 }
 
 static u32 build_shifted_reg_offset_asr_block(u8 *code)
 {
-  u8 *translation_ptr = code;
-  riscv_jit_block_meta *meta;
-  u32 code_bytes;
-
-  riscv_emit_block_prologue(&translation_ptr, &meta);
-  g_shifted_reg_offset_asr_entry = ((u8 *)meta) + block_prologue_size;
-
-  if (!riscv_emit_native_arm_access_memory(
-        &translation_ptr, meta,
-        SHIFTED_REG_OFFSET_LDRB_R10_R3_R2_ASR2,
-        SHIFTED_REG_OFFSET_ASR_START_PC,
-        SHIFTED_REG_OFFSET_CYCLES))
-  {
-    put_raw("result=FAIL command=runtime reason=shifted_reg_asr_rejected\n");
-    sys_exit(1);
-  }
-
-  riscv_emit_block_finalize(meta, &translation_ptr,
-                            SHIFTED_REG_OFFSET_ASR_START_PC,
-                            SHIFTED_REG_OFFSET_ASR_END_PC, false);
-  code_bytes = (u32)(translation_ptr - code);
-  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
-  return code_bytes;
+  return build_single_memory_block(
+    code,
+    SHIFTED_REG_OFFSET_LDRB_R10_R3_R2_ASR2,
+    SHIFTED_REG_OFFSET_ASR_START_PC,
+    SHIFTED_REG_OFFSET_ASR_END_PC,
+    SHIFTED_REG_OFFSET_CYCLES,
+    &g_shifted_reg_offset_asr_entry,
+    "result=FAIL command=runtime reason=shifted_reg_asr_rejected\n");
 }
 
 static u32 build_shifted_reg_offset_ror_block(u8 *code)
 {
-  u8 *translation_ptr = code;
-  riscv_jit_block_meta *meta;
-  u32 code_bytes;
-
-  riscv_emit_block_prologue(&translation_ptr, &meta);
-  g_shifted_reg_offset_ror_entry = ((u8 *)meta) + block_prologue_size;
-
-  if (!riscv_emit_native_arm_access_memory(
-        &translation_ptr, meta,
-        SHIFTED_REG_OFFSET_LDRB_R10_R3_R2_ROR1,
-        SHIFTED_REG_OFFSET_ROR_START_PC,
-        SHIFTED_REG_OFFSET_CYCLES))
-  {
-    put_raw("result=FAIL command=runtime reason=shifted_reg_ror_rejected\n");
-    sys_exit(1);
-  }
-
-  riscv_emit_block_finalize(meta, &translation_ptr,
-                            SHIFTED_REG_OFFSET_ROR_START_PC,
-                            SHIFTED_REG_OFFSET_ROR_END_PC, false);
-  code_bytes = (u32)(translation_ptr - code);
-  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
-  return code_bytes;
+  return build_single_memory_block(
+    code,
+    SHIFTED_REG_OFFSET_LDRB_R10_R3_R2_ROR1,
+    SHIFTED_REG_OFFSET_ROR_START_PC,
+    SHIFTED_REG_OFFSET_ROR_END_PC,
+    SHIFTED_REG_OFFSET_CYCLES,
+    &g_shifted_reg_offset_ror_entry,
+    "result=FAIL command=runtime reason=shifted_reg_ror_rejected\n");
 }
 
 static u32 build_psr_block(u8 *code)
