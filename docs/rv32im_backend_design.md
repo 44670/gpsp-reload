@@ -260,7 +260,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - SPSR restore for `Rd=PC,S=1` data-processing writes and `LDM ... {pc}^`
 - scriptable qemu-user harness commands for `load`, `reset`, `backend`, `run`,
   `cont`, `stepi`, `stepb`, `regs`, `mem`, `watchio`, `counters`,
-  `sched`, `tracepc`, `bp`, `framehash`, `compare`, `png`, and `quit`
+  `fallbacks`, `sched`, `tracepc`, `bp`, `framehash`, `compare`, `png`,
+  and `quit`
 - successful qemu-user harness commands use stable
   `result=PASS command=...` summary lines, and failure paths use
   `result=FAIL command=...`
@@ -274,6 +275,9 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - explicit runtime-snapshot `counters runtime` dump for selected-backend
   block/fallback/native counters, fallback source breakdown, state, memory,
   scheduler, and snapshot hashes
+- explicit RV32IM `fallbacks runtime [offset]` dump for observed runtime
+  fallback events, including initial lookup, relookup, and unsupported-block
+  categories plus PC, ARM/Thumb mode, lookup result, and cycle budget
 - runtime snapshot frame/hash artifacts include the fallback source breakdown,
   not only the aggregate fallback count
 - explicit RV32IM `sched runtime [offset]` dump for scheduler-boundary events
@@ -390,6 +394,7 @@ Remaining first-phase gaps should stay narrow and evidence-driven:
   `regs runtime`, `mem <addr> <len> runtime <offset>`,
   `mem <addr> <len> runtime-bytes`,
   `watchio <addr> <len> runtime <offset>`, `counters runtime`,
+  `fallbacks runtime <offset>`,
   `sched runtime <offset>`,
   `stepb runtime <count>`, `tracepc runtime <count> <offset>`,
   `bp <pc> runtime`,
@@ -401,10 +406,13 @@ Remaining first-phase gaps should stay narrow and evidence-driven:
   byte view of actual RV32IM helper writes, `stepb ... runtime` records the
   lookup prefix, `sched runtime ...` records a bounded window of actual
   scheduler/update boundary observations,
+  `fallbacks runtime ...` records the runtime fallback kind/PC/result window,
   `tracepc runtime ...` records a bounded window of actual RV32IM lookup PCs,
   and `bp ... runtime` reports hit/miss against those lookup PCs. Full
   addressable emulator RAM/IO dumps and real emulator frame output are still
   not wired in.
+- The `fallbacks runtime` command makes the current fallback bucket auditable;
+  it does not by itself reduce fallback count or claim broader parity.
 - Thumb instruction lowering remains deliberately unsupported; the harness
   compare path now proves Thumb lookup-miss/invalid fallback and unsupported
   Thumb block fallback only, and Thumb blocks must keep routing through

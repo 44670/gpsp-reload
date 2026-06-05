@@ -40,6 +40,20 @@ typedef struct riscv_runtime_stats
   u32 native_psr_insns;
 } riscv_runtime_stats;
 
+typedef enum riscv_runtime_fallback_kind
+{
+  RISCV_RUNTIME_FALLBACK_INITIAL_LOOKUP = 1,
+  RISCV_RUNTIME_FALLBACK_RELOOKUP = 2,
+  RISCV_RUNTIME_FALLBACK_UNSUPPORTED = 3
+} riscv_runtime_fallback_kind;
+
+typedef enum riscv_runtime_lookup_result
+{
+  RISCV_RUNTIME_LOOKUP_MISS = 1,
+  RISCV_RUNTIME_LOOKUP_INVALID = 2,
+  RISCV_RUNTIME_LOOKUP_UNSUPPORTED = 3
+} riscv_runtime_lookup_result;
+
 void riscv_emit_block_prologue(u8 **translation_ptr,
                                riscv_jit_block_meta **meta);
 void riscv_emit_block_finalize(riscv_jit_block_meta *meta,
@@ -153,6 +167,9 @@ u32 execute_arm_translate(u32 cycles);
 u32 execute_arm_translate_internal(u32 cycles, void *regptr);
 void init_emitter(bool must_swap);
 void riscv_get_runtime_stats(riscv_runtime_stats *stats);
+void riscv_note_runtime_fallback(u32 kind, u32 pc, u32 thumb,
+                                 u32 lookup_result,
+                                 u32 cycles_remaining);
 void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
 
 #define generate_block_extra_vars()                                           \

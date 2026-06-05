@@ -50,6 +50,20 @@ static cpu_alert_type riscv_cpu_alert;
 
 static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta);
 
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((weak))
+#endif
+void riscv_note_runtime_fallback(u32 kind, u32 pc, u32 thumb,
+                                 u32 lookup_result,
+                                 u32 cycles_remaining)
+{
+  (void)kind;
+  (void)pc;
+  (void)thumb;
+  (void)lookup_result;
+  (void)cycles_remaining;
+}
+
 static u8 *riscv_align_ptr(u8 *ptr)
 {
   uintptr_t value = (uintptr_t)ptr;
@@ -467,26 +481,56 @@ static void riscv_run_interpreter_remainder(void)
   }
 }
 
-static u8 *riscv_lookup_current_block(void)
+static void riscv_current_lookup_state(u32 *pc, u32 *thumb)
 {
-  if (reg[REG_CPSR] & 0x20)
-    return block_lookup_address_thumb(reg[REG_PC] & ~1u);
+  *thumb = (reg[REG_CPSR] & 0x20u) != 0;
+  *pc = *thumb ? (reg[REG_PC] & ~1u) : (reg[REG_PC] & ~0x03u);
+}
 
-  return block_lookup_address_arm(reg[REG_PC] & ~0x03);
+static u32 riscv_lookup_result_from_entry(const u8 *entry)
+{
+  if (entry == RISCV_INVALID_BLOCK_ENTRY)
+    return RISCV_RUNTIME_LOOKUP_INVALID;
+  if (!entry)
+    return RISCV_RUNTIME_LOOKUP_MISS;
+  return 0;
+}
+
+static u8 *riscv_lookup_current_block(u32 *pc_out, u32 *thumb_out)
+{
+  u32 pc;
+  u32 thumb;
+
+  riscv_current_lookup_state(&pc, &thumb);
+  if (pc_out)
+    *pc_out = pc;
+  if (thumb_out)
+    *thumb_out = thumb;
+
+  if (thumb)
+    return block_lookup_address_thumb(pc);
+
+  return block_lookup_address_arm(pc);
 }
 
 static u8 *riscv_lookup_or_fallback(void)
 {
   u8 *entry;
+  u32 pc;
+  u32 thumb;
 
   if (riscv_cycles_remaining <= 0)
     return NULL;
 
-  entry = riscv_lookup_current_block();
+  entry = riscv_lookup_current_block(&pc, &thumb);
   if (!entry || entry == RISCV_INVALID_BLOCK_ENTRY)
   {
     riscv_interpreter_fallbacks++;
     riscv_relookup_fallbacks++;
+    riscv_note_runtime_fallback(RISCV_RUNTIME_FALLBACK_RELOOKUP,
+                                pc, thumb,
+                                riscv_lookup_result_from_entry(entry),
+                                (u32)riscv_cycles_remaining);
     riscv_run_interpreter_remainder();
     return NULL;
   }
@@ -717,8 +761,25 @@ static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta)
 
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
   {
+    u32 pc;
+    u32 thumb;
+
+    if (meta)
+    {
+      pc = meta->start_pc;
+      thumb = meta->thumb;
+    }
+    else
+    {
+      riscv_current_lookup_state(&pc, &thumb);
+    }
+
     riscv_interpreter_fallbacks++;
     riscv_unsupported_fallbacks++;
+    riscv_note_runtime_fallback(RISCV_RUNTIME_FALLBACK_UNSUPPORTED,
+                                pc, thumb,
+                                RISCV_RUNTIME_LOOKUP_UNSUPPORTED,
+                                (u32)riscv_cycles_remaining);
     riscv_run_interpreter_remainder();
     return NULL;
   }
@@ -2376,6 +2437,8 @@ u32 execute_arm_translate_internal(u32 cycles, void *regptr)
 {
   riscv_jit_block_fn entry;
   u8 *entry_data;
+  u32 pc;
+  u32 thumb;
 
   (void)regptr;
 
@@ -2386,15 +2449,16 @@ u32 execute_arm_translate_internal(u32 cycles, void *regptr)
   if (cycles == 0)
     return 0;
 
-  if (reg[REG_CPSR] & 0x20)
-    entry_data = block_lookup_address_thumb(reg[REG_PC] & ~1u);
-  else
-    entry_data = block_lookup_address_arm(reg[REG_PC] & ~0x03);
+  entry_data = riscv_lookup_current_block(&pc, &thumb);
 
   if (!entry_data || entry_data == RISCV_INVALID_BLOCK_ENTRY)
   {
     riscv_interpreter_fallbacks++;
     riscv_initial_lookup_fallbacks++;
+    riscv_note_runtime_fallback(RISCV_RUNTIME_FALLBACK_INITIAL_LOOKUP,
+                                pc, thumb,
+                                riscv_lookup_result_from_entry(entry_data),
+                                cycles);
     execute_arm(cycles);
     riscv_cycles_remaining = 0;
     return 0;

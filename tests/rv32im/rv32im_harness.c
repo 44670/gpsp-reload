@@ -64,6 +64,7 @@ typedef unsigned int usize;
 #define RUNTIME_TRACE_MAX 256u
 #define RUNTIME_MEM_EVENT_MAX 256u
 #define RUNTIME_SCHED_EVENT_MAX 256u
+#define RUNTIME_FALLBACK_EVENT_MAX 256u
 #define RUNTIME_EXEC_MAP_BYTES 55296u
 #define RUNTIME_LOAD_BLOCK_OFFSET 512u
 #define RUNTIME_STORE_BLOCK_OFFSET 1024u
@@ -1202,6 +1203,13 @@ static u32 g_runtime_sched_event_execute_cycles[RUNTIME_SCHED_EVENT_MAX];
 static u32 g_runtime_sched_event_execute_pc[RUNTIME_SCHED_EVENT_MAX];
 static u32 g_runtime_sched_event_flush_calls[RUNTIME_SCHED_EVENT_MAX];
 static u32 g_runtime_sched_event_irq_calls[RUNTIME_SCHED_EVENT_MAX];
+static u32 g_runtime_fallback_event_enabled;
+static u32 g_runtime_fallback_event_count;
+static u32 g_runtime_fallback_event_kind[RUNTIME_FALLBACK_EVENT_MAX];
+static u32 g_runtime_fallback_event_pc[RUNTIME_FALLBACK_EVENT_MAX];
+static u32 g_runtime_fallback_event_thumb[RUNTIME_FALLBACK_EVENT_MAX];
+static u32 g_runtime_fallback_event_result[RUNTIME_FALLBACK_EVENT_MAX];
+static u32 g_runtime_fallback_event_cycles[RUNTIME_FALLBACK_EVENT_MAX];
 static u32 g_runtime_shadow_enabled;
 static u32 g_runtime_shadow_write_bytes;
 static u8 g_runtime_shadow_mem[RUNTIME_SHADOW_SIZE];
@@ -1389,6 +1397,27 @@ static void runtime_sched_event_record(void)
     g_runtime_sched_event_irq_calls[index] = g_runtime_irq_check_calls;
   }
   g_runtime_sched_event_count++;
+}
+
+void riscv_note_runtime_fallback(u32 kind, u32 pc, u32 thumb,
+                                 u32 lookup_result,
+                                 u32 cycles_remaining)
+{
+  u32 index;
+
+  if (!g_runtime_fallback_event_enabled)
+    return;
+
+  index = g_runtime_fallback_event_count;
+  if (index < RUNTIME_FALLBACK_EVENT_MAX)
+  {
+    g_runtime_fallback_event_kind[index] = kind;
+    g_runtime_fallback_event_pc[index] = pc;
+    g_runtime_fallback_event_thumb[index] = thumb;
+    g_runtime_fallback_event_result[index] = lookup_result;
+    g_runtime_fallback_event_cycles[index] = cycles_remaining;
+  }
+  g_runtime_fallback_event_count++;
 }
 
 static void clear_runtime_cond_entries(void)
@@ -10596,6 +10625,74 @@ static u32 runtime_sched_event_hash(u32 count)
   return hash;
 }
 
+static void runtime_fallback_event_reset(void)
+{
+  u32 i;
+
+  g_runtime_fallback_event_count = 0;
+  for (i = 0; i < RUNTIME_FALLBACK_EVENT_MAX; i++)
+  {
+    g_runtime_fallback_event_kind[i] = 0;
+    g_runtime_fallback_event_pc[i] = 0;
+    g_runtime_fallback_event_thumb[i] = 0;
+    g_runtime_fallback_event_result[i] = 0;
+    g_runtime_fallback_event_cycles[i] = 0;
+  }
+}
+
+static u32 runtime_fallback_event_stored_count(void)
+{
+  return g_runtime_fallback_event_count < RUNTIME_FALLBACK_EVENT_MAX ?
+    g_runtime_fallback_event_count : RUNTIME_FALLBACK_EVENT_MAX;
+}
+
+static u32 runtime_fallback_event_hash(u32 count)
+{
+  u32 i;
+  u32 hash = 2166136261u;
+
+  hash = fnv1a_update_u32(hash, g_runtime_fallback_event_count);
+  for (i = 0; i < count; i++)
+  {
+    hash = fnv1a_update_u32(hash, g_runtime_fallback_event_kind[i]);
+    hash = fnv1a_update_u32(hash, g_runtime_fallback_event_pc[i]);
+    hash = fnv1a_update_u32(hash, g_runtime_fallback_event_thumb[i]);
+    hash = fnv1a_update_u32(hash, g_runtime_fallback_event_result[i]);
+    hash = fnv1a_update_u32(hash, g_runtime_fallback_event_cycles[i]);
+  }
+  return hash;
+}
+
+static char runtime_fallback_kind_tag(u32 kind)
+{
+  switch (kind)
+  {
+    case RISCV_RUNTIME_FALLBACK_INITIAL_LOOKUP:
+      return 'i';
+    case RISCV_RUNTIME_FALLBACK_RELOOKUP:
+      return 'r';
+    case RISCV_RUNTIME_FALLBACK_UNSUPPORTED:
+      return 'u';
+    default:
+      return '?';
+  }
+}
+
+static char runtime_fallback_result_tag(u32 result)
+{
+  switch (result)
+  {
+    case RISCV_RUNTIME_LOOKUP_MISS:
+      return 'm';
+    case RISCV_RUNTIME_LOOKUP_INVALID:
+      return 'x';
+    case RISCV_RUNTIME_LOOKUP_UNSUPPORTED:
+      return 'u';
+    default:
+      return '?';
+  }
+}
+
 static const char *runtime_mem_event_kind_name(u32 kind)
 {
   switch (kind)
@@ -10977,6 +11074,8 @@ static void reset_state(void)
   runtime_mem_event_reset();
   g_runtime_sched_event_enabled = 0;
   runtime_sched_event_reset();
+  g_runtime_fallback_event_enabled = 0;
+  runtime_fallback_event_reset();
   g_runtime_shadow_enabled = 0;
   runtime_shadow_reset();
 }
@@ -11096,8 +11195,8 @@ static void print_fail(const char *command, const char *reason)
 static void command_help(void)
 {
   put_raw("result=PASS command=help commands=load reset backend run cont ");
-  put_raw("stepi stepb regs mem watchio counters sched tracepc bp framehash ");
-  put_raw("compare png quit harness_mode=");
+  put_raw("stepi stepb regs mem watchio counters fallbacks sched tracepc bp ");
+  put_raw("framehash compare png quit harness_mode=");
   put_raw(HARNESS_MODE);
   put_raw(" reason=command_list\n");
 }
@@ -11321,6 +11420,7 @@ static u32 synthetic_trace_pc(const struct harness_state *state, u32 index)
 static int capture_runtime_lookup_trace(const char **reason);
 static int capture_runtime_memory_events(const char **reason);
 static int capture_runtime_scheduler_events(const char **reason);
+static int capture_runtime_fallback_events(const char **reason);
 static int capture_runtime_shadow_memory(const char **reason);
 
 static void command_runtime_event_range(const char *command,
@@ -11842,6 +11942,106 @@ static void command_counters(char *mode)
   put_raw(" harness_mode=");
   put_raw(HARNESS_MODE);
   put_raw(" reason=synthetic_state_counters\n");
+}
+
+static void command_fallbacks(char *mode, char *offset_arg)
+{
+  if (mode && str_eq(mode, "runtime"))
+  {
+    const char *runtime_reason = "runtime_unknown";
+    u32 stored_count;
+    u32 offset;
+    u32 printed = 0;
+    u32 initial_lookup = 0;
+    u32 relookup = 0;
+    u32 unsupported = 0;
+    u32 hash;
+    u32 i;
+
+    if (!capture_runtime_fallback_events(&runtime_reason))
+    {
+      put_raw("result=FAIL command=fallbacks backend=");
+      put_raw(backend_name());
+      put_raw(" harness_mode=");
+      put_raw(RUNTIME_FIXTURE_MODE);
+      put_raw(" fallback_mode=runtime_events reason=");
+      put_raw(runtime_reason);
+      put_chr('\n');
+      return;
+    }
+
+    stored_count = runtime_fallback_event_stored_count();
+    for (i = 0; i < stored_count; i++)
+    {
+      if (g_runtime_fallback_event_kind[i] ==
+          RISCV_RUNTIME_FALLBACK_INITIAL_LOOKUP)
+      {
+        initial_lookup++;
+      }
+      else if (g_runtime_fallback_event_kind[i] ==
+               RISCV_RUNTIME_FALLBACK_RELOOKUP)
+      {
+        relookup++;
+      }
+      else if (g_runtime_fallback_event_kind[i] ==
+               RISCV_RUNTIME_FALLBACK_UNSUPPORTED)
+      {
+        unsupported++;
+      }
+    }
+
+    offset = optional_count(offset_arg, 0);
+    if (offset > stored_count)
+      offset = stored_count;
+    hash = runtime_fallback_event_hash(stored_count);
+
+    put_raw("result=PASS command=fallbacks backend=");
+    put_raw(backend_name());
+    put_raw(" total=");
+    put_u32_dec(g_runtime_fallback_event_count);
+    put_raw(" stored=");
+    put_u32_dec(stored_count);
+    put_raw(" offset=");
+    put_u32_dec(offset);
+    put_raw(" initial_lookup=");
+    put_u32_dec(initial_lookup);
+    put_raw(" relookup=");
+    put_u32_dec(relookup);
+    put_raw(" unsupported=");
+    put_u32_dec(unsupported);
+    put_raw(" events=");
+    for (i = offset; i < stored_count && printed < 8; i++)
+    {
+      if (printed)
+        put_chr(',');
+      put_chr(runtime_fallback_kind_tag(g_runtime_fallback_event_kind[i]));
+      put_chr('@');
+      put_u32_hex(g_runtime_fallback_event_pc[i]);
+      put_chr(':');
+      put_chr(g_runtime_fallback_event_thumb[i] ? 't' : 'a');
+      put_chr(':');
+      put_chr(runtime_fallback_result_tag(
+        g_runtime_fallback_event_result[i]));
+      put_raw(":c");
+      put_u32_dec(g_runtime_fallback_event_cycles[i]);
+      printed++;
+    }
+    put_raw(" printed=");
+    put_u32_dec(printed);
+    put_raw(" hash=");
+    put_u32_hex(hash);
+    put_raw(" harness_mode=");
+    put_raw(RUNTIME_FIXTURE_MODE);
+    put_raw(" fallback_mode=runtime_events");
+    put_raw(" event_encoding=kind@pc:mode:result:c");
+    put_raw(" reason=runtime_fallback_events\n");
+    return;
+  }
+
+  if (mode && *mode)
+    print_fail("fallbacks", "unknown_fallback_mode");
+  else
+    print_fail("fallbacks", "fallbacks_requires_runtime");
 }
 
 static void command_sched(char *mode, char *offset_arg)
@@ -12395,6 +12595,28 @@ static int capture_runtime_scheduler_events(const char **reason)
   return 1;
 }
 
+static int capture_runtime_fallback_events(const char **reason)
+{
+  struct harness_state saved_state = g_state;
+  struct compare_snapshot snapshot;
+
+  if (saved_state.backend != BACKEND_RV32IM)
+  {
+    *reason = "runtime_fallbacks_requires_rv32im";
+    return 0;
+  }
+
+  if (!ensure_runtime_fixture(reason))
+    return 0;
+
+  runtime_fallback_event_reset();
+  g_runtime_fallback_event_enabled = 1;
+  run_runtime_rv32im_workload(&saved_state, &snapshot);
+  g_runtime_fallback_event_enabled = 0;
+  g_state = saved_state;
+  return 1;
+}
+
 static int capture_runtime_shadow_memory(const char **reason)
 {
   struct harness_state saved_state = g_state;
@@ -12782,6 +13004,11 @@ static void process_line(char *line)
   else if (str_eq(cmd, "counters"))
   {
     command_counters(next_token(&cursor));
+  }
+  else if (str_eq(cmd, "fallbacks"))
+  {
+    char *mode = next_token(&cursor);
+    command_fallbacks(mode, next_token(&cursor));
   }
   else if (str_eq(cmd, "sched"))
   {
