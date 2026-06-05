@@ -474,6 +474,8 @@ typedef unsigned int usize;
 #define RUNTIME_UNSUPPORTED_CYCLES 11u
 #define RUNTIME_INITIAL_LOOKUP_MISS_START_PC 0x0800f000u
 #define RUNTIME_INITIAL_LOOKUP_MISS_CYCLES (RUNTIME_CYCLES + 7u)
+#define RUNTIME_INITIAL_LOOKUP_INVALID_START_PC 0x0800f100u
+#define RUNTIME_INITIAL_LOOKUP_INVALID_CYCLES (RUNTIME_CYCLES + 6u)
 #define RUNTIME_THUMB_FALLBACK_START_PC 0x02001020u
 #define RUNTIME_THUMB_FALLBACK_CYCLES 13u
 #define RUNTIME_NO_UPDATE_CYCLES 0x7fffffffu
@@ -7029,6 +7031,27 @@ static void run_runtime_reference_workload(const struct harness_state *base,
     values[i] = 0;
   values[1] = branch_r1;
   values[2] = branch_r2;
+  values[REG_PC] = RUNTIME_INITIAL_LOOKUP_INVALID_START_PC;
+  values[REG_CPSR] = 0;
+  values[CPU_HALT_STATE] = CPU_ACTIVE;
+  reg_hash = runtime_update_reg_hash(reg_hash, values);
+  mem_hash = runtime_update_memory_hash(mem_hash,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        runtime_reference_sticky_hash());
+  scheduler_hash = runtime_update_scheduler_hash(
+    scheduler_hash,
+    1, RUNTIME_INITIAL_LOOKUP_INVALID_START_PC, 0,
+    0, RUNTIME_NO_UPDATE_CYCLES,
+    1, RUNTIME_INITIAL_LOOKUP_INVALID_CYCLES,
+    RUNTIME_INITIAL_LOOKUP_INVALID_START_PC,
+    0, 0);
+
+  for (i = 0; i < REG_MAX; i++)
+    values[i] = 0;
+  values[1] = branch_r1;
+  values[2] = branch_r2;
   values[3] = branch_r1 + branch_r2;
   values[REG_PC] = RUNTIME_BRANCH_TARGET_END_PC;
   values[REG_CPSR] = 0;
@@ -7431,7 +7454,7 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   snapshot->mem_hash = mem_hash;
   snapshot->scheduler_hash = scheduler_hash;
   snapshot->blocks = 129;
-  snapshot->fallbacks = 43;
+  snapshot->fallbacks = 44;
   snapshot->native_data_proc = 64;
   snapshot->native_branch = 5;
   snapshot->native_load = 23;
@@ -8524,6 +8547,17 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   reg[2] = g_runtime_fixture_branch_r2;
   execute_arm_translate_internal(RUNTIME_INITIAL_LOOKUP_MISS_CYCLES,
                                  &reg[0]);
+  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+  mem_hash = runtime_update_current_memory_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+
+  reset_runtime_fixture_state(RUNTIME_INITIAL_LOOKUP_INVALID_START_PC);
+  g_runtime_invalid_lookup_pc = RUNTIME_INITIAL_LOOKUP_INVALID_START_PC;
+  reg[1] = g_runtime_fixture_branch_r1;
+  reg[2] = g_runtime_fixture_branch_r2;
+  execute_arm_translate_internal(RUNTIME_INITIAL_LOOKUP_INVALID_CYCLES,
+                                 &reg[0]);
+  g_runtime_invalid_lookup_pc = 0;
   reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
   mem_hash = runtime_update_current_memory_hash(mem_hash);
   scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
@@ -9665,7 +9699,7 @@ static void command_compare(void)
 
   if (!ensure_runtime_fixture(&runtime_reason))
   {
-    put_raw("result=FAIL command=compare workload=arm_add_armaddremain_arminvalidremain_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_psrremain_msr_msrremain_msrctrl_msrctrlremain_msrspsrremain_load_loadremain_store_storeremain_storebyte_storebyteremain_storebytealert_storehalt_pcmem_pcmemremain_loadpc_loadpcremain_pcstore_pcstoreremain_pcbasestoreremain_regoff_regoffremain_regstore_regstoreremain_regwb_regwbstoreremain_regwbloadremain_halfremain_halfreg_halfregremain_halfregstoreremain_halfpc_halfpcremain_halfwb_halfwbstoreremain_halfwbloadremain_halfhalt_blockmem_blockldmremain_blockalert_blockhalt_blockpush_blockpushremain_blockpc_blockspsr_hle_hledivarmremain_pcsrc_pcsrcremain_writeback_writebackstoreremain_writebackloadremain_swp_swpalert_swphalt_swpb_alert_branchremain_branchchainremain_armlookupmiss_branchupdaterefill_branchupdatepc_branchupdateframepc_branch_patch_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_cond_pcwrite_pcaddremain_spsr_idle_thumb_fallback");
+    put_raw("result=FAIL command=compare workload=arm_add_armaddremain_arminvalidremain_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_psrremain_msr_msrremain_msrctrl_msrctrlremain_msrspsrremain_load_loadremain_store_storeremain_storebyte_storebyteremain_storebytealert_storehalt_pcmem_pcmemremain_loadpc_loadpcremain_pcstore_pcstoreremain_pcbasestoreremain_regoff_regoffremain_regstore_regstoreremain_regwb_regwbstoreremain_regwbloadremain_halfremain_halfreg_halfregremain_halfregstoreremain_halfpc_halfpcremain_halfwb_halfwbstoreremain_halfwbloadremain_halfhalt_blockmem_blockldmremain_blockalert_blockhalt_blockpush_blockpushremain_blockpc_blockspsr_hle_hledivarmremain_pcsrc_pcsrcremain_writeback_writebackstoreremain_writebackloadremain_swp_swpalert_swphalt_swpb_alert_branchremain_branchchainremain_armlookupmiss_arminvalidlookup_branchupdaterefill_branchupdatepc_branchupdateframepc_branch_patch_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_cond_pcwrite_pcaddremain_spsr_idle_thumb_fallback");
     put_raw(" harness_mode=");
     put_raw(RUNTIME_FIXTURE_MODE);
     put_raw(" frame_mode=synthetic mem_mode=runtime_stickybits reason=");
@@ -9691,7 +9725,7 @@ static void command_compare(void)
       rv32im.native_store != interp.native_store ||
       rv32im.native_psr != interp.native_psr)
   {
-    put_raw("result=FAIL command=compare workload=arm_add_armaddremain_arminvalidremain_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_psrremain_msr_msrremain_msrctrl_msrctrlremain_msrspsrremain_load_loadremain_store_storeremain_storebyte_storebyteremain_storebytealert_storehalt_pcmem_pcmemremain_loadpc_loadpcremain_pcstore_pcstoreremain_pcbasestoreremain_regoff_regoffremain_regstore_regstoreremain_regwb_regwbstoreremain_regwbloadremain_halfremain_halfreg_halfregremain_halfregstoreremain_halfpc_halfpcremain_halfwb_halfwbstoreremain_halfwbloadremain_halfhalt_blockmem_blockldmremain_blockalert_blockhalt_blockpush_blockpushremain_blockpc_blockspsr_hle_hledivarmremain_pcsrc_pcsrcremain_writeback_writebackstoreremain_writebackloadremain_swp_swpalert_swphalt_swpb_alert_branchremain_branchchainremain_armlookupmiss_branchupdaterefill_branchupdatepc_branchupdateframepc_branch_patch_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_cond_pcwrite_pcaddremain_spsr_idle_thumb_fallback interp_frame_hash=");
+    put_raw("result=FAIL command=compare workload=arm_add_armaddremain_arminvalidremain_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_psrremain_msr_msrremain_msrctrl_msrctrlremain_msrspsrremain_load_loadremain_store_storeremain_storebyte_storebyteremain_storebytealert_storehalt_pcmem_pcmemremain_loadpc_loadpcremain_pcstore_pcstoreremain_pcbasestoreremain_regoff_regoffremain_regstore_regstoreremain_regwb_regwbstoreremain_regwbloadremain_halfremain_halfreg_halfregremain_halfregstoreremain_halfpc_halfpcremain_halfwb_halfwbstoreremain_halfwbloadremain_halfhalt_blockmem_blockldmremain_blockalert_blockhalt_blockpush_blockpushremain_blockpc_blockspsr_hle_hledivarmremain_pcsrc_pcsrcremain_writeback_writebackstoreremain_writebackloadremain_swp_swpalert_swphalt_swpb_alert_branchremain_branchchainremain_armlookupmiss_arminvalidlookup_branchupdaterefill_branchupdatepc_branchupdateframepc_branch_patch_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_cond_pcwrite_pcaddremain_spsr_idle_thumb_fallback interp_frame_hash=");
     put_u32_hex(interp.frame_hash);
     put_raw(" rv32im_frame_hash=");
     put_u32_hex(rv32im.frame_hash);
@@ -9730,7 +9764,7 @@ static void command_compare(void)
     return;
   }
 
-  put_raw("result=PASS command=compare workload=arm_add_armaddremain_arminvalidremain_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_psrremain_msr_msrremain_msrctrl_msrctrlremain_msrspsrremain_load_loadremain_store_storeremain_storebyte_storebyteremain_storebytealert_storehalt_pcmem_pcmemremain_loadpc_loadpcremain_pcstore_pcstoreremain_pcbasestoreremain_regoff_regoffremain_regstore_regstoreremain_regwb_regwbstoreremain_regwbloadremain_halfremain_halfreg_halfregremain_halfregstoreremain_halfpc_halfpcremain_halfwb_halfwbstoreremain_halfwbloadremain_halfhalt_blockmem_blockldmremain_blockalert_blockhalt_blockpush_blockpushremain_blockpc_blockspsr_hle_hledivarmremain_pcsrc_pcsrcremain_writeback_writebackstoreremain_writebackloadremain_swp_swpalert_swphalt_swpb_alert_branchremain_branchchainremain_armlookupmiss_branchupdaterefill_branchupdatepc_branchupdateframepc_branch_patch_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_cond_pcwrite_pcaddremain_spsr_idle_thumb_fallback interp_frame_hash=");
+  put_raw("result=PASS command=compare workload=arm_add_armaddremain_arminvalidremain_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_psrremain_msr_msrremain_msrctrl_msrctrlremain_msrspsrremain_load_loadremain_store_storeremain_storebyte_storebyteremain_storebytealert_storehalt_pcmem_pcmemremain_loadpc_loadpcremain_pcstore_pcstoreremain_pcbasestoreremain_regoff_regoffremain_regstore_regstoreremain_regwb_regwbstoreremain_regwbloadremain_halfremain_halfreg_halfregremain_halfregstoreremain_halfpc_halfpcremain_halfwb_halfwbstoreremain_halfwbloadremain_halfhalt_blockmem_blockldmremain_blockalert_blockhalt_blockpush_blockpushremain_blockpc_blockspsr_hle_hledivarmremain_pcsrc_pcsrcremain_writeback_writebackstoreremain_writebackloadremain_swp_swpalert_swphalt_swpb_alert_branchremain_branchchainremain_armlookupmiss_arminvalidlookup_branchupdaterefill_branchupdatepc_branchupdateframepc_branch_patch_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_cond_pcwrite_pcaddremain_spsr_idle_thumb_fallback interp_frame_hash=");
   put_u32_hex(interp.frame_hash);
   put_raw(" rv32im_frame_hash=");
   put_u32_hex(rv32im.frame_hash);

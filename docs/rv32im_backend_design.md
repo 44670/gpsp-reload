@@ -295,7 +295,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   store-triggered SMC/IRQ alert handling, byte-store SMC/IRQ alert handling,
   store/halfword/block/SWP HALT-alert handling, block-memory SMC/IRQ alert
   handling, SWP-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
-  fallback, ARM lookup-miss fallback, and Thumb lookup-miss fallback fixtures against a local ARM
+  fallback, ARM lookup-miss/invalid fallback, and Thumb lookup-miss fallback fixtures against a local ARM
   reference model, with
   one hundred twenty nine runtime blocks executed, basic data-processing remaining-cycle and invalid re-lookup fallback handoffs,
   ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
