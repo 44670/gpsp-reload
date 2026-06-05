@@ -282,7 +282,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   not only the aggregate fallback count
 - explicit RV32IM `sched runtime [offset]` dump for scheduler-boundary events
   observed during the runtime workload, including lookup, update, interpreter
-  remainder, flush, and IRQ-check counters
+  remainder, flush, IRQ-check, and HALT-state counters
 - explicit RV32IM `stepb runtime [count]` block-step prefix from the runtime
   lookup trace, with Thumb lookups tagged in bit 0
 - explicit RV32IM `tracepc runtime [count] [offset]` lookup trace window from
@@ -421,8 +421,9 @@ Remaining first-phase gaps should stay narrow and evidence-driven:
   `fallbacks runtime ...` records the runtime fallback kind/PC/result window,
   `tracepc runtime ...` records a bounded window of actual RV32IM lookup PCs,
   `sched runtime ...` includes the observed `update_gba()` return flags and
-  PC-change target for each scheduler window entry, and `bp ... runtime`
-  reports hit/miss against those lookup PCs. Full
+  PC-change target, flush count, IRQ-check count, and HALT state for each
+  scheduler window entry, and `bp ... runtime` reports hit/miss against those
+  lookup PCs. Full
   addressable emulator RAM/IO dumps and real emulator frame output are still
   not wired in.
 - The `fallbacks runtime` command makes the current fallback bucket auditable;

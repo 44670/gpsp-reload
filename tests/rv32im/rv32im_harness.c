@@ -1267,6 +1267,7 @@ static u32 g_runtime_sched_event_execute_cycles[RUNTIME_SCHED_EVENT_MAX];
 static u32 g_runtime_sched_event_execute_pc[RUNTIME_SCHED_EVENT_MAX];
 static u32 g_runtime_sched_event_flush_calls[RUNTIME_SCHED_EVENT_MAX];
 static u32 g_runtime_sched_event_irq_calls[RUNTIME_SCHED_EVENT_MAX];
+static u32 g_runtime_sched_event_halt_state[RUNTIME_SCHED_EVENT_MAX];
 static u32 g_runtime_fallback_event_enabled;
 static u32 g_runtime_fallback_event_count;
 static u32 g_runtime_fallback_event_kind[RUNTIME_FALLBACK_EVENT_MAX];
@@ -1480,6 +1481,7 @@ static void runtime_sched_event_record(void)
     g_runtime_sched_event_execute_pc[index] = g_runtime_execute_pc;
     g_runtime_sched_event_flush_calls[index] = g_runtime_flush_calls;
     g_runtime_sched_event_irq_calls[index] = g_runtime_irq_check_calls;
+    g_runtime_sched_event_halt_state[index] = reg[CPU_HALT_STATE];
   }
   g_runtime_sched_event_count++;
 }
@@ -11362,6 +11364,7 @@ static void runtime_sched_event_reset(void)
     g_runtime_sched_event_execute_pc[i] = 0;
     g_runtime_sched_event_flush_calls[i] = 0;
     g_runtime_sched_event_irq_calls[i] = 0;
+    g_runtime_sched_event_halt_state[i] = 0;
   }
 }
 
@@ -11391,6 +11394,7 @@ static u32 runtime_sched_event_hash(u32 count)
     hash = fnv1a_update_u32(hash, g_runtime_sched_event_execute_pc[i]);
     hash = fnv1a_update_u32(hash, g_runtime_sched_event_flush_calls[i]);
     hash = fnv1a_update_u32(hash, g_runtime_sched_event_irq_calls[i]);
+    hash = fnv1a_update_u32(hash, g_runtime_sched_event_halt_state[i]);
   }
   return hash;
 }
@@ -12912,6 +12916,8 @@ static void command_sched(char *mode, char *offset_arg)
       put_u32_dec(g_runtime_sched_event_flush_calls[i]);
       put_raw(":i");
       put_u32_dec(g_runtime_sched_event_irq_calls[i]);
+      put_raw(":h");
+      put_u32_dec(g_runtime_sched_event_halt_state[i]);
       printed++;
     }
     put_raw(" printed=");
@@ -12921,7 +12927,7 @@ static void command_sched(char *mode, char *offset_arg)
     put_raw(" harness_mode=");
     put_raw(RUNTIME_FIXTURE_MODE);
     put_raw(" sched_mode=runtime_scheduler");
-    put_raw(" event_encoding=l@pc:t:u:uc:uf:up:e@pc:ec:f:i");
+    put_raw(" event_encoding=l@pc:t:u:uc:uf:up:e@pc:ec:f:i:h");
     put_raw(" reason=runtime_scheduler_events\n");
     return;
   }
