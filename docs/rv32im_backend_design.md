@@ -337,7 +337,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   block-memory SMC/IRQ alert handling, SWP-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, ARM lookup-miss/invalid fallback, Thumb lookup-miss/invalid fallback, and Thumb unsupported-block fallback fixtures against a local ARM
   reference model, with
-  one hundred ninety three runtime blocks executed, fifty five total runtime
+  one hundred ninety six runtime blocks executed, fifty five total runtime
   fallbacks split into four initial lookup fallbacks, forty nine relookup
   fallbacks, and two unsupported-block fallbacks, basic data-processing native fallthrough chaining, remaining-cycle and invalid re-lookup fallback handoffs,
   ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
@@ -364,7 +364,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   checked,
   immediate memory writeback address/source ordering and store/load remaining-cycle handoff checked,
   block-memory writeback, decrement-before push, PC-loaded native target
-  chaining, LDM-PC native target chaining, LDM-PC SPSR restore/update behavior, ordered multi-word helper
+  chaining, LDM-PC native target chaining, LDM-PC target native fallthrough
+  chaining, LDM-PC SPSR restore/update behavior, ordered multi-word helper
   transfers, block-memory LDM, decrement-before PUSH, and SMC/IRQ remaining-cycle handoffs, and
   block-memory HALT update behavior checked,
   HLE division quotient/remainder/absolute-quotient helper results and DivArm remaining-cycle handoff checked,
@@ -377,9 +378,9 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   direct-branch target native-chain remaining-cycle execution, branch-target
   native fallthrough chaining, BX ARM-target native fallthrough chaining, and
   BL target native fallthrough chaining, SWI target native fallthrough
-  chaining, PC-write target native fallthrough chaining, and direct-branch,
-  BL, BX ARM, BX Thumb, SWI, and PC-write ADD remaining-cycle execution
-  exercised,
+  chaining, PC-write target native fallthrough chaining, LDM-PC target native
+  fallthrough chaining, and direct-branch, BL, BX ARM, BX Thumb, SWI, and
+  PC-write ADD remaining-cycle execution exercised,
   scheduler/update cycle-refill, PC-change chaining, and frame-complete PC-change exit, HALT/idle-loop/Thumb-lookup observations hashed, with
   unsupported-block, Thumb unsupported-block, Thumb lookup-miss/invalid, helper load, load-to-PC, PC-relative load/store, PSR read/write, word store, register-offset load/store, immediate/PC-relative/register-offset halfword load, register-offset halfword store, direct-branch, BL, BX ARM, BX Thumb, SWI, and PC-write ADD
   remaining-cycle lookup-misses, byte-store normal/alert, block-memory, and SWP alert remaining-cycle
