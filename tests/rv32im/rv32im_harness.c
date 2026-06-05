@@ -4951,15 +4951,20 @@ static u32 runtime_update_current_scheduler_hash(u32 hash)
                                        g_runtime_irq_check_calls);
 }
 
-static u32 runtime_fixture_frame_hash(const struct harness_state *state)
+static u32 runtime_snapshot_frame_hash(const struct compare_snapshot *snapshot)
 {
-  struct harness_state saved_state = g_state;
-  u32 hash;
+  u32 hash = 2166136261u;
 
-  g_state = *state;
-  render_frame();
-  hash = g_state.last_frame_hash;
-  g_state = saved_state;
+  hash = fnv1a_update_u32(hash, snapshot->reg_hash);
+  hash = fnv1a_update_u32(hash, snapshot->mem_hash);
+  hash = fnv1a_update_u32(hash, snapshot->scheduler_hash);
+  hash = fnv1a_update_u32(hash, snapshot->blocks);
+  hash = fnv1a_update_u32(hash, snapshot->fallbacks);
+  hash = fnv1a_update_u32(hash, snapshot->native_data_proc);
+  hash = fnv1a_update_u32(hash, snapshot->native_branch);
+  hash = fnv1a_update_u32(hash, snapshot->native_load);
+  hash = fnv1a_update_u32(hash, snapshot->native_store);
+  hash = fnv1a_update_u32(hash, snapshot->native_psr);
   return hash;
 }
 
@@ -8510,7 +8515,6 @@ static void run_runtime_reference_workload(const struct harness_state *base,
     RUNTIME_THUMB_UNSUPPORTED_START_PC,
     0, 0);
 
-  snapshot->frame_hash = runtime_fixture_frame_hash(base);
   snapshot->reg_hash = reg_hash;
   snapshot->mem_hash = mem_hash;
   snapshot->scheduler_hash = scheduler_hash;
@@ -8521,6 +8525,7 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   snapshot->native_load = 26;
   snapshot->native_store = 19;
   snapshot->native_psr = 5;
+  snapshot->frame_hash = runtime_snapshot_frame_hash(snapshot);
 }
 
 static void run_runtime_rv32im_workload(const struct harness_state *base,
@@ -10048,7 +10053,6 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
 
   riscv_get_runtime_stats(&after);
-  snapshot->frame_hash = runtime_fixture_frame_hash(base);
   snapshot->reg_hash = reg_hash;
   snapshot->mem_hash = mem_hash;
   snapshot->scheduler_hash = scheduler_hash;
@@ -10059,6 +10063,7 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   snapshot->native_load = after.native_load_insns;
   snapshot->native_store = after.native_store_insns;
   snapshot->native_psr = after.native_psr_insns;
+  snapshot->frame_hash = runtime_snapshot_frame_hash(snapshot);
 }
 
 void execute_arm(u32 cycles)
@@ -11039,7 +11044,7 @@ static void command_compare(void)
     put_raw(RUNTIME_COMPARE_WORKLOAD);
     put_raw(" harness_mode=");
     put_raw(RUNTIME_FIXTURE_MODE);
-    put_raw(" frame_mode=synthetic mem_mode=runtime_stickybits reason=");
+    put_raw(" frame_mode=runtime_snapshot mem_mode=runtime_stickybits reason=");
     put_raw(runtime_reason);
     put_chr('\n');
     return;
@@ -11098,7 +11103,7 @@ static void command_compare(void)
     put_u32_dec(g_runtime_code_bytes);
     put_raw(" harness_mode=");
     put_raw(RUNTIME_FIXTURE_MODE);
-    put_raw(" frame_mode=synthetic mem_mode=runtime_stickybits");
+    put_raw(" frame_mode=runtime_snapshot mem_mode=runtime_stickybits");
     put_raw(" reason=runtime_state_or_frame_mismatch\n");
     return;
   }
@@ -11139,8 +11144,8 @@ static void command_compare(void)
   put_u32_dec(g_runtime_code_bytes);
   put_raw(" harness_mode=");
   put_raw(RUNTIME_FIXTURE_MODE);
-  put_raw(" frame_mode=synthetic mem_mode=runtime_stickybits");
-  put_raw(" reason=runtime_state_synthetic_frame_equal\n");
+  put_raw(" frame_mode=runtime_snapshot mem_mode=runtime_stickybits");
+  put_raw(" reason=runtime_state_snapshot_frame_equal\n");
 }
 
 static void command_png(char *path)

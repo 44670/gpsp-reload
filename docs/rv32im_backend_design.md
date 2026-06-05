@@ -351,8 +351,9 @@ Remaining first-phase gaps should stay narrow and evidence-driven:
 - The qemu-user harness still has synthetic/fixture-backed state, memory, trace,
   and frame paths outside the runtime-backed `compare` state fixture. Synthetic
   paths stay labeled with `harness_mode=synthetic`; the `compare` fixture is
-  labeled `harness_mode=runtime_fixture` and still marks its frame hash as
-  synthetic until real emulator frame output is wired in.
+  labeled `harness_mode=runtime_fixture` and derives `frame_mode=runtime_snapshot`
+  from the runtime state/memory/scheduler/native-counter snapshot until real
+  emulator frame output is wired in.
 - Thumb instruction lowering remains deliberately unsupported; the harness
   compare path now proves Thumb lookup-miss/invalid fallback and unsupported
   Thumb block fallback only, and Thumb blocks must keep routing through
