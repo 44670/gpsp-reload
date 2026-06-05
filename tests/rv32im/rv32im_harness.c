@@ -10966,8 +10966,66 @@ static void command_mem(char *addr_arg, char *len_arg)
   put_chr('\n');
 }
 
-static void command_counters(void)
+static void command_counters(char *mode)
 {
+  if (mode && str_eq(mode, "runtime"))
+  {
+    const char *runtime_reason = "runtime_unknown";
+    struct compare_snapshot snapshot;
+
+    if (!capture_runtime_snapshot(&snapshot, &runtime_reason))
+    {
+      put_raw("result=FAIL command=counters backend=");
+      put_raw(backend_name());
+      put_raw(" harness_mode=");
+      put_raw(RUNTIME_FIXTURE_MODE);
+      put_raw(" counters_mode=runtime_snapshot reason=");
+      put_raw(runtime_reason);
+      put_chr('\n');
+      return;
+    }
+
+    put_raw("result=PASS command=counters backend=");
+    put_raw(backend_name());
+    put_raw(" blocks=");
+    put_u32_dec(snapshot.blocks);
+    put_raw(" fallbacks=");
+    put_u32_dec(snapshot.fallbacks);
+    put_raw(" native_data_proc=");
+    put_u32_dec(snapshot.native_data_proc);
+    put_raw(" native_branch=");
+    put_u32_dec(snapshot.native_branch);
+    put_raw(" native_load=");
+    put_u32_dec(snapshot.native_load);
+    put_raw(" native_store=");
+    put_u32_dec(snapshot.native_store);
+    put_raw(" native_psr=");
+    put_u32_dec(snapshot.native_psr);
+    put_raw(" reg_hash=");
+    put_u32_hex(snapshot.reg_hash);
+    put_raw(" mem_hash=");
+    put_u32_hex(snapshot.mem_hash);
+    put_raw(" scheduler_hash=");
+    put_u32_hex(snapshot.scheduler_hash);
+    put_raw(" snapshot_frame_hash=");
+    put_u32_hex(snapshot.frame_hash);
+    put_raw(" code_bytes=");
+    put_u32_dec(g_runtime_code_bytes);
+    put_raw(" harness_mode=");
+    put_raw(RUNTIME_FIXTURE_MODE);
+    put_raw(" counters_mode=runtime_snapshot counter_source=");
+    put_raw(g_state.backend == BACKEND_RV32IM ? "runtime_rv32im" :
+                                              "runtime_reference");
+    put_raw(" reason=runtime_snapshot_counters\n");
+    return;
+  }
+
+  if (mode && *mode && !str_eq(mode, "synthetic"))
+  {
+    print_fail("counters", "unknown_counters_mode");
+    return;
+  }
+
   render_frame();
   put_raw("result=PASS command=counters backend=");
   put_raw(backend_name());
@@ -11536,7 +11594,7 @@ static void process_line(char *line)
   }
   else if (str_eq(cmd, "counters"))
   {
-    command_counters();
+    command_counters(next_token(&cursor));
   }
   else if (str_eq(cmd, "tracepc"))
   {
