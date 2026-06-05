@@ -260,7 +260,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - SPSR restore for `Rd=PC,S=1` data-processing writes and `LDM ... {pc}^`
 - scriptable qemu-user harness commands for `load`, `reset`, `backend`, `run`,
   `cont`, `stepi`, `stepb`, `regs`, `mem`, `watchio`, `counters`,
-  `tracepc`, `framehash`, `compare`, `png`, and `quit`
+  `tracepc`, `bp`, `framehash`, `compare`, `png`, and `quit`
 - explicit runtime-snapshot `framehash runtime` and `png <path> runtime`
   artifact paths derived from the selected backend's compare snapshot
 - explicit runtime-snapshot `regs runtime` dump for the selected backend's
@@ -270,6 +270,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   hashes
 - explicit RV32IM `tracepc runtime [count]` lookup trace from the runtime
   workload, with Thumb lookups tagged in bit 0
+- explicit RV32IM `bp <pc> runtime` lookup-breakpoint query against the
+  runtime workload trace, using the same Thumb low-bit encoding
 - explicit RV32IM `mem <addr> <len> runtime` helper-event dump for observed
   runtime memory reads/writes in the selected address range
 - explicit RV32IM `mem <addr> <len> runtime-bytes` shadow byte dump for the
@@ -372,14 +374,15 @@ Remaining first-phase gaps should stay narrow and evidence-driven:
   `regs runtime`, `mem <addr> <len> runtime`,
   `mem <addr> <len> runtime-bytes`,
   `watchio <addr> <len> runtime`, `counters runtime`,
-  `tracepc runtime`, `framehash runtime`, and `png <path> runtime` fixture paths are labeled
+  `tracepc runtime`, `bp <pc> runtime`, `framehash runtime`, and
+  `png <path> runtime` fixture paths are labeled
   `harness_mode=runtime_fixture`; the snapshot commands derive output from the
   runtime state/memory/scheduler/native-counter snapshot, `mem ... runtime`
   and `watchio ... runtime` record actual RV32IM helper memory/IO events,
   `mem ... runtime-bytes` records a bounded shadow-memory byte view of actual
-  RV32IM helper writes, and `tracepc runtime` records actual RV32IM lookup PCs.
-  Full addressable emulator RAM/IO dumps and real emulator frame output are
-  still not wired in.
+  RV32IM helper writes, `tracepc runtime` records actual RV32IM lookup PCs, and
+  `bp ... runtime` reports hit/miss against those lookup PCs. Full addressable
+  emulator RAM/IO dumps and real emulator frame output are still not wired in.
 - Thumb instruction lowering remains deliberately unsupported; the harness
   compare path now proves Thumb lookup-miss/invalid fallback and unsupported
   Thumb block fallback only, and Thumb blocks must keep routing through

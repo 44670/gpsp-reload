@@ -61,7 +61,7 @@ typedef unsigned int usize;
 #define ZLIB_BLOCK_MAX 65535u
 #define ZLIB_BLOCKS ((PNG_RAW_SIZE + ZLIB_BLOCK_MAX - 1) / ZLIB_BLOCK_MAX)
 #define ZLIB_SIZE (2 + PNG_RAW_SIZE + (ZLIB_BLOCKS * 5) + 4)
-#define RUNTIME_TRACE_MAX 64u
+#define RUNTIME_TRACE_MAX 256u
 #define RUNTIME_MEM_EVENT_MAX 256u
 #define RUNTIME_EXEC_MAP_BYTES 55296u
 #define RUNTIME_LOAD_BLOCK_OFFSET 512u
@@ -10974,7 +10974,7 @@ static void print_fail(const char *command, const char *reason)
 
 static void command_help(void)
 {
-  put_raw("commands=load reset backend run cont stepi stepb regs mem watchio counters tracepc framehash compare png quit\n");
+  put_raw("commands=load reset backend run cont stepi stepb regs mem watchio counters tracepc bp framehash compare png quit\n");
 }
 
 static void command_backend(char *arg)
@@ -11617,6 +11617,122 @@ static void command_tracepc(char *arg, char *mode_arg)
   put_raw(" reason=synthetic_pc_trace\n");
 }
 
+static int runtime_trace_find_pc(u32 pc, u32 stored_count, u32 *index)
+{
+  u32 i;
+
+  for (i = 0; i < stored_count; i++)
+  {
+    if (g_runtime_trace_pcs[i] == pc)
+    {
+      *index = i;
+      return 1;
+    }
+  }
+  *index = 0xffffffffu;
+  return 0;
+}
+
+static void command_bp(char *pc_arg, char *mode)
+{
+  u32 pc;
+  u32 hit = 0;
+  u32 index = 0xffffffffu;
+  u32 i;
+  u32 hash = 2166136261u;
+
+  if (!parse_u32_token(pc_arg, &pc))
+  {
+    print_fail("bp", "bad_args");
+    return;
+  }
+
+  if (mode && str_eq(mode, "runtime"))
+  {
+    const char *runtime_reason = "runtime_unknown";
+    u32 stored_count;
+    u32 truncated;
+
+    if (!capture_runtime_lookup_trace(&runtime_reason))
+    {
+      put_raw("result=FAIL command=bp backend=");
+      put_raw(backend_name());
+      put_raw(" pc=");
+      put_u32_hex(pc);
+      put_raw(" harness_mode=");
+      put_raw(RUNTIME_FIXTURE_MODE);
+      put_raw(" bp_mode=runtime_lookup reason=");
+      put_raw(runtime_reason);
+      put_chr('\n');
+      return;
+    }
+
+    stored_count = runtime_trace_stored_count();
+    truncated = g_runtime_trace_count > stored_count;
+    hit = runtime_trace_find_pc(pc, stored_count, &index);
+    hash = runtime_trace_hash(stored_count);
+
+    put_raw("result=PASS command=bp backend=");
+    put_raw(backend_name());
+    put_raw(" pc=");
+    put_u32_hex(pc);
+    put_raw(" hit=");
+    put_u32_dec(hit);
+    put_raw(" index=");
+    put_u32_hex(index);
+    put_raw(" total=");
+    put_u32_dec(g_runtime_trace_count);
+    put_raw(" stored=");
+    put_u32_dec(stored_count);
+    put_raw(" truncated=");
+    put_u32_dec(truncated);
+    put_raw(" hash=");
+    put_u32_hex(hash);
+    put_raw(" harness_mode=");
+    put_raw(RUNTIME_FIXTURE_MODE);
+    put_raw(" bp_mode=runtime_lookup trace_encoding=thumb_lowbit reason=");
+    put_raw(hit ? "runtime_lookup_breakpoint_hit" :
+      (truncated ? "runtime_lookup_breakpoint_incomplete" :
+       "runtime_lookup_breakpoint_miss"));
+    put_chr('\n');
+    return;
+  }
+
+  if (mode && *mode && !str_eq(mode, "synthetic"))
+  {
+    print_fail("bp", "unknown_bp_mode");
+    return;
+  }
+
+  for (i = 0; i < 16; i++)
+  {
+    u32 trace_pc = synthetic_trace_pc(&g_state, i);
+    hash = fnv1a_update_u32(hash, trace_pc);
+    if (trace_pc == pc && !hit)
+    {
+      hit = 1;
+      index = i;
+    }
+  }
+
+  put_raw("result=PASS command=bp backend=");
+  put_raw(backend_name());
+  put_raw(" pc=");
+  put_u32_hex(pc);
+  put_raw(" hit=");
+  put_u32_dec(hit);
+  put_raw(" index=");
+  put_u32_hex(index);
+  put_raw(" count=16 hash=");
+  put_u32_hex(hash);
+  put_raw(" harness_mode=");
+  put_raw(HARNESS_MODE);
+  put_raw(" bp_mode=synthetic_trace reason=");
+  put_raw(hit ? "synthetic_pc_breakpoint_hit" :
+    "synthetic_pc_breakpoint_miss");
+  put_chr('\n');
+}
+
 static u32 crc32_update(u32 crc, const u8 *data, usize len)
 {
   usize i;
@@ -12212,6 +12328,11 @@ static void process_line(char *line)
   {
     char *arg = next_token(&cursor);
     command_tracepc(arg, next_token(&cursor));
+  }
+  else if (str_eq(cmd, "bp"))
+  {
+    char *pc = next_token(&cursor);
+    command_bp(pc, next_token(&cursor));
   }
   else if (str_eq(cmd, "framehash"))
   {
