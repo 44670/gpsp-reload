@@ -1260,6 +1260,8 @@ static u32 g_runtime_sched_event_lookup_pc[RUNTIME_SCHED_EVENT_MAX];
 static u32 g_runtime_sched_event_thumb_calls[RUNTIME_SCHED_EVENT_MAX];
 static u32 g_runtime_sched_event_update_calls[RUNTIME_SCHED_EVENT_MAX];
 static u32 g_runtime_sched_event_update_cycles[RUNTIME_SCHED_EVENT_MAX];
+static u32 g_runtime_sched_event_update_flags[RUNTIME_SCHED_EVENT_MAX];
+static u32 g_runtime_sched_event_update_pc[RUNTIME_SCHED_EVENT_MAX];
 static u32 g_runtime_sched_event_execute_calls[RUNTIME_SCHED_EVENT_MAX];
 static u32 g_runtime_sched_event_execute_cycles[RUNTIME_SCHED_EVENT_MAX];
 static u32 g_runtime_sched_event_execute_pc[RUNTIME_SCHED_EVENT_MAX];
@@ -1408,6 +1410,8 @@ static u32 g_runtime_update_first_return;
 static u32 g_runtime_update_later_return;
 static u32 g_runtime_update_first_pc_changed;
 static u32 g_runtime_update_first_pc;
+static u32 g_runtime_update_return_flags;
+static u32 g_runtime_update_pc;
 static u32 g_runtime_read_calls;
 static u32 g_runtime_write_calls;
 static u32 g_runtime_read32_calls;
@@ -1469,6 +1473,8 @@ static void runtime_sched_event_record(void)
     g_runtime_sched_event_thumb_calls[index] = g_runtime_thumb_lookup_calls;
     g_runtime_sched_event_update_calls[index] = g_runtime_update_calls;
     g_runtime_sched_event_update_cycles[index] = (u32)g_runtime_update_cycles;
+    g_runtime_sched_event_update_flags[index] = g_runtime_update_return_flags;
+    g_runtime_sched_event_update_pc[index] = g_runtime_update_pc;
     g_runtime_sched_event_execute_calls[index] = g_runtime_execute_calls;
     g_runtime_sched_event_execute_cycles[index] = g_runtime_execute_cycles;
     g_runtime_sched_event_execute_pc[index] = g_runtime_execute_pc;
@@ -1902,6 +1908,8 @@ static void reset_runtime_fixture_state(u32 pc)
   g_runtime_update_later_return = FRAME_COMPLETE;
   g_runtime_update_first_pc_changed = 0;
   g_runtime_update_first_pc = 0;
+  g_runtime_update_return_flags = 0;
+  g_runtime_update_pc = 0;
   g_runtime_read_calls = 0;
   g_runtime_write_calls = 0;
   g_runtime_read32_calls = 0;
@@ -11224,15 +11232,26 @@ void set_cpu_mode(u32 new_mode)
 
 u32 function_cc update_gba(int remaining_cycles)
 {
+  u32 update_return;
+
   g_runtime_update_calls++;
   g_runtime_update_cycles = remaining_cycles;
   if (g_runtime_update_calls == 1)
   {
     if (g_runtime_update_first_pc_changed)
       reg[REG_PC] = g_runtime_update_first_pc;
-    return g_runtime_update_first_return;
+    update_return = g_runtime_update_first_return;
   }
-  return g_runtime_update_later_return;
+  else
+  {
+    update_return = g_runtime_update_later_return;
+  }
+
+  g_runtime_update_return_flags |= update_return &
+    (FRAME_COMPLETE | PC_CHANGED);
+  if (update_return & PC_CHANGED)
+    g_runtime_update_pc = reg[REG_PC];
+  return update_return;
 }
 
 static void runtime_trace_reset(void)
@@ -11336,6 +11355,8 @@ static void runtime_sched_event_reset(void)
     g_runtime_sched_event_thumb_calls[i] = 0;
     g_runtime_sched_event_update_calls[i] = 0;
     g_runtime_sched_event_update_cycles[i] = 0;
+    g_runtime_sched_event_update_flags[i] = 0;
+    g_runtime_sched_event_update_pc[i] = 0;
     g_runtime_sched_event_execute_calls[i] = 0;
     g_runtime_sched_event_execute_cycles[i] = 0;
     g_runtime_sched_event_execute_pc[i] = 0;
@@ -11363,6 +11384,8 @@ static u32 runtime_sched_event_hash(u32 count)
     hash = fnv1a_update_u32(hash, g_runtime_sched_event_thumb_calls[i]);
     hash = fnv1a_update_u32(hash, g_runtime_sched_event_update_calls[i]);
     hash = fnv1a_update_u32(hash, g_runtime_sched_event_update_cycles[i]);
+    hash = fnv1a_update_u32(hash, g_runtime_sched_event_update_flags[i]);
+    hash = fnv1a_update_u32(hash, g_runtime_sched_event_update_pc[i]);
     hash = fnv1a_update_u32(hash, g_runtime_sched_event_execute_calls[i]);
     hash = fnv1a_update_u32(hash, g_runtime_sched_event_execute_cycles[i]);
     hash = fnv1a_update_u32(hash, g_runtime_sched_event_execute_pc[i]);
@@ -12875,6 +12898,10 @@ static void command_sched(char *mode, char *offset_arg)
       put_u32_dec(g_runtime_sched_event_update_calls[i]);
       put_raw(":uc");
       put_u32_hex(g_runtime_sched_event_update_cycles[i]);
+      put_raw(":uf");
+      put_u32_hex(g_runtime_sched_event_update_flags[i]);
+      put_raw(":up");
+      put_u32_hex(g_runtime_sched_event_update_pc[i]);
       put_raw(":e");
       put_u32_dec(g_runtime_sched_event_execute_calls[i]);
       put_chr('@');
@@ -12894,7 +12921,7 @@ static void command_sched(char *mode, char *offset_arg)
     put_raw(" harness_mode=");
     put_raw(RUNTIME_FIXTURE_MODE);
     put_raw(" sched_mode=runtime_scheduler");
-    put_raw(" event_encoding=l@pc:t:u:uc:e@pc:ec:f:i");
+    put_raw(" event_encoding=l@pc:t:u:uc:uf:up:e@pc:ec:f:i");
     put_raw(" reason=runtime_scheduler_events\n");
     return;
   }

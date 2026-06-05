@@ -420,7 +420,9 @@ Remaining first-phase gaps should stay narrow and evidence-driven:
   scheduler/update boundary observations,
   `fallbacks runtime ...` records the runtime fallback kind/PC/result window,
   `tracepc runtime ...` records a bounded window of actual RV32IM lookup PCs,
-  and `bp ... runtime` reports hit/miss against those lookup PCs. Full
+  `sched runtime ...` includes the observed `update_gba()` return flags and
+  PC-change target for each scheduler window entry, and `bp ... runtime`
+  reports hit/miss against those lookup PCs. Full
   addressable emulator RAM/IO dumps and real emulator frame output are still
   not wired in.
 - The `fallbacks runtime` command makes the current fallback bucket auditable;
