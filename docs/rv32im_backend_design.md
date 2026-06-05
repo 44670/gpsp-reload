@@ -261,8 +261,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - SPSR restore for `Rd=PC,S=1` data-processing writes and `LDM ... {pc}^`
 - scriptable qemu-user harness commands for `load`, `reset`, `backend`, `run`,
   `cont`, `stepi`, `stepb`, `regs`, `mem`, `watchio`, `counters`,
-  `fallbacks`, `sched`, `tracepc`, `bp`, `framehash`, `compare`, `png`,
-  and `quit`
+  `fallbacks`, `sched`, `tracepc`, `bp`, `framehash`, `compare`, `rejects`,
+  `png`, and `quit`
 - successful qemu-user harness commands use stable
   `result=PASS command=...` summary lines, and failure paths use
   `result=FAIL command=...`
@@ -276,6 +276,9 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - explicit runtime-snapshot `counters runtime` dump for selected-backend
   block/fallback/native counters, fallback source breakdown, state, memory,
   scheduler, and snapshot hashes
+- explicit RV32IM `rejects runtime` emitter-contract audit for unsafe PSR
+  opcodes that must stay rejected by native lowering, currently
+  `MRS r15,CPSR` and `MSR CPSR,r15`
 - explicit RV32IM `fallbacks runtime [offset]` dump for observed runtime
   fallback events, including initial lookup, relookup, and unsupported-block
   categories plus PC, ARM/Thumb mode, lookup result, and cycle budget; the

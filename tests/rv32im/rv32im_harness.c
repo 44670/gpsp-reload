@@ -85,6 +85,7 @@ typedef unsigned int usize;
 #define RUNTIME_MEM_EVENT_MAX 256u
 #define RUNTIME_SCHED_EVENT_MAX 256u
 #define RUNTIME_FALLBACK_EVENT_MAX 256u
+#define RUNTIME_REJECT_CODE_BYTES 512u
 #define RUNTIME_EXEC_MAP_BYTES 71680u
 #define RUNTIME_LOAD_BLOCK_OFFSET 512u
 #define RUNTIME_STORE_BLOCK_OFFSET 1024u
@@ -559,6 +560,8 @@ typedef unsigned int usize;
 #define RUNTIME_MSR_SPSR_EXTRA_CYCLES 6u
 #define RUNTIME_MSR_CPSR_FLAGS_IMM 0xe328f20au
 #define RUNTIME_MSR_CPSR_R0 0xe129f000u
+#define RUNTIME_MRS_R15_CPSR 0xe10ff000u
+#define RUNTIME_MSR_CPSR_R15 0xe129f00fu
 #define RUNTIME_MSR_SPSR_R1 0xe169f001u
 #define RUNTIME_MSR_CPSR_FLAGS_INITIAL 0x30000093u
 #define RUNTIME_MSR_CPSR_FLAGS_EXPECTED 0xa0000093u
@@ -1597,6 +1600,7 @@ static u32 g_runtime_fallback_event_cycles[RUNTIME_FALLBACK_EVENT_MAX];
 static u32 g_runtime_shadow_enabled;
 static u32 g_runtime_shadow_write_bytes;
 static u8 g_runtime_shadow_mem[RUNTIME_SHADOW_SIZE];
+static u8 g_runtime_reject_code[RUNTIME_REJECT_CODE_BYTES];
 
 u32 reg[REG_MAX];
 u32 spsr[6];
@@ -2394,6 +2398,52 @@ static int build_runtime_memory_block(const char **reason, u8 *block_base,
 
   riscv_emit_block_finalize(meta, &translation_ptr, start_pc, end_pc, false);
   *code_bytes_out = (u32)(translation_ptr - block_base);
+  return 1;
+}
+
+static int runtime_expect_psr_rejected(const char **reason, u32 opcode,
+                                       u32 cycles,
+                                       const char *accepted_reason)
+{
+  u8 *translation_ptr = g_runtime_reject_code;
+  riscv_jit_block_meta *meta;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  if (riscv_emit_native_arm_psr(&translation_ptr, meta, opcode, cycles))
+  {
+    *reason = accepted_reason;
+    return 0;
+  }
+
+  return 1;
+}
+
+static int run_runtime_reject_audit(const char **reason,
+                                    u32 *total_rejections,
+                                    u32 *psr_rejections)
+{
+  *total_rejections = 0;
+  *psr_rejections = 0;
+
+  if (!runtime_expect_psr_rejected(
+        reason, RUNTIME_MRS_R15_CPSR, RUNTIME_PSR_MRS_CPSR_CYCLES,
+        "runtime_reject_mrs_r15_cpsr_accepted"))
+  {
+    return 0;
+  }
+  (*total_rejections)++;
+  (*psr_rejections)++;
+
+  if (!runtime_expect_psr_rejected(
+        reason, RUNTIME_MSR_CPSR_R15, RUNTIME_PSR_MRS_CPSR_CYCLES,
+        "runtime_reject_msr_cpsr_r15_accepted"))
+  {
+    return 0;
+  }
+  (*total_rejections)++;
+  (*psr_rejections)++;
+
+  *reason = "runtime_rejections_preserved";
   return 1;
 }
 
@@ -14230,11 +14280,65 @@ static void print_fail(const char *command, const char *reason)
   put_chr('\n');
 }
 
+static void command_rejects(char *mode)
+{
+  const char *runtime_reason = "runtime_unknown";
+  u32 total_rejections = 0;
+  u32 psr_rejections = 0;
+
+  if (mode && *mode && !str_eq(mode, "runtime"))
+  {
+    print_fail("rejects", "unknown_reject_mode");
+    return;
+  }
+
+  if (g_state.backend != BACKEND_RV32IM)
+  {
+    put_raw("result=FAIL command=rejects backend=");
+    put_raw(backend_name());
+    put_raw(" harness_mode=");
+    put_raw(RUNTIME_FIXTURE_MODE);
+    put_raw(" reject_mode=emitter_contract");
+    put_raw(" reason=runtime_rejects_requires_rv32im\n");
+    return;
+  }
+
+  if (!run_runtime_reject_audit(&runtime_reason, &total_rejections,
+                                &psr_rejections))
+  {
+    put_raw("result=FAIL command=rejects backend=");
+    put_raw(backend_name());
+    put_raw(" total=");
+    put_u32_dec(total_rejections);
+    put_raw(" psr_unsupported=");
+    put_u32_dec(psr_rejections);
+    put_raw(" harness_mode=");
+    put_raw(RUNTIME_FIXTURE_MODE);
+    put_raw(" reject_mode=emitter_contract reason=");
+    put_raw(runtime_reason);
+    put_chr('\n');
+    return;
+  }
+
+  put_raw("result=PASS command=rejects backend=");
+  put_raw(backend_name());
+  put_raw(" total=");
+  put_u32_dec(total_rejections);
+  put_raw(" psr_unsupported=");
+  put_u32_dec(psr_rejections);
+  put_raw(" opcodes=mrs_r15_cpsr,msr_cpsr_r15");
+  put_raw(" harness_mode=");
+  put_raw(RUNTIME_FIXTURE_MODE);
+  put_raw(" reject_mode=emitter_contract reason=");
+  put_raw(runtime_reason);
+  put_chr('\n');
+}
+
 static void command_help(void)
 {
   put_raw("result=PASS command=help commands=load reset backend run cont ");
   put_raw("stepi stepb regs mem watchio counters fallbacks sched tracepc bp ");
-  put_raw("framehash compare png quit harness_mode=");
+  put_raw("framehash compare rejects png quit harness_mode=");
   put_raw(HARNESS_MODE);
   put_raw(" reason=command_list\n");
 }
@@ -16077,6 +16181,10 @@ static void process_line(char *line)
   else if (str_eq(cmd, "compare"))
   {
     command_compare();
+  }
+  else if (str_eq(cmd, "rejects"))
+  {
+    command_rejects(next_token(&cursor));
   }
   else if (str_eq(cmd, "png"))
   {

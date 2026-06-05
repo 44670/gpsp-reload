@@ -15,6 +15,7 @@ SMOKE_PNG_SIG := $(OUT_DIR)/png_signature.bin
 SMOKE_LOAD := $(OUT_DIR)/rv32im_harness_load.bin
 SMOKE_LOG := $(OUT_DIR)/rv32im_harness.log
 COMPARE_LOG := $(OUT_DIR)/rv32im_harness_compare.log
+REJECTS_LOG := $(OUT_DIR)/rv32im_harness_rejects.log
 CODEGEN_BIN := $(OUT_DIR)/rv32im_codegen.bin
 CODEGEN_REF_ELF := $(OUT_DIR)/rv32im_codegen_ref.elf
 CODEGEN_REF_BIN := $(OUT_DIR)/rv32im_codegen_ref.bin
@@ -110,10 +111,11 @@ codegen: $(CODEGEN) $(CODEGEN_REF_BIN) | $(OUT_DIR)
 frontend: $(FRONTEND_OBJ)
 
 smoke: $(HARNESS) $(SMOKE_LOAD) $(SMOKE_PNG_SIG) $(OUT_DIR)
-	printf 'help\nload $(SMOKE_LOAD)\nbackend rv32im\nreset\nrun 2\nrun runtime\ncont 16\nstepi 4\nstepb 3\nstepb runtime 5\nregs\nregs runtime\nmem 0x02000000 16\nmem 0x02000000 4096 runtime\nmem 0x02000000 4096 runtime 8\nmem 0x02000120 32 runtime-bytes\nwatchio 0x04000000 64 runtime\ncounters\ncounters runtime\nfallbacks runtime\nfallbacks runtime 8\nfallbacks runtime 40\nfallbacks runtime 48\nsched runtime\nsched runtime 8\nsched runtime 108\nsched runtime 120\ntracepc 4\ntracepc runtime 8\ntracepc runtime 4 32\nbp 0x08000000 runtime\nframehash\ncompare\nframehash runtime\npng $(SMOKE_RUNTIME_PNG) runtime\npng $(SMOKE_PNG)\nquit\n' | $(QEMU_RISCV32) ./$(HARNESS) | tee $(SMOKE_LOG)
-	grep -q 'result=PASS command=help commands=load reset backend run cont stepi stepb regs mem watchio counters fallbacks sched tracepc bp framehash compare png quit harness_mode=synthetic reason=command_list' $(SMOKE_LOG)
+	printf 'help\nload $(SMOKE_LOAD)\nbackend rv32im\nrejects runtime\nreset\nrun 2\nrun runtime\ncont 16\nstepi 4\nstepb 3\nstepb runtime 5\nregs\nregs runtime\nmem 0x02000000 16\nmem 0x02000000 4096 runtime\nmem 0x02000000 4096 runtime 8\nmem 0x02000120 32 runtime-bytes\nwatchio 0x04000000 64 runtime\ncounters\ncounters runtime\nfallbacks runtime\nfallbacks runtime 8\nfallbacks runtime 40\nfallbacks runtime 48\nsched runtime\nsched runtime 8\nsched runtime 108\nsched runtime 120\ntracepc 4\ntracepc runtime 8\ntracepc runtime 4 32\nbp 0x08000000 runtime\nframehash\ncompare\nframehash runtime\npng $(SMOKE_RUNTIME_PNG) runtime\npng $(SMOKE_PNG)\nquit\n' | $(QEMU_RISCV32) ./$(HARNESS) | tee $(SMOKE_LOG)
+	grep -q 'result=PASS command=help commands=load reset backend run cont stepi stepb regs mem watchio counters fallbacks sched tracepc bp framehash compare rejects png quit harness_mode=synthetic reason=command_list' $(SMOKE_LOG)
 	grep -q 'result=PASS command=load backend=interp bytes=23 hash=0x2b3be9fa harness_mode=synthetic reason=file_loaded' $(SMOKE_LOG)
 	grep -q 'result=PASS command=backend backend=rv32im harness_mode=synthetic reason=backend_selected' $(SMOKE_LOG)
+	grep -q 'result=PASS command=rejects backend=rv32im total=2 psr_unsupported=2 opcodes=mrs_r15_cpsr,msr_cpsr_r15 harness_mode=runtime_fixture reject_mode=emitter_contract reason=runtime_rejections_preserved' $(SMOKE_LOG)
 	grep -q 'result=PASS command=reset backend=rv32im loaded_bytes=23 loaded_hash=0x2b3be9fa frame_hash=.* harness_mode=synthetic reason=state_reset' $(SMOKE_LOG)
 	grep -q 'result=PASS command=run backend=rv32im' $(SMOKE_LOG)
 	grep -q 'reason=synthetic_frame_workload' $(SMOKE_LOG)
@@ -172,6 +174,12 @@ compare: $(HARNESS) | $(OUT_DIR)
 	grep -q 'reason=runtime_state_snapshot_frame_equal' $(COMPARE_LOG)
 	grep -q 'result=PASS command=quit backend=interp' $(COMPARE_LOG)
 
+rejects: $(HARNESS) | $(OUT_DIR)
+	printf 'backend rv32im\nrejects runtime\nquit\n' | $(QEMU_RISCV32) ./$(HARNESS) | tee $(REJECTS_LOG)
+	grep -q 'result=PASS command=backend backend=rv32im harness_mode=synthetic reason=backend_selected' $(REJECTS_LOG)
+	grep -q 'result=PASS command=rejects backend=rv32im total=2 psr_unsupported=2 opcodes=mrs_r15_cpsr,msr_cpsr_r15 harness_mode=runtime_fixture reject_mode=emitter_contract reason=runtime_rejections_preserved' $(REJECTS_LOG)
+	grep -q 'result=PASS command=quit backend=rv32im' $(REJECTS_LOG)
+
 abi: $(ABI_TEST)
 	$(QEMU_RISCV32) ./$(ABI_TEST)
 
@@ -181,7 +189,7 @@ exec: $(EXEC_TEST)
 runtime: $(RUNTIME_TEST)
 	$(QEMU_RISCV32) ./$(RUNTIME_TEST)
 
-test: codegen abi exec runtime frontend compare smoke
+test: codegen abi exec runtime frontend rejects compare smoke
 
 clean:
 	rm -f $(HARNESS) $(CODEGEN) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST)
