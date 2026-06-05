@@ -277,7 +277,9 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   scheduler, and snapshot hashes
 - explicit RV32IM `fallbacks runtime [offset]` dump for observed runtime
   fallback events, including initial lookup, relookup, and unsupported-block
-  categories plus PC, ARM/Thumb mode, lookup result, and cycle budget
+  categories plus PC, ARM/Thumb mode, lookup result, and cycle budget; the
+  smoke gate pins tail windows that prove ARM and Thumb initial lookup
+  miss/invalid paths plus ARM and Thumb unsupported-block fallback PCs
 - runtime snapshot frame/hash artifacts include the fallback source breakdown,
   not only the aggregate fallback count
 - explicit RV32IM `sched runtime [offset]` dump for scheduler-boundary events
