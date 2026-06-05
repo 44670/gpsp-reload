@@ -2053,7 +2053,9 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
 
   if (condition != 0xe || (opcode & 0x0e000090u) != 0x00000090u ||
       (pc_base && writeback_address) ||
-      mem_type == 0 || (load && rd == REG_PC) ||
+      mem_type == 0 ||
+      (load && rd == REG_PC &&
+       (mem_type != 1 || writeback_address || !immediate_offset || pc_base)) ||
       (!load && mem_type != 1) ||
       (!immediate_offset && ((opcode >> 8) & 0xfu) != 0))
   {
@@ -2136,6 +2138,8 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
     riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
     riscv_emit_c_call(&ptr, read_helper);
     riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_a0);
+    if (rd == REG_PC)
+      meta->flags |= RISCV_BLOCK_PC_WRITTEN;
     riscv_emit_adjust_cycles(&ptr, cycles + 2u);
     riscv_native_load_insns++;
   }
