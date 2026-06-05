@@ -779,6 +779,10 @@ typedef unsigned int usize;
 #define RUNTIME_PC_BASE_LOAD_EXTRA_CYCLES 5u
 #define RUNTIME_PC_BASE_LDR_R4_PC_0X24 0xe59f4024u
 #define RUNTIME_PC_BASE_LDRB_R5_PC_NEG_0X10 0xe55f5010u
+#define RUNTIME_PC_BASE_LDR_R4_PC_POST_0X24 \
+  (RUNTIME_PC_BASE_LDR_R4_PC_0X24 & ~0x01000000u)
+#define RUNTIME_PC_BASE_LDRB_R5_PC_NEG_0X10_WB \
+  (RUNTIME_PC_BASE_LDRB_R5_PC_NEG_0X10 | 0x00200000u)
 #define RUNTIME_LOAD_PC_START_PC 0x08001560u
 #define RUNTIME_LOAD_PC_END_PC (RUNTIME_LOAD_PC_START_PC + 4u)
 #define RUNTIME_LOAD_PC_CYCLES 8u
@@ -825,6 +829,8 @@ typedef unsigned int usize;
 #define RUNTIME_STORE_STRB_R6_R3_0X29 0xe5c36029u
 #define RUNTIME_STORE_STR_R15_R3_0X2C 0xe583f02cu
 #define RUNTIME_PC_BASE_STR_R6_PC_0X20 0xe58f6020u
+#define RUNTIME_PC_BASE_STR_R6_PC_0X20_WB \
+  (RUNTIME_PC_BASE_STR_R6_PC_0X20 | 0x00200000u)
 #define RUNTIME_STORE_BASE_ADDR 0x02000100u
 #define RUNTIME_STORE_WORD_ADDR (RUNTIME_STORE_BASE_ADDR + 0x28u)
 #define RUNTIME_STORE_BYTE_ADDR (RUNTIME_STORE_BASE_ADDR + 0x29u)
@@ -901,6 +907,12 @@ typedef unsigned int usize;
 #define RUNTIME_PC_BASE_HALF_LDRSH_R9_PC_0X26 0xe1df92f6u
 #define RUNTIME_PC_BASE_HALF_STRH_R10_PC_0X22 0xe1cfa2b2u
 #define RUNTIME_PC_BASE_HALF_STRH_R10_PC_NEG_0X22 0xe14fa2b2u
+#define RUNTIME_PC_BASE_HALF_LDRH_R8_PC_0X24_WB \
+  (RUNTIME_PC_BASE_HALF_LDRH_R8_PC_0X24 | 0x00200000u)
+#define RUNTIME_PC_BASE_HALF_LDRSB_R7_PC_POST_0X25 \
+  (RUNTIME_PC_BASE_HALF_LDRSB_R7_PC_0X25 & ~0x01000000u)
+#define RUNTIME_PC_BASE_HALF_STRH_R10_PC_0X22_WB \
+  (RUNTIME_PC_BASE_HALF_STRH_R10_PC_0X22 | 0x00200000u)
 #define RUNTIME_HALF_WRITEBACK_STRH_R3_R3_0X10_WB 0xe1e331b0u
 #define RUNTIME_HALF_WRITEBACK_LDRSH_R5_R4_POST_NEG_R2 0xe01450f2u
 #define RUNTIME_HALF_BASE_ADDR 0x02000240u
@@ -1339,6 +1351,7 @@ typedef unsigned int usize;
 #define RUNTIME_REG_OFFSET_STR_R9_R3_R15 0xe783900fu
 #define RUNTIME_REG_OFFSET_STRB_R9_R3_NEG_R15 0xe743900fu
 #define RUNTIME_REG_OFFSET_STRB_R9_R3_NEG_R2 0xe7439002u
+#define RUNTIME_REG_OFFSET_LDR_R8_R3_R2_LSL_R1 0xe7938112u
 #define RUNTIME_REG_OFFSET_WRITEBACK_STR_R3_R3_R2_WB 0xe7a33002u
 #define RUNTIME_REG_OFFSET_WRITEBACK_LDRB_R5_R4_POST_NEG_R2 0xe6545002u
 #define RUNTIME_SHIFTED_REG_OFFSET_LDRB_R10_R3_R2_LSL2 0xe7d3a102u
@@ -2538,7 +2551,9 @@ static int run_runtime_reject_audit(const char **reason,
                                     u32 *total_rejections,
                                     u32 *psr_rejections,
                                     u32 *conditional_rejections,
-                                    u32 *load_pc_rejections)
+                                    u32 *load_pc_rejections,
+                                    u32 *pc_base_wb_rejections,
+                                    u32 *shifted_reg_offset_rejections)
 {
   static const runtime_cond_cycles_reject_case conditional_cycles_cases[] =
   {
@@ -2599,12 +2614,35 @@ static int run_runtime_reject_audit(const char **reason,
       RUNTIME_HALF_LDRSH_BASE_CYCLES,
       "runtime_reject_ldrsh_pc_accepted" }
   };
+  static const runtime_access_memory_reject_case pc_base_wb_cases[] =
+  {
+    { RUNTIME_PC_BASE_LDR_R4_PC_POST_0X24,
+      RUNTIME_PC_BASE_LOAD_WORD_PC, RUNTIME_PC_BASE_LOAD_WORD_CYCLES,
+      "runtime_reject_pc_base_ldr_post_accepted" },
+    { RUNTIME_PC_BASE_LDRB_R5_PC_NEG_0X10_WB,
+      RUNTIME_PC_BASE_LOAD_BYTE_PC, RUNTIME_PC_BASE_LOAD_BYTE_CYCLES,
+      "runtime_reject_pc_base_ldrb_wb_accepted" },
+    { RUNTIME_PC_BASE_STR_R6_PC_0X20_WB,
+      RUNTIME_PC_BASE_STORE_START_PC, RUNTIME_STORE_BASE_CYCLES,
+      "runtime_reject_pc_base_str_wb_accepted" },
+    { RUNTIME_PC_BASE_HALF_LDRH_R8_PC_0X24_WB,
+      RUNTIME_PC_BASE_HALF_LDRH_PC, RUNTIME_HALF_LDRH_BASE_CYCLES,
+      "runtime_reject_pc_base_ldrh_wb_accepted" },
+    { RUNTIME_PC_BASE_HALF_LDRSB_R7_PC_POST_0X25,
+      RUNTIME_PC_BASE_HALF_LDRSB_PC, RUNTIME_HALF_LDRSB_BASE_CYCLES,
+      "runtime_reject_pc_base_ldrsb_post_accepted" },
+    { RUNTIME_PC_BASE_HALF_STRH_R10_PC_0X22_WB,
+      RUNTIME_PC_BASE_HALF_STORE_START_PC, RUNTIME_HALF_STORE_BASE_CYCLES,
+      "runtime_reject_pc_base_strh_wb_accepted" }
+  };
   u32 i;
 
   *total_rejections = 0;
   *psr_rejections = 0;
   *conditional_rejections = 0;
   *load_pc_rejections = 0;
+  *pc_base_wb_rejections = 0;
+  *shifted_reg_offset_rejections = 0;
 
   if (!runtime_expect_psr_rejected(
         reason, RUNTIME_MRS_R15_CPSR, RUNTIME_PSR_MRS_CPSR_CYCLES,
@@ -2706,6 +2744,32 @@ static int run_runtime_reject_audit(const char **reason,
     (*total_rejections)++;
     (*load_pc_rejections)++;
   }
+
+  for (i = 0; i < ARRAY_SIZE(pc_base_wb_cases); i++)
+  {
+    const runtime_access_memory_reject_case *test_case =
+      &pc_base_wb_cases[i];
+
+    if (!runtime_expect_access_memory_rejected(
+          reason, test_case->opcode, test_case->pc, test_case->cycles,
+          test_case->accepted_reason))
+    {
+      return 0;
+    }
+    (*total_rejections)++;
+    (*pc_base_wb_rejections)++;
+  }
+
+  if (!runtime_expect_access_memory_rejected(
+        reason, RUNTIME_REG_OFFSET_LDR_R8_R3_R2_LSL_R1,
+        RUNTIME_REG_OFFSET_LOAD_START_PC,
+        RUNTIME_REG_OFFSET_LDR_BASE_CYCLES,
+        "runtime_reject_shifted_reg_offset_accepted"))
+  {
+    return 0;
+  }
+  (*total_rejections)++;
+  (*shifted_reg_offset_rejections)++;
 
   *reason = "runtime_rejections_preserved";
   return 1;
@@ -14551,6 +14615,8 @@ static void command_rejects(char *mode)
   u32 psr_rejections = 0;
   u32 conditional_rejections = 0;
   u32 load_pc_rejections = 0;
+  u32 pc_base_wb_rejections = 0;
+  u32 shifted_reg_offset_rejections = 0;
 
   if (mode && *mode && !str_eq(mode, "runtime"))
   {
@@ -14571,7 +14637,9 @@ static void command_rejects(char *mode)
 
   if (!run_runtime_reject_audit(&runtime_reason, &total_rejections,
                                 &psr_rejections, &conditional_rejections,
-                                &load_pc_rejections))
+                                &load_pc_rejections,
+                                &pc_base_wb_rejections,
+                                &shifted_reg_offset_rejections))
   {
     put_raw("result=FAIL command=rejects backend=");
     put_raw(backend_name());
@@ -14583,6 +14651,10 @@ static void command_rejects(char *mode)
     put_u32_dec(conditional_rejections);
     put_raw(" load_pc=");
     put_u32_dec(load_pc_rejections);
+    put_raw(" pc_base_wb=");
+    put_u32_dec(pc_base_wb_rejections);
+    put_raw(" shifted_reg_offset=");
+    put_u32_dec(shifted_reg_offset_rejections);
     put_raw(" harness_mode=");
     put_raw(RUNTIME_FIXTURE_MODE);
     put_raw(" reject_mode=emitter_contract reason=");
@@ -14601,6 +14673,10 @@ static void command_rejects(char *mode)
   put_u32_dec(conditional_rejections);
   put_raw(" load_pc=");
   put_u32_dec(load_pc_rejections);
+  put_raw(" pc_base_wb=");
+  put_u32_dec(pc_base_wb_rejections);
+  put_raw(" shifted_reg_offset=");
+  put_u32_dec(shifted_reg_offset_rejections);
   put_raw(" opcodes=mrs_r15_cpsr,msr_cpsr_r15,mul_r15,umull_r15,");
   put_raw("hle_swi,swp_r15");
   put_raw(" harness_mode=");

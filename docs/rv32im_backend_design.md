@@ -283,7 +283,9 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   rejections across the direct native emitter families, preserving the rule
   that ARM condition handling enters through conditional block headers instead
   of per-opcode lowering, and four byte/halfword load-to-PC rejections that
-  stay helper-routed until those PC-write forms have interpreter-parity proof
+  stay helper-routed until those PC-write forms have interpreter-parity proof;
+  six PC-base writeback forms and one register-offset shifted-register form
+  are pinned the same way
 - explicit RV32IM `fallbacks runtime [offset]` dump for observed runtime
   fallback events, including initial lookup, relookup, and unsupported-block
   categories plus PC, ARM/Thumb mode, lookup result, and cycle budget; the
