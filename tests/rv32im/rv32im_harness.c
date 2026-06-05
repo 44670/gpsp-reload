@@ -1136,6 +1136,13 @@ struct compare_snapshot {
   u32 reg_hash;
   u32 mem_hash;
   u32 scheduler_hash;
+  u32 regs[16];
+  u32 cpsr;
+  u32 cpu_mode;
+  u32 halt_state;
+  u32 bus_value;
+  u32 supervisor_lr;
+  u32 supervisor_spsr;
   u32 blocks;
   u32 fallbacks;
   u32 native_data_proc;
@@ -4729,6 +4736,50 @@ static u32 runtime_update_reg_hash(u32 hash, const u32 *values)
   return hash;
 }
 
+static void runtime_store_snapshot_regs(struct compare_snapshot *snapshot,
+                                        const u32 *values,
+                                        u32 supervisor_lr,
+                                        u32 supervisor_spsr)
+{
+  u32 i;
+
+  for (i = 0; i < 16; i++)
+    snapshot->regs[i] = values[i];
+  snapshot->cpsr = values[REG_CPSR];
+  snapshot->cpu_mode = values[CPU_MODE];
+  snapshot->halt_state = values[CPU_HALT_STATE];
+  snapshot->bus_value = values[REG_BUS_VALUE];
+  snapshot->supervisor_lr = supervisor_lr;
+  snapshot->supervisor_spsr = supervisor_spsr;
+}
+
+static void runtime_store_current_snapshot_regs(
+  struct compare_snapshot *snapshot)
+{
+  runtime_store_snapshot_regs(snapshot, &reg[0],
+                              reg_mode[MODE_SUPERVISOR & 0xfu][6],
+                              spsr[MODE_SUPERVISOR & 0xfu]);
+}
+
+static int runtime_snapshot_regs_equal(const struct compare_snapshot *a,
+                                       const struct compare_snapshot *b)
+{
+  u32 i;
+
+  for (i = 0; i < 16; i++)
+  {
+    if (a->regs[i] != b->regs[i])
+      return 0;
+  }
+
+  return a->cpsr == b->cpsr &&
+         a->cpu_mode == b->cpu_mode &&
+         a->halt_state == b->halt_state &&
+         a->bus_value == b->bus_value &&
+         a->supervisor_lr == b->supervisor_lr &&
+         a->supervisor_spsr == b->supervisor_spsr;
+}
+
 static u32 runtime_update_supervisor_state_hash(u32 hash,
                                                 u32 supervisor_lr,
                                                 u32 supervisor_spsr)
@@ -4954,11 +5005,20 @@ static u32 runtime_update_current_scheduler_hash(u32 hash)
 
 static u32 runtime_snapshot_frame_hash(const struct compare_snapshot *snapshot)
 {
+  u32 i;
   u32 hash = 2166136261u;
 
   hash = fnv1a_update_u32(hash, snapshot->reg_hash);
   hash = fnv1a_update_u32(hash, snapshot->mem_hash);
   hash = fnv1a_update_u32(hash, snapshot->scheduler_hash);
+  for (i = 0; i < 16; i++)
+    hash = fnv1a_update_u32(hash, snapshot->regs[i]);
+  hash = fnv1a_update_u32(hash, snapshot->cpsr);
+  hash = fnv1a_update_u32(hash, snapshot->cpu_mode);
+  hash = fnv1a_update_u32(hash, snapshot->halt_state);
+  hash = fnv1a_update_u32(hash, snapshot->bus_value);
+  hash = fnv1a_update_u32(hash, snapshot->supervisor_lr);
+  hash = fnv1a_update_u32(hash, snapshot->supervisor_spsr);
   hash = fnv1a_update_u32(hash, snapshot->blocks);
   hash = fnv1a_update_u32(hash, snapshot->fallbacks);
   hash = fnv1a_update_u32(hash, snapshot->native_data_proc);
@@ -8526,6 +8586,7 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   snapshot->native_load = 26;
   snapshot->native_store = 19;
   snapshot->native_psr = 5;
+  runtime_store_snapshot_regs(snapshot, values, 0, 0);
   snapshot->frame_hash = runtime_snapshot_frame_hash(snapshot);
 }
 
@@ -10064,6 +10125,7 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   snapshot->native_load = after.native_load_insns;
   snapshot->native_store = after.native_store_insns;
   snapshot->native_psr = after.native_psr_insns;
+  runtime_store_current_snapshot_regs(snapshot);
   snapshot->frame_hash = runtime_snapshot_frame_hash(snapshot);
 }
 
@@ -10783,6 +10845,9 @@ static u32 synthetic_trace_pc(const struct harness_state *state, u32 index)
   return 0x08000000u + ((seed + index * 4u) & 0x000003fcu);
 }
 
+static int capture_runtime_snapshot(struct compare_snapshot *snapshot,
+                                    const char **reason);
+
 static void command_stepi(char *arg)
 {
   u32 count = optional_count(arg, 1);
@@ -10801,9 +10866,62 @@ static void command_stepb(char *arg)
   print_summary("stepb", "synthetic_block_step");
 }
 
-static void command_regs(void)
+static void command_regs(char *mode)
 {
   u32 i;
+
+  if (mode && str_eq(mode, "runtime"))
+  {
+    const char *runtime_reason = "runtime_unknown";
+    struct compare_snapshot snapshot;
+
+    if (!capture_runtime_snapshot(&snapshot, &runtime_reason))
+    {
+      put_raw("result=FAIL command=regs backend=");
+      put_raw(backend_name());
+      put_raw(" harness_mode=");
+      put_raw(RUNTIME_FIXTURE_MODE);
+      put_raw(" regs_mode=runtime_snapshot reason=");
+      put_raw(runtime_reason);
+      put_chr('\n');
+      return;
+    }
+
+    put_raw("result=PASS command=regs backend=");
+    put_raw(backend_name());
+    for (i = 0; i < 16; i++)
+    {
+      put_raw(" r");
+      put_u32_dec(i);
+      put_chr('=');
+      put_u32_hex(snapshot.regs[i]);
+    }
+    put_raw(" cpsr=");
+    put_u32_hex(snapshot.cpsr);
+    put_raw(" cpu_mode=");
+    put_u32_hex(snapshot.cpu_mode);
+    put_raw(" halt=");
+    put_u32_hex(snapshot.halt_state);
+    put_raw(" bus=");
+    put_u32_hex(snapshot.bus_value);
+    put_raw(" supervisor_lr=");
+    put_u32_hex(snapshot.supervisor_lr);
+    put_raw(" supervisor_spsr=");
+    put_u32_hex(snapshot.supervisor_spsr);
+    put_raw(" reg_hash=");
+    put_u32_hex(snapshot.reg_hash);
+    put_raw(" harness_mode=");
+    put_raw(RUNTIME_FIXTURE_MODE);
+    put_raw(" regs_mode=runtime_snapshot reason=runtime_snapshot_regs\n");
+    return;
+  }
+
+  if (mode && *mode && !str_eq(mode, "synthetic"))
+  {
+    print_fail("regs", "unknown_regs_mode");
+    return;
+  }
+
   put_raw("regs");
   for (i = 0; i < 16; i++)
   {
@@ -11177,6 +11295,7 @@ static void command_compare(void)
       interp.reg_hash != rv32im.reg_hash ||
       interp.mem_hash != rv32im.mem_hash ||
       interp.scheduler_hash != rv32im.scheduler_hash ||
+      !runtime_snapshot_regs_equal(&interp, &rv32im) ||
       rv32im.blocks != interp.blocks ||
       rv32im.fallbacks != interp.fallbacks ||
       rv32im.native_data_proc != interp.native_data_proc ||
@@ -11407,7 +11526,7 @@ static void process_line(char *line)
   }
   else if (str_eq(cmd, "regs"))
   {
-    command_regs();
+    command_regs(next_token(&cursor));
   }
   else if (str_eq(cmd, "mem"))
   {
