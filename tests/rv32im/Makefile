@@ -18,6 +18,7 @@ COMPARE_LOG := $(OUT_DIR)/rv32im_harness_compare.log
 CODEGEN_BIN := $(OUT_DIR)/rv32im_codegen.bin
 CODEGEN_REF_ELF := $(OUT_DIR)/rv32im_codegen_ref.elf
 CODEGEN_REF_BIN := $(OUT_DIR)/rv32im_codegen_ref.bin
+FRONTEND_OBJ := $(OUT_DIR)/cpu_threaded_riscv.o
 
 RV32_CFLAGS := \
 	--target=riscv32 \
@@ -40,6 +41,14 @@ RV32_LDFLAGS := \
 	-nostdlib \
 	-static \
 	-Wl,-e,_start
+
+FRONTEND_WARNFLAGS := \
+	-Wno-old-style-declaration \
+	-Wno-unused-variable \
+	-Wno-unused-label \
+	-Wno-unused-but-set-variable \
+	-Wno-sign-compare \
+	-Wno-implicit-fallthrough
 
 HOST_CC ?= cc
 LLVM_OBJCOPY ?= llvm-objcopy
@@ -84,10 +93,21 @@ $(CODEGEN_REF_ELF): rv32im_codegen.S | $(OUT_DIR)
 $(CODEGEN_REF_BIN): $(CODEGEN_REF_ELF)
 	$(LLVM_OBJCOPY) -j .text -O binary $< $@
 
+$(FRONTEND_OBJ): $(ROOT)/cpu_threaded.c $(ROOT)/riscv/riscv_emit.h \
+		$(ROOT)/riscv/riscv_codegen.h | $(OUT_DIR)
+	$(HOST_CC) -std=c99 -O2 -Wall -Wextra $(FRONTEND_WARNFLAGS) \
+		-DHAVE_DYNAREC -DRISCV_ARCH -D__LIBRETRO__ \
+		-DHAVE_STRINGS_H -DHAVE_STDINT_H -DHAVE_INTTYPES_H -DINLINE=inline \
+		-I$(ROOT) -I$(ROOT)/libretro \
+		-I$(ROOT)/libretro/libretro-common/include \
+		-o $@ -c $(ROOT)/cpu_threaded.c
+
 codegen: $(CODEGEN) $(CODEGEN_REF_BIN) | $(OUT_DIR)
 	./$(CODEGEN) > $(CODEGEN_BIN)
 	cmp $(CODEGEN_REF_BIN) $(CODEGEN_BIN)
 	@echo "RV32IM codegen test passed"
+
+frontend: $(FRONTEND_OBJ)
 
 smoke: $(HARNESS) $(SMOKE_LOAD) $(SMOKE_PNG_SIG) $(OUT_DIR)
 	printf 'help\nload $(SMOKE_LOAD)\nbackend rv32im\nreset\nrun 2\ncont 16\nstepi 4\nstepb 3\nstepb runtime 5\nregs\nregs runtime\nmem 0x02000000 16\nmem 0x02000000 4096 runtime\nmem 0x02000000 4096 runtime 8\nmem 0x02000120 32 runtime-bytes\nwatchio 0x04000000 64 runtime\ncounters\ncounters runtime\nsched runtime\nsched runtime 8\ntracepc 4\ntracepc runtime 8\ntracepc runtime 4 32\nbp 0x08000000 runtime\nframehash\ncompare\nframehash runtime\npng $(SMOKE_RUNTIME_PNG) runtime\npng $(SMOKE_PNG)\nquit\n' | $(QEMU_RISCV32) ./$(HARNESS) | tee $(SMOKE_LOG)
@@ -154,10 +174,10 @@ exec: $(EXEC_TEST)
 runtime: $(RUNTIME_TEST)
 	$(QEMU_RISCV32) ./$(RUNTIME_TEST)
 
-test: codegen abi exec runtime compare smoke
+test: codegen abi exec runtime frontend compare smoke
 
 clean:
 	rm -f $(HARNESS) $(CODEGEN) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST)
 	rm -rf $(OUT_DIR)
 
-.PHONY: all codegen abi exec runtime smoke compare test clean
+.PHONY: all codegen abi exec runtime frontend smoke compare test clean
