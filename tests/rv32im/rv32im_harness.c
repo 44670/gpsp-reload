@@ -4060,9 +4060,7 @@ static int build_runtime_fixture_block(const char **reason)
     half_writeback_load_code_bytes +
     shifted_reg_offset_code_bytes + reg_offset_rrx_load_code_bytes;
   flush_ret = syscall3(SYS_RISCV_FLUSH_ICACHE, (long)g_runtime_code,
-                       (long)(g_runtime_code +
-                              RUNTIME_THUMB_UNSUPPORTED_BLOCK_OFFSET +
-                              thumb_unsupported_code_bytes), 0);
+                       (long)(g_runtime_code + RUNTIME_EXEC_MAP_BYTES), 0);
   if (flush_ret != 0)
   {
     *reason = "runtime_icache_flush_failed";
