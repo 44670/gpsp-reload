@@ -5094,6 +5094,9 @@ static u32 runtime_snapshot_frame_hash(const struct compare_snapshot *snapshot)
   hash = fnv1a_update_u32(hash, snapshot->supervisor_spsr);
   hash = fnv1a_update_u32(hash, snapshot->blocks);
   hash = fnv1a_update_u32(hash, snapshot->fallbacks);
+  hash = fnv1a_update_u32(hash, snapshot->initial_lookup_fallbacks);
+  hash = fnv1a_update_u32(hash, snapshot->relookup_fallbacks);
+  hash = fnv1a_update_u32(hash, snapshot->unsupported_fallbacks);
   hash = fnv1a_update_u32(hash, snapshot->native_data_proc);
   hash = fnv1a_update_u32(hash, snapshot->native_branch);
   hash = fnv1a_update_u32(hash, snapshot->native_load);
@@ -11003,7 +11006,8 @@ static void render_frame(void)
 
 static void render_runtime_snapshot_frame(const struct compare_snapshot *snapshot)
 {
-  u32 values[11];
+  enum { runtime_snapshot_frame_value_count = 14 };
+  u32 values[runtime_snapshot_frame_value_count];
   u32 x;
   u32 y;
   usize pos = 0;
@@ -11014,19 +11018,24 @@ static void render_runtime_snapshot_frame(const struct compare_snapshot *snapsho
   values[3] = snapshot->scheduler_hash;
   values[4] = snapshot->blocks;
   values[5] = snapshot->fallbacks;
-  values[6] = snapshot->native_data_proc;
-  values[7] = snapshot->native_branch;
-  values[8] = snapshot->native_load;
-  values[9] = snapshot->native_store;
-  values[10] = snapshot->native_psr;
+  values[6] = snapshot->initial_lookup_fallbacks;
+  values[7] = snapshot->relookup_fallbacks;
+  values[8] = snapshot->unsupported_fallbacks;
+  values[9] = snapshot->native_data_proc;
+  values[10] = snapshot->native_branch;
+  values[11] = snapshot->native_load;
+  values[12] = snapshot->native_store;
+  values[13] = snapshot->native_psr;
 
   for (y = 0; y < FRAME_H; y++)
   {
     for (x = 0; x < FRAME_W; x++)
     {
-      u32 mix = values[(x + y) % 11u];
-      u32 accent = values[(x * 3u + y * 5u) % 11u];
-      u32 stripe = values[((x >> 4) + (y >> 3)) % 11u];
+      u32 mix = values[(x + y) % runtime_snapshot_frame_value_count];
+      u32 accent =
+        values[(x * 3u + y * 5u) % runtime_snapshot_frame_value_count];
+      u32 stripe =
+        values[((x >> 4) + (y >> 3)) % runtime_snapshot_frame_value_count];
       u32 r;
       u32 g;
       u32 b;

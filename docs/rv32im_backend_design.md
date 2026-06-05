@@ -268,6 +268,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - explicit runtime-snapshot `counters runtime` dump for selected-backend
   block/fallback/native counters, fallback source breakdown, state, memory,
   scheduler, and snapshot hashes
+- runtime snapshot frame/hash artifacts include the fallback source breakdown,
+  not only the aggregate fallback count
 - explicit RV32IM `sched runtime [offset]` dump for scheduler-boundary events
   observed during the runtime workload, including lookup, update, interpreter
   remainder, flush, and IRQ-check counters
