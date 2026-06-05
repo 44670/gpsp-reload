@@ -15,7 +15,7 @@ typedef unsigned int usize;
 #define PROT_EXEC 4
 #define MAP_PRIVATE 2
 #define MAP_ANONYMOUS 32
-#define EXEC_MAP_BYTES 70656u
+#define EXEC_MAP_BYTES 71168u
 
 #define BLOCK_START_PC 0x08000000u
 #define BLOCK_END_PC 0x08000004u
@@ -602,6 +602,7 @@ typedef unsigned int usize;
 #define HALF_REG_STRH_R9_R3_NEG_R15 0xe10390bfu
 #define PC_BASE_HALF_LDRH_R8_PC_0X24 0xe1df82b4u
 #define PC_BASE_HALF_LDRSH_R9_PC_0X26 0xe1df92f6u
+#define PC_BASE_HALF_STRH_R10_PC_0X22 0xe1cfa2b2u
 #define HALF_REG_STRH_R9_R3_NEG_R2 0xe10390b2u
 #define HALF_REG_LDRH_R4_R3_R2_WB 0xe1b340b2u
 #define HALF_WRITEBACK_STRH_R3_R3_0X10_WB 0xe1e331b0u
@@ -637,6 +638,8 @@ typedef unsigned int usize;
 #define PC_BASE_HALF_LDRH_PC PC_BASE_HALF_LOAD_START_PC
 #define PC_BASE_HALF_LDRSH_PC (PC_BASE_HALF_LOAD_START_PC + 4u)
 #define PC_BASE_HALF_LOAD_END_PC (PC_BASE_HALF_LOAD_START_PC + 8u)
+#define PC_BASE_HALF_STORE_START_PC 0x08000b60u
+#define PC_BASE_HALF_STORE_END_PC (PC_BASE_HALF_STORE_START_PC + 4u)
 #define HALF_REG_STORE_START_PC 0x080005c0u
 #define HALF_REG_STORE_END_PC (HALF_REG_STORE_START_PC + 4u)
 #define HALF_WRITEBACK_STORE_START_PC 0x08000780u
@@ -664,6 +667,7 @@ typedef unsigned int usize;
   (HALF_BASE_ADDR - (HALF_REG_PC_STORE_START_PC + 8u))
 #define PC_BASE_HALF_U16_ADDR (PC_BASE_HALF_LDRH_PC + 8u + 0x24u)
 #define PC_BASE_HALF_S16_ADDR (PC_BASE_HALF_LDRSH_PC + 8u + 0x26u)
+#define PC_BASE_HALF_STORE_ADDR (PC_BASE_HALF_STORE_START_PC + 8u + 0x22u)
 #define HALF_REG_STORE_ADDR HALF_REG_S8_ADDR
 #define HALF_WRITEBACK_BASE_ADDR 0x02000500u
 #define HALF_WRITEBACK_STORE_ADDR (HALF_WRITEBACK_BASE_ADDR + 0x10u)
@@ -679,6 +683,8 @@ typedef unsigned int usize;
 #define HALF_REG_PC_S16_VALUE 0xffff90abu
 #define HALF_REG_PC_STORE_VALUE 0x579b2468u
 #define HALF_REG_PC_STORE_U16_VALUE (HALF_REG_PC_STORE_VALUE & 0xffffu)
+#define PC_BASE_HALF_STORE_VALUE 0xbad1cafeu
+#define PC_BASE_HALF_STORE_U16_VALUE (PC_BASE_HALF_STORE_VALUE & 0xffffu)
 #define HALF_STORE_VALUE 0x2468ace1u
 #define HALF_STORE_U16_VALUE (HALF_STORE_VALUE & 0xffffu)
 #define HALF_LOAD_BLOCK_OFFSET 3584u
@@ -1210,6 +1216,7 @@ typedef unsigned int usize;
 #define SHIFTED_REG_OFFSET_PC_ASR_WORD_STORE_BLOCK_OFFSET 69120u
 #define SHIFTED_REG_OFFSET_PC_ROR_WORD_BLOCK_OFFSET 69632u
 #define SHIFTED_REG_OFFSET_PC_ROR_WORD_STORE_BLOCK_OFFSET 70144u
+#define PC_BASE_HALF_STORE_BLOCK_OFFSET 70656u
 #define EXPECTED_INITIAL_ROM_WATERMARK 16u
 
 u32 reg[REG_MAX];
@@ -1267,6 +1274,7 @@ static u8 *g_load_pc_target_entry;
 static u8 *g_pc_base_load_entry;
 static u8 *g_pc_base_store_entry;
 static u8 *g_pc_base_half_load_entry;
+static u8 *g_pc_base_half_store_entry;
 static u8 *g_store_word_entry;
 static u8 *g_store_byte_entry;
 static u8 *g_store_pc_entry;
@@ -2844,6 +2852,33 @@ static u32 build_pc_base_half_load_block(u8 *code)
   riscv_emit_block_finalize(meta, &translation_ptr,
                             PC_BASE_HALF_LOAD_START_PC,
                             PC_BASE_HALF_LOAD_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_pc_base_half_store_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_pc_base_half_store_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_access_memory(
+        &translation_ptr, meta,
+        PC_BASE_HALF_STRH_R10_PC_0X22,
+        PC_BASE_HALF_STORE_START_PC,
+        HALF_STORE_BASE_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=pc_base_strh_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            PC_BASE_HALF_STORE_START_PC,
+                            PC_BASE_HALF_STORE_END_PC, false);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -6710,6 +6745,44 @@ static void run_pc_base_half_load_remaining_case(void)
   expect_stickybits_cleared("pc_base_half_load");
 }
 
+static void run_pc_base_half_store_remaining_case(void)
+{
+  const u32 extra_cycles = 4u;
+
+  reset_runtime_observations(PC_BASE_HALF_STORE_START_PC);
+  g_lookup_entry = g_pc_base_half_store_entry;
+  reg[10] = PC_BASE_HALF_STORE_VALUE;
+
+  execute_arm_translate_internal(HALF_STORE_TOTAL_CYCLES + extra_cycles,
+                                 &reg[0]);
+
+  if (g_write16_calls != 1)
+    fail_u32("pc_base_half_store", "write16_calls", g_write16_calls, 1);
+  if (g_write16_addr != PC_BASE_HALF_STORE_ADDR)
+    fail_u32("pc_base_half_store", "write16_addr",
+             g_write16_addr, PC_BASE_HALF_STORE_ADDR);
+  if (g_write16_value != PC_BASE_HALF_STORE_U16_VALUE)
+    fail_u32("pc_base_half_store", "write16_value",
+             g_write16_value, PC_BASE_HALF_STORE_U16_VALUE);
+  if (g_write16_pc != PC_BASE_HALF_STORE_END_PC)
+    fail_u32("pc_base_half_store", "write16_pc",
+             g_write16_pc, PC_BASE_HALF_STORE_END_PC);
+  if (reg[REG_PC] != PC_BASE_HALF_STORE_END_PC)
+    fail_u32("pc_base_half_store", "pc",
+             reg[REG_PC], PC_BASE_HALF_STORE_END_PC);
+  if (g_update_calls != 0)
+    fail_u32("pc_base_half_store", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("pc_base_half_store", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("pc_base_half_store", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != PC_BASE_HALF_STORE_END_PC)
+    fail_u32("pc_base_half_store", "execute_pc",
+             g_execute_pc, PC_BASE_HALF_STORE_END_PC);
+  expect_stickybits_cleared("pc_base_half_store");
+}
+
 static void run_half_store_smc_irq_alert_case(void)
 {
   const u32 extra_cycles = 4u;
@@ -9395,6 +9468,7 @@ void _start(void)
   u32 pc_base_load_code_bytes;
   u32 pc_base_store_code_bytes;
   u32 pc_base_half_load_code_bytes;
+  u32 pc_base_half_store_code_bytes;
   u32 store_word_code_bytes;
   u32 store_byte_code_bytes;
   u32 store_pc_code_bytes;
@@ -9760,6 +9834,8 @@ void _start(void)
   half_load_code_bytes = build_half_load_block(code + HALF_LOAD_BLOCK_OFFSET);
   pc_base_half_load_code_bytes =
     build_pc_base_half_load_block(code + PC_BASE_HALF_LOAD_BLOCK_OFFSET);
+  pc_base_half_store_code_bytes =
+    build_pc_base_half_store_block(code + PC_BASE_HALF_STORE_BLOCK_OFFSET);
   half_store_code_bytes =
     build_half_store_block(code + HALF_STORE_BLOCK_OFFSET);
   half_reg_load_code_bytes =
@@ -10176,6 +10252,7 @@ void _start(void)
   run_pc_base_load_remaining_case();
   run_half_load_remaining_cycles_case();
   run_pc_base_half_load_remaining_case();
+  run_pc_base_half_store_remaining_case();
   run_half_reg_load_remaining_cycles_case();
   run_half_reg_pc_load_remaining_cycles_case();
   run_half_reg_pc_store_remaining_cycles_case();
@@ -10352,6 +10429,8 @@ void _start(void)
   put_u32_dec(pc_base_store_code_bytes);
   put_raw(" pc_base_half_load_code_bytes=");
   put_u32_dec(pc_base_half_load_code_bytes);
+  put_raw(" pc_base_half_store_code_bytes=");
+  put_u32_dec(pc_base_half_store_code_bytes);
   put_raw(" store_word_code_bytes=");
   put_u32_dec(store_word_code_bytes);
   put_raw(" store_byte_code_bytes=");

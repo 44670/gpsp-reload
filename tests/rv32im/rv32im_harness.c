@@ -52,7 +52,8 @@ typedef unsigned int usize;
   "rrxstore_rrxstoreremain_regwb_regwbstoreremain_regwbloadremain_" \
   "halfremain_halfreg_halfregremain_halfregpc_halfregpcremain_" \
   "halfregpcstoreremain_halfregstoreremain_halfpc_" \
-  "halfpcremain_halfwb_halfwbstoreremain_halfwbloadremain_halfalert_" \
+  "halfpcremain_halfpcstoreremain_halfwb_halfwbstoreremain_" \
+  "halfwbloadremain_halfalert_" \
   "halfhalt_blockmem_blockldmremain_blockalert_blockhalt_blockpush_" \
   "blockpushremain_blockpc_blockpcnative_blockpcfallthrough_blockspsr_hle_" \
   "hledivarmremain_pcsrc_pcsrcremain_writeback_writebackstoreremain_" \
@@ -82,7 +83,7 @@ typedef unsigned int usize;
 #define RUNTIME_MEM_EVENT_MAX 256u
 #define RUNTIME_SCHED_EVENT_MAX 256u
 #define RUNTIME_FALLBACK_EVENT_MAX 256u
-#define RUNTIME_EXEC_MAP_BYTES 69632u
+#define RUNTIME_EXEC_MAP_BYTES 70144u
 #define RUNTIME_LOAD_BLOCK_OFFSET 512u
 #define RUNTIME_STORE_BLOCK_OFFSET 1024u
 #define RUNTIME_BRANCH_BLOCK_OFFSET 1536u
@@ -200,6 +201,7 @@ typedef unsigned int usize;
 #define RUNTIME_SHIFTED_REG_OFFSET_PC_ASR_WORD_STORE_BLOCK_OFFSET 68096u
 #define RUNTIME_SHIFTED_REG_OFFSET_PC_ROR_WORD_BLOCK_OFFSET 68608u
 #define RUNTIME_SHIFTED_REG_OFFSET_PC_ROR_WORD_STORE_BLOCK_OFFSET 69120u
+#define RUNTIME_PC_BASE_HALF_STORE_BLOCK_OFFSET 69632u
 #define RUNTIME_START_PC 0x08000000u
 #define RUNTIME_END_PC (RUNTIME_START_PC + 4u)
 #define RUNTIME_CYCLES 7u
@@ -824,6 +826,9 @@ typedef unsigned int usize;
   (RUNTIME_PC_BASE_HALF_LOAD_START_PC + 4u)
 #define RUNTIME_PC_BASE_HALF_LOAD_END_PC \
   (RUNTIME_PC_BASE_HALF_LOAD_START_PC + 8u)
+#define RUNTIME_PC_BASE_HALF_STORE_START_PC 0x080019a0u
+#define RUNTIME_PC_BASE_HALF_STORE_END_PC \
+  (RUNTIME_PC_BASE_HALF_STORE_START_PC + 4u)
 #define RUNTIME_HALF_LDRH_BASE_CYCLES 4u
 #define RUNTIME_HALF_LDRSB_BASE_CYCLES 5u
 #define RUNTIME_HALF_LDRSH_BASE_CYCLES 6u
@@ -836,6 +841,7 @@ typedef unsigned int usize;
   ((RUNTIME_HALF_LDRH_BASE_CYCLES + 2u) + \
    (RUNTIME_HALF_LDRSH_BASE_CYCLES + 2u))
 #define RUNTIME_PC_BASE_HALF_LOAD_EXTRA_CYCLES 5u
+#define RUNTIME_PC_BASE_HALF_STORE_EXTRA_CYCLES 4u
 #define RUNTIME_HALF_STORE_START_PC 0x08000e40u
 #define RUNTIME_HALF_STORE_END_PC (RUNTIME_HALF_STORE_START_PC + 4u)
 #define RUNTIME_HALF_WRITEBACK_STORE_START_PC 0x080015c0u
@@ -858,6 +864,7 @@ typedef unsigned int usize;
 #define RUNTIME_HALF_STRH_R7_R3_0X28 0xe1c372b8u
 #define RUNTIME_PC_BASE_HALF_LDRH_R8_PC_0X24 0xe1df82b4u
 #define RUNTIME_PC_BASE_HALF_LDRSH_R9_PC_0X26 0xe1df92f6u
+#define RUNTIME_PC_BASE_HALF_STRH_R10_PC_0X22 0xe1cfa2b2u
 #define RUNTIME_HALF_WRITEBACK_STRH_R3_R3_0X10_WB 0xe1e331b0u
 #define RUNTIME_HALF_WRITEBACK_LDRSH_R5_R4_POST_NEG_R2 0xe01450f2u
 #define RUNTIME_HALF_BASE_ADDR 0x02000240u
@@ -869,6 +876,8 @@ typedef unsigned int usize;
   (RUNTIME_PC_BASE_HALF_LDRH_PC + 8u + 0x24u)
 #define RUNTIME_PC_BASE_HALF_S16_ADDR \
   (RUNTIME_PC_BASE_HALF_LDRSH_PC + 8u + 0x26u)
+#define RUNTIME_PC_BASE_HALF_STORE_ADDR \
+  (RUNTIME_PC_BASE_HALF_STORE_START_PC + 8u + 0x22u)
 #define RUNTIME_HALF_WRITEBACK_BASE_ADDR 0x02000500u
 #define RUNTIME_HALF_WRITEBACK_STORE_ADDR \
   (RUNTIME_HALF_WRITEBACK_BASE_ADDR + 0x10u)
@@ -883,6 +892,9 @@ typedef unsigned int usize;
 #define RUNTIME_HALF_STORE_VALUE 0x2468ace1u
 #define RUNTIME_HALF_STORE_U16_VALUE \
   (RUNTIME_HALF_STORE_VALUE & 0xffffu)
+#define RUNTIME_PC_BASE_HALF_STORE_VALUE 0xbad1cafeu
+#define RUNTIME_PC_BASE_HALF_STORE_U16_VALUE \
+  (RUNTIME_PC_BASE_HALF_STORE_VALUE & 0xffffu)
 #define RUNTIME_HALF_REG_LOAD_START_PC 0x08001080u
 #define RUNTIME_HALF_REG_LDRH_PC RUNTIME_HALF_REG_LOAD_START_PC
 #define RUNTIME_HALF_REG_LDRSB_PC \
@@ -1664,6 +1676,7 @@ static u8 *g_runtime_reg_offset_writeback_load_entry;
 static u8 *g_runtime_store_pc_entry;
 static u8 *g_runtime_pc_base_store_entry;
 static u8 *g_runtime_pc_base_half_load_entry;
+static u8 *g_runtime_pc_base_half_store_entry;
 static u8 *g_runtime_half_writeback_store_entry;
 static u8 *g_runtime_half_writeback_load_entry;
 static u8 *g_runtime_shifted_reg_offset_entry;
@@ -1914,6 +1927,7 @@ static void clear_runtime_fixture_entries(void)
   g_runtime_store_pc_entry = (u8 *)0;
   g_runtime_pc_base_store_entry = (u8 *)0;
   g_runtime_pc_base_half_load_entry = (u8 *)0;
+  g_runtime_pc_base_half_store_entry = (u8 *)0;
   g_runtime_half_writeback_store_entry = (u8 *)0;
   g_runtime_half_writeback_load_entry = (u8 *)0;
   g_runtime_shifted_reg_offset_entry = (u8 *)0;
@@ -2437,6 +2451,7 @@ static int build_runtime_fixture_block(const char **reason)
   u32 store_pc_code_bytes;
   u32 pc_base_store_code_bytes;
   u32 pc_base_half_load_code_bytes;
+  u32 pc_base_half_store_code_bytes;
   u32 half_writeback_store_code_bytes;
   u32 half_writeback_load_code_bytes;
   u32 shifted_reg_offset_code_bytes;
@@ -5092,6 +5107,27 @@ static int build_runtime_fixture_block(const char **reason)
     (u32)(translation_ptr -
           (g_runtime_code + RUNTIME_PC_BASE_HALF_LOAD_BLOCK_OFFSET));
 
+  translation_ptr = g_runtime_code + RUNTIME_PC_BASE_HALF_STORE_BLOCK_OFFSET;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_runtime_pc_base_half_store_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_access_memory(
+        &translation_ptr, meta, RUNTIME_PC_BASE_HALF_STRH_R10_PC_0X22,
+        RUNTIME_PC_BASE_HALF_STORE_START_PC,
+        RUNTIME_HALF_STORE_BASE_CYCLES))
+  {
+    *reason = "runtime_pc_base_half_strh_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            RUNTIME_PC_BASE_HALF_STORE_START_PC,
+                            RUNTIME_PC_BASE_HALF_STORE_END_PC, false);
+  pc_base_half_store_code_bytes =
+    (u32)(translation_ptr -
+          (g_runtime_code + RUNTIME_PC_BASE_HALF_STORE_BLOCK_OFFSET));
+
   translation_ptr = g_runtime_code + RUNTIME_HALF_WRITEBACK_STORE_BLOCK_OFFSET;
   riscv_emit_block_prologue(&translation_ptr, &meta);
   g_runtime_half_writeback_store_entry =
@@ -5712,6 +5748,7 @@ static int build_runtime_fixture_block(const char **reason)
     reg_offset_writeback_load_code_bytes + store_pc_code_bytes +
     pc_base_store_code_bytes +
     pc_base_half_load_code_bytes +
+    pc_base_half_store_code_bytes +
     half_writeback_store_code_bytes +
     half_writeback_load_code_bytes +
     shifted_reg_offset_code_bytes +
@@ -5839,6 +5876,7 @@ static int ensure_runtime_fixture(const char **reason)
       g_runtime_store_pc_entry &&
       g_runtime_pc_base_store_entry &&
       g_runtime_pc_base_half_load_entry &&
+      g_runtime_pc_base_half_store_entry &&
       g_runtime_half_writeback_store_entry &&
       g_runtime_half_writeback_load_entry &&
       g_runtime_shifted_reg_offset_entry &&
@@ -7790,6 +7828,34 @@ static void run_runtime_reference_workload(const struct harness_state *base,
     0, RUNTIME_NO_UPDATE_CYCLES,
     1, RUNTIME_PC_BASE_HALF_LOAD_EXTRA_CYCLES,
     RUNTIME_PC_BASE_HALF_LOAD_END_PC,
+    0, 0);
+
+  for (i = 0; i < REG_MAX; i++)
+    values[i] = 0;
+  values[10] = RUNTIME_PC_BASE_HALF_STORE_VALUE;
+  values[REG_PC] = RUNTIME_PC_BASE_HALF_STORE_END_PC;
+  values[REG_CPSR] = 0;
+  values[CPU_HALT_STATE] = CPU_ACTIVE;
+  reg_hash = runtime_update_reg_hash(reg_hash, values);
+  mem_hash = runtime_update_memory_hash(mem_hash,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        runtime_reference_sticky_hash());
+  mem_hash = runtime_update_half_memory_hash(
+    mem_hash,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    1, RUNTIME_PC_BASE_HALF_STORE_ADDR,
+    RUNTIME_PC_BASE_HALF_STORE_END_PC,
+    RUNTIME_PC_BASE_HALF_STORE_U16_VALUE);
+  scheduler_hash = runtime_update_scheduler_hash(
+    scheduler_hash,
+    2, RUNTIME_PC_BASE_HALF_STORE_END_PC, 0,
+    0, RUNTIME_NO_UPDATE_CYCLES,
+    1, RUNTIME_PC_BASE_HALF_STORE_EXTRA_CYCLES,
+    RUNTIME_PC_BASE_HALF_STORE_END_PC,
     0, 0);
 
   for (i = 0; i < REG_MAX; i++)
@@ -10853,15 +10919,15 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   snapshot->reg_hash = reg_hash;
   snapshot->mem_hash = mem_hash;
   snapshot->scheduler_hash = scheduler_hash;
-  snapshot->blocks = 237;
-  snapshot->fallbacks = 68;
+  snapshot->blocks = 238;
+  snapshot->fallbacks = 69;
   snapshot->initial_lookup_fallbacks = 4;
-  snapshot->relookup_fallbacks = 62;
+  snapshot->relookup_fallbacks = 63;
   snapshot->unsupported_fallbacks = 2;
   snapshot->native_data_proc = 88;
   snapshot->native_branch = 7;
   snapshot->native_load = 39;
-  snapshot->native_store = 30;
+  snapshot->native_store = 31;
   snapshot->native_psr = 5;
   runtime_store_snapshot_regs(snapshot, values, 0, 0);
   snapshot->frame_hash = runtime_snapshot_frame_hash(snapshot);
@@ -11507,6 +11573,16 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   reset_runtime_fixture_state(RUNTIME_PC_BASE_HALF_LOAD_START_PC);
   execute_arm_translate_internal(RUNTIME_PC_BASE_HALF_LOAD_TOTAL_CYCLES +
                                  RUNTIME_PC_BASE_HALF_LOAD_EXTRA_CYCLES,
+                                 &reg[0]);
+  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+  mem_hash = runtime_update_current_memory_hash(mem_hash);
+  mem_hash = runtime_update_current_half_memory_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+
+  reset_runtime_fixture_state(RUNTIME_PC_BASE_HALF_STORE_START_PC);
+  reg[10] = RUNTIME_PC_BASE_HALF_STORE_VALUE;
+  execute_arm_translate_internal(RUNTIME_HALF_STORE_TOTAL_CYCLES +
+                                 RUNTIME_PC_BASE_HALF_STORE_EXTRA_CYCLES,
                                  &reg[0]);
   reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
   mem_hash = runtime_update_current_memory_hash(mem_hash);
@@ -13529,6 +13605,9 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
   if (g_runtime_pc_base_half_load_entry &&
       pc == RUNTIME_PC_BASE_HALF_LOAD_START_PC)
     return g_runtime_pc_base_half_load_entry;
+  if (g_runtime_pc_base_half_store_entry &&
+      pc == RUNTIME_PC_BASE_HALF_STORE_START_PC)
+    return g_runtime_pc_base_half_store_entry;
   if (g_runtime_half_writeback_store_entry &&
       pc == RUNTIME_HALF_WRITEBACK_STORE_START_PC)
     return g_runtime_half_writeback_store_entry;

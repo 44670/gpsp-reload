@@ -320,7 +320,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   `LDRSH`, PC-relative `LDRSH`, register-offset `LDRSH`,
   PC-register-offset `LDRSH`,
   post-index writeback `LDRSH`,
-  `STRH`, register-offset `STRH`, PC-register-offset `STRH`,
+  `STRH`, PC-relative `STRH`, register-offset `STRH`,
+  PC-register-offset `STRH`,
   writeback `STRH`,
   `STMIA`, `LDMIA`, `STMDB sp!`, `LDMIA ... {pc}`,
   `LDMIA ... {pc}^`,
@@ -346,8 +347,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   block-memory SMC/IRQ alert handling, SWP-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, ARM lookup-miss/invalid fallback, Thumb lookup-miss/invalid fallback, and Thumb unsupported-block fallback fixtures against a local ARM
   reference model, with
-  two hundred thirty seven runtime blocks executed, sixty eight total runtime
-  fallbacks split into four initial lookup fallbacks, sixty two relookup
+  two hundred thirty eight runtime blocks executed, sixty nine total runtime
+  fallbacks split into four initial lookup fallbacks, sixty three relookup
   fallbacks, and two unsupported-block fallbacks, basic data-processing native fallthrough chaining, remaining-cycle and invalid re-lookup fallback handoffs,
   ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results and remaining-cycle handoff, MSR CPSR flag remaining-cycle handoff,
@@ -371,7 +372,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   RRX load/store, and register-offset writeback
   load/store address/value observations checked,
   immediate, PC-relative, register-offset, and PC-register-offset halfword
-  load/store remaining-cycle handoffs, register-offset halfword store remaining-cycle handoff, writeback halfword
+  load/store remaining-cycle handoffs, PC-relative halfword store helper
+  address/value/PC observation, register-offset halfword store remaining-cycle handoff, writeback halfword
   signed/unsigned helper load results and store observations checked,
   halfword writeback store source/base ordering, store/load remaining-cycle handoff, and post-index load ordering
   checked,
@@ -402,11 +404,12 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   remaining-cycle lookup-misses, byte-store normal/alert, block-memory, and SWP alert remaining-cycle
   lookup-misses, and SWPB remaining-cycle lookup-miss fallbacks observed
 
-The lower-level standalone runtime test also emits the PC-register-offset
-word/byte store, shifted-LSL/LSR/ASR/ROR PC-register-offset word/byte load/store, and halfword
-load/store blocks plus LSL/LSR/ASR/ROR/RRX register-offset load blocks and
-LSL/LSR/ASR/ROR/RRX register-offset store blocks, then checks their helper
-address, PC, value, and leftover-cycle handoff observations directly.
+The lower-level standalone runtime test also emits the PC-relative halfword
+store, PC-register-offset word/byte store, shifted-LSL/LSR/ASR/ROR
+PC-register-offset word/byte load/store, and halfword load/store blocks plus
+LSL/LSR/ASR/ROR/RRX register-offset load blocks and LSL/LSR/ASR/ROR/RRX
+register-offset store blocks, then checks their helper address, PC, value,
+and leftover-cycle handoff observations directly.
 
 Remaining first-phase gaps should stay narrow and evidence-driven:
 
