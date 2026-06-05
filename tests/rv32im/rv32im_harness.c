@@ -62,6 +62,7 @@ typedef unsigned int usize;
 #define ZLIB_BLOCKS ((PNG_RAW_SIZE + ZLIB_BLOCK_MAX - 1) / ZLIB_BLOCK_MAX)
 #define ZLIB_SIZE (2 + PNG_RAW_SIZE + (ZLIB_BLOCKS * 5) + 4)
 #define RUNTIME_TRACE_MAX 64u
+#define RUNTIME_MEM_EVENT_MAX 256u
 #define RUNTIME_EXEC_MAP_BYTES 55296u
 #define RUNTIME_LOAD_BLOCK_OFFSET 512u
 #define RUNTIME_STORE_BLOCK_OFFSET 1024u
@@ -1116,6 +1117,17 @@ typedef unsigned int usize;
 #define PC_CHANGED 0x40000000u
 #define IDLE_LOOP_DISABLED 0xffffffffu
 
+enum runtime_mem_event_kind {
+  RUNTIME_MEM_EVENT_R8 = 1,
+  RUNTIME_MEM_EVENT_R8S = 2,
+  RUNTIME_MEM_EVENT_R16 = 3,
+  RUNTIME_MEM_EVENT_R16S = 4,
+  RUNTIME_MEM_EVENT_R32 = 5,
+  RUNTIME_MEM_EVENT_W8 = 6,
+  RUNTIME_MEM_EVENT_W16 = 7,
+  RUNTIME_MEM_EVENT_W32 = 8,
+};
+
 enum harness_backend {
   BACKEND_INTERP = 0,
   BACKEND_RV32IM = 1,
@@ -1161,6 +1173,12 @@ static char g_line[512];
 static u32 g_runtime_trace_enabled;
 static u32 g_runtime_trace_count;
 static u32 g_runtime_trace_pcs[RUNTIME_TRACE_MAX];
+static u32 g_runtime_mem_event_enabled;
+static u32 g_runtime_mem_event_count;
+static u32 g_runtime_mem_event_kind[RUNTIME_MEM_EVENT_MAX];
+static u32 g_runtime_mem_event_addr[RUNTIME_MEM_EVENT_MAX];
+static u32 g_runtime_mem_event_pc[RUNTIME_MEM_EVENT_MAX];
+static u32 g_runtime_mem_event_value[RUNTIME_MEM_EVENT_MAX];
 
 u32 reg[REG_MAX];
 u32 spsr[6];
@@ -10140,6 +10158,8 @@ void execute_arm(u32 cycles)
   g_runtime_execute_pc = reg[REG_PC];
 }
 
+static void runtime_mem_event_record(u32 kind, u32 address, u32 pc, u32 value);
+
 u32 function_cc read_memory8(u32 address)
 {
   u32 value = 0;
@@ -10170,6 +10190,7 @@ u32 function_cc read_memory8(u32 address)
   else if (address == RUNTIME_SWP_BYTE_ADDR)
     value = RUNTIME_SWP_BYTE_OLD_VALUE;
   g_runtime_read8_value = value;
+  runtime_mem_event_record(RUNTIME_MEM_EVENT_R8, address, reg[REG_PC], value);
   return value;
 }
 
@@ -10186,6 +10207,7 @@ u32 function_cc read_memory8s(u32 address)
   else if (address == RUNTIME_HALF_REG_S8_ADDR)
     value = RUNTIME_HALF_S8_VALUE;
   g_runtime_read8s_value = value;
+  runtime_mem_event_record(RUNTIME_MEM_EVENT_R8S, address, reg[REG_PC], value);
   return value;
 }
 
@@ -10202,6 +10224,7 @@ u32 function_cc read_memory16(u32 address)
   else if (address == RUNTIME_PC_BASE_HALF_U16_ADDR)
     value = RUNTIME_HALF_U16_VALUE;
   g_runtime_read16_value = value;
+  runtime_mem_event_record(RUNTIME_MEM_EVENT_R16, address, reg[REG_PC], value);
   return value;
 }
 
@@ -10222,6 +10245,7 @@ u32 function_cc read_memory16s(u32 address)
   else if (address == RUNTIME_HALF_WRITEBACK_LOAD_ADDR)
     value = RUNTIME_HALF_S16_VALUE;
   g_runtime_read16s_value = value;
+  runtime_mem_event_record(RUNTIME_MEM_EVENT_R16S, address, reg[REG_PC], value);
   return value;
 }
 
@@ -10262,6 +10286,7 @@ u32 function_cc read_memory32(u32 address)
   g_runtime_block_mem32_hash = runtime_update_block_mem32_event_hash(
     g_runtime_block_mem32_hash, RUNTIME_BLOCK_MEM_READ32_TAG,
     address, reg[REG_PC], value);
+  runtime_mem_event_record(RUNTIME_MEM_EVENT_R32, address, reg[REG_PC], value);
   return value;
 }
 
@@ -10272,6 +10297,7 @@ cpu_alert_type function_cc write_memory8(u32 address, u8 value)
   g_runtime_write8_addr = address;
   g_runtime_write8_pc = reg[REG_PC];
   g_runtime_write8_value = value;
+  runtime_mem_event_record(RUNTIME_MEM_EVENT_W8, address, reg[REG_PC], value);
   if (g_runtime_store_alert & CPU_ALERT_HALT)
     reg[CPU_HALT_STATE] = CPU_HALT;
   return g_runtime_store_alert;
@@ -10284,6 +10310,7 @@ cpu_alert_type function_cc write_memory16(u32 address, u16 value)
   g_runtime_write16_addr = address;
   g_runtime_write16_pc = reg[REG_PC];
   g_runtime_write16_value = value;
+  runtime_mem_event_record(RUNTIME_MEM_EVENT_W16, address, reg[REG_PC], value);
   if (g_runtime_store_alert & CPU_ALERT_HALT)
     reg[CPU_HALT_STATE] = CPU_HALT;
   return g_runtime_store_alert;
@@ -10299,6 +10326,7 @@ cpu_alert_type function_cc write_memory32(u32 address, u32 value)
   g_runtime_block_mem32_hash = runtime_update_block_mem32_event_hash(
     g_runtime_block_mem32_hash, RUNTIME_BLOCK_MEM_WRITE32_TAG,
     address, reg[REG_PC], value);
+  runtime_mem_event_record(RUNTIME_MEM_EVENT_W32, address, reg[REG_PC], value);
   if (g_runtime_store_alert & CPU_ALERT_HALT)
     reg[CPU_HALT_STATE] = CPU_HALT;
   return g_runtime_store_alert;
@@ -10371,6 +10399,84 @@ static u32 runtime_trace_hash(u32 count)
   for (i = 0; i < count; i++)
     hash = fnv1a_update_u32(hash, g_runtime_trace_pcs[i]);
   return hash;
+}
+
+static void runtime_mem_event_reset(void)
+{
+  u32 i;
+
+  g_runtime_mem_event_count = 0;
+  for (i = 0; i < RUNTIME_MEM_EVENT_MAX; i++)
+  {
+    g_runtime_mem_event_kind[i] = 0;
+    g_runtime_mem_event_addr[i] = 0;
+    g_runtime_mem_event_pc[i] = 0;
+    g_runtime_mem_event_value[i] = 0;
+  }
+}
+
+static void runtime_mem_event_record(u32 kind, u32 address, u32 pc, u32 value)
+{
+  u32 index;
+
+  if (!g_runtime_mem_event_enabled)
+    return;
+
+  index = g_runtime_mem_event_count;
+  if (index < RUNTIME_MEM_EVENT_MAX)
+  {
+    g_runtime_mem_event_kind[index] = kind;
+    g_runtime_mem_event_addr[index] = address;
+    g_runtime_mem_event_pc[index] = pc;
+    g_runtime_mem_event_value[index] = value;
+  }
+  g_runtime_mem_event_count++;
+}
+
+static u32 runtime_mem_event_stored_count(void)
+{
+  return g_runtime_mem_event_count < RUNTIME_MEM_EVENT_MAX ?
+    g_runtime_mem_event_count : RUNTIME_MEM_EVENT_MAX;
+}
+
+static const char *runtime_mem_event_kind_name(u32 kind)
+{
+  switch (kind)
+  {
+    case RUNTIME_MEM_EVENT_R8:
+      return "r8";
+    case RUNTIME_MEM_EVENT_R8S:
+      return "r8s";
+    case RUNTIME_MEM_EVENT_R16:
+      return "r16";
+    case RUNTIME_MEM_EVENT_R16S:
+      return "r16s";
+    case RUNTIME_MEM_EVENT_R32:
+      return "r32";
+    case RUNTIME_MEM_EVENT_W8:
+      return "w8";
+    case RUNTIME_MEM_EVENT_W16:
+      return "w16";
+    case RUNTIME_MEM_EVENT_W32:
+      return "w32";
+    default:
+      return "unknown";
+  }
+}
+
+static int runtime_mem_event_in_range(u32 index, u32 addr, u32 len)
+{
+  u32 event_addr;
+  u32 end;
+
+  if (len == 0)
+    return 0;
+
+  event_addr = g_runtime_mem_event_addr[index];
+  end = addr + len;
+  if (end < addr)
+    return event_addr >= addr || event_addr < end;
+  return event_addr >= addr && event_addr < end;
 }
 
 u8 function_cc *block_lookup_address_arm(u32 pc)
@@ -10647,6 +10753,8 @@ static void reset_state(void)
   g_state.last_frame_hash = 0;
   g_runtime_trace_enabled = 0;
   runtime_trace_reset();
+  g_runtime_mem_event_enabled = 0;
+  runtime_mem_event_reset();
 }
 
 static void render_frame(void)
@@ -10895,6 +11003,7 @@ static u32 synthetic_trace_pc(const struct harness_state *state, u32 index)
 static int capture_runtime_snapshot(struct compare_snapshot *snapshot,
                                     const char **reason);
 static int capture_runtime_lookup_trace(const char **reason);
+static int capture_runtime_memory_events(const char **reason);
 
 static void command_stepi(char *arg)
 {
@@ -10983,7 +11092,7 @@ static void command_regs(char *mode)
   put_chr('\n');
 }
 
-static void command_mem(char *addr_arg, char *len_arg)
+static void command_mem(char *addr_arg, char *len_arg, char *mode)
 {
   u32 addr;
   u32 len;
@@ -10992,6 +11101,85 @@ static void command_mem(char *addr_arg, char *len_arg)
   if (!parse_u32_token(addr_arg, &addr) || !parse_u32_token(len_arg, &len))
   {
     print_fail("mem", "bad_args");
+    return;
+  }
+
+  if (mode && str_eq(mode, "runtime"))
+  {
+    const char *runtime_reason = "runtime_unknown";
+    u32 stored_count;
+    u32 matched = 0;
+    u32 printed = 0;
+    u32 hash = 2166136261u;
+
+    if (!capture_runtime_memory_events(&runtime_reason))
+    {
+      put_raw("result=FAIL command=mem backend=");
+      put_raw(backend_name());
+      put_raw(" addr=");
+      put_u32_hex(addr);
+      put_raw(" len=");
+      put_u32_dec(len);
+      put_raw(" harness_mode=");
+      put_raw(RUNTIME_FIXTURE_MODE);
+      put_raw(" mem_mode=runtime_events reason=");
+      put_raw(runtime_reason);
+      put_chr('\n');
+      return;
+    }
+
+    stored_count = runtime_mem_event_stored_count();
+    put_raw("result=PASS command=mem backend=");
+    put_raw(backend_name());
+    put_raw(" addr=");
+    put_u32_hex(addr);
+    put_raw(" len=");
+    put_u32_dec(len);
+    put_raw(" total=");
+    put_u32_dec(g_runtime_mem_event_count);
+    put_raw(" stored=");
+    put_u32_dec(stored_count);
+    put_raw(" events=");
+    for (i = 0; i < stored_count; i++)
+    {
+      if (!runtime_mem_event_in_range(i, addr, len))
+        continue;
+
+      matched++;
+      hash = fnv1a_update_u32(hash, g_runtime_mem_event_kind[i]);
+      hash = fnv1a_update_u32(hash, g_runtime_mem_event_addr[i]);
+      hash = fnv1a_update_u32(hash, g_runtime_mem_event_pc[i]);
+      hash = fnv1a_update_u32(hash, g_runtime_mem_event_value[i]);
+      if (printed < 16)
+      {
+        if (printed)
+          put_chr(',');
+        put_raw(runtime_mem_event_kind_name(g_runtime_mem_event_kind[i]));
+        put_chr('@');
+        put_u32_hex(g_runtime_mem_event_addr[i]);
+        put_chr(':');
+        put_u32_hex(g_runtime_mem_event_pc[i]);
+        put_chr(':');
+        put_u32_hex(g_runtime_mem_event_value[i]);
+        printed++;
+      }
+    }
+    put_raw(" matched=");
+    put_u32_dec(matched);
+    put_raw(" printed=");
+    put_u32_dec(printed);
+    put_raw(" hash=");
+    put_u32_hex(hash);
+    put_raw(" harness_mode=");
+    put_raw(RUNTIME_FIXTURE_MODE);
+    put_raw(" mem_mode=runtime_events event_encoding=kind@addr:pc:value");
+    put_raw(" reason=runtime_memory_events\n");
+    return;
+  }
+
+  if (mode && *mode && !str_eq(mode, "synthetic"))
+  {
+    print_fail("mem", "unknown_mem_mode");
     return;
   }
 
@@ -11390,6 +11578,28 @@ static int capture_runtime_lookup_trace(const char **reason)
   return 1;
 }
 
+static int capture_runtime_memory_events(const char **reason)
+{
+  struct harness_state saved_state = g_state;
+  struct compare_snapshot snapshot;
+
+  if (saved_state.backend != BACKEND_RV32IM)
+  {
+    *reason = "runtime_mem_requires_rv32im";
+    return 0;
+  }
+
+  if (!ensure_runtime_fixture(reason))
+    return 0;
+
+  runtime_mem_event_reset();
+  g_runtime_mem_event_enabled = 1;
+  run_runtime_rv32im_workload(&saved_state, &snapshot);
+  g_runtime_mem_event_enabled = 0;
+  g_state = saved_state;
+  return 1;
+}
+
 static void print_runtime_frame_fail(const char *command, const char *reason)
 {
   put_raw("result=FAIL command=");
@@ -11724,7 +11934,7 @@ static void process_line(char *line)
   {
     char *addr = next_token(&cursor);
     char *len = next_token(&cursor);
-    command_mem(addr, len);
+    command_mem(addr, len, next_token(&cursor));
   }
   else if (str_eq(cmd, "counters"))
   {
