@@ -5,6 +5,7 @@ QEMU_RISCV32 ?= qemu-riscv32
 
 HARNESS := rv32im_harness
 CODEGEN := rv32im_codegen
+ARMWRESTLER := rv32im_armwrestler
 ABI_TEST := rv32im_abi_test
 EXEC_TEST := rv32im_exec_test
 RUNTIME_TEST := rv32im_runtime_test
@@ -17,6 +18,7 @@ SMOKE_LOG := $(OUT_DIR)/rv32im_harness.log
 COMPARE_LOG := $(OUT_DIR)/rv32im_harness_compare.log
 MIXED_LOG := $(OUT_DIR)/rv32im_harness_mixed.log
 REJECTS_LOG := $(OUT_DIR)/rv32im_harness_rejects.log
+ARMWRESTLER_LOG := $(OUT_DIR)/rv32im_armwrestler.log
 CODEGEN_BIN := $(OUT_DIR)/rv32im_codegen.bin
 CODEGEN_REF_ELF := $(OUT_DIR)/rv32im_codegen_ref.elf
 CODEGEN_REF_BIN := $(OUT_DIR)/rv32im_codegen_ref.bin
@@ -57,7 +59,7 @@ FRONTEND_WARNFLAGS := \
 HOST_CC ?= cc
 LLVM_OBJCOPY ?= llvm-objcopy
 
-all: $(HARNESS) $(CODEGEN) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST)
+all: $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST)
 
 $(HARNESS): rv32im_harness.c $(ROOT)/riscv/riscv_runtime.c \
 		$(ROOT)/riscv/riscv_emit.h $(ROOT)/riscv/riscv_codegen.h \
@@ -81,6 +83,17 @@ $(RUNTIME_TEST): rv32im_runtime_test.c $(ROOT)/riscv/riscv_runtime.c \
 	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) \
 		-DRISCV_RUNTIME_STANDALONE_TEST -I$(ROOT) -I$(ROOT)/riscv \
 		-o $@ rv32im_runtime_test.c $(ROOT)/riscv/riscv_runtime.c
+
+$(ARMWRESTLER): rv32im_armwrestler.c rv32im_frontend_shim.h \
+		$(ROOT)/cpu_threaded.c $(ROOT)/riscv/riscv_runtime.c \
+		$(ROOT)/riscv/riscv_emit.h $(ROOT)/riscv/riscv_codegen.h \
+		$(ROOT)/riscv/riscv_runtime_test_shim.h
+	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) \
+		-DRISCV_RUNTIME_STANDALONE_TEST -DHAVE_DYNAREC -DRISCV_ARCH \
+		-DMMAP_JIT_CACHE -I. -I$(ROOT) -I$(ROOT)/riscv \
+		-include rv32im_frontend_shim.h \
+		-o $@ rv32im_armwrestler.c $(ROOT)/cpu_threaded.c \
+		$(ROOT)/riscv/riscv_runtime.c
 
 $(OUT_DIR):
 	mkdir -p $@
@@ -212,6 +225,13 @@ rejects: $(HARNESS) | $(OUT_DIR)
 	grep -q 'result=PASS command=rejects backend=rv32im total=26 psr_unsupported=2 conditional=13 load_pc=0 pc_base_wb=6 shifted_reg_offset=1 opcodes=mrs_r15_cpsr,msr_cpsr_r15,mul_r15,umull_r15,hle_swi,swp_r15 harness_mode=runtime_fixture reject_mode=emitter_contract reason=runtime_rejections_preserved' $(REJECTS_LOG)
 	grep -q 'result=PASS command=quit backend=rv32im' $(REJECTS_LOG)
 
+armwrestler-jit: $(ARMWRESTLER) | $(OUT_DIR)
+	$(QEMU_RISCV32) ./$(ARMWRESTLER) | tee $(ARMWRESTLER_LOG)
+	grep -q 'result=PASS command=armwrestler test=arm0' $(ARMWRESTLER_LOG)
+	grep -q 'observed_results=15 failure_mask=0x00000000' $(ARMWRESTLER_LOG)
+	grep -q 'fallbacks=0 fallback_events=0 execute_arm_calls=0' $(ARMWRESTLER_LOG)
+	grep -q 'harness_mode=armwrestler_frontend_jit_only reason=armwrestler_arm0_jit_only_passed' $(ARMWRESTLER_LOG)
+
 abi: $(ABI_TEST)
 	$(QEMU_RISCV32) ./$(ABI_TEST)
 
@@ -224,7 +244,7 @@ runtime: $(RUNTIME_TEST)
 test: codegen abi exec runtime frontend core-build rejects compare mixed smoke
 
 clean:
-	rm -f $(HARNESS) $(CODEGEN) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST)
+	rm -f $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST)
 	rm -rf $(OUT_DIR)
 
-.PHONY: all codegen abi exec runtime frontend core-build smoke compare mixed test clean
+.PHONY: all codegen abi exec runtime frontend core-build smoke compare mixed rejects armwrestler-jit test clean
