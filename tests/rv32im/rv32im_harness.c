@@ -40,7 +40,8 @@ typedef unsigned int usize;
   "storebyteremain_storebytealert_storebytehalt_pcmem_pcmemremain_" \
   "loadpc_loadpcremain_loadpcnative_pcstore_pcstoreremain_" \
   "pcbasestoreremain_storealert_storehalt_regoff_regoffremain_" \
-  "regpcstore_regpcstoreremain_regstore_regstoreremain_" \
+  "regpcstore_regpcstoreremain_regpcbytestore_regpcbytestoreremain_" \
+  "regstore_regstoreremain_" \
   "shiftstore_shiftlsr_shiftasr_shiftror_" \
   "shiftstoreremain_shiftlsrstoreremain_shiftasrstoreremain_" \
   "shiftrorstoreremain_" \
@@ -73,7 +74,7 @@ typedef unsigned int usize;
 #define RUNTIME_MEM_EVENT_MAX 256u
 #define RUNTIME_SCHED_EVENT_MAX 256u
 #define RUNTIME_FALLBACK_EVENT_MAX 256u
-#define RUNTIME_EXEC_MAP_BYTES 61440u
+#define RUNTIME_EXEC_MAP_BYTES 61952u
 #define RUNTIME_LOAD_BLOCK_OFFSET 512u
 #define RUNTIME_STORE_BLOCK_OFFSET 1024u
 #define RUNTIME_BRANCH_BLOCK_OFFSET 1536u
@@ -175,6 +176,7 @@ typedef unsigned int usize;
 #define RUNTIME_HALF_REG_PC_LOAD_BLOCK_OFFSET 59904u
 #define RUNTIME_HALF_REG_PC_STORE_BLOCK_OFFSET 60416u
 #define RUNTIME_REG_OFFSET_PC_STORE_BLOCK_OFFSET 60928u
+#define RUNTIME_REG_OFFSET_PC_BYTE_STORE_BLOCK_OFFSET 61440u
 #define RUNTIME_START_PC 0x08000000u
 #define RUNTIME_END_PC (RUNTIME_START_PC + 4u)
 #define RUNTIME_CYCLES 7u
@@ -1080,6 +1082,9 @@ typedef unsigned int usize;
 #define RUNTIME_REG_OFFSET_PC_STORE_START_PC 0x08001780u
 #define RUNTIME_REG_OFFSET_PC_STORE_END_PC \
   (RUNTIME_REG_OFFSET_PC_STORE_START_PC + 4u)
+#define RUNTIME_REG_OFFSET_PC_BYTE_STORE_START_PC 0x080017a0u
+#define RUNTIME_REG_OFFSET_PC_BYTE_STORE_END_PC \
+  (RUNTIME_REG_OFFSET_PC_BYTE_STORE_START_PC + 4u)
 #define RUNTIME_REG_OFFSET_STORE_START_PC 0x080014c0u
 #define RUNTIME_REG_OFFSET_STORE_END_PC \
   (RUNTIME_REG_OFFSET_STORE_START_PC + 4u)
@@ -1100,6 +1105,7 @@ typedef unsigned int usize;
   (RUNTIME_REG_OFFSET_STORE_BASE_CYCLES + 1u)
 #define RUNTIME_REG_OFFSET_STORE_EXTRA_CYCLES 4u
 #define RUNTIME_REG_OFFSET_PC_STORE_EXTRA_CYCLES 4u
+#define RUNTIME_REG_OFFSET_PC_BYTE_STORE_EXTRA_CYCLES 4u
 #define RUNTIME_REG_OFFSET_WRITEBACK_STORE_TOTAL_CYCLES \
   RUNTIME_REG_OFFSET_STORE_TOTAL_CYCLES
 #define RUNTIME_REG_OFFSET_WRITEBACK_STORE_EXTRA_CYCLES 4u
@@ -1168,6 +1174,7 @@ typedef unsigned int usize;
 #define RUNTIME_REG_OFFSET_LDR_R8_R3_R15 0xe793800fu
 #define RUNTIME_REG_OFFSET_LDRB_R9_R3_NEG_R15 0xe753900fu
 #define RUNTIME_REG_OFFSET_STR_R9_R3_R15 0xe783900fu
+#define RUNTIME_REG_OFFSET_STRB_R9_R3_NEG_R15 0xe743900fu
 #define RUNTIME_REG_OFFSET_STRB_R9_R3_NEG_R2 0xe7439002u
 #define RUNTIME_REG_OFFSET_WRITEBACK_STR_R3_R3_R2_WB 0xe7a33002u
 #define RUNTIME_REG_OFFSET_WRITEBACK_LDRB_R5_R4_POST_NEG_R2 0xe6545002u
@@ -1197,6 +1204,9 @@ typedef unsigned int usize;
 #define RUNTIME_REG_OFFSET_PC_STORE_WORD_ADDR \
   (RUNTIME_REG_OFFSET_BASE_ADDR + \
    (RUNTIME_REG_OFFSET_PC_STORE_START_PC + 8u))
+#define RUNTIME_REG_OFFSET_PC_STORE_BYTE_ADDR \
+  (RUNTIME_REG_OFFSET_BASE_ADDR - \
+   (RUNTIME_REG_OFFSET_PC_BYTE_STORE_START_PC + 8u))
 #define RUNTIME_SHIFTED_REG_OFFSET_BYTE_ADDR \
   (RUNTIME_REG_OFFSET_BASE_ADDR + (RUNTIME_REG_OFFSET_VALUE << 2))
 #define RUNTIME_SHIFTED_REG_OFFSET_LSR_BYTE_ADDR \
@@ -1211,6 +1221,9 @@ typedef unsigned int usize;
 #define RUNTIME_REG_OFFSET_PC_WORD_VALUE 0x13579bdfu
 #define RUNTIME_REG_OFFSET_PC_BYTE_VALUE 0x9eu
 #define RUNTIME_REG_OFFSET_PC_STORE_WORD_VALUE 0xcafebabeu
+#define RUNTIME_REG_OFFSET_PC_STORE_BYTE_VALUE 0x123456ddu
+#define RUNTIME_REG_OFFSET_PC_STORE_U8_VALUE \
+  (RUNTIME_REG_OFFSET_PC_STORE_BYTE_VALUE & 0xffu)
 #define RUNTIME_REG_OFFSET_STORE_VALUE 0x123456a9u
 #define RUNTIME_REG_OFFSET_WRITEBACK_BASE_ADDR 0x02000480u
 #define RUNTIME_REG_OFFSET_WRITEBACK_STORE_ADDR \
@@ -1444,6 +1457,7 @@ static u8 *g_runtime_writeback_load_entry;
 static u8 *g_runtime_reg_offset_load_entry;
 static u8 *g_runtime_reg_offset_pc_load_entry;
 static u8 *g_runtime_reg_offset_pc_store_entry;
+static u8 *g_runtime_reg_offset_pc_byte_store_entry;
 static u8 *g_runtime_reg_offset_store_entry;
 static u8 *g_runtime_reg_offset_writeback_store_entry;
 static u8 *g_runtime_reg_offset_writeback_load_entry;
@@ -1678,6 +1692,7 @@ static void clear_runtime_fixture_entries(void)
   g_runtime_reg_offset_load_entry = (u8 *)0;
   g_runtime_reg_offset_pc_load_entry = (u8 *)0;
   g_runtime_reg_offset_pc_store_entry = (u8 *)0;
+  g_runtime_reg_offset_pc_byte_store_entry = (u8 *)0;
   g_runtime_reg_offset_store_entry = (u8 *)0;
   g_runtime_reg_offset_writeback_store_entry = (u8 *)0;
   g_runtime_reg_offset_writeback_load_entry = (u8 *)0;
@@ -2157,6 +2172,7 @@ static int build_runtime_fixture_block(const char **reason)
   u32 reg_offset_load_code_bytes;
   u32 reg_offset_pc_load_code_bytes;
   u32 reg_offset_pc_store_code_bytes;
+  u32 reg_offset_pc_byte_store_code_bytes;
   u32 reg_offset_store_code_bytes;
   u32 reg_offset_writeback_store_code_bytes;
   u32 reg_offset_writeback_load_code_bytes;
@@ -4562,6 +4578,30 @@ static int build_runtime_fixture_block(const char **reason)
     (u32)(translation_ptr -
           (g_runtime_code + RUNTIME_REG_OFFSET_PC_STORE_BLOCK_OFFSET));
 
+  translation_ptr =
+    g_runtime_code + RUNTIME_REG_OFFSET_PC_BYTE_STORE_BLOCK_OFFSET;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_runtime_reg_offset_pc_byte_store_entry =
+    ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_access_memory(
+        &translation_ptr, meta,
+        RUNTIME_REG_OFFSET_STRB_R9_R3_NEG_R15,
+        RUNTIME_REG_OFFSET_PC_BYTE_STORE_START_PC,
+        RUNTIME_REG_OFFSET_STORE_BASE_CYCLES))
+  {
+    *reason = "runtime_reg_offset_pc_strb_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            RUNTIME_REG_OFFSET_PC_BYTE_STORE_START_PC,
+                            RUNTIME_REG_OFFSET_PC_BYTE_STORE_END_PC, false);
+  reg_offset_pc_byte_store_code_bytes =
+    (u32)(translation_ptr -
+          (g_runtime_code + RUNTIME_REG_OFFSET_PC_BYTE_STORE_BLOCK_OFFSET));
+
   translation_ptr = g_runtime_code + RUNTIME_REG_OFFSET_STORE_BLOCK_OFFSET;
   riscv_emit_block_prologue(&translation_ptr, &meta);
   g_runtime_reg_offset_store_entry = ((u8 *)meta) + block_prologue_size;
@@ -5119,6 +5159,7 @@ static int build_runtime_fixture_block(const char **reason)
     writeback_load_code_bytes + reg_offset_load_code_bytes +
     reg_offset_pc_load_code_bytes +
     reg_offset_pc_store_code_bytes +
+    reg_offset_pc_byte_store_code_bytes +
     reg_offset_store_code_bytes +
     reg_offset_writeback_store_code_bytes +
     reg_offset_writeback_load_code_bytes + store_pc_code_bytes +
@@ -5229,6 +5270,7 @@ static int ensure_runtime_fixture(const char **reason)
       g_runtime_writeback_load_entry && g_runtime_reg_offset_load_entry &&
       g_runtime_reg_offset_pc_load_entry &&
       g_runtime_reg_offset_pc_store_entry &&
+      g_runtime_reg_offset_pc_byte_store_entry &&
       g_runtime_reg_offset_store_entry &&
       g_runtime_reg_offset_writeback_store_entry &&
       g_runtime_reg_offset_writeback_load_entry &&
@@ -8318,6 +8360,59 @@ static void run_runtime_reference_workload(const struct harness_state *base,
 
   for (i = 0; i < REG_MAX; i++)
     values[i] = 0;
+  values[3] = RUNTIME_REG_OFFSET_BASE_ADDR;
+  values[9] = RUNTIME_REG_OFFSET_PC_STORE_BYTE_VALUE;
+  values[REG_PC] = RUNTIME_REG_OFFSET_PC_BYTE_STORE_END_PC;
+  values[REG_CPSR] = 0;
+  values[CPU_HALT_STATE] = CPU_ACTIVE;
+  reg_hash = runtime_update_reg_hash(reg_hash, values);
+  mem_hash = runtime_update_memory_hash(
+    mem_hash,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    runtime_reference_sticky_hash());
+  mem_hash = runtime_append_write8_hash(
+    mem_hash,
+    1, RUNTIME_REG_OFFSET_PC_STORE_BYTE_ADDR,
+    RUNTIME_REG_OFFSET_PC_BYTE_STORE_END_PC,
+    RUNTIME_REG_OFFSET_PC_STORE_U8_VALUE);
+  scheduler_hash = runtime_update_scheduler_hash(
+    scheduler_hash,
+    1, RUNTIME_REG_OFFSET_PC_BYTE_STORE_START_PC, 0,
+    1, 0,
+    0, 0, 0,
+    0, 0);
+
+  for (i = 0; i < REG_MAX; i++)
+    values[i] = 0;
+  values[3] = RUNTIME_REG_OFFSET_BASE_ADDR;
+  values[9] = RUNTIME_REG_OFFSET_PC_STORE_BYTE_VALUE;
+  values[REG_PC] = RUNTIME_REG_OFFSET_PC_BYTE_STORE_END_PC;
+  values[REG_CPSR] = 0;
+  values[CPU_HALT_STATE] = CPU_ACTIVE;
+  reg_hash = runtime_update_reg_hash(reg_hash, values);
+  mem_hash = runtime_update_memory_hash(
+    mem_hash,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    runtime_reference_sticky_hash());
+  mem_hash = runtime_append_write8_hash(
+    mem_hash,
+    1, RUNTIME_REG_OFFSET_PC_STORE_BYTE_ADDR,
+    RUNTIME_REG_OFFSET_PC_BYTE_STORE_END_PC,
+    RUNTIME_REG_OFFSET_PC_STORE_U8_VALUE);
+  scheduler_hash = runtime_update_scheduler_hash(
+    scheduler_hash,
+    2, RUNTIME_REG_OFFSET_PC_BYTE_STORE_END_PC, 0,
+    0, RUNTIME_NO_UPDATE_CYCLES,
+    1, RUNTIME_REG_OFFSET_PC_BYTE_STORE_EXTRA_CYCLES,
+    RUNTIME_REG_OFFSET_PC_BYTE_STORE_END_PC,
+    0, 0);
+
+  for (i = 0; i < REG_MAX; i++)
+    values[i] = 0;
   values[2] = RUNTIME_REG_OFFSET_VALUE;
   values[3] = RUNTIME_REG_OFFSET_BASE_ADDR;
   values[9] = RUNTIME_REG_OFFSET_STORE_VALUE;
@@ -9736,15 +9831,15 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   snapshot->reg_hash = reg_hash;
   snapshot->mem_hash = mem_hash;
   snapshot->scheduler_hash = scheduler_hash;
-  snapshot->blocks = 212;
-  snapshot->fallbacks = 59;
+  snapshot->blocks = 214;
+  snapshot->fallbacks = 60;
   snapshot->initial_lookup_fallbacks = 4;
-  snapshot->relookup_fallbacks = 53;
+  snapshot->relookup_fallbacks = 54;
   snapshot->unsupported_fallbacks = 2;
   snapshot->native_data_proc = 88;
   snapshot->native_branch = 7;
   snapshot->native_load = 31;
-  snapshot->native_store = 21;
+  snapshot->native_store = 22;
   snapshot->native_psr = 5;
   runtime_store_snapshot_regs(snapshot, values, 0, 0);
   snapshot->frame_hash = runtime_snapshot_frame_hash(snapshot);
@@ -10810,6 +10905,28 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
                                  &reg[0]);
   reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
   mem_hash = runtime_update_current_memory_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+
+  reset_runtime_fixture_state(RUNTIME_REG_OFFSET_PC_BYTE_STORE_START_PC);
+  reg[3] = RUNTIME_REG_OFFSET_BASE_ADDR;
+  reg[9] = RUNTIME_REG_OFFSET_PC_STORE_BYTE_VALUE;
+  execute_arm_translate_internal(RUNTIME_REG_OFFSET_STORE_TOTAL_CYCLES,
+                                 &reg[0]);
+  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+  mem_hash = runtime_update_current_memory_hash(mem_hash);
+  mem_hash = runtime_update_current_write8_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+
+  reset_runtime_fixture_state(RUNTIME_REG_OFFSET_PC_BYTE_STORE_START_PC);
+  reg[3] = RUNTIME_REG_OFFSET_BASE_ADDR;
+  reg[9] = RUNTIME_REG_OFFSET_PC_STORE_BYTE_VALUE;
+  execute_arm_translate_internal(
+    RUNTIME_REG_OFFSET_STORE_TOTAL_CYCLES +
+      RUNTIME_REG_OFFSET_PC_BYTE_STORE_EXTRA_CYCLES,
+    &reg[0]);
+  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+  mem_hash = runtime_update_current_memory_hash(mem_hash);
+  mem_hash = runtime_update_current_write8_hash(mem_hash);
   scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
 
   reset_runtime_fixture_state(RUNTIME_REG_OFFSET_STORE_START_PC);
@@ -12252,6 +12369,9 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
   if (g_runtime_reg_offset_pc_store_entry &&
       pc == RUNTIME_REG_OFFSET_PC_STORE_START_PC)
     return g_runtime_reg_offset_pc_store_entry;
+  if (g_runtime_reg_offset_pc_byte_store_entry &&
+      pc == RUNTIME_REG_OFFSET_PC_BYTE_STORE_START_PC)
+    return g_runtime_reg_offset_pc_byte_store_entry;
   if (g_runtime_reg_offset_store_entry &&
       pc == RUNTIME_REG_OFFSET_STORE_START_PC)
     return g_runtime_reg_offset_store_entry;
