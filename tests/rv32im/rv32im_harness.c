@@ -35,7 +35,7 @@ typedef unsigned int usize;
 #define ZLIB_BLOCK_MAX 65535u
 #define ZLIB_BLOCKS ((PNG_RAW_SIZE + ZLIB_BLOCK_MAX - 1) / ZLIB_BLOCK_MAX)
 #define ZLIB_SIZE (2 + PNG_RAW_SIZE + (ZLIB_BLOCKS * 5) + 4)
-#define RUNTIME_EXEC_MAP_BYTES 51712u
+#define RUNTIME_EXEC_MAP_BYTES 52224u
 #define RUNTIME_LOAD_BLOCK_OFFSET 512u
 #define RUNTIME_STORE_BLOCK_OFFSET 1024u
 #define RUNTIME_BRANCH_BLOCK_OFFSET 1536u
@@ -118,6 +118,7 @@ typedef unsigned int usize;
 #define RUNTIME_INTERNAL_BRANCH_BLOCK_OFFSET 50176u
 #define RUNTIME_LOAD_PC_TARGET_BLOCK_OFFSET 50688u
 #define RUNTIME_SHIFTED_REG_OFFSET_STORE_BLOCK_OFFSET 51200u
+#define RUNTIME_REG_OFFSET_RRX_STORE_BLOCK_OFFSET 51712u
 #define RUNTIME_START_PC 0x08000000u
 #define RUNTIME_END_PC (RUNTIME_START_PC + 4u)
 #define RUNTIME_CYCLES 7u
@@ -969,6 +970,11 @@ typedef unsigned int usize;
 #define RUNTIME_REG_OFFSET_RRX_LOAD_CYCLES 7u
 #define RUNTIME_REG_OFFSET_RRX_LOAD_TOTAL_CYCLES \
   (RUNTIME_REG_OFFSET_RRX_LOAD_CYCLES + 2u)
+#define RUNTIME_REG_OFFSET_RRX_STORE_START_PC 0x08001640u
+#define RUNTIME_REG_OFFSET_RRX_STORE_END_PC \
+  (RUNTIME_REG_OFFSET_RRX_STORE_START_PC + 4u)
+#define RUNTIME_REG_OFFSET_RRX_STORE_TOTAL_CYCLES \
+  (RUNTIME_REG_OFFSET_STORE_BASE_CYCLES + 1u)
 #define RUNTIME_REG_OFFSET_LDR_R8_R3_R2 0xe7938002u
 #define RUNTIME_REG_OFFSET_LDRB_R9_R3_NEG_R2 0xe7539002u
 #define RUNTIME_REG_OFFSET_STRB_R9_R3_NEG_R2 0xe7439002u
@@ -977,6 +983,7 @@ typedef unsigned int usize;
 #define RUNTIME_SHIFTED_REG_OFFSET_LDRB_R10_R3_R2_LSL2 0xe7d3a102u
 #define RUNTIME_SHIFTED_REG_OFFSET_STRB_R9_R3_R2_LSL2 0xe7c39102u
 #define RUNTIME_REG_OFFSET_LDR_R11_R3_R2_RRX 0xe793b062u
+#define RUNTIME_REG_OFFSET_STRB_R9_R3_R2_RRX 0xe7c39062u
 #define RUNTIME_REG_OFFSET_BASE_ADDR 0x02000300u
 #define RUNTIME_REG_OFFSET_VALUE 0x34u
 #define RUNTIME_REG_OFFSET_RRX_VALUE 0x38u
@@ -987,6 +994,7 @@ typedef unsigned int usize;
 #define RUNTIME_SHIFTED_REG_OFFSET_BYTE_ADDR \
   (RUNTIME_REG_OFFSET_BASE_ADDR + (RUNTIME_REG_OFFSET_VALUE << 2))
 #define RUNTIME_REG_OFFSET_RRX_WORD_ADDR 0x8200031cu
+#define RUNTIME_REG_OFFSET_RRX_STORE_ADDR RUNTIME_REG_OFFSET_RRX_WORD_ADDR
 #define RUNTIME_REG_OFFSET_WORD_VALUE 0x55667788u
 #define RUNTIME_REG_OFFSET_BYTE_VALUE 0xa5u
 #define RUNTIME_REG_OFFSET_STORE_VALUE 0x123456a9u
@@ -1154,6 +1162,7 @@ static u8 *g_runtime_half_writeback_load_entry;
 static u8 *g_runtime_shifted_reg_offset_entry;
 static u8 *g_runtime_shifted_reg_offset_store_entry;
 static u8 *g_runtime_reg_offset_rrx_load_entry;
+static u8 *g_runtime_reg_offset_rrx_store_entry;
 static u32 g_runtime_code_bytes;
 static u32 g_runtime_lookup_calls;
 static u32 g_runtime_lookup_pc;
@@ -1310,6 +1319,7 @@ static void clear_runtime_fixture_entries(void)
   g_runtime_shifted_reg_offset_entry = (u8 *)0;
   g_runtime_shifted_reg_offset_store_entry = (u8 *)0;
   g_runtime_reg_offset_rrx_load_entry = (u8 *)0;
+  g_runtime_reg_offset_rrx_store_entry = (u8 *)0;
 }
 
 static void render_frame(void);
@@ -1759,6 +1769,7 @@ static int build_runtime_fixture_block(const char **reason)
   u32 shifted_reg_offset_code_bytes;
   u32 shifted_reg_offset_store_code_bytes;
   u32 reg_offset_rrx_load_code_bytes;
+  u32 reg_offset_rrx_store_code_bytes;
   u32 condition;
   u8 *patch_branch_source;
   u8 *internal_branch_source;
@@ -4162,6 +4173,29 @@ static int build_runtime_fixture_block(const char **reason)
     (u32)(translation_ptr -
           (g_runtime_code + RUNTIME_REG_OFFSET_RRX_LOAD_BLOCK_OFFSET));
 
+  translation_ptr = g_runtime_code + RUNTIME_REG_OFFSET_RRX_STORE_BLOCK_OFFSET;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_runtime_reg_offset_rrx_store_entry =
+    ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_access_memory(
+        &translation_ptr, meta,
+        RUNTIME_REG_OFFSET_STRB_R9_R3_R2_RRX,
+        RUNTIME_REG_OFFSET_RRX_STORE_START_PC,
+        RUNTIME_REG_OFFSET_STORE_BASE_CYCLES))
+  {
+    *reason = "runtime_reg_offset_rrx_strb_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            RUNTIME_REG_OFFSET_RRX_STORE_START_PC,
+                            RUNTIME_REG_OFFSET_RRX_STORE_END_PC, false);
+  reg_offset_rrx_store_code_bytes =
+    (u32)(translation_ptr -
+          (g_runtime_code + RUNTIME_REG_OFFSET_RRX_STORE_BLOCK_OFFSET));
+
   g_runtime_code_bytes = add_code_bytes + load_code_bytes +
     store_code_bytes + store_byte_code_bytes +
     branch_code_bytes + branch_target_code_bytes + unsupported_code_bytes +
@@ -4209,7 +4243,8 @@ static int build_runtime_fixture_block(const char **reason)
     half_writeback_load_code_bytes +
     shifted_reg_offset_code_bytes +
     shifted_reg_offset_store_code_bytes +
-    reg_offset_rrx_load_code_bytes;
+    reg_offset_rrx_load_code_bytes +
+    reg_offset_rrx_store_code_bytes;
   flush_ret = syscall3(SYS_RISCV_FLUSH_ICACHE, (long)g_runtime_code,
                        (long)(g_runtime_code + RUNTIME_EXEC_MAP_BYTES), 0);
   if (flush_ret != 0)
@@ -4297,7 +4332,8 @@ static int ensure_runtime_fixture(const char **reason)
       g_runtime_half_writeback_load_entry &&
       g_runtime_shifted_reg_offset_entry &&
       g_runtime_shifted_reg_offset_store_entry &&
-      g_runtime_reg_offset_rrx_load_entry)
+      g_runtime_reg_offset_rrx_load_entry &&
+      g_runtime_reg_offset_rrx_store_entry)
     return 1;
 
   g_runtime_code = (u8 *)map_runtime_exec_page();
@@ -7258,6 +7294,33 @@ static void run_runtime_reference_workload(const struct harness_state *base,
 
   for (i = 0; i < REG_MAX; i++)
     values[i] = 0;
+  values[2] = RUNTIME_REG_OFFSET_RRX_VALUE;
+  values[3] = RUNTIME_REG_OFFSET_BASE_ADDR;
+  values[9] = RUNTIME_REG_OFFSET_STORE_VALUE;
+  values[REG_PC] = RUNTIME_REG_OFFSET_RRX_STORE_END_PC;
+  values[REG_CPSR] = RUNTIME_CPSR_C_BIT;
+  values[CPU_HALT_STATE] = CPU_ACTIVE;
+  reg_hash = runtime_update_reg_hash(reg_hash, values);
+  mem_hash = runtime_update_memory_hash(
+    mem_hash,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    runtime_reference_sticky_hash());
+  mem_hash = runtime_append_write8_hash(
+    mem_hash,
+    1, RUNTIME_REG_OFFSET_RRX_STORE_ADDR,
+    RUNTIME_REG_OFFSET_RRX_STORE_END_PC,
+    RUNTIME_REG_OFFSET_STORE_VALUE & 0xffu);
+  scheduler_hash = runtime_update_scheduler_hash(
+    scheduler_hash,
+    1, RUNTIME_REG_OFFSET_RRX_STORE_START_PC, 0,
+    1, 0,
+    0, 0, 0,
+    0, 0);
+
+  for (i = 0; i < REG_MAX; i++)
+    values[i] = 0;
   values[3] = RUNTIME_SWP_ADDR;
   values[4] = swp_old_word;
   values[5] = store_word;
@@ -8000,12 +8063,12 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   snapshot->reg_hash = reg_hash;
   snapshot->mem_hash = mem_hash;
   snapshot->scheduler_hash = scheduler_hash;
-  snapshot->blocks = 167;
+  snapshot->blocks = 168;
   snapshot->fallbacks = 51;
   snapshot->native_data_proc = 80;
   snapshot->native_branch = 7;
   snapshot->native_load = 23;
-  snapshot->native_store = 15;
+  snapshot->native_store = 16;
   snapshot->native_psr = 5;
 }
 
@@ -9072,6 +9135,18 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   mem_hash = runtime_update_current_memory_hash(mem_hash);
   scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
 
+  reset_runtime_fixture_state(RUNTIME_REG_OFFSET_RRX_STORE_START_PC);
+  reg[2] = RUNTIME_REG_OFFSET_RRX_VALUE;
+  reg[3] = RUNTIME_REG_OFFSET_BASE_ADDR;
+  reg[9] = RUNTIME_REG_OFFSET_STORE_VALUE;
+  reg[REG_CPSR] = RUNTIME_CPSR_C_BIT;
+  execute_arm_translate_internal(RUNTIME_REG_OFFSET_RRX_STORE_TOTAL_CYCLES,
+                                 &reg[0]);
+  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+  mem_hash = runtime_update_current_memory_hash(mem_hash);
+  mem_hash = runtime_update_current_write8_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+
   reset_runtime_fixture_state(RUNTIME_SWP_START_PC);
   reg[3] = RUNTIME_SWP_ADDR;
   reg[5] = g_runtime_fixture_store_word;
@@ -9816,6 +9891,9 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
   if (g_runtime_reg_offset_rrx_load_entry &&
       pc == RUNTIME_REG_OFFSET_RRX_LOAD_START_PC)
     return g_runtime_reg_offset_rrx_load_entry;
+  if (g_runtime_reg_offset_rrx_store_entry &&
+      pc == RUNTIME_REG_OFFSET_RRX_STORE_START_PC)
+    return g_runtime_reg_offset_rrx_store_entry;
   if (g_runtime_branch_entry && pc == RUNTIME_BRANCH_START_PC)
     return g_runtime_branch_entry;
   if (g_runtime_branch_target_entry && pc == RUNTIME_BRANCH_TARGET_PC)
@@ -10399,7 +10477,7 @@ static void command_compare(void)
 
   if (!ensure_runtime_fixture(&runtime_reason))
   {
-    put_raw("result=FAIL command=compare workload=arm_add_armaddremain_arminvalidremain_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_psrremain_msr_msrremain_msrctrl_msrctrlremain_msrspsrremain_load_loadremain_store_storeremain_storebyte_storebyteremain_storebytealert_storebytehalt_pcmem_pcmemremain_loadpc_loadpcremain_loadpcnative_pcstore_pcstoreremain_pcbasestoreremain_storealert_storehalt_regoff_regoffremain_regstore_regstoreremain_shiftstore_shiftstoreremain_regwb_regwbstoreremain_regwbloadremain_halfremain_halfreg_halfregremain_halfregstoreremain_halfpc_halfpcremain_halfwb_halfwbstoreremain_halfwbloadremain_halfalert_halfhalt_blockmem_blockldmremain_blockalert_blockhalt_blockpush_blockpushremain_blockpc_blockpcnative_blockspsr_hle_hledivarmremain_pcsrc_pcsrcremain_writeback_writebackstoreremain_writebackloadremain_swp_swpalert_swphalt_swpb_alert_branchremain_branchchainremain_armlookupmiss_arminvalidlookup_branchupdaterefill_branchupdatepc_branchupdateframepc_branch_patch_external_branch_patch_internal_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_swipatch_condtruth_pcwrite_pcwritenative_pcwritethumb_pcaddremain_spsr_idle_thumb_fallback_thumbinvalidlookup_thumbunsupported");
+    put_raw("result=FAIL command=compare workload=arm_add_armaddremain_arminvalidremain_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_psrremain_msr_msrremain_msrctrl_msrctrlremain_msrspsrremain_load_loadremain_store_storeremain_storebyte_storebyteremain_storebytealert_storebytehalt_pcmem_pcmemremain_loadpc_loadpcremain_loadpcnative_pcstore_pcstoreremain_pcbasestoreremain_storealert_storehalt_regoff_regoffremain_regstore_regstoreremain_shiftstore_shiftstoreremain_rrxstore_regwb_regwbstoreremain_regwbloadremain_halfremain_halfreg_halfregremain_halfregstoreremain_halfpc_halfpcremain_halfwb_halfwbstoreremain_halfwbloadremain_halfalert_halfhalt_blockmem_blockldmremain_blockalert_blockhalt_blockpush_blockpushremain_blockpc_blockpcnative_blockspsr_hle_hledivarmremain_pcsrc_pcsrcremain_writeback_writebackstoreremain_writebackloadremain_swp_swpalert_swphalt_swpb_alert_branchremain_branchchainremain_armlookupmiss_arminvalidlookup_branchupdaterefill_branchupdatepc_branchupdateframepc_branch_patch_external_branch_patch_internal_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_swipatch_condtruth_pcwrite_pcwritenative_pcwritethumb_pcaddremain_spsr_idle_thumb_fallback_thumbinvalidlookup_thumbunsupported");
     put_raw(" harness_mode=");
     put_raw(RUNTIME_FIXTURE_MODE);
     put_raw(" frame_mode=synthetic mem_mode=runtime_stickybits reason=");
@@ -10425,7 +10503,7 @@ static void command_compare(void)
       rv32im.native_store != interp.native_store ||
       rv32im.native_psr != interp.native_psr)
   {
-    put_raw("result=FAIL command=compare workload=arm_add_armaddremain_arminvalidremain_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_psrremain_msr_msrremain_msrctrl_msrctrlremain_msrspsrremain_load_loadremain_store_storeremain_storebyte_storebyteremain_storebytealert_storebytehalt_pcmem_pcmemremain_loadpc_loadpcremain_loadpcnative_pcstore_pcstoreremain_pcbasestoreremain_storealert_storehalt_regoff_regoffremain_regstore_regstoreremain_shiftstore_shiftstoreremain_regwb_regwbstoreremain_regwbloadremain_halfremain_halfreg_halfregremain_halfregstoreremain_halfpc_halfpcremain_halfwb_halfwbstoreremain_halfwbloadremain_halfalert_halfhalt_blockmem_blockldmremain_blockalert_blockhalt_blockpush_blockpushremain_blockpc_blockpcnative_blockspsr_hle_hledivarmremain_pcsrc_pcsrcremain_writeback_writebackstoreremain_writebackloadremain_swp_swpalert_swphalt_swpb_alert_branchremain_branchchainremain_armlookupmiss_arminvalidlookup_branchupdaterefill_branchupdatepc_branchupdateframepc_branch_patch_external_branch_patch_internal_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_swipatch_condtruth_pcwrite_pcwritenative_pcwritethumb_pcaddremain_spsr_idle_thumb_fallback_thumbinvalidlookup_thumbunsupported interp_frame_hash=");
+    put_raw("result=FAIL command=compare workload=arm_add_armaddremain_arminvalidremain_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_psrremain_msr_msrremain_msrctrl_msrctrlremain_msrspsrremain_load_loadremain_store_storeremain_storebyte_storebyteremain_storebytealert_storebytehalt_pcmem_pcmemremain_loadpc_loadpcremain_loadpcnative_pcstore_pcstoreremain_pcbasestoreremain_storealert_storehalt_regoff_regoffremain_regstore_regstoreremain_shiftstore_shiftstoreremain_rrxstore_regwb_regwbstoreremain_regwbloadremain_halfremain_halfreg_halfregremain_halfregstoreremain_halfpc_halfpcremain_halfwb_halfwbstoreremain_halfwbloadremain_halfalert_halfhalt_blockmem_blockldmremain_blockalert_blockhalt_blockpush_blockpushremain_blockpc_blockpcnative_blockspsr_hle_hledivarmremain_pcsrc_pcsrcremain_writeback_writebackstoreremain_writebackloadremain_swp_swpalert_swphalt_swpb_alert_branchremain_branchchainremain_armlookupmiss_arminvalidlookup_branchupdaterefill_branchupdatepc_branchupdateframepc_branch_patch_external_branch_patch_internal_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_swipatch_condtruth_pcwrite_pcwritenative_pcwritethumb_pcaddremain_spsr_idle_thumb_fallback_thumbinvalidlookup_thumbunsupported interp_frame_hash=");
     put_u32_hex(interp.frame_hash);
     put_raw(" rv32im_frame_hash=");
     put_u32_hex(rv32im.frame_hash);
@@ -10464,7 +10542,7 @@ static void command_compare(void)
     return;
   }
 
-  put_raw("result=PASS command=compare workload=arm_add_armaddremain_arminvalidremain_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_psrremain_msr_msrremain_msrctrl_msrctrlremain_msrspsrremain_load_loadremain_store_storeremain_storebyte_storebyteremain_storebytealert_storebytehalt_pcmem_pcmemremain_loadpc_loadpcremain_loadpcnative_pcstore_pcstoreremain_pcbasestoreremain_storealert_storehalt_regoff_regoffremain_regstore_regstoreremain_shiftstore_shiftstoreremain_regwb_regwbstoreremain_regwbloadremain_halfremain_halfreg_halfregremain_halfregstoreremain_halfpc_halfpcremain_halfwb_halfwbstoreremain_halfwbloadremain_halfalert_halfhalt_blockmem_blockldmremain_blockalert_blockhalt_blockpush_blockpushremain_blockpc_blockpcnative_blockspsr_hle_hledivarmremain_pcsrc_pcsrcremain_writeback_writebackstoreremain_writebackloadremain_swp_swpalert_swphalt_swpb_alert_branchremain_branchchainremain_armlookupmiss_arminvalidlookup_branchupdaterefill_branchupdatepc_branchupdateframepc_branch_patch_external_branch_patch_internal_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_swipatch_condtruth_pcwrite_pcwritenative_pcwritethumb_pcaddremain_spsr_idle_thumb_fallback_thumbinvalidlookup_thumbunsupported interp_frame_hash=");
+  put_raw("result=PASS command=compare workload=arm_add_armaddremain_arminvalidremain_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_psrremain_msr_msrremain_msrctrl_msrctrlremain_msrspsrremain_load_loadremain_store_storeremain_storebyte_storebyteremain_storebytealert_storebytehalt_pcmem_pcmemremain_loadpc_loadpcremain_loadpcnative_pcstore_pcstoreremain_pcbasestoreremain_storealert_storehalt_regoff_regoffremain_regstore_regstoreremain_shiftstore_shiftstoreremain_rrxstore_regwb_regwbstoreremain_regwbloadremain_halfremain_halfreg_halfregremain_halfregstoreremain_halfpc_halfpcremain_halfwb_halfwbstoreremain_halfwbloadremain_halfalert_halfhalt_blockmem_blockldmremain_blockalert_blockhalt_blockpush_blockpushremain_blockpc_blockpcnative_blockspsr_hle_hledivarmremain_pcsrc_pcsrcremain_writeback_writebackstoreremain_writebackloadremain_swp_swpalert_swphalt_swpb_alert_branchremain_branchchainremain_armlookupmiss_arminvalidlookup_branchupdaterefill_branchupdatepc_branchupdateframepc_branch_patch_external_branch_patch_internal_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_swipatch_condtruth_pcwrite_pcwritenative_pcwritethumb_pcaddremain_spsr_idle_thumb_fallback_thumbinvalidlookup_thumbunsupported interp_frame_hash=");
   put_u32_hex(interp.frame_hash);
   put_raw(" rv32im_frame_hash=");
   put_u32_hex(rv32im.frame_hash);
