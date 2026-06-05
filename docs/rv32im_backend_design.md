@@ -292,7 +292,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   mode/bus/banked-state effects, patchable SWI-to-native-target chaining,
   conditional-header truth-table taken/skipped behavior for ARM conditions `0..13`,
   `MOV pc, r14` PC-write behavior, `MOVS pc, r14` SPSR restore behavior,
-  store-triggered SMC/IRQ alert handling, byte-store SMC/IRQ alert handling,
+  store-triggered SMC/IRQ/HALT alert handling, byte-store SMC/IRQ/HALT alert handling,
   halfword SMC/IRQ alert handling, store/halfword/block/SWP HALT-alert handling,
   block-memory SMC/IRQ alert handling, SWP-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, ARM lookup-miss/invalid fallback, Thumb lookup-miss/invalid fallback, and Thumb unsupported-block fallback fixtures against a local ARM
