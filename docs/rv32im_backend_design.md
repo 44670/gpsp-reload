@@ -291,10 +291,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   and `SWP` with `rm == pc`; it also pins 13 non-AL conditional opcode
   rejections across the direct native emitter families, preserving the rule
   that ARM condition handling enters through conditional block headers instead
-  of per-opcode lowering, and one signed halfword load-to-PC rejection that
-  stays helper-routed until that PC-write form has interpreter-parity proof; six
-  PC-base writeback forms and one register-offset shifted-register form
-  are pinned the same way
+  of per-opcode lowering; six PC-base writeback forms and one register-offset
+  shifted-register form are pinned the same way
 - explicit RV32IM `fallbacks runtime [offset]` dump for observed runtime
   fallback events, including initial lookup, relookup, and unsupported-block
   categories plus PC, ARM/Thumb mode, lookup result, and cycle budget; the
@@ -437,17 +435,18 @@ load and positive/negative halfword store, PC-register-offset word/byte store, s
 PC-register-offset word/byte load/store, and halfword load/store blocks plus
 LSL/LSR/ASR/ROR/RRX register-offset load blocks and LSL/LSR/ASR/ROR/RRX
 register-offset store blocks, then checks their helper address, PC, value,
-and leftover-cycle handoff observations directly. It also proves that
-signed halfword load-to-PC (`LDRSH` with `Rd=PC`) stays rejected by the
-native emitter until a separate interpreter-parity proof exists.
+and leftover-cycle handoff observations directly.
 Immediate no-writeback `LDRB pc` now has standalone and qemu-user compare
 proof for boundary, remaining-cycle, and native-target chaining behavior.
 Immediate no-writeback `LDRH pc` now has standalone and qemu-user compare
 proof for the same boundary, remaining-cycle, and native-target chaining
 behavior. Immediate no-writeback `LDRSB pc` now has standalone and qemu-user
 compare proof for the same boundary, remaining-cycle, and native-target
-chaining behavior with a sign-extended PC target. PC-base writeback and
-post-index load/store forms are likewise proven rejected for word/byte and
+chaining behavior with a sign-extended PC target. Immediate no-writeback
+`LDRSH pc` now has standalone proof for the same boundary, remaining-cycle,
+and native-target chaining behavior with a sign-extended PC target; qemu-user
+compare coverage should follow before widening that form. PC-base writeback
+and post-index load/store forms are likewise proven rejected for word/byte and
 halfword memory classes. A
 standalone partial-unsupported block remains as the focused
 `riscv_emit_block_finalize()` proof for the same discard-and-fallback contract.

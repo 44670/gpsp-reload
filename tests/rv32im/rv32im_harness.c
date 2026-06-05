@@ -2701,12 +2701,6 @@ static int run_runtime_reject_audit(const char **reason,
       RUNTIME_HALF_LOAD_START_PC, RUNTIME_HALF_LDRH_BASE_CYCLES,
       "runtime_reject_cond_extra_memory_accepted" }
   };
-  static const runtime_access_memory_reject_case load_pc_cases[] =
-  {
-    { RUNTIME_HALF_LDRSH_PC_R3_0X26, RUNTIME_HALF_LDRSH_PC,
-      RUNTIME_HALF_LDRSH_BASE_CYCLES,
-      "runtime_reject_ldrsh_pc_accepted" }
-  };
   static const runtime_access_memory_reject_case pc_base_wb_cases[] =
   {
     { RUNTIME_PC_BASE_LDR_R4_PC_POST_0X24,
@@ -2821,21 +2815,6 @@ static int run_runtime_reject_audit(const char **reason,
     }
     (*total_rejections)++;
     (*conditional_rejections)++;
-  }
-
-  for (i = 0; i < ARRAY_SIZE(load_pc_cases); i++)
-  {
-    const runtime_access_memory_reject_case *test_case =
-      &load_pc_cases[i];
-
-    if (!runtime_expect_access_memory_rejected(
-          reason, test_case->opcode, test_case->pc, test_case->cycles,
-          test_case->accepted_reason))
-    {
-      return 0;
-    }
-    (*total_rejections)++;
-    (*load_pc_rejections)++;
   }
 
   for (i = 0; i < ARRAY_SIZE(pc_base_wb_cases); i++)
