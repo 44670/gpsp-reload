@@ -274,14 +274,14 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   the runtime workload, with Thumb lookups tagged in bit 0
 - explicit RV32IM `bp <pc> runtime` lookup-breakpoint query against the
   runtime workload trace, using the same Thumb low-bit encoding
-- explicit RV32IM `mem <addr> <len> runtime` helper-event dump for observed
-  runtime memory reads/writes in the selected address range
+- explicit RV32IM `mem <addr> <len> runtime [offset]` helper-event dump for
+  observed runtime memory reads/writes in the selected address range
 - explicit RV32IM `mem <addr> <len> runtime-bytes` shadow byte dump for the
   `0x02000000..0x0200ffff` fixture window, populated by actual RV32IM helper
   writes during the runtime workload
-- explicit RV32IM `watchio <addr> <len> runtime` helper-event view for observed
-  runtime IO-window reads/writes, currently exercised by a real store helper
-  event at `0x04000028`
+- explicit RV32IM `watchio <addr> <len> runtime [offset]` helper-event view
+  for observed runtime IO-window reads/writes, currently exercised by a real
+  store helper event at `0x04000028`
 - qemu-user harness `compare` execution of generated RV32IM
   `ADD r2, r0, r1`, `ADDS`, `SUBS`, `RSBS`, `CMP`, `MUL`, `MLA`,
   `UMULL`, `SMULL`,
@@ -373,17 +373,18 @@ Remaining first-phase gaps should stay narrow and evidence-driven:
 - The qemu-user harness still has synthetic/fixture-backed state, memory, and default trace,
   and default frame paths outside the runtime-backed fixture commands. Synthetic
   paths stay labeled with `harness_mode=synthetic`; the `compare`,
-  `regs runtime`, `mem <addr> <len> runtime`,
+  `regs runtime`, `mem <addr> <len> runtime <offset>`,
   `mem <addr> <len> runtime-bytes`,
-  `watchio <addr> <len> runtime`, `counters runtime`,
+  `watchio <addr> <len> runtime <offset>`, `counters runtime`,
   `stepb runtime <count>`, `tracepc runtime <count> <offset>`,
   `bp <pc> runtime`,
   `framehash runtime`, and `png <path> runtime` fixture paths are labeled
   `harness_mode=runtime_fixture`; the snapshot commands derive output from the
   runtime state/memory/scheduler/native-counter snapshot, `mem ... runtime`
-  and `watchio ... runtime` record actual RV32IM helper memory/IO events,
-  `mem ... runtime-bytes` records a bounded shadow-memory byte view of actual
-  RV32IM helper writes, `stepb ... runtime` records the lookup prefix,
+  and `watchio ... runtime` record bounded windows of actual RV32IM helper
+  memory/IO events, `mem ... runtime-bytes` records a bounded shadow-memory
+  byte view of actual RV32IM helper writes, `stepb ... runtime` records the
+  lookup prefix,
   `tracepc runtime ...` records a bounded window of actual RV32IM lookup PCs,
   and `bp ... runtime` reports hit/miss against those lookup PCs. Full
   addressable emulator RAM/IO dumps and real emulator frame output are still

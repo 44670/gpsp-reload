@@ -11131,7 +11131,8 @@ static void command_runtime_event_range(const char *command,
                                         u32 addr,
                                         u32 len,
                                         const char *mode_field,
-                                        const char *pass_reason)
+                                        const char *pass_reason,
+                                        u32 offset)
 {
   const char *runtime_reason = "runtime_unknown";
   u32 stored_count;
@@ -11139,6 +11140,7 @@ static void command_runtime_event_range(const char *command,
   u32 printed = 0;
   u32 hash = 2166136261u;
   u32 i;
+  u32 match_index;
 
   if (!capture_runtime_memory_events(&runtime_reason))
   {
@@ -11161,6 +11163,21 @@ static void command_runtime_event_range(const char *command,
   }
 
   stored_count = runtime_mem_event_stored_count();
+  for (i = 0; i < stored_count; i++)
+  {
+    if (!runtime_mem_event_in_range(i, addr, len))
+      continue;
+
+    matched++;
+    hash = fnv1a_update_u32(hash, g_runtime_mem_event_kind[i]);
+    hash = fnv1a_update_u32(hash, g_runtime_mem_event_addr[i]);
+    hash = fnv1a_update_u32(hash, g_runtime_mem_event_pc[i]);
+    hash = fnv1a_update_u32(hash, g_runtime_mem_event_value[i]);
+  }
+
+  if (offset > matched)
+    offset = matched;
+
   put_raw("result=PASS command=");
   put_raw(command);
   put_raw(" backend=");
@@ -11173,18 +11190,17 @@ static void command_runtime_event_range(const char *command,
   put_u32_dec(g_runtime_mem_event_count);
   put_raw(" stored=");
   put_u32_dec(stored_count);
+  put_raw(" offset=");
+  put_u32_dec(offset);
   put_raw(" events=");
+
+  match_index = 0;
   for (i = 0; i < stored_count; i++)
   {
     if (!runtime_mem_event_in_range(i, addr, len))
       continue;
 
-    matched++;
-    hash = fnv1a_update_u32(hash, g_runtime_mem_event_kind[i]);
-    hash = fnv1a_update_u32(hash, g_runtime_mem_event_addr[i]);
-    hash = fnv1a_update_u32(hash, g_runtime_mem_event_pc[i]);
-    hash = fnv1a_update_u32(hash, g_runtime_mem_event_value[i]);
-    if (printed < 16)
+    if (match_index >= offset && printed < 16)
     {
       if (printed)
         put_chr(',');
@@ -11197,6 +11213,7 @@ static void command_runtime_event_range(const char *command,
       put_u32_hex(g_runtime_mem_event_value[i]);
       printed++;
     }
+    match_index++;
   }
   put_raw(" matched=");
   put_u32_dec(matched);
@@ -11375,7 +11392,8 @@ static void command_regs(char *mode)
   put_chr('\n');
 }
 
-static void command_mem(char *addr_arg, char *len_arg, char *mode)
+static void command_mem(char *addr_arg, char *len_arg, char *mode,
+                        char *offset_arg)
 {
   u32 addr;
   u32 len;
@@ -11390,7 +11408,8 @@ static void command_mem(char *addr_arg, char *len_arg, char *mode)
   if (mode && str_eq(mode, "runtime"))
   {
     command_runtime_event_range("mem", addr, len, "mem_mode",
-                                "runtime_memory_events");
+                                "runtime_memory_events",
+                                optional_count(offset_arg, 0));
     return;
   }
 
@@ -11399,6 +11418,12 @@ static void command_mem(char *addr_arg, char *len_arg, char *mode)
     const char *runtime_reason = "runtime_unknown";
     u32 offset;
     u32 hash;
+
+    if (offset_arg && *offset_arg)
+    {
+      print_fail("mem", "unknown_mem_mode");
+      return;
+    }
 
     if (len > 64)
       len = 64;
@@ -11463,7 +11488,8 @@ static void command_mem(char *addr_arg, char *len_arg, char *mode)
     return;
   }
 
-  if (mode && *mode && !str_eq(mode, "synthetic"))
+  if ((mode && *mode && !str_eq(mode, "synthetic")) ||
+      (offset_arg && *offset_arg))
   {
     print_fail("mem", "unknown_mem_mode");
     return;
@@ -11502,7 +11528,8 @@ static int runtime_io_range_valid(u32 addr, u32 len)
   return addr >= RUNTIME_IO_BASE_ADDR && end <= RUNTIME_IO_END_ADDR;
 }
 
-static void command_watchio(char *addr_arg, char *len_arg, char *mode)
+static void command_watchio(char *addr_arg, char *len_arg, char *mode,
+                            char *offset_arg)
 {
   u32 addr;
   u32 len;
@@ -11526,7 +11553,8 @@ static void command_watchio(char *addr_arg, char *len_arg, char *mode)
   }
 
   command_runtime_event_range("watchio", addr, len, "watch_mode",
-                              "runtime_io_events");
+                              "runtime_io_events",
+                              optional_count(offset_arg, 0));
 }
 
 static void command_counters(char *mode)
@@ -12418,13 +12446,15 @@ static void process_line(char *line)
   {
     char *addr = next_token(&cursor);
     char *len = next_token(&cursor);
-    command_mem(addr, len, next_token(&cursor));
+    char *mode = next_token(&cursor);
+    command_mem(addr, len, mode, next_token(&cursor));
   }
   else if (str_eq(cmd, "watchio"))
   {
     char *addr = next_token(&cursor);
     char *len = next_token(&cursor);
-    command_watchio(addr, len, next_token(&cursor));
+    char *mode = next_token(&cursor);
+    command_watchio(addr, len, mode, next_token(&cursor));
   }
   else if (str_eq(cmd, "counters"))
   {
