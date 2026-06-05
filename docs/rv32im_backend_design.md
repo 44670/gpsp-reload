@@ -416,7 +416,10 @@ unsupported byte and halfword load-to-PC forms (`LDRB`, `LDRH`, `LDRSB`,
 and `LDRSH` with `Rd=PC`) stay rejected by the native emitter until a
 separate interpreter-parity proof exists. PC-base writeback and post-index
 load/store forms are likewise proven rejected for word/byte and halfword
-memory classes.
+memory classes. A standalone partial-unsupported block proves that
+`riscv_emit_block_finalize()` discards a partially emitted native body when
+the block is marked unsupported, then routes through the interpreter fallback
+without applying that partial native register write.
 
 Remaining first-phase gaps should stay narrow and evidence-driven:
 

@@ -15,7 +15,7 @@ typedef unsigned int usize;
 #define PROT_EXEC 4
 #define MAP_PRIVATE 2
 #define MAP_ANONYMOUS 32
-#define EXEC_MAP_BYTES 71680u
+#define EXEC_MAP_BYTES 72192u
 
 #define BLOCK_START_PC 0x08000000u
 #define BLOCK_END_PC 0x08000004u
@@ -44,6 +44,12 @@ typedef unsigned int usize;
 #define UNSUPPORTED_START_PC 0x08000020u
 #define UNSUPPORTED_END_PC (UNSUPPORTED_START_PC + 4u)
 #define UNSUPPORTED_CYCLES 11u
+#define PARTIAL_UNSUPPORTED_START_PC 0x08000030u
+#define PARTIAL_UNSUPPORTED_END_PC (PARTIAL_UNSUPPORTED_START_PC + 4u)
+#define PARTIAL_UNSUPPORTED_CYCLES 12u
+#define PARTIAL_UNSUPPORTED_R0_VALUE 0x01020304u
+#define PARTIAL_UNSUPPORTED_R1_VALUE 0x11121314u
+#define PARTIAL_UNSUPPORTED_R2_SENTINEL 0xa55a1177u
 #define THUMB_UNSUPPORTED_START_PC 0x02001020u
 #define THUMB_UNSUPPORTED_END_PC (THUMB_UNSUPPORTED_START_PC + 2u)
 #define THUMB_UNSUPPORTED_CYCLES 13u
@@ -1245,6 +1251,7 @@ typedef unsigned int usize;
 #define SHIFTED_REG_OFFSET_PC_ROR_WORD_STORE_BLOCK_OFFSET 70144u
 #define PC_BASE_HALF_STORE_BLOCK_OFFSET 70656u
 #define PC_BASE_HALF_NEG_STORE_BLOCK_OFFSET 71168u
+#define PARTIAL_UNSUPPORTED_BLOCK_OFFSET 71680u
 #define EXPECTED_INITIAL_ROM_WATERMARK 16u
 
 u32 reg[REG_MAX];
@@ -1264,6 +1271,7 @@ static u8 *g_data_entry;
 static u8 *g_chain_second_entry;
 static u8 *g_cycle_update_entry;
 static u8 *g_unsupported_entry;
+static u8 *g_partial_unsupported_entry;
 static u8 *g_thumb_unsupported_entry;
 static u8 *g_multiply_entry;
 static u8 *g_multiply_flag_muls_entry;
@@ -1909,6 +1917,33 @@ static u32 build_unsupported_block(u8 *code)
   riscv_mark_block_unsupported(meta);
   riscv_emit_block_finalize(meta, &translation_ptr, UNSUPPORTED_START_PC,
                             UNSUPPORTED_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_partial_unsupported_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_partial_unsupported_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       ADD_R2_R0_R1,
+                                       PARTIAL_UNSUPPORTED_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=partial_unsupported_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_mark_block_unsupported(meta);
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            PARTIAL_UNSUPPORTED_START_PC,
+                            PARTIAL_UNSUPPORTED_END_PC, false);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -4313,6 +4348,46 @@ static void run_unsupported_block_fallback_case(void)
   expect_runtime_fallback_delta("unsupported_fallback_stats",
                                 &stats_before, 1, 1, 0, 0, 1);
   expect_stickybits_cleared("unsupported_fallback");
+}
+
+static void run_partial_unsupported_finalize_case(void)
+{
+  riscv_runtime_stats stats_before;
+
+  reset_runtime_observations(PARTIAL_UNSUPPORTED_START_PC);
+  g_lookup_entry = g_partial_unsupported_entry;
+  reg[0] = PARTIAL_UNSUPPORTED_R0_VALUE;
+  reg[1] = PARTIAL_UNSUPPORTED_R1_VALUE;
+  reg[2] = PARTIAL_UNSUPPORTED_R2_SENTINEL;
+  riscv_get_runtime_stats(&stats_before);
+
+  execute_arm_translate_internal(PARTIAL_UNSUPPORTED_CYCLES, &reg[0]);
+
+  if (reg[REG_PC] != PARTIAL_UNSUPPORTED_START_PC)
+    fail_u32("partial_unsupported", "pc",
+             reg[REG_PC], PARTIAL_UNSUPPORTED_START_PC);
+  if (reg[2] != PARTIAL_UNSUPPORTED_R2_SENTINEL)
+    fail_u32("partial_unsupported", "r2",
+             reg[2], PARTIAL_UNSUPPORTED_R2_SENTINEL);
+  if (g_lookup_calls != 1)
+    fail_u32("partial_unsupported", "lookup_calls", g_lookup_calls, 1);
+  if (g_lookup_pc != PARTIAL_UNSUPPORTED_START_PC)
+    fail_u32("partial_unsupported", "lookup_pc",
+             g_lookup_pc, PARTIAL_UNSUPPORTED_START_PC);
+  if (g_update_calls != 0)
+    fail_u32("partial_unsupported", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("partial_unsupported", "execute_calls",
+             g_execute_calls, 1);
+  if (g_execute_cycles != PARTIAL_UNSUPPORTED_CYCLES)
+    fail_u32("partial_unsupported", "execute_cycles",
+             g_execute_cycles, PARTIAL_UNSUPPORTED_CYCLES);
+  if (g_execute_pc != PARTIAL_UNSUPPORTED_START_PC)
+    fail_u32("partial_unsupported", "execute_pc",
+             g_execute_pc, PARTIAL_UNSUPPORTED_START_PC);
+  expect_runtime_fallback_delta("partial_unsupported_stats",
+                                &stats_before, 1, 1, 0, 0, 1);
+  expect_stickybits_cleared("partial_unsupported");
 }
 
 static void run_thumb_unsupported_block_fallback_case(void)
@@ -9607,6 +9682,7 @@ void _start(void)
   u32 chain_second_code_bytes;
   u32 cycle_update_code_bytes;
   u32 unsupported_code_bytes;
+  u32 partial_unsupported_code_bytes;
   u32 thumb_unsupported_code_bytes;
   u32 multiply_code_bytes;
   u32 multiply_flag_muls_code_bytes;
@@ -9744,6 +9820,8 @@ void _start(void)
                                  "chain_second_emit_rejected");
   unsupported_code_bytes =
     build_unsupported_block(code + UNSUPPORTED_BLOCK_OFFSET);
+  partial_unsupported_code_bytes =
+    build_partial_unsupported_block(code + PARTIAL_UNSUPPORTED_BLOCK_OFFSET);
   thumb_unsupported_code_bytes =
     build_thumb_unsupported_block(code + THUMB_UNSUPPORTED_BLOCK_OFFSET);
   multiply_code_bytes = build_multiply_block(code + MULTIPLY_BLOCK_OFFSET);
@@ -10275,6 +10353,7 @@ void _start(void)
   run_cycle_boundary_case();
   run_cycle_update_checkpoint_case();
   run_unsupported_block_fallback_case();
+  run_partial_unsupported_finalize_case();
   run_thumb_unsupported_block_fallback_case();
   run_initial_lookup_miss_fallback_case();
   run_initial_lookup_invalid_fallback_case();
@@ -10516,6 +10595,8 @@ void _start(void)
   put_u32_dec(cycle_update_code_bytes);
   put_raw(" unsupported_code_bytes=");
   put_u32_dec(unsupported_code_bytes);
+  put_raw(" partial_unsupported_code_bytes=");
+  put_u32_dec(partial_unsupported_code_bytes);
   put_raw(" thumb_unsupported_code_bytes=");
   put_u32_dec(thumb_unsupported_code_bytes);
   put_raw(" multiply_code_bytes=");
@@ -10772,6 +10853,8 @@ void _start(void)
   put_u32_hex((u32)g_cycle_update_entry);
   put_raw(" unsupported_entry=");
   put_u32_hex((u32)g_unsupported_entry);
+  put_raw(" partial_unsupported_entry=");
+  put_u32_hex((u32)g_partial_unsupported_entry);
   put_raw(" thumb_unsupported_entry=");
   put_u32_hex((u32)g_thumb_unsupported_entry);
   put_raw(" multiply_entry=");
