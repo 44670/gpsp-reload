@@ -279,7 +279,10 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - explicit RV32IM `rejects runtime` emitter-contract audit for unsafe opcodes
   that must stay rejected by native lowering, currently `MRS r15,CPSR`,
   `MSR CPSR,r15`, multiply/long-multiply with `rm == pc`, HLE-reserved SWI,
-  and `SWP` with `rm == pc`
+  and `SWP` with `rm == pc`; it also pins 13 non-AL conditional opcode
+  rejections across the direct native emitter families, preserving the rule
+  that ARM condition handling enters through conditional block headers instead
+  of per-opcode lowering
 - explicit RV32IM `fallbacks runtime [offset]` dump for observed runtime
   fallback events, including initial lookup, relookup, and unsupported-block
   categories plus PC, ARM/Thumb mode, lookup result, and cycle budget; the

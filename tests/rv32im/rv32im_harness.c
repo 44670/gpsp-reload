@@ -31,6 +31,7 @@ typedef unsigned int usize;
 #define HARNESS_MODE "synthetic"
 #define RUNTIME_FIXTURE_MODE "runtime_fixture"
 #define FRAME_MODE_RUNTIME_SNAPSHOT "runtime_snapshot"
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 #define RUNTIME_COMPARE_WORKLOAD \
   "arm_add_armaddchain_armaddremain_arminvalidremain_multiply_multiplylong_" \
   "longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_" \
@@ -2405,98 +2406,167 @@ static int build_runtime_memory_block(const char **reason, u8 *block_base,
   return 1;
 }
 
-static int runtime_expect_psr_rejected(const char **reason, u32 opcode,
-                                       u32 cycles,
-                                       const char *accepted_reason)
+typedef bool (*runtime_emit_opcode_cycles_fn)(u8 **translation_ptr,
+                                              riscv_jit_block_meta *meta,
+                                              u32 opcode, u32 cycles);
+
+typedef bool (*runtime_emit_opcode_pc_cycles_fn)(u8 **translation_ptr,
+                                                 riscv_jit_block_meta *meta,
+                                                 u32 opcode, u32 pc,
+                                                 u32 cycles);
+
+typedef struct runtime_cond_cycles_reject_case
+{
+  runtime_emit_opcode_cycles_fn emit;
+  u32 opcode;
+  u32 cycles;
+  const char *accepted_reason;
+} runtime_cond_cycles_reject_case;
+
+typedef struct runtime_cond_pc_cycles_reject_case
+{
+  runtime_emit_opcode_pc_cycles_fn emit;
+  u32 opcode;
+  u32 pc;
+  u32 cycles;
+  const char *accepted_reason;
+} runtime_cond_pc_cycles_reject_case;
+
+static u32 runtime_opcode_with_condition(u32 opcode, u32 condition)
+{
+  return (opcode & 0x0fffffffu) | (condition << 28);
+}
+
+static int runtime_expect_opcode_cycles_rejected(
+  const char **reason, runtime_emit_opcode_cycles_fn emit, u32 opcode,
+  u32 cycles, const char *accepted_reason)
 {
   u8 *translation_ptr = g_runtime_reject_code;
   riscv_jit_block_meta *meta;
 
   riscv_emit_block_prologue(&translation_ptr, &meta);
-  if (riscv_emit_native_arm_psr(&translation_ptr, meta, opcode, cycles))
+  if (emit(&translation_ptr, meta, opcode, cycles))
   {
     *reason = accepted_reason;
     return 0;
   }
 
   return 1;
+}
+
+static int runtime_expect_opcode_pc_cycles_rejected(
+  const char **reason, runtime_emit_opcode_pc_cycles_fn emit, u32 opcode,
+  u32 pc, u32 cycles, const char *accepted_reason)
+{
+  u8 *translation_ptr = g_runtime_reject_code;
+  riscv_jit_block_meta *meta;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  if (emit(&translation_ptr, meta, opcode, pc, cycles))
+  {
+    *reason = accepted_reason;
+    return 0;
+  }
+
+  return 1;
+}
+
+static int runtime_expect_psr_rejected(const char **reason, u32 opcode,
+                                       u32 cycles,
+                                       const char *accepted_reason)
+{
+  return runtime_expect_opcode_cycles_rejected(
+    reason, riscv_emit_native_arm_psr, opcode, cycles, accepted_reason);
 }
 
 static int runtime_expect_multiply_rejected(const char **reason, u32 opcode,
                                             u32 cycles,
                                             const char *accepted_reason)
 {
-  u8 *translation_ptr = g_runtime_reject_code;
-  riscv_jit_block_meta *meta;
-
-  riscv_emit_block_prologue(&translation_ptr, &meta);
-  if (riscv_emit_native_arm_multiply(&translation_ptr, meta, opcode, cycles))
-  {
-    *reason = accepted_reason;
-    return 0;
-  }
-
-  return 1;
+  return runtime_expect_opcode_cycles_rejected(
+    reason, riscv_emit_native_arm_multiply, opcode, cycles, accepted_reason);
 }
 
 static int runtime_expect_multiply_long_rejected(const char **reason,
                                                  u32 opcode, u32 cycles,
                                                  const char *accepted_reason)
 {
-  u8 *translation_ptr = g_runtime_reject_code;
-  riscv_jit_block_meta *meta;
-
-  riscv_emit_block_prologue(&translation_ptr, &meta);
-  if (riscv_emit_native_arm_multiply_long(&translation_ptr, meta, opcode,
-                                          cycles))
-  {
-    *reason = accepted_reason;
-    return 0;
-  }
-
-  return 1;
+  return runtime_expect_opcode_cycles_rejected(
+    reason, riscv_emit_native_arm_multiply_long, opcode, cycles,
+    accepted_reason);
 }
 
 static int runtime_expect_swi_rejected(const char **reason, u32 opcode,
                                        u32 pc, u32 cycles,
                                        const char *accepted_reason)
 {
-  u8 *translation_ptr = g_runtime_reject_code;
-  riscv_jit_block_meta *meta;
-
-  riscv_emit_block_prologue(&translation_ptr, &meta);
-  if (riscv_emit_native_arm_swi(&translation_ptr, meta, opcode, pc, cycles))
-  {
-    *reason = accepted_reason;
-    return 0;
-  }
-
-  return 1;
+  return runtime_expect_opcode_pc_cycles_rejected(
+    reason, riscv_emit_native_arm_swi, opcode, pc, cycles, accepted_reason);
 }
 
 static int runtime_expect_swap_rejected(const char **reason, u32 opcode,
                                         u32 pc, u32 cycles,
                                         const char *accepted_reason)
 {
-  u8 *translation_ptr = g_runtime_reject_code;
-  riscv_jit_block_meta *meta;
-
-  riscv_emit_block_prologue(&translation_ptr, &meta);
-  if (riscv_emit_native_arm_swap(&translation_ptr, meta, opcode, pc, cycles))
-  {
-    *reason = accepted_reason;
-    return 0;
-  }
-
-  return 1;
+  return runtime_expect_opcode_pc_cycles_rejected(
+    reason, riscv_emit_native_arm_swap, opcode, pc, cycles, accepted_reason);
 }
 
 static int run_runtime_reject_audit(const char **reason,
                                     u32 *total_rejections,
-                                    u32 *psr_rejections)
+                                    u32 *psr_rejections,
+                                    u32 *conditional_rejections)
 {
+  static const runtime_cond_cycles_reject_case conditional_cycles_cases[] =
+  {
+    { riscv_emit_native_arm_data_proc, RUNTIME_ADD_R2_R0_R1,
+      RUNTIME_CYCLES, "runtime_reject_cond_data_proc_accepted" },
+    { riscv_emit_native_arm_data_proc_test, RUNTIME_CMP_R0_0X20,
+      RUNTIME_FLAG_CMP_CYCLES,
+      "runtime_reject_cond_data_proc_test_accepted" },
+    { riscv_emit_native_arm_multiply, RUNTIME_MULTIPLY_MUL_R4_R1_R2,
+      RUNTIME_MULTIPLY_MUL_CYCLES,
+      "runtime_reject_cond_multiply_accepted" },
+    { riscv_emit_native_arm_multiply_long,
+      RUNTIME_MULTIPLY_LONG_UMULL_R8_R9_R1_R2,
+      RUNTIME_MULTIPLY_LONG_UMULL_CYCLES,
+      "runtime_reject_cond_multiply_long_accepted" },
+    { riscv_emit_native_arm_psr, RUNTIME_MRS_R6_CPSR,
+      RUNTIME_PSR_MRS_CPSR_CYCLES,
+      "runtime_reject_cond_psr_accepted" }
+  };
+  static const runtime_cond_pc_cycles_reject_case conditional_pc_cases[] =
+  {
+    { riscv_emit_native_arm_b, RUNTIME_BRANCH_B_PLUS_12,
+      RUNTIME_BRANCH_START_PC, RUNTIME_BRANCH_CYCLES,
+      "runtime_reject_cond_branch_accepted" },
+    { riscv_emit_native_arm_bl, RUNTIME_BL_PLUS_16,
+      RUNTIME_BL_START_PC, RUNTIME_BL_CYCLES,
+      "runtime_reject_cond_bl_accepted" },
+    { riscv_emit_native_arm_bx, RUNTIME_BX_R7,
+      RUNTIME_BX_START_PC, RUNTIME_BX_CYCLES,
+      "runtime_reject_cond_bx_accepted" },
+    { riscv_emit_native_arm_swi, RUNTIME_SWI_OPCODE_5,
+      RUNTIME_SWI_START_PC, RUNTIME_SWI_CYCLES,
+      "runtime_reject_cond_swi_accepted" },
+    { riscv_emit_native_arm_swap, RUNTIME_SWP_R4_R5_R3,
+      RUNTIME_SWP_START_PC, RUNTIME_SWP_BASE_CYCLES,
+      "runtime_reject_cond_swap_accepted" },
+    { riscv_emit_native_arm_block_memory, RUNTIME_STMIA_R3_WB_R0_R2_R5,
+      RUNTIME_BLOCK_MEM_STM_START_PC, RUNTIME_BLOCK_MEM_STM_CYCLES,
+      "runtime_reject_cond_block_memory_accepted" },
+    { riscv_emit_native_arm_access_memory, RUNTIME_LOAD_LDR_R4_R3_0X24,
+      RUNTIME_LOAD_START_PC, RUNTIME_LOAD_WORD_BASE_CYCLES,
+      "runtime_reject_cond_memory_accepted" },
+    { riscv_emit_native_arm_access_memory, RUNTIME_HALF_LDRH_R4_R3_0X24,
+      RUNTIME_HALF_LOAD_START_PC, RUNTIME_HALF_LDRH_BASE_CYCLES,
+      "runtime_reject_cond_extra_memory_accepted" }
+  };
+  u32 i;
+
   *total_rejections = 0;
   *psr_rejections = 0;
+  *conditional_rejections = 0;
 
   if (!runtime_expect_psr_rejected(
         reason, RUNTIME_MRS_R15_CPSR, RUNTIME_PSR_MRS_CPSR_CYCLES,
@@ -2549,6 +2619,40 @@ static int run_runtime_reject_audit(const char **reason,
     return 0;
   }
   (*total_rejections)++;
+
+  for (i = 0; i < ARRAY_SIZE(conditional_cycles_cases); i++)
+  {
+    const runtime_cond_cycles_reject_case *test_case =
+      &conditional_cycles_cases[i];
+    u32 opcode = runtime_opcode_with_condition(test_case->opcode,
+                                               RUNTIME_COND_NE);
+
+    if (!runtime_expect_opcode_cycles_rejected(
+          reason, test_case->emit, opcode, test_case->cycles,
+          test_case->accepted_reason))
+    {
+      return 0;
+    }
+    (*total_rejections)++;
+    (*conditional_rejections)++;
+  }
+
+  for (i = 0; i < ARRAY_SIZE(conditional_pc_cases); i++)
+  {
+    const runtime_cond_pc_cycles_reject_case *test_case =
+      &conditional_pc_cases[i];
+    u32 opcode = runtime_opcode_with_condition(test_case->opcode,
+                                               RUNTIME_COND_NE);
+
+    if (!runtime_expect_opcode_pc_cycles_rejected(
+          reason, test_case->emit, opcode, test_case->pc, test_case->cycles,
+          test_case->accepted_reason))
+    {
+      return 0;
+    }
+    (*total_rejections)++;
+    (*conditional_rejections)++;
+  }
 
   *reason = "runtime_rejections_preserved";
   return 1;
@@ -14392,6 +14496,7 @@ static void command_rejects(char *mode)
   const char *runtime_reason = "runtime_unknown";
   u32 total_rejections = 0;
   u32 psr_rejections = 0;
+  u32 conditional_rejections = 0;
 
   if (mode && *mode && !str_eq(mode, "runtime"))
   {
@@ -14411,7 +14516,7 @@ static void command_rejects(char *mode)
   }
 
   if (!run_runtime_reject_audit(&runtime_reason, &total_rejections,
-                                &psr_rejections))
+                                &psr_rejections, &conditional_rejections))
   {
     put_raw("result=FAIL command=rejects backend=");
     put_raw(backend_name());
@@ -14419,6 +14524,8 @@ static void command_rejects(char *mode)
     put_u32_dec(total_rejections);
     put_raw(" psr_unsupported=");
     put_u32_dec(psr_rejections);
+    put_raw(" conditional=");
+    put_u32_dec(conditional_rejections);
     put_raw(" harness_mode=");
     put_raw(RUNTIME_FIXTURE_MODE);
     put_raw(" reject_mode=emitter_contract reason=");
@@ -14433,6 +14540,8 @@ static void command_rejects(char *mode)
   put_u32_dec(total_rejections);
   put_raw(" psr_unsupported=");
   put_u32_dec(psr_rejections);
+  put_raw(" conditional=");
+  put_u32_dec(conditional_rejections);
   put_raw(" opcodes=mrs_r15_cpsr,msr_cpsr_r15,mul_r15,umull_r15,");
   put_raw("hle_swi,swp_r15");
   put_raw(" harness_mode=");
