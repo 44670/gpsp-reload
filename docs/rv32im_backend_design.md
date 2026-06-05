@@ -261,6 +261,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - scriptable qemu-user harness commands for `load`, `reset`, `backend`, `run`,
   `cont`, `stepi`, `stepb`, `regs`, `mem`, `counters`, `tracepc`,
   `framehash`, `compare`, `png`, and `quit`
+- explicit runtime-snapshot `framehash runtime` and `png <path> runtime`
+  artifact paths derived from the selected backend's compare snapshot
 - qemu-user harness `compare` execution of generated RV32IM
   `ADD r2, r0, r1`, `ADDS`, `SUBS`, `RSBS`, `CMP`, `MUL`, `MLA`,
   `UMULL`, `SMULL`,
@@ -349,11 +351,12 @@ directly.
 Remaining first-phase gaps should stay narrow and evidence-driven:
 
 - The qemu-user harness still has synthetic/fixture-backed state, memory, trace,
-  and frame paths outside the runtime-backed `compare` state fixture. Synthetic
-  paths stay labeled with `harness_mode=synthetic`; the `compare` fixture is
-  labeled `harness_mode=runtime_fixture` and derives `frame_mode=runtime_snapshot`
-  from the runtime state/memory/scheduler/native-counter snapshot until real
-  emulator frame output is wired in.
+  and default frame paths outside the runtime-backed fixture commands. Synthetic
+  paths stay labeled with `harness_mode=synthetic`; the `compare`,
+  `framehash runtime`, and `png <path> runtime` fixture paths are labeled
+  `harness_mode=runtime_fixture` and derive `frame_mode=runtime_snapshot` from
+  the runtime state/memory/scheduler/native-counter snapshot until real emulator
+  frame output is wired in.
 - Thumb instruction lowering remains deliberately unsupported; the harness
   compare path now proves Thumb lookup-miss/invalid fallback and unsupported
   Thumb block fallback only, and Thumb blocks must keep routing through

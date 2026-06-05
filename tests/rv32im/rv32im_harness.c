@@ -30,6 +30,7 @@ typedef unsigned int usize;
 #define FRAME_BYTES (FRAME_W * FRAME_H * 2)
 #define HARNESS_MODE "synthetic"
 #define RUNTIME_FIXTURE_MODE "runtime_fixture"
+#define FRAME_MODE_RUNTIME_SNAPSHOT "runtime_snapshot"
 #define RUNTIME_COMPARE_WORKLOAD \
   "arm_add_armaddremain_arminvalidremain_multiply_multiplylong_" \
   "longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_" \
@@ -10562,6 +10563,53 @@ static void render_frame(void)
   g_state.last_frame_hash = fnv1a_update(2166136261u, g_frame, FRAME_BYTES);
 }
 
+static void render_runtime_snapshot_frame(const struct compare_snapshot *snapshot)
+{
+  u32 values[11];
+  u32 x;
+  u32 y;
+  usize pos = 0;
+
+  values[0] = snapshot->frame_hash;
+  values[1] = snapshot->reg_hash;
+  values[2] = snapshot->mem_hash;
+  values[3] = snapshot->scheduler_hash;
+  values[4] = snapshot->blocks;
+  values[5] = snapshot->fallbacks;
+  values[6] = snapshot->native_data_proc;
+  values[7] = snapshot->native_branch;
+  values[8] = snapshot->native_load;
+  values[9] = snapshot->native_store;
+  values[10] = snapshot->native_psr;
+
+  for (y = 0; y < FRAME_H; y++)
+  {
+    for (x = 0; x < FRAME_W; x++)
+    {
+      u32 mix = values[(x + y) % 11u];
+      u32 accent = values[(x * 3u + y * 5u) % 11u];
+      u32 stripe = values[((x >> 4) + (y >> 3)) % 11u];
+      u32 r;
+      u32 g;
+      u32 b;
+      u16 pix;
+
+      mix ^= snapshot->frame_hash + x * 0x45d9f3bu + y * 0x119de1f3u;
+      mix ^= (accent << ((x + y) & 7u)) | (accent >> (24u - ((x + y) & 7u)));
+      mix += stripe ^ (x << 16) ^ y;
+
+      r = (mix ^ (mix >> 11)) & 31u;
+      g = ((mix >> 5) ^ (mix >> 19)) & 63u;
+      b = ((mix >> 16) ^ (mix >> 27)) & 31u;
+      pix = (u16)((r << 11) | (g << 5) | b);
+      g_frame[pos++] = (u8)(pix & 0xff);
+      g_frame[pos++] = (u8)(pix >> 8);
+    }
+  }
+
+  g_state.last_frame_hash = fnv1a_update(2166136261u, g_frame, FRAME_BYTES);
+}
+
 static void print_summary(const char *command, const char *reason)
 {
   put_raw("result=PASS command=");
@@ -11015,8 +11063,78 @@ static int write_png_file(const char *path)
   return 0;
 }
 
-static void command_framehash(void)
+static int capture_runtime_snapshot(struct compare_snapshot *snapshot,
+                                    const char **reason)
 {
+  struct harness_state saved_state = g_state;
+
+  if (!ensure_runtime_fixture(reason))
+    return 0;
+
+  if (saved_state.backend == BACKEND_RV32IM)
+    run_runtime_rv32im_workload(&saved_state, snapshot);
+  else
+    run_runtime_reference_workload(&saved_state, snapshot);
+
+  g_state = saved_state;
+  return 1;
+}
+
+static void print_runtime_frame_fail(const char *command, const char *reason)
+{
+  put_raw("result=FAIL command=");
+  put_raw(command);
+  put_raw(" backend=");
+  put_raw(backend_name());
+  put_raw(" harness_mode=");
+  put_raw(RUNTIME_FIXTURE_MODE);
+  put_raw(" frame_mode=");
+  put_raw(FRAME_MODE_RUNTIME_SNAPSHOT);
+  put_raw(" reason=");
+  put_raw(reason);
+  put_chr('\n');
+}
+
+static void command_framehash(char *mode)
+{
+  if (mode && str_eq(mode, "runtime"))
+  {
+    const char *runtime_reason = "runtime_unknown";
+    struct compare_snapshot snapshot;
+
+    if (!capture_runtime_snapshot(&snapshot, &runtime_reason))
+    {
+      print_runtime_frame_fail("framehash", runtime_reason);
+      return;
+    }
+
+    render_runtime_snapshot_frame(&snapshot);
+    put_raw("result=PASS command=framehash backend=");
+    put_raw(backend_name());
+    put_raw(" width=");
+    put_u32_dec(FRAME_W);
+    put_raw(" height=");
+    put_u32_dec(FRAME_H);
+    put_raw(" bytes=");
+    put_u32_dec(FRAME_BYTES);
+    put_raw(" hash=");
+    put_u32_hex(g_state.last_frame_hash);
+    put_raw(" snapshot_frame_hash=");
+    put_u32_hex(snapshot.frame_hash);
+    put_raw(" harness_mode=");
+    put_raw(RUNTIME_FIXTURE_MODE);
+    put_raw(" frame_mode=");
+    put_raw(FRAME_MODE_RUNTIME_SNAPSHOT);
+    put_raw(" reason=runtime_snapshot_frame\n");
+    return;
+  }
+
+  if (mode && *mode && !str_eq(mode, "synthetic"))
+  {
+    print_fail("framehash", "unknown_frame_mode");
+    return;
+  }
+
   render_frame();
   put_raw("framehash width=");
   put_u32_dec(FRAME_W);
@@ -11148,11 +11266,55 @@ static void command_compare(void)
   put_raw(" reason=runtime_state_snapshot_frame_equal\n");
 }
 
-static void command_png(char *path)
+static void command_png(char *path, char *mode)
 {
   if (!path || !*path)
   {
     print_fail("png", "missing_path");
+    return;
+  }
+
+  if (mode && str_eq(mode, "runtime"))
+  {
+    const char *runtime_reason = "runtime_unknown";
+    struct compare_snapshot snapshot;
+
+    if (!capture_runtime_snapshot(&snapshot, &runtime_reason))
+    {
+      print_runtime_frame_fail("png", runtime_reason);
+      return;
+    }
+
+    render_runtime_snapshot_frame(&snapshot);
+    if (write_png_file(path) < 0)
+    {
+      print_runtime_frame_fail("png", "write_error");
+      return;
+    }
+
+    put_raw("result=PASS command=png backend=");
+    put_raw(backend_name());
+    put_raw(" width=");
+    put_u32_dec(FRAME_W);
+    put_raw(" height=");
+    put_u32_dec(FRAME_H);
+    put_raw(" frame_hash=");
+    put_u32_hex(g_state.last_frame_hash);
+    put_raw(" snapshot_frame_hash=");
+    put_u32_hex(snapshot.frame_hash);
+    put_raw(" harness_mode=");
+    put_raw(RUNTIME_FIXTURE_MODE);
+    put_raw(" frame_mode=");
+    put_raw(FRAME_MODE_RUNTIME_SNAPSHOT);
+    put_raw(" path=");
+    put_raw(path);
+    put_chr('\n');
+    return;
+  }
+
+  if (mode && *mode && !str_eq(mode, "synthetic"))
+  {
+    print_fail("png", "unknown_frame_mode");
     return;
   }
 
@@ -11263,7 +11425,7 @@ static void process_line(char *line)
   }
   else if (str_eq(cmd, "framehash"))
   {
-    command_framehash();
+    command_framehash(next_token(&cursor));
   }
   else if (str_eq(cmd, "compare"))
   {
@@ -11271,7 +11433,8 @@ static void process_line(char *line)
   }
   else if (str_eq(cmd, "png"))
   {
-    command_png(next_token(&cursor));
+    char *path = next_token(&cursor);
+    command_png(path, next_token(&cursor));
   }
   else if (str_eq(cmd, "quit"))
   {

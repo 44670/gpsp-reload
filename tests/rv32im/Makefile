@@ -10,6 +10,7 @@ EXEC_TEST := rv32im_exec_test
 RUNTIME_TEST := rv32im_runtime_test
 OUT_DIR := out
 SMOKE_PNG := $(OUT_DIR)/rv32im_harness.png
+SMOKE_RUNTIME_PNG := $(OUT_DIR)/rv32im_harness_runtime.png
 SMOKE_PNG_SIG := $(OUT_DIR)/png_signature.bin
 SMOKE_LOAD := $(OUT_DIR)/rv32im_harness_load.bin
 SMOKE_LOG := $(OUT_DIR)/rv32im_harness.log
@@ -89,7 +90,7 @@ codegen: $(CODEGEN) $(CODEGEN_REF_BIN) | $(OUT_DIR)
 	@echo "RV32IM codegen test passed"
 
 smoke: $(HARNESS) $(SMOKE_LOAD) $(SMOKE_PNG_SIG) $(OUT_DIR)
-	printf 'help\nload $(SMOKE_LOAD)\nbackend rv32im\nreset\nrun 2\ncont 16\nstepi 4\nstepb 3\nregs\nmem 0x02000000 16\ncounters\ntracepc 4\nframehash\ncompare\npng $(SMOKE_PNG)\nquit\n' | $(QEMU_RISCV32) ./$(HARNESS) | tee $(SMOKE_LOG)
+	printf 'help\nload $(SMOKE_LOAD)\nbackend rv32im\nreset\nrun 2\ncont 16\nstepi 4\nstepb 3\nregs\nmem 0x02000000 16\ncounters\ntracepc 4\nframehash\ncompare\nframehash runtime\npng $(SMOKE_RUNTIME_PNG) runtime\npng $(SMOKE_PNG)\nquit\n' | $(QEMU_RISCV32) ./$(HARNESS) | tee $(SMOKE_LOG)
 	grep -q 'commands=load reset backend run cont stepi stepb regs mem counters tracepc framehash compare png quit' $(SMOKE_LOG)
 	grep -q 'ok command=load bytes=23 hash=0x2b3be9fa' $(SMOKE_LOG)
 	grep -q 'ok backend=rv32im' $(SMOKE_LOG)
@@ -114,11 +115,15 @@ smoke: $(HARNESS) $(SMOKE_LOAD) $(SMOKE_PNG_SIG) $(OUT_DIR)
 	grep -q 'rv32im_blocks=175 rv32im_fallbacks=55 rv32im_native_data_proc=80 rv32im_native_branch=7 rv32im_native_load=26 rv32im_native_store=19 rv32im_native_psr=5' $(SMOKE_LOG)
 	grep -q 'command=compare.*harness_mode=runtime_fixture frame_mode=runtime_snapshot mem_mode=runtime_stickybits' $(SMOKE_LOG)
 	grep -q 'reason=runtime_state_snapshot_frame_equal' $(SMOKE_LOG)
+	grep -q 'result=PASS command=framehash backend=rv32im width=240 height=160 bytes=76800 hash=.* snapshot_frame_hash=.* harness_mode=runtime_fixture frame_mode=runtime_snapshot reason=runtime_snapshot_frame' $(SMOKE_LOG)
+	grep -q 'result=PASS command=png backend=rv32im width=240 height=160 frame_hash=.* snapshot_frame_hash=.* harness_mode=runtime_fixture frame_mode=runtime_snapshot path=$(SMOKE_RUNTIME_PNG)' $(SMOKE_LOG)
 	grep -q 'result=PASS command=png backend=rv32im width=240 height=160' $(SMOKE_LOG)
 	grep -q 'command=png.*harness_mode=synthetic' $(SMOKE_LOG)
 	grep -q 'result=PASS command=quit backend=rv32im' $(SMOKE_LOG)
 	test -s $(SMOKE_PNG)
+	test -s $(SMOKE_RUNTIME_PNG)
 	cmp -n 8 $(SMOKE_PNG_SIG) $(SMOKE_PNG)
+	cmp -n 8 $(SMOKE_PNG_SIG) $(SMOKE_RUNTIME_PNG)
 
 compare: $(HARNESS) | $(OUT_DIR)
 	printf 'compare\nquit\n' | $(QEMU_RISCV32) ./$(HARNESS) | tee $(COMPARE_LOG)
