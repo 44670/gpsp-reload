@@ -269,6 +269,9 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - explicit runtime-snapshot `run runtime` command that executes the selected
   backend's runtime fixture snapshot and reports state, memory, scheduler,
   frame, and backend-counter hashes
+- explicit RV32IM `cont runtime [offset]` command that reports a bounded
+  scheduler-boundary window from the runtime workload using the same event
+  encoding as `sched runtime`
 - explicit runtime-snapshot `framehash runtime` and `png <path> runtime`
   artifact paths derived from the selected backend's compare snapshot
 - explicit runtime-snapshot `regs runtime` dump for the selected backend's
@@ -450,6 +453,7 @@ Remaining first-phase gaps should stay narrow and evidence-driven:
   and default frame paths outside the runtime-backed fixture commands. Synthetic
   paths stay labeled with `harness_mode=synthetic`; the `run runtime`,
   `compare`,
+  `cont runtime <offset>`,
   `regs runtime`, `mem <addr> <len> runtime <offset>`,
   `mem <addr> <len> runtime-bytes`,
   `watchio <addr> <len> runtime <offset>`, `counters runtime`,

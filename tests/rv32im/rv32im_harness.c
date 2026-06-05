@@ -14807,6 +14807,7 @@ static u32 optional_count(char *arg, u32 fallback)
 
 static int capture_runtime_snapshot(struct compare_snapshot *snapshot,
                                     const char **reason);
+static int capture_runtime_scheduler_events(const char **reason);
 
 static void command_run(char *arg)
 {
@@ -14884,8 +14885,108 @@ static void command_run(char *arg)
   print_summary("run", "synthetic_frame_workload");
 }
 
-static void command_cont(char *arg)
+static void print_runtime_scheduler_window(const char *command,
+                                           const char *mode_field,
+                                           const char *reason,
+                                           u32 offset)
 {
+  u32 stored_count = runtime_sched_event_stored_count();
+  u32 printed = 0;
+  u32 hash;
+  u32 i;
+
+  if (offset > stored_count)
+    offset = stored_count;
+  hash = runtime_sched_event_hash(stored_count);
+
+  put_raw("result=PASS command=");
+  put_raw(command);
+  put_raw(" backend=");
+  put_raw(backend_name());
+  put_raw(" total=");
+  put_u32_dec(g_runtime_sched_event_count);
+  put_raw(" stored=");
+  put_u32_dec(stored_count);
+  put_raw(" offset=");
+  put_u32_dec(offset);
+  put_raw(" events=");
+  for (i = offset; i < stored_count && printed < 8; i++)
+  {
+    if (printed)
+      put_chr(',');
+    put_chr('l');
+    put_u32_dec(g_runtime_sched_event_lookup_calls[i]);
+    put_chr('@');
+    put_u32_hex(g_runtime_sched_event_lookup_pc[i]);
+    put_raw(":t");
+    put_u32_dec(g_runtime_sched_event_thumb_calls[i]);
+    put_raw(":u");
+    put_u32_dec(g_runtime_sched_event_update_calls[i]);
+    put_raw(":uc");
+    put_u32_hex(g_runtime_sched_event_update_cycles[i]);
+    put_raw(":uf");
+    put_u32_hex(g_runtime_sched_event_update_flags[i]);
+    put_raw(":up");
+    put_u32_hex(g_runtime_sched_event_update_pc[i]);
+    put_raw(":e");
+    put_u32_dec(g_runtime_sched_event_execute_calls[i]);
+    put_chr('@');
+    put_u32_hex(g_runtime_sched_event_execute_pc[i]);
+    put_raw(":ec");
+    put_u32_dec(g_runtime_sched_event_execute_cycles[i]);
+    put_raw(":f");
+    put_u32_dec(g_runtime_sched_event_flush_calls[i]);
+    put_raw(":i");
+    put_u32_dec(g_runtime_sched_event_irq_calls[i]);
+    put_raw(":h");
+    put_u32_dec(g_runtime_sched_event_halt_state[i]);
+    printed++;
+  }
+  put_raw(" printed=");
+  put_u32_dec(printed);
+  put_raw(" hash=");
+  put_u32_hex(hash);
+  put_raw(" harness_mode=");
+  put_raw(RUNTIME_FIXTURE_MODE);
+  put_chr(' ');
+  put_raw(mode_field);
+  put_raw("=runtime_scheduler");
+  put_raw(" event_encoding=l@pc:t:u:uc:uf:up:e@pc:ec:f:i:h");
+  put_raw(" reason=");
+  put_raw(reason);
+  put_chr('\n');
+}
+
+static void command_cont(char *arg, char *mode_arg)
+{
+  if (arg && str_eq(arg, "runtime"))
+  {
+    const char *runtime_reason = "runtime_unknown";
+
+    if (!capture_runtime_scheduler_events(&runtime_reason))
+    {
+      put_raw("result=FAIL command=cont backend=");
+      put_raw(backend_name());
+      put_raw(" harness_mode=");
+      put_raw(RUNTIME_FIXTURE_MODE);
+      put_raw(" cont_mode=runtime_scheduler reason=");
+      put_raw(runtime_reason);
+      put_chr('\n');
+      return;
+    }
+
+    print_runtime_scheduler_window("cont", "cont_mode",
+                                   "runtime_scheduler_continue",
+                                   optional_count(mode_arg, 0));
+    return;
+  }
+
+  if (mode_arg && *mode_arg)
+  {
+    print_fail("cont", "unknown_cont_mode");
+    return;
+  }
+
   u32 cycles = optional_count(arg, 960);
   g_state.cycles += cycles;
   g_state.blocks += g_state.backend == BACKEND_RV32IM ? 1u : 0u;
@@ -14913,7 +15014,6 @@ static u32 synthetic_trace_pc(const struct harness_state *state, u32 index)
 
 static int capture_runtime_lookup_trace(const char **reason);
 static int capture_runtime_memory_events(const char **reason);
-static int capture_runtime_scheduler_events(const char **reason);
 static int capture_runtime_fallback_events(const char **reason);
 static int capture_runtime_shadow_memory(const char **reason);
 
@@ -15543,11 +15643,6 @@ static void command_sched(char *mode, char *offset_arg)
   if (mode && str_eq(mode, "runtime"))
   {
     const char *runtime_reason = "runtime_unknown";
-    u32 stored_count;
-    u32 offset;
-    u32 printed = 0;
-    u32 hash;
-    u32 i;
 
     if (!capture_runtime_scheduler_events(&runtime_reason))
     {
@@ -15561,62 +15656,9 @@ static void command_sched(char *mode, char *offset_arg)
       return;
     }
 
-    stored_count = runtime_sched_event_stored_count();
-    offset = optional_count(offset_arg, 0);
-    if (offset > stored_count)
-      offset = stored_count;
-    hash = runtime_sched_event_hash(stored_count);
-
-    put_raw("result=PASS command=sched backend=");
-    put_raw(backend_name());
-    put_raw(" total=");
-    put_u32_dec(g_runtime_sched_event_count);
-    put_raw(" stored=");
-    put_u32_dec(stored_count);
-    put_raw(" offset=");
-    put_u32_dec(offset);
-    put_raw(" events=");
-    for (i = offset; i < stored_count && printed < 8; i++)
-    {
-      if (printed)
-        put_chr(',');
-      put_chr('l');
-      put_u32_dec(g_runtime_sched_event_lookup_calls[i]);
-      put_chr('@');
-      put_u32_hex(g_runtime_sched_event_lookup_pc[i]);
-      put_raw(":t");
-      put_u32_dec(g_runtime_sched_event_thumb_calls[i]);
-      put_raw(":u");
-      put_u32_dec(g_runtime_sched_event_update_calls[i]);
-      put_raw(":uc");
-      put_u32_hex(g_runtime_sched_event_update_cycles[i]);
-      put_raw(":uf");
-      put_u32_hex(g_runtime_sched_event_update_flags[i]);
-      put_raw(":up");
-      put_u32_hex(g_runtime_sched_event_update_pc[i]);
-      put_raw(":e");
-      put_u32_dec(g_runtime_sched_event_execute_calls[i]);
-      put_chr('@');
-      put_u32_hex(g_runtime_sched_event_execute_pc[i]);
-      put_raw(":ec");
-      put_u32_dec(g_runtime_sched_event_execute_cycles[i]);
-      put_raw(":f");
-      put_u32_dec(g_runtime_sched_event_flush_calls[i]);
-      put_raw(":i");
-      put_u32_dec(g_runtime_sched_event_irq_calls[i]);
-      put_raw(":h");
-      put_u32_dec(g_runtime_sched_event_halt_state[i]);
-      printed++;
-    }
-    put_raw(" printed=");
-    put_u32_dec(printed);
-    put_raw(" hash=");
-    put_u32_hex(hash);
-    put_raw(" harness_mode=");
-    put_raw(RUNTIME_FIXTURE_MODE);
-    put_raw(" sched_mode=runtime_scheduler");
-    put_raw(" event_encoding=l@pc:t:u:uc:uf:up:e@pc:ec:f:i:h");
-    put_raw(" reason=runtime_scheduler_events\n");
+    print_runtime_scheduler_window("sched", "sched_mode",
+                                   "runtime_scheduler_events",
+                                   optional_count(offset_arg, 0));
     return;
   }
 
@@ -16472,7 +16514,8 @@ static void process_line(char *line)
   }
   else if (str_eq(cmd, "cont"))
   {
-    command_cont(next_token(&cursor));
+    char *arg = next_token(&cursor);
+    command_cont(arg, next_token(&cursor));
   }
   else if (str_eq(cmd, "stepi"))
   {
