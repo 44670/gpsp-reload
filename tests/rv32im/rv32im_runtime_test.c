@@ -15,7 +15,7 @@ typedef unsigned int usize;
 #define PROT_EXEC 4
 #define MAP_PRIVATE 2
 #define MAP_ANONYMOUS 32
-#define EXEC_MAP_BYTES 72192u
+#define EXEC_MAP_BYTES 73728u
 
 #define BLOCK_START_PC 0x08000000u
 #define BLOCK_END_PC 0x08000004u
@@ -517,6 +517,20 @@ typedef unsigned int usize;
 #define EXTERNAL_BRANCH_R2_VALUE 0x00000034u
 #define EXTERNAL_BRANCH_R3_VALUE \
   (EXTERNAL_BRANCH_R1_VALUE + EXTERNAL_BRANCH_R2_VALUE)
+#define REPATCH_BRANCH_START_PC 0x08001280u
+#define REPATCH_BRANCH_TARGET_PC (REPATCH_BRANCH_START_PC + 0x40u)
+#define REPATCH_BRANCH_TARGET_END_PC (REPATCH_BRANCH_TARGET_PC + 4u)
+#define REPATCH_BRANCH_CYCLES 6u
+#define REPATCH_BRANCH_TARGET_CYCLES 5u
+#define REPATCH_BRANCH_TOTAL_CYCLES \
+  (REPATCH_BRANCH_CYCLES + REPATCH_BRANCH_TARGET_CYCLES)
+#define REPATCH_BRANCH_B_PLUS_0X40 0xea00000eu
+#define REPATCH_BRANCH_ADD_R3_R0_R1 0xe0803001u
+#define REPATCH_BRANCH_ADD_R4_R0_R1 0xe0804001u
+#define REPATCH_BRANCH_R0_VALUE 0x00000058u
+#define REPATCH_BRANCH_R1_VALUE 0x00000019u
+#define REPATCH_BRANCH_SUM_VALUE \
+  (REPATCH_BRANCH_R0_VALUE + REPATCH_BRANCH_R1_VALUE)
 #define LOAD_START_PC 0x08000200u
 #define LOAD_WORD_PC LOAD_START_PC
 #define LOAD_BYTE_PC (LOAD_START_PC + 4u)
@@ -1252,6 +1266,9 @@ typedef unsigned int usize;
 #define PC_BASE_HALF_STORE_BLOCK_OFFSET 70656u
 #define PC_BASE_HALF_NEG_STORE_BLOCK_OFFSET 71168u
 #define PARTIAL_UNSUPPORTED_BLOCK_OFFSET 71680u
+#define REPATCH_BRANCH_BLOCK_OFFSET 72192u
+#define REPATCH_BRANCH_TARGET_A_BLOCK_OFFSET 72704u
+#define REPATCH_BRANCH_TARGET_B_BLOCK_OFFSET 73216u
 #define EXPECTED_INITIAL_ROM_WATERMARK 16u
 
 u32 reg[REG_MAX];
@@ -1302,6 +1319,12 @@ static u8 *g_branch_target_entry;
 static u8 *g_internal_branch_entry;
 static u8 *g_external_branch_entry;
 static u8 *g_external_branch_target_entry;
+static u8 *g_repatch_branch_entry;
+static u8 *g_repatch_branch_source;
+static u8 *g_repatch_branch_target_a_entry;
+static u8 *g_repatch_branch_target_b_entry;
+static u32 g_repatch_branch_flush_a;
+static u32 g_repatch_branch_flush_b;
 static u8 *g_bl_entry;
 static u8 *g_bl_target_entry;
 static u8 *g_load_entry;
@@ -2743,6 +2766,42 @@ static u32 build_external_branch_block(u8 *code, u8 *target_entry)
                             EXTERNAL_BRANCH_START_PC,
                             EXTERNAL_BRANCH_END_PC, false);
   riscv_patch_unconditional_branch(branch_source, target_entry);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_repatch_branch_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u8 *branch_source;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_repatch_branch_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_b_patchable(
+        &translation_ptr, meta,
+        &branch_source,
+        REPATCH_BRANCH_B_PLUS_0X40,
+        REPATCH_BRANCH_START_PC,
+        REPATCH_BRANCH_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=repatch_branch_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!branch_source)
+  {
+    put_raw("result=FAIL command=runtime reason=repatch_branch_no_patch\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            REPATCH_BRANCH_START_PC,
+                            REPATCH_BRANCH_START_PC + 4u, false);
+  g_repatch_branch_source = branch_source;
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -6409,6 +6468,75 @@ static void run_external_branch_patch_case(void)
   expect_stickybits_cleared("external_branch_patch");
 }
 
+static u32 patch_repatch_branch_target(u8 *target_entry)
+{
+  u32 flush_ret;
+
+  if (!g_repatch_branch_source)
+    fail_u32("repatch_branch", "branch_source", 0, 1);
+  if (!target_entry)
+    fail_u32("repatch_branch", "target_entry", 0, 1);
+
+  riscv_patch_unconditional_branch(g_repatch_branch_source, target_entry);
+  flush_ret = (u32)syscall3(SYS_RISCV_FLUSH_ICACHE,
+                            (long)g_repatch_branch_source,
+                            (long)(g_repatch_branch_source + 12), 0);
+  if (flush_ret != 0)
+    fail_u32("repatch_branch", "flush_ret", flush_ret, 0);
+
+  return flush_ret;
+}
+
+static void run_repatch_branch_target_case(const char *test_name,
+                                           u8 *target_entry,
+                                           u32 expected_r3,
+                                           u32 expected_r4,
+                                           u32 *flush_out)
+{
+  *flush_out = patch_repatch_branch_target(target_entry);
+
+  reset_runtime_observations(REPATCH_BRANCH_START_PC);
+  g_lookup_entry = g_repatch_branch_entry;
+  reg[0] = REPATCH_BRANCH_R0_VALUE;
+  reg[1] = REPATCH_BRANCH_R1_VALUE;
+
+  execute_arm_translate_internal(REPATCH_BRANCH_TOTAL_CYCLES, &reg[0]);
+
+  if (reg[3] != expected_r3)
+    fail_u32(test_name, "r3", reg[3], expected_r3);
+  if (reg[4] != expected_r4)
+    fail_u32(test_name, "r4", reg[4], expected_r4);
+  if (reg[REG_PC] != REPATCH_BRANCH_TARGET_END_PC)
+    fail_u32(test_name, "pc",
+             reg[REG_PC], REPATCH_BRANCH_TARGET_END_PC);
+  if (g_lookup_calls != 1)
+    fail_u32(test_name, "lookup_calls", g_lookup_calls, 1);
+  if (g_lookup_pc != REPATCH_BRANCH_START_PC)
+    fail_u32(test_name, "lookup_pc",
+             g_lookup_pc, REPATCH_BRANCH_START_PC);
+  if (g_update_calls != 1)
+    fail_u32(test_name, "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32(test_name, "update_cycles",
+             (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32(test_name, "execute_calls",
+             g_execute_calls, 0);
+  expect_stickybits_cleared(test_name);
+}
+
+static void run_repatch_branch_case(void)
+{
+  run_repatch_branch_target_case("repatch_branch_first",
+                                 g_repatch_branch_target_a_entry,
+                                 REPATCH_BRANCH_SUM_VALUE, 0,
+                                 &g_repatch_branch_flush_a);
+  run_repatch_branch_target_case("repatch_branch_second",
+                                 g_repatch_branch_target_b_entry,
+                                 0, REPATCH_BRANCH_SUM_VALUE,
+                                 &g_repatch_branch_flush_b);
+}
+
 static void run_bl_boundary_case(void)
 {
   reset_runtime_observations(BL_START_PC);
@@ -9744,6 +9872,9 @@ void _start(void)
   u32 internal_branch_code_bytes;
   u32 external_branch_code_bytes;
   u32 external_branch_target_code_bytes;
+  u32 repatch_branch_code_bytes;
+  u32 repatch_branch_target_a_code_bytes;
+  u32 repatch_branch_target_b_code_bytes;
   u32 half_load_code_bytes;
   u32 half_store_code_bytes;
   u32 half_reg_load_code_bytes;
@@ -10052,6 +10183,22 @@ void _start(void)
   external_branch_code_bytes =
     build_external_branch_block(code + EXTERNAL_BRANCH_BLOCK_OFFSET,
                                 g_external_branch_target_entry);
+  repatch_branch_target_a_code_bytes =
+    build_single_data_proc_block(code + REPATCH_BRANCH_TARGET_A_BLOCK_OFFSET,
+                                 REPATCH_BRANCH_ADD_R3_R0_R1,
+                                 REPATCH_BRANCH_TARGET_PC,
+                                 REPATCH_BRANCH_TARGET_CYCLES,
+                                 &g_repatch_branch_target_a_entry,
+                                 "repatch_branch_target_a_rejected");
+  repatch_branch_target_b_code_bytes =
+    build_single_data_proc_block(code + REPATCH_BRANCH_TARGET_B_BLOCK_OFFSET,
+                                 REPATCH_BRANCH_ADD_R4_R0_R1,
+                                 REPATCH_BRANCH_TARGET_PC,
+                                 REPATCH_BRANCH_TARGET_CYCLES,
+                                 &g_repatch_branch_target_b_entry,
+                                 "repatch_branch_target_b_rejected");
+  repatch_branch_code_bytes =
+    build_repatch_branch_block(code + REPATCH_BRANCH_BLOCK_OFFSET);
   bl_code_bytes = build_bl_block(code + BL_BLOCK_OFFSET);
   bl_target_code_bytes =
     build_single_data_proc_block(code + BL_TARGET_BLOCK_OFFSET,
@@ -10510,6 +10657,7 @@ void _start(void)
   run_branch_idle_loop_case();
   run_internal_branch_patch_case();
   run_external_branch_patch_case();
+  run_repatch_branch_case();
   run_bl_boundary_case();
   run_bl_remaining_cycles_case();
   run_bl_native_target_case();
@@ -10689,6 +10837,16 @@ void _start(void)
   put_u32_dec(external_branch_code_bytes);
   put_raw(" external_branch_target_code_bytes=");
   put_u32_dec(external_branch_target_code_bytes);
+  put_raw(" repatch_branch_code_bytes=");
+  put_u32_dec(repatch_branch_code_bytes);
+  put_raw(" repatch_branch_target_a_code_bytes=");
+  put_u32_dec(repatch_branch_target_a_code_bytes);
+  put_raw(" repatch_branch_target_b_code_bytes=");
+  put_u32_dec(repatch_branch_target_b_code_bytes);
+  put_raw(" repatch_branch_flush_a=");
+  put_u32_hex(g_repatch_branch_flush_a);
+  put_raw(" repatch_branch_flush_b=");
+  put_u32_hex(g_repatch_branch_flush_b);
   put_raw(" bl_code_bytes=");
   put_u32_dec(bl_code_bytes);
   put_raw(" bl_target_code_bytes=");
@@ -10947,6 +11105,14 @@ void _start(void)
   put_u32_hex((u32)g_external_branch_entry);
   put_raw(" external_branch_target_entry=");
   put_u32_hex((u32)g_external_branch_target_entry);
+  put_raw(" repatch_branch_entry=");
+  put_u32_hex((u32)g_repatch_branch_entry);
+  put_raw(" repatch_branch_source=");
+  put_u32_hex((u32)g_repatch_branch_source);
+  put_raw(" repatch_branch_target_a_entry=");
+  put_u32_hex((u32)g_repatch_branch_target_a_entry);
+  put_raw(" repatch_branch_target_b_entry=");
+  put_u32_hex((u32)g_repatch_branch_target_b_entry);
   put_raw(" bl_entry=");
   put_u32_hex((u32)g_bl_entry);
   put_raw(" bl_target_entry=");

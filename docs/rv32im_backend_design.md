@@ -392,6 +392,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   byte read/write observations, and remaining-cycle handoff for `SWP` and
   `SWPB`,
   direct, indirect, conditional, SWI, PC-write, SPSR-restore, external and internal patched branch,
+  production patch-site repatching with explicit icache flush,
   direct-branch target native-chain remaining-cycle execution, branch-target
   native fallthrough chaining, BX ARM-target native fallthrough chaining,
   patched-branch target native fallthrough chaining, and
@@ -419,7 +420,11 @@ load/store forms are likewise proven rejected for word/byte and halfword
 memory classes. A standalone partial-unsupported block proves that
 `riscv_emit_block_finalize()` discards a partially emitted native body when
 the block is marked unsupported, then routes through the interpreter fallback
-without applying that partial native register write.
+without applying that partial native register write. A standalone patch-site
+case rewrites the same `riscv_patch_unconditional_branch()` slot from one
+native target block to another for the same guest branch target PC, flushes the
+patched instruction range each time, and proves execution follows the updated
+host target.
 
 Remaining first-phase gaps should stay narrow and evidence-driven:
 
