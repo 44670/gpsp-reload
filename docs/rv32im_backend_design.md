@@ -284,7 +284,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   `LDMIA ... {pc}^`,
   HLE `Div`, HLE `DivArm`, PC-source data-processing/test ops,
   register-offset/shifted-LSL/shifted-LSR/shifted-ASR/shifted-ROR/RRX load ops,
-  shifted-LSL/shifted-LSR/RRX register-offset stores and shifted-LSL/shifted-LSR/RRX-store
+  shifted-LSL/shifted-LSR/shifted-ASR/RRX register-offset stores and shifted-LSL/shifted-LSR/shifted-ASR/RRX-store
   remaining-cycle handoffs,
   pre/post-index writeback memory ops,
   register-offset writeback/post-index memory ops,
@@ -301,7 +301,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   block-memory SMC/IRQ alert handling, SWP-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, ARM lookup-miss/invalid fallback, Thumb lookup-miss/invalid fallback, and Thumb unsupported-block fallback fixtures against a local ARM
   reference model, with
-  one hundred seventy three runtime blocks executed, basic data-processing remaining-cycle and invalid re-lookup fallback handoffs,
+  one hundred seventy four runtime blocks executed, basic data-processing remaining-cycle and invalid re-lookup fallback handoffs,
   ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results and remaining-cycle handoff, MSR CPSR flag remaining-cycle handoff,
   MSR CPSR control mode/banked-LR effects and remaining-cycle handoff, SPSR helper-write effects and remaining-cycle handoff, and native PSR
@@ -313,7 +313,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   register-shifted flag/test and TEQ/CMN CPSR results checked,
   helper memory, helper load, load-to-PC, load-to-PC native target chaining, PC-write native target chaining, PC-write Thumb fallback, PC-relative load, and register-offset load plus writeback store/load remaining-cycle handoffs, PC-relative store memory and remaining-cycle handoff,
   source-PC store value and remaining-cycle handoff, word-store, byte-store,
-  register-offset byte-store, shifted-LSL/shifted-LSR register-offset byte-store, and RRX
+  register-offset byte-store, shifted-LSL/shifted-LSR/shifted-ASR register-offset byte-store, and RRX
   register-offset byte-store plus remaining-cycle handoffs, byte-store SMC/IRQ
   remaining-cycle handoff, and SMC/IRQ/HALT alert observations hashed,
   register-offset, shifted register-offset load/store including shifted-LSR,

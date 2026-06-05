@@ -40,7 +40,7 @@ typedef unsigned int usize;
   "loadpc_loadpcremain_loadpcnative_pcstore_pcstoreremain_" \
   "pcbasestoreremain_storealert_storehalt_regoff_regoffremain_" \
   "regstore_regstoreremain_shiftstore_shiftlsr_shiftasr_shiftror_" \
-  "shiftstoreremain_shiftlsrstoreremain_" \
+  "shiftstoreremain_shiftlsrstoreremain_shiftasrstoreremain_" \
   "rrxstore_rrxstoreremain_regwb_regwbstoreremain_regwbloadremain_" \
   "halfremain_halfreg_halfregremain_halfregstoreremain_halfpc_" \
   "halfpcremain_halfwb_halfwbstoreremain_halfwbloadremain_halfalert_" \
@@ -59,7 +59,7 @@ typedef unsigned int usize;
 #define ZLIB_BLOCK_MAX 65535u
 #define ZLIB_BLOCKS ((PNG_RAW_SIZE + ZLIB_BLOCK_MAX - 1) / ZLIB_BLOCK_MAX)
 #define ZLIB_SIZE (2 + PNG_RAW_SIZE + (ZLIB_BLOCKS * 5) + 4)
-#define RUNTIME_EXEC_MAP_BYTES 54272u
+#define RUNTIME_EXEC_MAP_BYTES 54784u
 #define RUNTIME_LOAD_BLOCK_OFFSET 512u
 #define RUNTIME_STORE_BLOCK_OFFSET 1024u
 #define RUNTIME_BRANCH_BLOCK_OFFSET 1536u
@@ -147,6 +147,7 @@ typedef unsigned int usize;
 #define RUNTIME_SHIFTED_REG_OFFSET_ASR_LOAD_BLOCK_OFFSET 52736u
 #define RUNTIME_SHIFTED_REG_OFFSET_ROR_LOAD_BLOCK_OFFSET 53248u
 #define RUNTIME_SHIFTED_REG_OFFSET_LSR_STORE_BLOCK_OFFSET 53760u
+#define RUNTIME_SHIFTED_REG_OFFSET_ASR_STORE_BLOCK_OFFSET 54272u
 #define RUNTIME_START_PC 0x08000000u
 #define RUNTIME_END_PC (RUNTIME_START_PC + 4u)
 #define RUNTIME_CYCLES 7u
@@ -998,6 +999,12 @@ typedef unsigned int usize;
 #define RUNTIME_SHIFTED_REG_OFFSET_LSR_STORE_TOTAL_CYCLES \
   RUNTIME_SHIFTED_REG_OFFSET_STORE_TOTAL_CYCLES
 #define RUNTIME_SHIFTED_REG_OFFSET_LSR_STORE_EXTRA_CYCLES 8u
+#define RUNTIME_SHIFTED_REG_OFFSET_ASR_STORE_START_PC 0x080016e0u
+#define RUNTIME_SHIFTED_REG_OFFSET_ASR_STORE_END_PC \
+  (RUNTIME_SHIFTED_REG_OFFSET_ASR_STORE_START_PC + 4u)
+#define RUNTIME_SHIFTED_REG_OFFSET_ASR_STORE_TOTAL_CYCLES \
+  RUNTIME_SHIFTED_REG_OFFSET_STORE_TOTAL_CYCLES
+#define RUNTIME_SHIFTED_REG_OFFSET_ASR_STORE_EXTRA_CYCLES 9u
 #define RUNTIME_REG_OFFSET_RRX_LOAD_START_PC 0x08001040u
 #define RUNTIME_REG_OFFSET_RRX_LOAD_END_PC \
   (RUNTIME_REG_OFFSET_RRX_LOAD_START_PC + 4u)
@@ -1036,6 +1043,7 @@ typedef unsigned int usize;
 #define RUNTIME_SHIFTED_REG_OFFSET_LDRB_R10_R3_R2_ROR1 0xe7d3a0e2u
 #define RUNTIME_SHIFTED_REG_OFFSET_STRB_R9_R3_R2_LSL2 0xe7c39102u
 #define RUNTIME_SHIFTED_REG_OFFSET_STRB_R9_R3_R2_LSR1 0xe7c390a2u
+#define RUNTIME_SHIFTED_REG_OFFSET_STRB_R9_R3_R2_ASR2 0xe7c39142u
 #define RUNTIME_REG_OFFSET_LDR_R11_R3_R2_RRX 0xe793b062u
 #define RUNTIME_REG_OFFSET_STRB_R9_R3_R2_RRX 0xe7c39062u
 #define RUNTIME_REG_OFFSET_BASE_ADDR 0x02000300u
@@ -1229,6 +1237,7 @@ static u8 *g_runtime_shifted_reg_offset_lsr_load_entry;
 static u8 *g_runtime_shifted_reg_offset_asr_load_entry;
 static u8 *g_runtime_shifted_reg_offset_ror_load_entry;
 static u8 *g_runtime_shifted_reg_offset_lsr_store_entry;
+static u8 *g_runtime_shifted_reg_offset_asr_store_entry;
 static u8 *g_runtime_reg_offset_rrx_load_entry;
 static u8 *g_runtime_reg_offset_rrx_store_entry;
 static u32 g_runtime_code_bytes;
@@ -1390,6 +1399,7 @@ static void clear_runtime_fixture_entries(void)
   g_runtime_shifted_reg_offset_asr_load_entry = (u8 *)0;
   g_runtime_shifted_reg_offset_ror_load_entry = (u8 *)0;
   g_runtime_shifted_reg_offset_lsr_store_entry = (u8 *)0;
+  g_runtime_shifted_reg_offset_asr_store_entry = (u8 *)0;
   g_runtime_reg_offset_rrx_load_entry = (u8 *)0;
   g_runtime_reg_offset_rrx_store_entry = (u8 *)0;
 }
@@ -1844,6 +1854,7 @@ static int build_runtime_fixture_block(const char **reason)
   u32 shifted_reg_offset_asr_load_code_bytes;
   u32 shifted_reg_offset_ror_load_code_bytes;
   u32 shifted_reg_offset_lsr_store_code_bytes;
+  u32 shifted_reg_offset_asr_store_code_bytes;
   u32 reg_offset_rrx_load_code_bytes;
   u32 reg_offset_rrx_store_code_bytes;
   u32 condition;
@@ -4331,6 +4342,32 @@ static int build_runtime_fixture_block(const char **reason)
           (g_runtime_code +
            RUNTIME_SHIFTED_REG_OFFSET_LSR_STORE_BLOCK_OFFSET));
 
+  translation_ptr =
+    g_runtime_code + RUNTIME_SHIFTED_REG_OFFSET_ASR_STORE_BLOCK_OFFSET;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_runtime_shifted_reg_offset_asr_store_entry =
+    ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_access_memory(
+        &translation_ptr, meta,
+        RUNTIME_SHIFTED_REG_OFFSET_STRB_R9_R3_R2_ASR2,
+        RUNTIME_SHIFTED_REG_OFFSET_ASR_STORE_START_PC,
+        RUNTIME_REG_OFFSET_STORE_BASE_CYCLES))
+  {
+    *reason = "runtime_shifted_reg_offset_asr_strb_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            RUNTIME_SHIFTED_REG_OFFSET_ASR_STORE_START_PC,
+                            RUNTIME_SHIFTED_REG_OFFSET_ASR_STORE_END_PC,
+                            false);
+  shifted_reg_offset_asr_store_code_bytes =
+    (u32)(translation_ptr -
+          (g_runtime_code +
+           RUNTIME_SHIFTED_REG_OFFSET_ASR_STORE_BLOCK_OFFSET));
+
   translation_ptr = g_runtime_code + RUNTIME_REG_OFFSET_RRX_LOAD_BLOCK_OFFSET;
   riscv_emit_block_prologue(&translation_ptr, &meta);
   g_runtime_reg_offset_rrx_load_entry = ((u8 *)meta) + block_prologue_size;
@@ -4427,6 +4464,7 @@ static int build_runtime_fixture_block(const char **reason)
     shifted_reg_offset_asr_load_code_bytes +
     shifted_reg_offset_ror_load_code_bytes +
     shifted_reg_offset_lsr_store_code_bytes +
+    shifted_reg_offset_asr_store_code_bytes +
     reg_offset_rrx_load_code_bytes +
     reg_offset_rrx_store_code_bytes;
   flush_ret = syscall3(SYS_RISCV_FLUSH_ICACHE, (long)g_runtime_code,
@@ -4520,6 +4558,7 @@ static int ensure_runtime_fixture(const char **reason)
       g_runtime_shifted_reg_offset_asr_load_entry &&
       g_runtime_shifted_reg_offset_ror_load_entry &&
       g_runtime_shifted_reg_offset_lsr_store_entry &&
+      g_runtime_shifted_reg_offset_asr_store_entry &&
       g_runtime_reg_offset_rrx_load_entry &&
       g_runtime_reg_offset_rrx_store_entry)
     return 1;
@@ -7558,6 +7597,34 @@ static void run_runtime_reference_workload(const struct harness_state *base,
 
   for (i = 0; i < REG_MAX; i++)
     values[i] = 0;
+  values[2] = RUNTIME_SHIFTED_REG_OFFSET_ASR_VALUE;
+  values[3] = RUNTIME_REG_OFFSET_BASE_ADDR;
+  values[9] = RUNTIME_REG_OFFSET_STORE_VALUE;
+  values[REG_PC] = RUNTIME_SHIFTED_REG_OFFSET_ASR_STORE_END_PC;
+  values[REG_CPSR] = 0;
+  values[CPU_HALT_STATE] = CPU_ACTIVE;
+  reg_hash = runtime_update_reg_hash(reg_hash, values);
+  mem_hash = runtime_update_memory_hash(
+    mem_hash,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    runtime_reference_sticky_hash());
+  mem_hash = runtime_append_write8_hash(
+    mem_hash,
+    1, RUNTIME_SHIFTED_REG_OFFSET_ASR_BYTE_ADDR,
+    RUNTIME_SHIFTED_REG_OFFSET_ASR_STORE_END_PC,
+    RUNTIME_REG_OFFSET_STORE_VALUE & 0xffu);
+  scheduler_hash = runtime_update_scheduler_hash(
+    scheduler_hash,
+    2, RUNTIME_SHIFTED_REG_OFFSET_ASR_STORE_END_PC, 0,
+    0, RUNTIME_NO_UPDATE_CYCLES,
+    1, RUNTIME_SHIFTED_REG_OFFSET_ASR_STORE_EXTRA_CYCLES,
+    RUNTIME_SHIFTED_REG_OFFSET_ASR_STORE_END_PC,
+    0, 0);
+
+  for (i = 0; i < REG_MAX; i++)
+    values[i] = 0;
   values[2] = RUNTIME_REG_OFFSET_RRX_VALUE;
   values[3] = RUNTIME_REG_OFFSET_BASE_ADDR;
   values[11] = RUNTIME_REG_OFFSET_RRX_WORD_VALUE;
@@ -8379,12 +8446,12 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   snapshot->reg_hash = reg_hash;
   snapshot->mem_hash = mem_hash;
   snapshot->scheduler_hash = scheduler_hash;
-  snapshot->blocks = 173;
-  snapshot->fallbacks = 53;
+  snapshot->blocks = 174;
+  snapshot->fallbacks = 54;
   snapshot->native_data_proc = 80;
   snapshot->native_branch = 7;
   snapshot->native_load = 26;
-  snapshot->native_store = 17;
+  snapshot->native_store = 18;
   snapshot->native_psr = 5;
 }
 
@@ -9484,6 +9551,19 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   mem_hash = runtime_update_current_write8_hash(mem_hash);
   scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
 
+  reset_runtime_fixture_state(RUNTIME_SHIFTED_REG_OFFSET_ASR_STORE_START_PC);
+  reg[2] = RUNTIME_SHIFTED_REG_OFFSET_ASR_VALUE;
+  reg[3] = RUNTIME_REG_OFFSET_BASE_ADDR;
+  reg[9] = RUNTIME_REG_OFFSET_STORE_VALUE;
+  execute_arm_translate_internal(
+    RUNTIME_SHIFTED_REG_OFFSET_ASR_STORE_TOTAL_CYCLES +
+      RUNTIME_SHIFTED_REG_OFFSET_ASR_STORE_EXTRA_CYCLES,
+    &reg[0]);
+  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+  mem_hash = runtime_update_current_memory_hash(mem_hash);
+  mem_hash = runtime_update_current_write8_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+
   reset_runtime_fixture_state(RUNTIME_REG_OFFSET_RRX_LOAD_START_PC);
   reg[2] = RUNTIME_REG_OFFSET_RRX_VALUE;
   reg[3] = RUNTIME_REG_OFFSET_BASE_ADDR;
@@ -10279,6 +10359,9 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
   if (g_runtime_shifted_reg_offset_lsr_store_entry &&
       pc == RUNTIME_SHIFTED_REG_OFFSET_LSR_STORE_START_PC)
     return g_runtime_shifted_reg_offset_lsr_store_entry;
+  if (g_runtime_shifted_reg_offset_asr_store_entry &&
+      pc == RUNTIME_SHIFTED_REG_OFFSET_ASR_STORE_START_PC)
+    return g_runtime_shifted_reg_offset_asr_store_entry;
   if (g_runtime_reg_offset_rrx_load_entry &&
       pc == RUNTIME_REG_OFFSET_RRX_LOAD_START_PC)
     return g_runtime_reg_offset_rrx_load_entry;
