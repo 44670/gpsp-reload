@@ -601,6 +601,7 @@ typedef unsigned int usize;
 #define HALF_REG_LDRSH_R10_R3_R15 0xe193a0ffu
 #define HALF_REG_STRH_R9_R3_NEG_R15 0xe10390bfu
 #define PC_BASE_HALF_LDRH_R8_PC_0X24 0xe1df82b4u
+#define PC_BASE_HALF_LDRSB_R7_PC_0X25 0xe1df72d5u
 #define PC_BASE_HALF_LDRSH_R9_PC_0X26 0xe1df92f6u
 #define PC_BASE_HALF_STRH_R10_PC_0X22 0xe1cfa2b2u
 #define HALF_REG_STRH_R9_R3_NEG_R2 0xe10390b2u
@@ -636,8 +637,9 @@ typedef unsigned int usize;
 #define HALF_REG_PC_STORE_END_PC (HALF_REG_PC_STORE_START_PC + 4u)
 #define PC_BASE_HALF_LOAD_START_PC 0x08000b40u
 #define PC_BASE_HALF_LDRH_PC PC_BASE_HALF_LOAD_START_PC
-#define PC_BASE_HALF_LDRSH_PC (PC_BASE_HALF_LOAD_START_PC + 4u)
-#define PC_BASE_HALF_LOAD_END_PC (PC_BASE_HALF_LOAD_START_PC + 8u)
+#define PC_BASE_HALF_LDRSB_PC (PC_BASE_HALF_LOAD_START_PC + 4u)
+#define PC_BASE_HALF_LDRSH_PC (PC_BASE_HALF_LOAD_START_PC + 8u)
+#define PC_BASE_HALF_LOAD_END_PC (PC_BASE_HALF_LOAD_START_PC + 12u)
 #define PC_BASE_HALF_STORE_START_PC 0x08000b60u
 #define PC_BASE_HALF_STORE_END_PC (PC_BASE_HALF_STORE_START_PC + 4u)
 #define HALF_REG_STORE_START_PC 0x080005c0u
@@ -666,6 +668,7 @@ typedef unsigned int usize;
 #define HALF_REG_PC_STORE_ADDR \
   (HALF_BASE_ADDR - (HALF_REG_PC_STORE_START_PC + 8u))
 #define PC_BASE_HALF_U16_ADDR (PC_BASE_HALF_LDRH_PC + 8u + 0x24u)
+#define PC_BASE_HALF_S8_ADDR (PC_BASE_HALF_LDRSB_PC + 8u + 0x25u)
 #define PC_BASE_HALF_S16_ADDR (PC_BASE_HALF_LDRSH_PC + 8u + 0x26u)
 #define PC_BASE_HALF_STORE_ADDR (PC_BASE_HALF_STORE_START_PC + 8u + 0x22u)
 #define HALF_REG_STORE_ADDR HALF_REG_S8_ADDR
@@ -2837,6 +2840,15 @@ static u32 build_pc_base_half_load_block(u8 *code)
                                            HALF_LDRH_BASE_CYCLES))
   {
     put_raw("result=FAIL command=runtime reason=pc_base_ldrh_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_access_memory(&translation_ptr, meta,
+                                           PC_BASE_HALF_LDRSB_R7_PC_0X25,
+                                           PC_BASE_HALF_LDRSB_PC,
+                                           HALF_LDRSB_BASE_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=pc_base_ldrsb_rejected\n");
     sys_exit(1);
   }
 
@@ -6702,13 +6714,17 @@ static void run_pc_base_half_load_remaining_case(void)
 {
   const u32 extra_cycles = 5u;
   const u32 total_cycles =
-    (HALF_LDRH_BASE_CYCLES + 2u) + (HALF_LDRSH_BASE_CYCLES + 2u);
+    (HALF_LDRH_BASE_CYCLES + 2u) +
+    (HALF_LDRSB_BASE_CYCLES + 2u) +
+    (HALF_LDRSH_BASE_CYCLES + 2u);
 
   reset_runtime_observations(PC_BASE_HALF_LOAD_START_PC);
   g_lookup_entry = g_pc_base_half_load_entry;
 
   execute_arm_translate_internal(total_cycles + extra_cycles, &reg[0]);
 
+  if (reg[7] != HALF_S8_VALUE)
+    fail_u32("pc_base_half_load", "r7", reg[7], HALF_S8_VALUE);
   if (reg[8] != HALF_U16_VALUE)
     fail_u32("pc_base_half_load", "r8", reg[8], HALF_U16_VALUE);
   if (reg[9] != HALF_S16_VALUE)
@@ -6724,6 +6740,14 @@ static void run_pc_base_half_load_remaining_case(void)
   if (g_read16_pc != PC_BASE_HALF_LDRH_PC)
     fail_u32("pc_base_half_load", "read16_pc",
              g_read16_pc, PC_BASE_HALF_LDRH_PC);
+  if (g_read8s_calls != 1)
+    fail_u32("pc_base_half_load", "read8s_calls", g_read8s_calls, 1);
+  if (g_read8s_addr != PC_BASE_HALF_S8_ADDR)
+    fail_u32("pc_base_half_load", "read8s_addr",
+             g_read8s_addr, PC_BASE_HALF_S8_ADDR);
+  if (g_read8s_pc != PC_BASE_HALF_LDRSB_PC)
+    fail_u32("pc_base_half_load", "read8s_pc",
+             g_read8s_pc, PC_BASE_HALF_LDRSB_PC);
   if (g_read16s_calls != 1)
     fail_u32("pc_base_half_load", "read16s_calls", g_read16s_calls, 1);
   if (g_read16s_addr != PC_BASE_HALF_S16_ADDR)

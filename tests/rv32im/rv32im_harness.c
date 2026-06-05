@@ -822,10 +822,12 @@ typedef unsigned int usize;
 #define RUNTIME_HALF_LOAD_END_PC (RUNTIME_HALF_LOAD_START_PC + 12u)
 #define RUNTIME_PC_BASE_HALF_LOAD_START_PC 0x080015a0u
 #define RUNTIME_PC_BASE_HALF_LDRH_PC RUNTIME_PC_BASE_HALF_LOAD_START_PC
-#define RUNTIME_PC_BASE_HALF_LDRSH_PC \
+#define RUNTIME_PC_BASE_HALF_LDRSB_PC \
   (RUNTIME_PC_BASE_HALF_LOAD_START_PC + 4u)
-#define RUNTIME_PC_BASE_HALF_LOAD_END_PC \
+#define RUNTIME_PC_BASE_HALF_LDRSH_PC \
   (RUNTIME_PC_BASE_HALF_LOAD_START_PC + 8u)
+#define RUNTIME_PC_BASE_HALF_LOAD_END_PC \
+  (RUNTIME_PC_BASE_HALF_LOAD_START_PC + 12u)
 #define RUNTIME_PC_BASE_HALF_STORE_START_PC 0x080019a0u
 #define RUNTIME_PC_BASE_HALF_STORE_END_PC \
   (RUNTIME_PC_BASE_HALF_STORE_START_PC + 4u)
@@ -839,6 +841,7 @@ typedef unsigned int usize;
 #define RUNTIME_HALF_LOAD_EXTRA_CYCLES 5u
 #define RUNTIME_PC_BASE_HALF_LOAD_TOTAL_CYCLES \
   ((RUNTIME_HALF_LDRH_BASE_CYCLES + 2u) + \
+   (RUNTIME_HALF_LDRSB_BASE_CYCLES + 2u) + \
    (RUNTIME_HALF_LDRSH_BASE_CYCLES + 2u))
 #define RUNTIME_PC_BASE_HALF_LOAD_EXTRA_CYCLES 5u
 #define RUNTIME_PC_BASE_HALF_STORE_EXTRA_CYCLES 4u
@@ -863,6 +866,7 @@ typedef unsigned int usize;
 #define RUNTIME_HALF_LDRSH_R6_R3_0X26 0xe1d362f6u
 #define RUNTIME_HALF_STRH_R7_R3_0X28 0xe1c372b8u
 #define RUNTIME_PC_BASE_HALF_LDRH_R8_PC_0X24 0xe1df82b4u
+#define RUNTIME_PC_BASE_HALF_LDRSB_R7_PC_0X25 0xe1df72d5u
 #define RUNTIME_PC_BASE_HALF_LDRSH_R9_PC_0X26 0xe1df92f6u
 #define RUNTIME_PC_BASE_HALF_STRH_R10_PC_0X22 0xe1cfa2b2u
 #define RUNTIME_HALF_WRITEBACK_STRH_R3_R3_0X10_WB 0xe1e331b0u
@@ -874,6 +878,8 @@ typedef unsigned int usize;
 #define RUNTIME_HALF_STORE_ADDR (RUNTIME_HALF_BASE_ADDR + 0x28u)
 #define RUNTIME_PC_BASE_HALF_U16_ADDR \
   (RUNTIME_PC_BASE_HALF_LDRH_PC + 8u + 0x24u)
+#define RUNTIME_PC_BASE_HALF_S8_ADDR \
+  (RUNTIME_PC_BASE_HALF_LDRSB_PC + 8u + 0x25u)
 #define RUNTIME_PC_BASE_HALF_S16_ADDR \
   (RUNTIME_PC_BASE_HALF_LDRSH_PC + 8u + 0x26u)
 #define RUNTIME_PC_BASE_HALF_STORE_ADDR \
@@ -5091,6 +5097,16 @@ static int build_runtime_fixture_block(const char **reason)
   }
 
   if (!riscv_emit_native_arm_access_memory(
+        &translation_ptr, meta, RUNTIME_PC_BASE_HALF_LDRSB_R7_PC_0X25,
+        RUNTIME_PC_BASE_HALF_LDRSB_PC,
+        RUNTIME_HALF_LDRSB_BASE_CYCLES))
+  {
+    *reason = "runtime_pc_base_half_ldrsb_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  if (!riscv_emit_native_arm_access_memory(
         &translation_ptr, meta, RUNTIME_PC_BASE_HALF_LDRSH_R9_PC_0X26,
         RUNTIME_PC_BASE_HALF_LDRSH_PC,
         RUNTIME_HALF_LDRSH_BASE_CYCLES))
@@ -7775,6 +7791,7 @@ static void run_runtime_reference_workload(const struct harness_state *base,
 
   for (i = 0; i < REG_MAX; i++)
     values[i] = 0;
+  values[7] = RUNTIME_HALF_S8_VALUE;
   values[8] = RUNTIME_HALF_U16_VALUE;
   values[9] = RUNTIME_HALF_S16_VALUE;
   values[REG_PC] = RUNTIME_PC_BASE_HALF_LOAD_END_PC;
@@ -7790,7 +7807,8 @@ static void run_runtime_reference_workload(const struct harness_state *base,
     mem_hash,
     1, RUNTIME_PC_BASE_HALF_U16_ADDR,
     RUNTIME_PC_BASE_HALF_LDRH_PC, RUNTIME_HALF_U16_VALUE,
-    0, 0, 0, 0,
+    1, RUNTIME_PC_BASE_HALF_S8_ADDR,
+    RUNTIME_PC_BASE_HALF_LDRSB_PC, RUNTIME_HALF_S8_VALUE,
     1, RUNTIME_PC_BASE_HALF_S16_ADDR,
     RUNTIME_PC_BASE_HALF_LDRSH_PC, RUNTIME_HALF_S16_VALUE,
     0, 0, 0, 0);
@@ -7803,6 +7821,7 @@ static void run_runtime_reference_workload(const struct harness_state *base,
 
   for (i = 0; i < REG_MAX; i++)
     values[i] = 0;
+  values[7] = RUNTIME_HALF_S8_VALUE;
   values[8] = RUNTIME_HALF_U16_VALUE;
   values[9] = RUNTIME_HALF_S16_VALUE;
   values[REG_PC] = RUNTIME_PC_BASE_HALF_LOAD_END_PC;
@@ -7818,7 +7837,8 @@ static void run_runtime_reference_workload(const struct harness_state *base,
     mem_hash,
     1, RUNTIME_PC_BASE_HALF_U16_ADDR,
     RUNTIME_PC_BASE_HALF_LDRH_PC, RUNTIME_HALF_U16_VALUE,
-    0, 0, 0, 0,
+    1, RUNTIME_PC_BASE_HALF_S8_ADDR,
+    RUNTIME_PC_BASE_HALF_LDRSB_PC, RUNTIME_HALF_S8_VALUE,
     1, RUNTIME_PC_BASE_HALF_S16_ADDR,
     RUNTIME_PC_BASE_HALF_LDRSH_PC, RUNTIME_HALF_S16_VALUE,
     0, 0, 0, 0);
@@ -10926,7 +10946,7 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   snapshot->unsupported_fallbacks = 2;
   snapshot->native_data_proc = 88;
   snapshot->native_branch = 7;
-  snapshot->native_load = 39;
+  snapshot->native_load = 40;
   snapshot->native_store = 31;
   snapshot->native_psr = 5;
   runtime_store_snapshot_regs(snapshot, values, 0, 0);
@@ -12989,6 +13009,8 @@ u32 function_cc read_memory8s(u32 address)
   g_runtime_read8s_addr = address;
   g_runtime_read8s_pc = reg[REG_PC];
   if (address == RUNTIME_HALF_S8_ADDR)
+    value = RUNTIME_HALF_S8_VALUE;
+  else if (address == RUNTIME_PC_BASE_HALF_S8_ADDR)
     value = RUNTIME_HALF_S8_VALUE;
   else if (address == RUNTIME_HALF_REG_S8_ADDR)
     value = RUNTIME_HALF_S8_VALUE;
