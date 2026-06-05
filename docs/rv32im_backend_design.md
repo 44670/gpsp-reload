@@ -241,6 +241,33 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 `tests/rv32im/` and production lowering in `riscv/riscv_runtime.c` /
 `riscv/riscv_emit.h`. The current validated surface includes:
 
+| Backend boundary | RV32IM status | Evidence / next decision |
+| --- | --- | --- |
+| Raw RV32I/M emission and ABI entry/exit | native+compare | `make -C tests/rv32im test` covers emitter encodings and qemu-riscv32 ABI stubs. |
+| Data processing, flags, shifts, multiply, long multiply, PC-source operands | native+compare | Runtime `compare` covers ALU, flag, multiply, shifted/register-shifted, and PC-source fixtures against the local ARM reference model. |
+| PSR and banked-state boundaries | native+compare | `compare` covers MRS/MSR CPSR/SPSR, control-mode banked LR effects, SPSR helper writes, `MOVS pc`, and `LDM ... {pc}^`. |
+| Unsafe PSR/register combinations | explicit reject | `rejects runtime` pins `MRS r15,CPSR`, `MSR CPSR,r15`, and related non-AL direct-emitter rejection rules. |
+| Word/byte memory without PC writes | native+compare | `compare` covers helper loads/stores, PC-relative memory, register-offset memory, shifted register-offset memory, writeback, source-PC stores, IO observation, and remaining-cycle handoffs. |
+| Halfword/signed memory without PC writes | native+compare | `compare` covers immediate, PC-relative, register-offset, PC-register-offset, writeback, post-index, signed/unsigned helper loads, stores, and ordering. |
+| Immediate load-to-PC memory | native+compare | `LDR pc`, `LDRB pc`, `LDRH pc`, `LDRSB pc`, and `LDRSH pc` have boundary, remaining-cycle, and native-target chaining compare coverage. |
+| Register-offset `LDRH pc` | native+standalone | Standalone qemu-user proof covers boundary, remaining-cycle, and native-target chaining; promote this row to `native+compare` next. |
+| Register-offset `LDRSB pc` / `LDRSH pc` | missing | Implement after register-offset `LDRH pc` compare lands, using the same PC-write fixture shape. |
+| PC-base writeback and unsafe memory forms | explicit reject | `rejects runtime` pins PC-base writeback forms and the unsafe shifted-register offset form until parity proof exists. |
+| Branch, patch sites, conditional headers, BX/BL, PC-write chaining | native+compare | `compare`, `tracepc runtime`, `stepb runtime`, and patch-site standalone proof cover direct, indirect, internal/external patched, conditional, SWI, PC-write, Thumb fallback, and repatching behavior. |
+| Block memory and PC-loaded block memory | native+compare | `compare` covers STM/LDM, push, ordered transfers, writeback, PC-loaded chaining/fallthrough, and SPSR restore/update behavior. |
+| SWP/SWPB | native+compare | `compare` covers word/byte swap helper order, old-value reads, writes, SMC/IRQ/HALT alerts, and remaining-cycle handoffs. |
+| Unsafe SWP source/register form | explicit reject | `rejects runtime` pins `SWP` with `rm == pc`. |
+| SWI and HLE division | native+compare | `compare` covers SWI-to-BIOS effects, native target chaining/fallthrough, patchable SWI chaining, and HLE `Div` / `DivArm`. |
+| HLE-reserved SWI form | explicit reject | `rejects runtime` pins the reserved HLE SWI rejection. |
+| CPU alerts, cache flush, IRQ, HALT, idle-loop gate | native+compare | Runtime snapshots, `sched runtime`, and `fallbacks runtime` cover SMC/IRQ/HALT consumption, RAM flush, IRQ checks, HALT updates, and idle-loop gate exits. |
+| Scheduler exits, update_gba(), frame completion, fallback buckets | native+compare | `run runtime`, `cont runtime`, `sched runtime`, `counters runtime`, and `compare` pin update/refill, PC-change, frame-complete, fallback source breakdown, and snapshot hashes. |
+| Thumb instruction lowering | helper fallback | Current harness proves Thumb lookup miss/invalid and unsupported-block fallback only; Thumb native lowering is deliberately out of first-phase scope. |
+
+Next milestone selection comes from this table: close register-offset
+load-to-PC rows before widening the backend again, then audit the
+`native+compare` rows for the smallest mixed-workload gap that blocks a more
+realistic qemu-user smoke.
+
 - raw RV32I/M emitter encoding checks against clang/LLVM reference output
 - qemu-riscv32 ABI entry/return checks
 - top-level unix libretro core build with `HAVE_DYNAREC=1` and
