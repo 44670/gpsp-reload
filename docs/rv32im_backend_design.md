@@ -264,6 +264,9 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - successful qemu-user harness commands use stable
   `result=PASS command=...` summary lines, and failure paths use
   `result=FAIL command=...`
+- explicit runtime-snapshot `run runtime` command that executes the selected
+  backend's runtime fixture snapshot and reports state, memory, scheduler,
+  frame, and backend-counter hashes
 - explicit runtime-snapshot `framehash runtime` and `png <path> runtime`
   artifact paths derived from the selected backend's compare snapshot
 - explicit runtime-snapshot `regs runtime` dump for the selected backend's
@@ -382,7 +385,8 @@ Remaining first-phase gaps should stay narrow and evidence-driven:
 
 - The qemu-user harness still has synthetic/fixture-backed state, memory, and default trace,
   and default frame paths outside the runtime-backed fixture commands. Synthetic
-  paths stay labeled with `harness_mode=synthetic`; the `compare`,
+  paths stay labeled with `harness_mode=synthetic`; the `run runtime`,
+  `compare`,
   `regs runtime`, `mem <addr> <len> runtime <offset>`,
   `mem <addr> <len> runtime-bytes`,
   `watchio <addr> <len> runtime <offset>`, `counters runtime`,

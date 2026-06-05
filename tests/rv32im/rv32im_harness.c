@@ -11212,8 +11212,76 @@ static u32 optional_count(char *arg, u32 fallback)
   return value;
 }
 
+static int capture_runtime_snapshot(struct compare_snapshot *snapshot,
+                                    const char **reason);
+
 static void command_run(char *arg)
 {
+  if (arg && str_eq(arg, "runtime"))
+  {
+    const char *runtime_reason = "runtime_unknown";
+    struct compare_snapshot snapshot;
+
+    if (!capture_runtime_snapshot(&snapshot, &runtime_reason))
+    {
+      put_raw("result=FAIL command=run backend=");
+      put_raw(backend_name());
+      put_raw(" harness_mode=");
+      put_raw(RUNTIME_FIXTURE_MODE);
+      put_raw(" run_mode=runtime_snapshot reason=");
+      put_raw(runtime_reason);
+      put_chr('\n');
+      return;
+    }
+
+    render_runtime_snapshot_frame(&snapshot);
+    put_raw("result=PASS command=run backend=");
+    put_raw(backend_name());
+    put_raw(" blocks=");
+    put_u32_dec(snapshot.blocks);
+    put_raw(" fallbacks=");
+    put_u32_dec(snapshot.fallbacks);
+    put_raw(" initial_lookup_fallbacks=");
+    put_u32_dec(snapshot.initial_lookup_fallbacks);
+    put_raw(" relookup_fallbacks=");
+    put_u32_dec(snapshot.relookup_fallbacks);
+    put_raw(" unsupported_fallbacks=");
+    put_u32_dec(snapshot.unsupported_fallbacks);
+    put_raw(" native_data_proc=");
+    put_u32_dec(snapshot.native_data_proc);
+    put_raw(" native_branch=");
+    put_u32_dec(snapshot.native_branch);
+    put_raw(" native_load=");
+    put_u32_dec(snapshot.native_load);
+    put_raw(" native_store=");
+    put_u32_dec(snapshot.native_store);
+    put_raw(" native_psr=");
+    put_u32_dec(snapshot.native_psr);
+    put_raw(" reg_hash=");
+    put_u32_hex(snapshot.reg_hash);
+    put_raw(" mem_hash=");
+    put_u32_hex(snapshot.mem_hash);
+    put_raw(" scheduler_hash=");
+    put_u32_hex(snapshot.scheduler_hash);
+    put_raw(" width=");
+    put_u32_dec(FRAME_W);
+    put_raw(" height=");
+    put_u32_dec(FRAME_H);
+    put_raw(" frame_hash=");
+    put_u32_hex(g_state.last_frame_hash);
+    put_raw(" snapshot_frame_hash=");
+    put_u32_hex(snapshot.frame_hash);
+    put_raw(" code_bytes=");
+    put_u32_dec(g_runtime_code_bytes);
+    put_raw(" harness_mode=");
+    put_raw(RUNTIME_FIXTURE_MODE);
+    put_raw(" run_mode=runtime_snapshot counter_source=");
+    put_raw(g_state.backend == BACKEND_RV32IM ? "runtime_rv32im" :
+                                              "runtime_reference");
+    put_raw(" reason=runtime_snapshot_run\n");
+    return;
+  }
+
   u32 frames = optional_count(arg, 1);
   g_state.frames += frames;
   g_state.cycles += frames * 280896u;
@@ -11250,8 +11318,6 @@ static u32 synthetic_trace_pc(const struct harness_state *state, u32 index)
   return 0x08000000u + ((seed + index * 4u) & 0x000003fcu);
 }
 
-static int capture_runtime_snapshot(struct compare_snapshot *snapshot,
-                                    const char **reason);
 static int capture_runtime_lookup_trace(const char **reason);
 static int capture_runtime_memory_events(const char **reason);
 static int capture_runtime_scheduler_events(const char **reason);
