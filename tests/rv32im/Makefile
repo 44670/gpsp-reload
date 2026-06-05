@@ -20,6 +20,8 @@ CODEGEN_BIN := $(OUT_DIR)/rv32im_codegen.bin
 CODEGEN_REF_ELF := $(OUT_DIR)/rv32im_codegen_ref.elf
 CODEGEN_REF_BIN := $(OUT_DIR)/rv32im_codegen_ref.bin
 FRONTEND_OBJ := $(OUT_DIR)/cpu_threaded_riscv.o
+CORE_BUILD_TARGET := gpsp_libretro.so
+CORE_BUILD_FLAGS := platform=unix CPU_ARCH=riscv HAVE_DYNAREC=1
 
 RV32_CFLAGS := \
 	--target=riscv32 \
@@ -110,6 +112,9 @@ codegen: $(CODEGEN) $(CODEGEN_REF_BIN) | $(OUT_DIR)
 
 frontend: $(FRONTEND_OBJ)
 
+core-build:
+	$(MAKE) -C $(ROOT) $(CORE_BUILD_FLAGS) $(CORE_BUILD_TARGET)
+
 smoke: $(HARNESS) $(SMOKE_LOAD) $(SMOKE_PNG_SIG) $(OUT_DIR)
 	printf 'help\nload $(SMOKE_LOAD)\nbackend rv32im\nrejects runtime\nreset\nrun 2\nrun runtime\ncont 16\ncont runtime\nstepi 4\nstepi runtime 8\nstepb 3\nstepb runtime 5\nregs\nregs runtime\nmem 0x02000000 16\nmem 0x02000000 4096 runtime\nmem 0x02000000 4096 runtime 8\nmem 0x02000120 32 runtime-bytes\nwatchio 0x04000000 64 runtime\ncounters\ncounters runtime\nfallbacks runtime\nfallbacks runtime 8\nfallbacks runtime 40\nfallbacks runtime 48\nsched runtime\nsched runtime 8\nsched runtime 108\nsched runtime 120\ntracepc 4\ntracepc runtime 8\ntracepc runtime 4 32\nbp 0x08000000 runtime\nframehash\ncompare\nframehash runtime\npng $(SMOKE_RUNTIME_PNG) runtime\npng $(SMOKE_PNG)\nquit\n' | $(QEMU_RISCV32) ./$(HARNESS) | tee $(SMOKE_LOG)
 	grep -q 'result=PASS command=help commands=load reset backend run cont stepi stepb regs mem watchio counters fallbacks sched tracepc bp framehash compare rejects png quit harness_mode=synthetic reason=command_list' $(SMOKE_LOG)
@@ -191,10 +196,10 @@ exec: $(EXEC_TEST)
 runtime: $(RUNTIME_TEST)
 	$(QEMU_RISCV32) ./$(RUNTIME_TEST)
 
-test: codegen abi exec runtime frontend rejects compare smoke
+test: codegen abi exec runtime frontend core-build rejects compare smoke
 
 clean:
 	rm -f $(HARNESS) $(CODEGEN) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST)
 	rm -rf $(OUT_DIR)
 
-.PHONY: all codegen abi exec runtime frontend smoke compare test clean
+.PHONY: all codegen abi exec runtime frontend core-build smoke compare test clean

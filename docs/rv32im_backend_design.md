@@ -243,6 +243,9 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 
 - raw RV32I/M emitter encoding checks against clang/LLVM reference output
 - qemu-riscv32 ABI entry/return checks
+- top-level unix libretro core build with `HAVE_DYNAREC=1` and
+  `CPU_ARCH=riscv`, proving the production `cpu_threaded.c` / RV32IM runtime
+  integration still compiles and links outside the standalone qemu-user shim
 - data-processing, flag-producing data-processing, multiply, long multiply,
   PSR, load/store, PC-relative load/store memory,
   register-offset load/store, PC-register-offset word/byte load/store, shifted-LSL/LSR/ASR/ROR
@@ -503,6 +506,6 @@ Remaining first-phase gaps should stay narrow and evidence-driven:
 Every validated RV32IM semi-milestone should be committed separately. A typical
 gate is `git diff --check`, `make -C tests/rv32im compare`,
 `make -C tests/rv32im test`, which includes a `cpu_threaded.c` compile guard
-for `HAVE_DYNAREC` plus `RISCV_ARCH`, a top-level unix RV32IM dynarec smoke
-build when production backend code changed, and
-`make -C tests/rv32im clean` before committing.
+for `HAVE_DYNAREC` plus `RISCV_ARCH`, the `core-build` target for a top-level
+unix RV32IM dynarec libretro build, and `make -C tests/rv32im clean` before
+committing.
