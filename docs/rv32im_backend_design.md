@@ -295,7 +295,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   store-triggered SMC/IRQ alert handling, byte-store SMC/IRQ alert handling,
   store/halfword/block/SWP HALT-alert handling, block-memory SMC/IRQ alert
   handling, SWP-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
-  fallback, ARM lookup-miss/invalid fallback, and Thumb lookup-miss fallback fixtures against a local ARM
+  fallback, ARM lookup-miss/invalid fallback, and Thumb lookup-miss/invalid fallback fixtures against a local ARM
   reference model, with
   one hundred twenty nine runtime blocks executed, basic data-processing remaining-cycle and invalid re-lookup fallback handoffs,
   ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
@@ -330,7 +330,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   direct, indirect, conditional, SWI, PC-write, SPSR-restore, patched branch,
   direct-branch target native-chain remaining-cycle execution, and direct-branch, BL, BX ARM, BX Thumb, SWI, and PC-write ADD remaining-cycle execution exercised,
   scheduler/update cycle-refill, PC-change chaining, and frame-complete PC-change exit, HALT/idle-loop/Thumb-lookup observations hashed, with
-  unsupported-block, Thumb lookup-miss, helper load, load-to-PC, PC-relative load/store, PSR read/write, word store, register-offset load/store, immediate/PC-relative/register-offset halfword load, register-offset halfword store, direct-branch, BL, BX ARM, BX Thumb, SWI, and PC-write ADD
+  unsupported-block, Thumb lookup-miss/invalid, helper load, load-to-PC, PC-relative load/store, PSR read/write, word store, register-offset load/store, immediate/PC-relative/register-offset halfword load, register-offset halfword store, direct-branch, BL, BX ARM, BX Thumb, SWI, and PC-write ADD
   remaining-cycle lookup-misses, byte-store normal/alert, block-memory, and SWP alert remaining-cycle
   lookup-misses, and SWPB remaining-cycle lookup-miss fallbacks observed
 
@@ -342,7 +342,7 @@ Remaining first-phase gaps should stay narrow and evidence-driven:
   labeled `harness_mode=runtime_fixture` and still marks its frame hash as
   synthetic until real emulator frame output is wired in.
 - Thumb instruction lowering remains deliberately unsupported; the harness
-  compare path now proves Thumb lookup-miss fallback only, and Thumb blocks must
+  compare path now proves Thumb lookup-miss/invalid fallback only, and Thumb blocks must
   keep routing through fallback until a separate Thumb lowering milestone
   exists.
 - Conditional ARM opcodes are still expected to enter through the frontend's
