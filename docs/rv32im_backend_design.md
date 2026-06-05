@@ -250,8 +250,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 | Word/byte memory without PC writes | native+compare | `compare` covers helper loads/stores, PC-relative memory, register-offset memory, shifted register-offset memory, writeback, source-PC stores, IO observation, and remaining-cycle handoffs. |
 | Halfword/signed memory without PC writes | native+compare | `compare` covers immediate, PC-relative, register-offset, PC-register-offset, writeback, post-index, signed/unsigned helper loads, stores, and ordering. |
 | Immediate load-to-PC memory | native+compare | `LDR pc`, `LDRB pc`, `LDRH pc`, `LDRSB pc`, and `LDRSH pc` have boundary, remaining-cycle, and native-target chaining compare coverage. |
-| Register-offset `LDRH pc` | native+standalone | Standalone qemu-user proof covers boundary, remaining-cycle, and native-target chaining; promote this row to `native+compare` next. |
-| Register-offset `LDRSB pc` / `LDRSH pc` | missing | Implement after register-offset `LDRH pc` compare lands, using the same PC-write fixture shape. |
+| Register-offset `LDRH pc` | native+compare | Standalone qemu-user and runtime `compare` proofs cover boundary, remaining-cycle, and native-target chaining. |
+| Register-offset `LDRSB pc` / `LDRSH pc` | missing | Implement next, using the same PC-write fixture shape. |
 | PC-base writeback and unsafe memory forms | explicit reject | `rejects runtime` pins PC-base writeback forms and the unsafe shifted-register offset form until parity proof exists. |
 | Branch, patch sites, conditional headers, BX/BL, PC-write chaining | native+compare | `compare`, `tracepc runtime`, `stepb runtime`, and patch-site standalone proof cover direct, indirect, internal/external patched, conditional, SWI, PC-write, Thumb fallback, and repatching behavior. |
 | Block memory and PC-loaded block memory | native+compare | `compare` covers STM/LDM, push, ordered transfers, writeback, PC-loaded chaining/fallthrough, and SPSR restore/update behavior. |
@@ -263,7 +263,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 | Scheduler exits, update_gba(), frame completion, fallback buckets | native+compare | `run runtime`, `cont runtime`, `sched runtime`, `counters runtime`, and `compare` pin update/refill, PC-change, frame-complete, fallback source breakdown, and snapshot hashes. |
 | Thumb instruction lowering | helper fallback | Current harness proves Thumb lookup miss/invalid and unsupported-block fallback only; Thumb native lowering is deliberately out of first-phase scope. |
 
-Next milestone selection comes from this table: close register-offset
+Next milestone selection comes from this table: close signed register-offset
 load-to-PC rows before widening the backend again, then audit the
 `native+compare` rows for the smallest mixed-workload gap that blocks a more
 realistic qemu-user smoke.
@@ -394,8 +394,8 @@ realistic qemu-user smoke.
   partial-unsupported native discard
   fallback, ARM lookup-miss/invalid fallback, Thumb lookup-miss/invalid fallback, and Thumb unsupported-block fallback fixtures against a local ARM
   reference model, with
-  two hundred fifty eight runtime blocks executed, seventy nine total runtime
-  fallbacks split into four initial lookup fallbacks, seventy two relookup
+  two hundred sixty two runtime blocks executed, eighty one total runtime
+  fallbacks split into four initial lookup fallbacks, seventy four relookup
   fallbacks, and three unsupported-block fallbacks, basic data-processing native fallthrough chaining, remaining-cycle and invalid re-lookup fallback handoffs,
   ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results and remaining-cycle handoff, MSR CPSR flag remaining-cycle handoff,
@@ -406,7 +406,7 @@ realistic qemu-user smoke.
   checked, carry-input data-processing, carry-input flag, logical flag, and
   extended shifted and register-shifted data-processing results checked,
   register-shifted flag/test and TEQ/CMN CPSR results checked,
-  helper memory, helper load, word/byte/halfword load-to-PC, word/byte/halfword load-to-PC native target chaining, PC-write native target chaining, PC-write target native fallthrough chaining, PC-write Thumb fallback, PC-relative load, and register-offset load plus writeback store/load remaining-cycle handoffs, PC-relative store memory and remaining-cycle handoff,
+  helper memory, helper load, word/byte/halfword load-to-PC, word/byte/halfword load-to-PC native target chaining, register-offset halfword load-to-PC, PC-write native target chaining, PC-write target native fallthrough chaining, PC-write Thumb fallback, PC-relative load, and register-offset load plus writeback store/load remaining-cycle handoffs, PC-relative store memory and remaining-cycle handoff,
   source-PC store value and remaining-cycle handoff, word-store,
   IO-window word-store helper observation, byte-store,
   register-offset byte-store, shifted-LSL/shifted-LSL-with-PC/shifted-LSR/shifted-LSR-with-PC/shifted-ASR/shifted-ASR-with-PC/shifted-ROR/shifted-ROR-with-PC register-offset byte-store, and RRX
@@ -473,10 +473,11 @@ compare proof for the same boundary, remaining-cycle, and native-target
 chaining behavior with a sign-extended PC target. Immediate no-writeback
 `LDRSH pc` now has standalone and qemu-user compare proof for the same
 boundary, remaining-cycle, and native-target chaining behavior with a
-sign-extended PC target. Register-offset `LDRH pc` now has standalone proof
-for boundary, remaining-cycle, and native-target chaining behavior; qemu-user
-compare coverage should follow before widening signed register-offset
-load-to-PC forms. PC-base writeback and post-index load/store forms are
+sign-extended PC target. Register-offset `LDRH pc` now has standalone and
+qemu-user compare proof for boundary, remaining-cycle, and native-target
+chaining behavior. Signed register-offset load-to-PC forms should follow
+before widening memory PC-write coverage again. PC-base writeback and
+post-index load/store forms are
 likewise proven rejected for word/byte and halfword memory classes. A
 standalone partial-unsupported block remains as the focused
 `riscv_emit_block_finalize()` proof for the same discard-and-fallback contract.
