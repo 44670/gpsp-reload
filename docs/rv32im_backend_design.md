@@ -283,8 +283,9 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   `STMIA`, `LDMIA`, `STMDB sp!`, `LDMIA ... {pc}`,
   `LDMIA ... {pc}^`,
   HLE `Div`, HLE `DivArm`, PC-source data-processing/test ops,
-  register-offset/shifted/RRX load ops, shifted/RRX register-offset stores
-  and shifted/RRX-store remaining-cycle handoffs,
+  register-offset/shifted-LSL/shifted-LSR/RRX load ops,
+  shifted-LSL/RRX register-offset stores and shifted/RRX-store
+  remaining-cycle handoffs,
   pre/post-index writeback memory ops,
   register-offset writeback/post-index memory ops,
   `SWP`, `SWPB`,
@@ -300,7 +301,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   block-memory SMC/IRQ alert handling, SWP-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, ARM lookup-miss/invalid fallback, Thumb lookup-miss/invalid fallback, and Thumb unsupported-block fallback fixtures against a local ARM
   reference model, with
-  one hundred sixty nine runtime blocks executed, basic data-processing remaining-cycle and invalid re-lookup fallback handoffs,
+  one hundred seventy runtime blocks executed, basic data-processing remaining-cycle and invalid re-lookup fallback handoffs,
   ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results and remaining-cycle handoff, MSR CPSR flag remaining-cycle handoff,
   MSR CPSR control mode/banked-LR effects and remaining-cycle handoff, SPSR helper-write effects and remaining-cycle handoff, and native PSR
@@ -315,8 +316,9 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   register-offset byte-store, shifted register-offset byte-store, and RRX
   register-offset byte-store plus remaining-cycle handoffs, byte-store SMC/IRQ
   remaining-cycle handoff, and SMC/IRQ/HALT alert observations hashed,
-  register-offset, shifted register-offset load/store, subtract-offset, RRX
-  load/store, and register-offset writeback load/store address/value observations checked,
+  register-offset, shifted register-offset load/store including shifted-LSR
+  load, subtract-offset, RRX load/store, and register-offset writeback
+  load/store address/value observations checked,
   immediate and PC-relative halfword load remaining-cycle handoffs, register-offset halfword load/store remaining-cycle handoffs, writeback halfword
   signed/unsigned helper load results and store observations checked,
   halfword writeback store source/base ordering, store/load remaining-cycle handoff, and post-index load ordering
