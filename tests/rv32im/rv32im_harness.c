@@ -712,6 +712,9 @@ typedef unsigned int usize;
 #define RUNTIME_STORE_BYTE_ADDR (RUNTIME_STORE_BASE_ADDR + 0x29u)
 #define RUNTIME_STORE_PC_ADDR (RUNTIME_STORE_BASE_ADDR + 0x2cu)
 #define RUNTIME_STORE_PC_VALUE (RUNTIME_STORE_PC_START_PC + 12u)
+#define RUNTIME_IO_BASE_ADDR 0x04000000u
+#define RUNTIME_IO_STORE_ADDR (RUNTIME_IO_BASE_ADDR + 0x28u)
+#define RUNTIME_IO_END_ADDR 0x04000400u
 #define RUNTIME_PC_BASE_STORE_ADDR \
   (RUNTIME_PC_BASE_STORE_START_PC + 8u + 0x20u)
 #define RUNTIME_HALF_LOAD_START_PC 0x08000e00u
@@ -6058,6 +6061,26 @@ static void run_runtime_reference_workload(const struct harness_state *base,
 
   for (i = 0; i < REG_MAX; i++)
     values[i] = 0;
+  values[3] = RUNTIME_IO_BASE_ADDR;
+  values[6] = store_word;
+  values[REG_PC] = RUNTIME_STORE_END_PC;
+  values[REG_CPSR] = 0;
+  values[CPU_HALT_STATE] = CPU_ACTIVE;
+  reg_hash = runtime_update_reg_hash(reg_hash, values);
+  mem_hash = runtime_update_memory_hash(mem_hash,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        1, RUNTIME_IO_STORE_ADDR,
+                                        RUNTIME_STORE_END_PC, store_word,
+                                        runtime_reference_sticky_hash());
+  scheduler_hash = runtime_update_scheduler_hash(scheduler_hash,
+                                                 1, RUNTIME_STORE_START_PC, 0,
+                                                 1, 0,
+                                                 0, 0, 0,
+                                                 0, 0);
+
+  for (i = 0; i < REG_MAX; i++)
+    values[i] = 0;
   values[3] = RUNTIME_STORE_BASE_ADDR;
   values[6] = store_word;
   values[REG_PC] = RUNTIME_STORE_END_PC;
@@ -8601,7 +8624,7 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   snapshot->reg_hash = reg_hash;
   snapshot->mem_hash = mem_hash;
   snapshot->scheduler_hash = scheduler_hash;
-  snapshot->blocks = 175;
+  snapshot->blocks = 176;
   snapshot->fallbacks = 55;
   snapshot->native_data_proc = 80;
   snapshot->native_branch = 7;
@@ -9092,6 +9115,14 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
 
   reset_runtime_fixture_state(RUNTIME_STORE_START_PC);
   reg[3] = RUNTIME_STORE_BASE_ADDR;
+  reg[6] = g_runtime_fixture_store_word;
+  execute_arm_translate_internal(RUNTIME_STORE_TOTAL_CYCLES, &reg[0]);
+  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+  mem_hash = runtime_update_current_memory_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+
+  reset_runtime_fixture_state(RUNTIME_STORE_START_PC);
+  reg[3] = RUNTIME_IO_BASE_ADDR;
   reg[6] = g_runtime_fixture_store_word;
   execute_arm_translate_internal(RUNTIME_STORE_TOTAL_CYCLES, &reg[0]);
   reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
@@ -10865,7 +10896,7 @@ static void print_fail(const char *command, const char *reason)
 
 static void command_help(void)
 {
-  put_raw("commands=load reset backend run cont stepi stepb regs mem counters tracepc framehash compare png quit\n");
+  put_raw("commands=load reset backend run cont stepi stepb regs mem watchio counters tracepc framehash compare png quit\n");
 }
 
 static void command_backend(char *arg)
@@ -11005,6 +11036,92 @@ static int capture_runtime_snapshot(struct compare_snapshot *snapshot,
 static int capture_runtime_lookup_trace(const char **reason);
 static int capture_runtime_memory_events(const char **reason);
 
+static void command_runtime_event_range(const char *command,
+                                        u32 addr,
+                                        u32 len,
+                                        const char *mode_field,
+                                        const char *pass_reason)
+{
+  const char *runtime_reason = "runtime_unknown";
+  u32 stored_count;
+  u32 matched = 0;
+  u32 printed = 0;
+  u32 hash = 2166136261u;
+  u32 i;
+
+  if (!capture_runtime_memory_events(&runtime_reason))
+  {
+    put_raw("result=FAIL command=");
+    put_raw(command);
+    put_raw(" backend=");
+    put_raw(backend_name());
+    put_raw(" addr=");
+    put_u32_hex(addr);
+    put_raw(" len=");
+    put_u32_dec(len);
+    put_raw(" harness_mode=");
+    put_raw(RUNTIME_FIXTURE_MODE);
+    put_chr(' ');
+    put_raw(mode_field);
+    put_raw("=runtime_events reason=");
+    put_raw(runtime_reason);
+    put_chr('\n');
+    return;
+  }
+
+  stored_count = runtime_mem_event_stored_count();
+  put_raw("result=PASS command=");
+  put_raw(command);
+  put_raw(" backend=");
+  put_raw(backend_name());
+  put_raw(" addr=");
+  put_u32_hex(addr);
+  put_raw(" len=");
+  put_u32_dec(len);
+  put_raw(" total=");
+  put_u32_dec(g_runtime_mem_event_count);
+  put_raw(" stored=");
+  put_u32_dec(stored_count);
+  put_raw(" events=");
+  for (i = 0; i < stored_count; i++)
+  {
+    if (!runtime_mem_event_in_range(i, addr, len))
+      continue;
+
+    matched++;
+    hash = fnv1a_update_u32(hash, g_runtime_mem_event_kind[i]);
+    hash = fnv1a_update_u32(hash, g_runtime_mem_event_addr[i]);
+    hash = fnv1a_update_u32(hash, g_runtime_mem_event_pc[i]);
+    hash = fnv1a_update_u32(hash, g_runtime_mem_event_value[i]);
+    if (printed < 16)
+    {
+      if (printed)
+        put_chr(',');
+      put_raw(runtime_mem_event_kind_name(g_runtime_mem_event_kind[i]));
+      put_chr('@');
+      put_u32_hex(g_runtime_mem_event_addr[i]);
+      put_chr(':');
+      put_u32_hex(g_runtime_mem_event_pc[i]);
+      put_chr(':');
+      put_u32_hex(g_runtime_mem_event_value[i]);
+      printed++;
+    }
+  }
+  put_raw(" matched=");
+  put_u32_dec(matched);
+  put_raw(" printed=");
+  put_u32_dec(printed);
+  put_raw(" hash=");
+  put_u32_hex(hash);
+  put_raw(" harness_mode=");
+  put_raw(RUNTIME_FIXTURE_MODE);
+  put_chr(' ');
+  put_raw(mode_field);
+  put_raw("=runtime_events event_encoding=kind@addr:pc:value reason=");
+  put_raw(pass_reason);
+  put_chr('\n');
+}
+
 static void command_stepi(char *arg)
 {
   u32 count = optional_count(arg, 1);
@@ -11106,74 +11223,8 @@ static void command_mem(char *addr_arg, char *len_arg, char *mode)
 
   if (mode && str_eq(mode, "runtime"))
   {
-    const char *runtime_reason = "runtime_unknown";
-    u32 stored_count;
-    u32 matched = 0;
-    u32 printed = 0;
-    u32 hash = 2166136261u;
-
-    if (!capture_runtime_memory_events(&runtime_reason))
-    {
-      put_raw("result=FAIL command=mem backend=");
-      put_raw(backend_name());
-      put_raw(" addr=");
-      put_u32_hex(addr);
-      put_raw(" len=");
-      put_u32_dec(len);
-      put_raw(" harness_mode=");
-      put_raw(RUNTIME_FIXTURE_MODE);
-      put_raw(" mem_mode=runtime_events reason=");
-      put_raw(runtime_reason);
-      put_chr('\n');
-      return;
-    }
-
-    stored_count = runtime_mem_event_stored_count();
-    put_raw("result=PASS command=mem backend=");
-    put_raw(backend_name());
-    put_raw(" addr=");
-    put_u32_hex(addr);
-    put_raw(" len=");
-    put_u32_dec(len);
-    put_raw(" total=");
-    put_u32_dec(g_runtime_mem_event_count);
-    put_raw(" stored=");
-    put_u32_dec(stored_count);
-    put_raw(" events=");
-    for (i = 0; i < stored_count; i++)
-    {
-      if (!runtime_mem_event_in_range(i, addr, len))
-        continue;
-
-      matched++;
-      hash = fnv1a_update_u32(hash, g_runtime_mem_event_kind[i]);
-      hash = fnv1a_update_u32(hash, g_runtime_mem_event_addr[i]);
-      hash = fnv1a_update_u32(hash, g_runtime_mem_event_pc[i]);
-      hash = fnv1a_update_u32(hash, g_runtime_mem_event_value[i]);
-      if (printed < 16)
-      {
-        if (printed)
-          put_chr(',');
-        put_raw(runtime_mem_event_kind_name(g_runtime_mem_event_kind[i]));
-        put_chr('@');
-        put_u32_hex(g_runtime_mem_event_addr[i]);
-        put_chr(':');
-        put_u32_hex(g_runtime_mem_event_pc[i]);
-        put_chr(':');
-        put_u32_hex(g_runtime_mem_event_value[i]);
-        printed++;
-      }
-    }
-    put_raw(" matched=");
-    put_u32_dec(matched);
-    put_raw(" printed=");
-    put_u32_dec(printed);
-    put_raw(" hash=");
-    put_u32_hex(hash);
-    put_raw(" harness_mode=");
-    put_raw(RUNTIME_FIXTURE_MODE);
-    put_raw(" mem_mode=runtime_events event_encoding=kind@addr:pc:value");
-    put_raw(" reason=runtime_memory_events\n");
+    command_runtime_event_range("mem", addr, len, "mem_mode",
+                                "runtime_memory_events");
     return;
   }
 
@@ -11200,6 +11251,47 @@ static void command_mem(char *addr_arg, char *len_arg, char *mode)
   put_raw(" harness_mode=");
   put_raw(HARNESS_MODE);
   put_chr('\n');
+}
+
+static int runtime_io_range_valid(u32 addr, u32 len)
+{
+  u32 end;
+
+  if (len == 0)
+    return 0;
+
+  end = addr + len;
+  if (end < addr)
+    return 0;
+
+  return addr >= RUNTIME_IO_BASE_ADDR && end <= RUNTIME_IO_END_ADDR;
+}
+
+static void command_watchio(char *addr_arg, char *len_arg, char *mode)
+{
+  u32 addr;
+  u32 len;
+
+  if (!parse_u32_token(addr_arg, &addr) || !parse_u32_token(len_arg, &len))
+  {
+    print_fail("watchio", "bad_args");
+    return;
+  }
+
+  if (!mode || !str_eq(mode, "runtime"))
+  {
+    print_fail("watchio", "watchio_requires_runtime");
+    return;
+  }
+
+  if (!runtime_io_range_valid(addr, len))
+  {
+    print_fail("watchio", "bad_io_range");
+    return;
+  }
+
+  command_runtime_event_range("watchio", addr, len, "watch_mode",
+                              "runtime_io_events");
 }
 
 static void command_counters(char *mode)
@@ -11935,6 +12027,12 @@ static void process_line(char *line)
     char *addr = next_token(&cursor);
     char *len = next_token(&cursor);
     command_mem(addr, len, next_token(&cursor));
+  }
+  else if (str_eq(cmd, "watchio"))
+  {
+    char *addr = next_token(&cursor);
+    char *len = next_token(&cursor);
+    command_watchio(addr, len, next_token(&cursor));
   }
   else if (str_eq(cmd, "counters"))
   {

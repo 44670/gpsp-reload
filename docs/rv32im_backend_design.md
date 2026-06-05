@@ -259,8 +259,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - ARM and Thumb lookup/fallback paths, including restored-SPSR Thumb fallback
 - SPSR restore for `Rd=PC,S=1` data-processing writes and `LDM ... {pc}^`
 - scriptable qemu-user harness commands for `load`, `reset`, `backend`, `run`,
-  `cont`, `stepi`, `stepb`, `regs`, `mem`, `counters`, `tracepc`,
-  `framehash`, `compare`, `png`, and `quit`
+  `cont`, `stepi`, `stepb`, `regs`, `mem`, `watchio`, `counters`,
+  `tracepc`, `framehash`, `compare`, `png`, and `quit`
 - explicit runtime-snapshot `framehash runtime` and `png <path> runtime`
   artifact paths derived from the selected backend's compare snapshot
 - explicit runtime-snapshot `regs runtime` dump for the selected backend's
@@ -272,6 +272,9 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   workload, with Thumb lookups tagged in bit 0
 - explicit RV32IM `mem <addr> <len> runtime` helper-event dump for observed
   runtime memory reads/writes in the selected address range
+- explicit RV32IM `watchio <addr> <len> runtime` helper-event view for observed
+  runtime IO-window reads/writes, currently exercised by a real store helper
+  event at `0x04000028`
 - qemu-user harness `compare` execution of generated RV32IM
   `ADD r2, r0, r1`, `ADDS`, `SUBS`, `RSBS`, `CMP`, `MUL`, `MLA`,
   `UMULL`, `SMULL`,
@@ -312,7 +315,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   block-memory SMC/IRQ alert handling, SWP-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, ARM lookup-miss/invalid fallback, Thumb lookup-miss/invalid fallback, and Thumb unsupported-block fallback fixtures against a local ARM
   reference model, with
-  one hundred seventy five runtime blocks executed, basic data-processing remaining-cycle and invalid re-lookup fallback handoffs,
+  one hundred seventy six runtime blocks executed, basic data-processing remaining-cycle and invalid re-lookup fallback handoffs,
   ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results and remaining-cycle handoff, MSR CPSR flag remaining-cycle handoff,
   MSR CPSR control mode/banked-LR effects and remaining-cycle handoff, SPSR helper-write effects and remaining-cycle handoff, and native PSR
@@ -323,7 +326,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   extended shifted and register-shifted data-processing results checked,
   register-shifted flag/test and TEQ/CMN CPSR results checked,
   helper memory, helper load, load-to-PC, load-to-PC native target chaining, PC-write native target chaining, PC-write Thumb fallback, PC-relative load, and register-offset load plus writeback store/load remaining-cycle handoffs, PC-relative store memory and remaining-cycle handoff,
-  source-PC store value and remaining-cycle handoff, word-store, byte-store,
+  source-PC store value and remaining-cycle handoff, word-store,
+  IO-window word-store helper observation, byte-store,
   register-offset byte-store, shifted-LSL/shifted-LSR/shifted-ASR/shifted-ROR register-offset byte-store, and RRX
   register-offset byte-store plus remaining-cycle handoffs, byte-store SMC/IRQ
   remaining-cycle handoff, and SMC/IRQ/HALT alert observations hashed,
@@ -362,12 +366,13 @@ Remaining first-phase gaps should stay narrow and evidence-driven:
 - The qemu-user harness still has synthetic/fixture-backed state, memory, and default trace,
   and default frame paths outside the runtime-backed fixture commands. Synthetic
   paths stay labeled with `harness_mode=synthetic`; the `compare`,
-  `regs runtime`, `mem <addr> <len> runtime`, `counters runtime`,
+  `regs runtime`, `mem <addr> <len> runtime`,
+  `watchio <addr> <len> runtime`, `counters runtime`,
   `tracepc runtime`, `framehash runtime`, and `png <path> runtime` fixture paths are labeled
   `harness_mode=runtime_fixture`; the snapshot commands derive output from the
   runtime state/memory/scheduler/native-counter snapshot, `mem ... runtime`
-  records actual RV32IM helper memory events, and `tracepc runtime` records
-  actual RV32IM lookup PCs. Full addressable emulator RAM/IO dumps and real
+  and `watchio ... runtime` record actual RV32IM helper memory/IO events, and
+  `tracepc runtime` records actual RV32IM lookup PCs. Full addressable emulator RAM/IO dumps and real
   emulator frame output are still not wired in.
 - Thumb instruction lowering remains deliberately unsupported; the harness
   compare path now proves Thumb lookup-miss/invalid fallback and unsupported
