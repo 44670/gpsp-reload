@@ -15,7 +15,7 @@ typedef unsigned int usize;
 #define PROT_EXEC 4
 #define MAP_PRIVATE 2
 #define MAP_ANONYMOUS 32
-#define EXEC_MAP_BYTES 66560u
+#define EXEC_MAP_BYTES 70656u
 
 #define BLOCK_START_PC 0x08000000u
 #define BLOCK_END_PC 0x08000004u
@@ -802,6 +802,54 @@ typedef unsigned int usize;
 #define SHIFTED_REG_OFFSET_PC_ROR_STORE_TOTAL_CYCLES \
   SHIFTED_REG_OFFSET_STORE_TOTAL_CYCLES
 #define SHIFTED_REG_OFFSET_STRB_R9_R3_R15_ROR1 0xe7c390efu
+#define SHIFTED_REG_OFFSET_PC_LSL_WORD_START_PC 0x08001180u
+#define SHIFTED_REG_OFFSET_PC_LSL_WORD_END_PC \
+  (SHIFTED_REG_OFFSET_PC_LSL_WORD_START_PC + 4u)
+#define SHIFTED_REG_OFFSET_PC_LSL_WORD_TOTAL_CYCLES \
+  (SHIFTED_REG_OFFSET_CYCLES + 2u)
+#define SHIFTED_REG_OFFSET_LDR_R11_R3_R15_LSL2 0xe793b10fu
+#define SHIFTED_REG_OFFSET_PC_LSL_WORD_STORE_START_PC 0x080011a0u
+#define SHIFTED_REG_OFFSET_PC_LSL_WORD_STORE_END_PC \
+  (SHIFTED_REG_OFFSET_PC_LSL_WORD_STORE_START_PC + 4u)
+#define SHIFTED_REG_OFFSET_PC_LSL_WORD_STORE_TOTAL_CYCLES \
+  SHIFTED_REG_OFFSET_STORE_TOTAL_CYCLES
+#define SHIFTED_REG_OFFSET_STR_R9_R3_R15_LSL2 0xe783910fu
+#define SHIFTED_REG_OFFSET_PC_LSR_WORD_START_PC 0x080011c0u
+#define SHIFTED_REG_OFFSET_PC_LSR_WORD_END_PC \
+  (SHIFTED_REG_OFFSET_PC_LSR_WORD_START_PC + 4u)
+#define SHIFTED_REG_OFFSET_PC_LSR_WORD_TOTAL_CYCLES \
+  (SHIFTED_REG_OFFSET_CYCLES + 2u)
+#define SHIFTED_REG_OFFSET_LDR_R11_R3_R15_LSR1 0xe793b0afu
+#define SHIFTED_REG_OFFSET_PC_LSR_WORD_STORE_START_PC 0x080011e0u
+#define SHIFTED_REG_OFFSET_PC_LSR_WORD_STORE_END_PC \
+  (SHIFTED_REG_OFFSET_PC_LSR_WORD_STORE_START_PC + 4u)
+#define SHIFTED_REG_OFFSET_PC_LSR_WORD_STORE_TOTAL_CYCLES \
+  SHIFTED_REG_OFFSET_STORE_TOTAL_CYCLES
+#define SHIFTED_REG_OFFSET_STR_R9_R3_R15_LSR1 0xe78390afu
+#define SHIFTED_REG_OFFSET_PC_ASR_WORD_START_PC 0x08001200u
+#define SHIFTED_REG_OFFSET_PC_ASR_WORD_END_PC \
+  (SHIFTED_REG_OFFSET_PC_ASR_WORD_START_PC + 4u)
+#define SHIFTED_REG_OFFSET_PC_ASR_WORD_TOTAL_CYCLES \
+  (SHIFTED_REG_OFFSET_CYCLES + 2u)
+#define SHIFTED_REG_OFFSET_LDR_R11_R3_R15_ASR2 0xe793b14fu
+#define SHIFTED_REG_OFFSET_PC_ASR_WORD_STORE_START_PC 0x08001220u
+#define SHIFTED_REG_OFFSET_PC_ASR_WORD_STORE_END_PC \
+  (SHIFTED_REG_OFFSET_PC_ASR_WORD_STORE_START_PC + 4u)
+#define SHIFTED_REG_OFFSET_PC_ASR_WORD_STORE_TOTAL_CYCLES \
+  SHIFTED_REG_OFFSET_STORE_TOTAL_CYCLES
+#define SHIFTED_REG_OFFSET_STR_R9_R3_R15_ASR2 0xe783914fu
+#define SHIFTED_REG_OFFSET_PC_ROR_WORD_START_PC 0x08001240u
+#define SHIFTED_REG_OFFSET_PC_ROR_WORD_END_PC \
+  (SHIFTED_REG_OFFSET_PC_ROR_WORD_START_PC + 4u)
+#define SHIFTED_REG_OFFSET_PC_ROR_WORD_TOTAL_CYCLES \
+  (SHIFTED_REG_OFFSET_CYCLES + 2u)
+#define SHIFTED_REG_OFFSET_LDR_R11_R3_R15_ROR1 0xe793b0efu
+#define SHIFTED_REG_OFFSET_PC_ROR_WORD_STORE_START_PC 0x08001260u
+#define SHIFTED_REG_OFFSET_PC_ROR_WORD_STORE_END_PC \
+  (SHIFTED_REG_OFFSET_PC_ROR_WORD_STORE_START_PC + 4u)
+#define SHIFTED_REG_OFFSET_PC_ROR_WORD_STORE_TOTAL_CYCLES \
+  SHIFTED_REG_OFFSET_STORE_TOTAL_CYCLES
+#define SHIFTED_REG_OFFSET_STR_R9_R3_R15_ROR1 0xe78390efu
 #define SHIFTED_REG_OFFSET_LSR_STORE_START_PC 0x08000f80u
 #define SHIFTED_REG_OFFSET_LSR_STORE_END_PC \
   (SHIFTED_REG_OFFSET_LSR_STORE_START_PC + 4u)
@@ -881,6 +929,32 @@ typedef unsigned int usize;
   (REG_OFFSET_BASE_ADDR + (REG_OFFSET_VALUE >> 1))
 #define SHIFTED_REG_OFFSET_ASR_BYTE_ADDR (REG_OFFSET_BASE_ADDR - 8u)
 #define SHIFTED_REG_OFFSET_ROR_BYTE_ADDR 0x82000308u
+#define SHIFTED_REG_OFFSET_PC_LSL_WORD_ADDR \
+  (REG_OFFSET_BASE_ADDR + \
+   ((SHIFTED_REG_OFFSET_PC_LSL_WORD_START_PC + 8u) << 2))
+#define SHIFTED_REG_OFFSET_PC_LSL_WORD_STORE_ADDR \
+  (REG_OFFSET_BASE_ADDR + \
+   ((SHIFTED_REG_OFFSET_PC_LSL_WORD_STORE_START_PC + 8u) << 2))
+#define SHIFTED_REG_OFFSET_PC_LSR_WORD_ADDR \
+  (REG_OFFSET_BASE_ADDR + \
+   ((SHIFTED_REG_OFFSET_PC_LSR_WORD_START_PC + 8u) >> 1))
+#define SHIFTED_REG_OFFSET_PC_LSR_WORD_STORE_ADDR \
+  (REG_OFFSET_BASE_ADDR + \
+   ((SHIFTED_REG_OFFSET_PC_LSR_WORD_STORE_START_PC + 8u) >> 1))
+#define SHIFTED_REG_OFFSET_PC_ASR_WORD_ADDR \
+  (REG_OFFSET_BASE_ADDR + \
+   ((SHIFTED_REG_OFFSET_PC_ASR_WORD_START_PC + 8u) >> 2))
+#define SHIFTED_REG_OFFSET_PC_ASR_WORD_STORE_ADDR \
+  (REG_OFFSET_BASE_ADDR + \
+   ((SHIFTED_REG_OFFSET_PC_ASR_WORD_STORE_START_PC + 8u) >> 2))
+#define SHIFTED_REG_OFFSET_PC_ROR_WORD_ADDR \
+  (REG_OFFSET_BASE_ADDR + \
+   (((SHIFTED_REG_OFFSET_PC_ROR_WORD_START_PC + 8u) >> 1) | \
+    ((SHIFTED_REG_OFFSET_PC_ROR_WORD_START_PC + 8u) << 31)))
+#define SHIFTED_REG_OFFSET_PC_ROR_WORD_STORE_ADDR \
+  (REG_OFFSET_BASE_ADDR + \
+   (((SHIFTED_REG_OFFSET_PC_ROR_WORD_STORE_START_PC + 8u) >> 1) | \
+    ((SHIFTED_REG_OFFSET_PC_ROR_WORD_STORE_START_PC + 8u) << 31)))
 #define REG_OFFSET_RRX_WORD_ADDR 0x8200031cu
 #define REG_OFFSET_RRX_STORE_ADDR REG_OFFSET_RRX_WORD_ADDR
 #define REG_OFFSET_WORD_VALUE 0x55667788u
@@ -911,6 +985,14 @@ typedef unsigned int usize;
 #define SHIFTED_REG_OFFSET_LSR_BYTE_VALUE 0x6bu
 #define SHIFTED_REG_OFFSET_ASR_BYTE_VALUE 0x7cu
 #define SHIFTED_REG_OFFSET_ROR_BYTE_VALUE 0x8du
+#define SHIFTED_REG_OFFSET_PC_LSL_WORD_VALUE 0x13572468u
+#define SHIFTED_REG_OFFSET_PC_LSL_WORD_STORE_VALUE 0x89abcdefu
+#define SHIFTED_REG_OFFSET_PC_LSR_WORD_VALUE 0x24681357u
+#define SHIFTED_REG_OFFSET_PC_LSR_WORD_STORE_VALUE 0x76543210u
+#define SHIFTED_REG_OFFSET_PC_ASR_WORD_VALUE 0x0badc0deu
+#define SHIFTED_REG_OFFSET_PC_ASR_WORD_STORE_VALUE 0x10293847u
+#define SHIFTED_REG_OFFSET_PC_ROR_WORD_VALUE 0x55aa33ccu
+#define SHIFTED_REG_OFFSET_PC_ROR_WORD_STORE_VALUE 0xc001d00du
 #define REG_OFFSET_STORE_VALUE 0x123456f2u
 #define PSR_START_PC 0x08000920u
 #define PSR_END_PC (PSR_START_PC + 8u)
@@ -1120,6 +1202,14 @@ typedef unsigned int usize;
 #define SHIFTED_REG_OFFSET_PC_ASR_STORE_BLOCK_OFFSET 65024u
 #define SHIFTED_REG_OFFSET_PC_ROR_BLOCK_OFFSET 65536u
 #define SHIFTED_REG_OFFSET_PC_ROR_STORE_BLOCK_OFFSET 66048u
+#define SHIFTED_REG_OFFSET_PC_LSL_WORD_BLOCK_OFFSET 66560u
+#define SHIFTED_REG_OFFSET_PC_LSL_WORD_STORE_BLOCK_OFFSET 67072u
+#define SHIFTED_REG_OFFSET_PC_LSR_WORD_BLOCK_OFFSET 67584u
+#define SHIFTED_REG_OFFSET_PC_LSR_WORD_STORE_BLOCK_OFFSET 68096u
+#define SHIFTED_REG_OFFSET_PC_ASR_WORD_BLOCK_OFFSET 68608u
+#define SHIFTED_REG_OFFSET_PC_ASR_WORD_STORE_BLOCK_OFFSET 69120u
+#define SHIFTED_REG_OFFSET_PC_ROR_WORD_BLOCK_OFFSET 69632u
+#define SHIFTED_REG_OFFSET_PC_ROR_WORD_STORE_BLOCK_OFFSET 70144u
 #define EXPECTED_INITIAL_ROM_WATERMARK 16u
 
 u32 reg[REG_MAX];
@@ -1206,6 +1296,14 @@ static u8 *g_shifted_reg_offset_pc_asr_entry;
 static u8 *g_shifted_reg_offset_pc_asr_store_entry;
 static u8 *g_shifted_reg_offset_pc_ror_entry;
 static u8 *g_shifted_reg_offset_pc_ror_store_entry;
+static u8 *g_shifted_reg_offset_pc_lsl_word_entry;
+static u8 *g_shifted_reg_offset_pc_lsl_word_store_entry;
+static u8 *g_shifted_reg_offset_pc_lsr_word_entry;
+static u8 *g_shifted_reg_offset_pc_lsr_word_store_entry;
+static u8 *g_shifted_reg_offset_pc_asr_word_entry;
+static u8 *g_shifted_reg_offset_pc_asr_word_store_entry;
+static u8 *g_shifted_reg_offset_pc_ror_word_entry;
+static u8 *g_shifted_reg_offset_pc_ror_word_store_entry;
 static u8 *g_shifted_reg_offset_lsr_entry;
 static u8 *g_shifted_reg_offset_asr_entry;
 static u8 *g_shifted_reg_offset_ror_entry;
@@ -3490,6 +3588,31 @@ static u32 build_shifted_reg_offset_pc_ror_store_block(u8 *code)
   riscv_emit_block_finalize(meta, &translation_ptr,
                             SHIFTED_REG_OFFSET_PC_ROR_STORE_START_PC,
                             SHIFTED_REG_OFFSET_PC_ROR_STORE_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_shifted_reg_offset_pc_word_block(u8 *code, u32 opcode,
+                                                  u32 start_pc, u32 end_pc,
+                                                  u32 cycles, u8 **entry,
+                                                  const char *reject_reason)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  *entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_access_memory(&translation_ptr, meta, opcode,
+                                           start_pc, cycles))
+  {
+    put_raw(reject_reason);
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, start_pc, end_pc, false);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -7757,6 +7880,133 @@ static void run_shifted_reg_offset_pc_ror_store_remaining_case(void)
   expect_stickybits_cleared("shifted_reg_offset_pc_ror_store");
 }
 
+static void run_shifted_reg_offset_pc_word_load_case(
+    const char *test_name, u8 *entry, u32 start_pc, u32 end_pc,
+    u32 total_cycles, u32 address, u32 value, u32 extra_cycles)
+{
+  reset_runtime_observations(start_pc);
+  g_lookup_entry = entry;
+  reg[3] = REG_OFFSET_BASE_ADDR;
+
+  execute_arm_translate_internal(total_cycles + extra_cycles, &reg[0]);
+
+  if (reg[11] != value)
+    fail_u32(test_name, "r11", reg[11], value);
+  if (reg[REG_PC] != end_pc)
+    fail_u32(test_name, "pc", reg[REG_PC], end_pc);
+  if (g_read32_calls != 1)
+    fail_u32(test_name, "read32_calls", g_read32_calls, 1);
+  if (g_read32_addr != address)
+    fail_u32(test_name, "read32_addr", g_read32_addr, address);
+  if (g_read32_pc != start_pc)
+    fail_u32(test_name, "read32_pc", g_read32_pc, start_pc);
+  if (g_update_calls != 0)
+    fail_u32(test_name, "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32(test_name, "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32(test_name, "execute_cycles", g_execute_cycles, extra_cycles);
+  if (g_execute_pc != end_pc)
+    fail_u32(test_name, "execute_pc", g_execute_pc, end_pc);
+  expect_stickybits_cleared(test_name);
+}
+
+static void run_shifted_reg_offset_pc_word_store_case(
+    const char *test_name, u8 *entry, u32 start_pc, u32 end_pc,
+    u32 total_cycles, u32 address, u32 value, u32 extra_cycles)
+{
+  reset_runtime_observations(start_pc);
+  g_lookup_entry = entry;
+  reg[3] = REG_OFFSET_BASE_ADDR;
+  reg[9] = value;
+
+  execute_arm_translate_internal(total_cycles + extra_cycles, &reg[0]);
+
+  if (g_write32_calls != 1)
+    fail_u32(test_name, "write32_calls", g_write32_calls, 1);
+  if (g_write32_addr != address)
+    fail_u32(test_name, "write32_addr", g_write32_addr, address);
+  if (g_write32_value != value)
+    fail_u32(test_name, "write32_value", g_write32_value, value);
+  if (g_write32_pc != end_pc)
+    fail_u32(test_name, "write32_pc", g_write32_pc, end_pc);
+  if (reg[REG_PC] != end_pc)
+    fail_u32(test_name, "pc", reg[REG_PC], end_pc);
+  if (g_update_calls != 0)
+    fail_u32(test_name, "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32(test_name, "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32(test_name, "execute_cycles", g_execute_cycles, extra_cycles);
+  if (g_execute_pc != end_pc)
+    fail_u32(test_name, "execute_pc", g_execute_pc, end_pc);
+  expect_stickybits_cleared(test_name);
+}
+
+static void run_shifted_reg_offset_pc_word_cases(void)
+{
+  run_shifted_reg_offset_pc_word_load_case(
+    "shifted_reg_offset_pc_lsl_word", g_shifted_reg_offset_pc_lsl_word_entry,
+    SHIFTED_REG_OFFSET_PC_LSL_WORD_START_PC,
+    SHIFTED_REG_OFFSET_PC_LSL_WORD_END_PC,
+    SHIFTED_REG_OFFSET_PC_LSL_WORD_TOTAL_CYCLES,
+    SHIFTED_REG_OFFSET_PC_LSL_WORD_ADDR,
+    SHIFTED_REG_OFFSET_PC_LSL_WORD_VALUE, 3u);
+  run_shifted_reg_offset_pc_word_store_case(
+    "shifted_reg_offset_pc_lsl_word_store",
+    g_shifted_reg_offset_pc_lsl_word_store_entry,
+    SHIFTED_REG_OFFSET_PC_LSL_WORD_STORE_START_PC,
+    SHIFTED_REG_OFFSET_PC_LSL_WORD_STORE_END_PC,
+    SHIFTED_REG_OFFSET_PC_LSL_WORD_STORE_TOTAL_CYCLES,
+    SHIFTED_REG_OFFSET_PC_LSL_WORD_STORE_ADDR,
+    SHIFTED_REG_OFFSET_PC_LSL_WORD_STORE_VALUE, 4u);
+  run_shifted_reg_offset_pc_word_load_case(
+    "shifted_reg_offset_pc_lsr_word", g_shifted_reg_offset_pc_lsr_word_entry,
+    SHIFTED_REG_OFFSET_PC_LSR_WORD_START_PC,
+    SHIFTED_REG_OFFSET_PC_LSR_WORD_END_PC,
+    SHIFTED_REG_OFFSET_PC_LSR_WORD_TOTAL_CYCLES,
+    SHIFTED_REG_OFFSET_PC_LSR_WORD_ADDR,
+    SHIFTED_REG_OFFSET_PC_LSR_WORD_VALUE, 4u);
+  run_shifted_reg_offset_pc_word_store_case(
+    "shifted_reg_offset_pc_lsr_word_store",
+    g_shifted_reg_offset_pc_lsr_word_store_entry,
+    SHIFTED_REG_OFFSET_PC_LSR_WORD_STORE_START_PC,
+    SHIFTED_REG_OFFSET_PC_LSR_WORD_STORE_END_PC,
+    SHIFTED_REG_OFFSET_PC_LSR_WORD_STORE_TOTAL_CYCLES,
+    SHIFTED_REG_OFFSET_PC_LSR_WORD_STORE_ADDR,
+    SHIFTED_REG_OFFSET_PC_LSR_WORD_STORE_VALUE, 4u);
+  run_shifted_reg_offset_pc_word_load_case(
+    "shifted_reg_offset_pc_asr_word", g_shifted_reg_offset_pc_asr_word_entry,
+    SHIFTED_REG_OFFSET_PC_ASR_WORD_START_PC,
+    SHIFTED_REG_OFFSET_PC_ASR_WORD_END_PC,
+    SHIFTED_REG_OFFSET_PC_ASR_WORD_TOTAL_CYCLES,
+    SHIFTED_REG_OFFSET_PC_ASR_WORD_ADDR,
+    SHIFTED_REG_OFFSET_PC_ASR_WORD_VALUE, 5u);
+  run_shifted_reg_offset_pc_word_store_case(
+    "shifted_reg_offset_pc_asr_word_store",
+    g_shifted_reg_offset_pc_asr_word_store_entry,
+    SHIFTED_REG_OFFSET_PC_ASR_WORD_STORE_START_PC,
+    SHIFTED_REG_OFFSET_PC_ASR_WORD_STORE_END_PC,
+    SHIFTED_REG_OFFSET_PC_ASR_WORD_STORE_TOTAL_CYCLES,
+    SHIFTED_REG_OFFSET_PC_ASR_WORD_STORE_ADDR,
+    SHIFTED_REG_OFFSET_PC_ASR_WORD_STORE_VALUE, 4u);
+  run_shifted_reg_offset_pc_word_load_case(
+    "shifted_reg_offset_pc_ror_word", g_shifted_reg_offset_pc_ror_word_entry,
+    SHIFTED_REG_OFFSET_PC_ROR_WORD_START_PC,
+    SHIFTED_REG_OFFSET_PC_ROR_WORD_END_PC,
+    SHIFTED_REG_OFFSET_PC_ROR_WORD_TOTAL_CYCLES,
+    SHIFTED_REG_OFFSET_PC_ROR_WORD_ADDR,
+    SHIFTED_REG_OFFSET_PC_ROR_WORD_VALUE, 6u);
+  run_shifted_reg_offset_pc_word_store_case(
+    "shifted_reg_offset_pc_ror_word_store",
+    g_shifted_reg_offset_pc_ror_word_store_entry,
+    SHIFTED_REG_OFFSET_PC_ROR_WORD_STORE_START_PC,
+    SHIFTED_REG_OFFSET_PC_ROR_WORD_STORE_END_PC,
+    SHIFTED_REG_OFFSET_PC_ROR_WORD_STORE_TOTAL_CYCLES,
+    SHIFTED_REG_OFFSET_PC_ROR_WORD_STORE_ADDR,
+    SHIFTED_REG_OFFSET_PC_ROR_WORD_STORE_VALUE, 4u);
+}
+
 static void run_shifted_reg_offset_lsr_load_case(void)
 {
   const u32 extra_cycles = 3u;
@@ -9109,6 +9359,14 @@ u32 function_cc read_memory32(u32 address)
     return REG_OFFSET_RRX_WORD_VALUE;
   if (address == REG_OFFSET_PC_WORD_ADDR)
     return REG_OFFSET_PC_WORD_VALUE;
+  if (address == SHIFTED_REG_OFFSET_PC_LSL_WORD_ADDR)
+    return SHIFTED_REG_OFFSET_PC_LSL_WORD_VALUE;
+  if (address == SHIFTED_REG_OFFSET_PC_LSR_WORD_ADDR)
+    return SHIFTED_REG_OFFSET_PC_LSR_WORD_VALUE;
+  if (address == SHIFTED_REG_OFFSET_PC_ASR_WORD_ADDR)
+    return SHIFTED_REG_OFFSET_PC_ASR_WORD_VALUE;
+  if (address == SHIFTED_REG_OFFSET_PC_ROR_WORD_ADDR)
+    return SHIFTED_REG_OFFSET_PC_ROR_WORD_VALUE;
   if (address == REG_OFFSET_WORD_ADDR)
     return REG_OFFSET_WORD_VALUE;
   if (address == BLOCK_MEM_BASE)
@@ -9385,6 +9643,14 @@ void _start(void)
   u32 shifted_reg_offset_pc_asr_store_code_bytes;
   u32 shifted_reg_offset_pc_ror_code_bytes;
   u32 shifted_reg_offset_pc_ror_store_code_bytes;
+  u32 shifted_reg_offset_pc_lsl_word_code_bytes;
+  u32 shifted_reg_offset_pc_lsl_word_store_code_bytes;
+  u32 shifted_reg_offset_pc_lsr_word_code_bytes;
+  u32 shifted_reg_offset_pc_lsr_word_store_code_bytes;
+  u32 shifted_reg_offset_pc_asr_word_code_bytes;
+  u32 shifted_reg_offset_pc_asr_word_store_code_bytes;
+  u32 shifted_reg_offset_pc_ror_word_code_bytes;
+  u32 shifted_reg_offset_pc_ror_word_store_code_bytes;
   u32 shifted_reg_offset_lsr_code_bytes;
   u32 shifted_reg_offset_asr_code_bytes;
   u32 shifted_reg_offset_ror_code_bytes;
@@ -9764,6 +10030,86 @@ void _start(void)
   shifted_reg_offset_pc_ror_store_code_bytes =
     build_shifted_reg_offset_pc_ror_store_block(
       code + SHIFTED_REG_OFFSET_PC_ROR_STORE_BLOCK_OFFSET);
+  shifted_reg_offset_pc_lsl_word_code_bytes =
+    build_shifted_reg_offset_pc_word_block(
+      code + SHIFTED_REG_OFFSET_PC_LSL_WORD_BLOCK_OFFSET,
+      SHIFTED_REG_OFFSET_LDR_R11_R3_R15_LSL2,
+      SHIFTED_REG_OFFSET_PC_LSL_WORD_START_PC,
+      SHIFTED_REG_OFFSET_PC_LSL_WORD_END_PC,
+      SHIFTED_REG_OFFSET_CYCLES,
+      &g_shifted_reg_offset_pc_lsl_word_entry,
+      "result=FAIL command=runtime "
+      "reason=shifted_reg_pc_lsl_word_rejected\n");
+  shifted_reg_offset_pc_lsl_word_store_code_bytes =
+    build_shifted_reg_offset_pc_word_block(
+      code + SHIFTED_REG_OFFSET_PC_LSL_WORD_STORE_BLOCK_OFFSET,
+      SHIFTED_REG_OFFSET_STR_R9_R3_R15_LSL2,
+      SHIFTED_REG_OFFSET_PC_LSL_WORD_STORE_START_PC,
+      SHIFTED_REG_OFFSET_PC_LSL_WORD_STORE_END_PC,
+      REG_OFFSET_STORE_BASE_CYCLES,
+      &g_shifted_reg_offset_pc_lsl_word_store_entry,
+      "result=FAIL command=runtime "
+      "reason=shifted_reg_pc_lsl_word_str_rejected\n");
+  shifted_reg_offset_pc_lsr_word_code_bytes =
+    build_shifted_reg_offset_pc_word_block(
+      code + SHIFTED_REG_OFFSET_PC_LSR_WORD_BLOCK_OFFSET,
+      SHIFTED_REG_OFFSET_LDR_R11_R3_R15_LSR1,
+      SHIFTED_REG_OFFSET_PC_LSR_WORD_START_PC,
+      SHIFTED_REG_OFFSET_PC_LSR_WORD_END_PC,
+      SHIFTED_REG_OFFSET_CYCLES,
+      &g_shifted_reg_offset_pc_lsr_word_entry,
+      "result=FAIL command=runtime "
+      "reason=shifted_reg_pc_lsr_word_rejected\n");
+  shifted_reg_offset_pc_lsr_word_store_code_bytes =
+    build_shifted_reg_offset_pc_word_block(
+      code + SHIFTED_REG_OFFSET_PC_LSR_WORD_STORE_BLOCK_OFFSET,
+      SHIFTED_REG_OFFSET_STR_R9_R3_R15_LSR1,
+      SHIFTED_REG_OFFSET_PC_LSR_WORD_STORE_START_PC,
+      SHIFTED_REG_OFFSET_PC_LSR_WORD_STORE_END_PC,
+      REG_OFFSET_STORE_BASE_CYCLES,
+      &g_shifted_reg_offset_pc_lsr_word_store_entry,
+      "result=FAIL command=runtime "
+      "reason=shifted_reg_pc_lsr_word_str_rejected\n");
+  shifted_reg_offset_pc_asr_word_code_bytes =
+    build_shifted_reg_offset_pc_word_block(
+      code + SHIFTED_REG_OFFSET_PC_ASR_WORD_BLOCK_OFFSET,
+      SHIFTED_REG_OFFSET_LDR_R11_R3_R15_ASR2,
+      SHIFTED_REG_OFFSET_PC_ASR_WORD_START_PC,
+      SHIFTED_REG_OFFSET_PC_ASR_WORD_END_PC,
+      SHIFTED_REG_OFFSET_CYCLES,
+      &g_shifted_reg_offset_pc_asr_word_entry,
+      "result=FAIL command=runtime "
+      "reason=shifted_reg_pc_asr_word_rejected\n");
+  shifted_reg_offset_pc_asr_word_store_code_bytes =
+    build_shifted_reg_offset_pc_word_block(
+      code + SHIFTED_REG_OFFSET_PC_ASR_WORD_STORE_BLOCK_OFFSET,
+      SHIFTED_REG_OFFSET_STR_R9_R3_R15_ASR2,
+      SHIFTED_REG_OFFSET_PC_ASR_WORD_STORE_START_PC,
+      SHIFTED_REG_OFFSET_PC_ASR_WORD_STORE_END_PC,
+      REG_OFFSET_STORE_BASE_CYCLES,
+      &g_shifted_reg_offset_pc_asr_word_store_entry,
+      "result=FAIL command=runtime "
+      "reason=shifted_reg_pc_asr_word_str_rejected\n");
+  shifted_reg_offset_pc_ror_word_code_bytes =
+    build_shifted_reg_offset_pc_word_block(
+      code + SHIFTED_REG_OFFSET_PC_ROR_WORD_BLOCK_OFFSET,
+      SHIFTED_REG_OFFSET_LDR_R11_R3_R15_ROR1,
+      SHIFTED_REG_OFFSET_PC_ROR_WORD_START_PC,
+      SHIFTED_REG_OFFSET_PC_ROR_WORD_END_PC,
+      SHIFTED_REG_OFFSET_CYCLES,
+      &g_shifted_reg_offset_pc_ror_word_entry,
+      "result=FAIL command=runtime "
+      "reason=shifted_reg_pc_ror_word_rejected\n");
+  shifted_reg_offset_pc_ror_word_store_code_bytes =
+    build_shifted_reg_offset_pc_word_block(
+      code + SHIFTED_REG_OFFSET_PC_ROR_WORD_STORE_BLOCK_OFFSET,
+      SHIFTED_REG_OFFSET_STR_R9_R3_R15_ROR1,
+      SHIFTED_REG_OFFSET_PC_ROR_WORD_STORE_START_PC,
+      SHIFTED_REG_OFFSET_PC_ROR_WORD_STORE_END_PC,
+      REG_OFFSET_STORE_BASE_CYCLES,
+      &g_shifted_reg_offset_pc_ror_word_store_entry,
+      "result=FAIL command=runtime "
+      "reason=shifted_reg_pc_ror_word_str_rejected\n");
   shifted_reg_offset_lsr_code_bytes =
     build_shifted_reg_offset_lsr_block(
       code + SHIFTED_REG_OFFSET_LSR_BLOCK_OFFSET);
@@ -10061,6 +10407,7 @@ void _start(void)
   run_shifted_reg_offset_pc_asr_store_remaining_case();
   run_shifted_reg_offset_pc_ror_load_case();
   run_shifted_reg_offset_pc_ror_store_remaining_case();
+  run_shifted_reg_offset_pc_word_cases();
   run_shifted_reg_offset_lsr_load_case();
   run_shifted_reg_offset_lsr_store_remaining_case();
   run_shifted_reg_offset_asr_store_remaining_case();
@@ -10278,6 +10625,22 @@ void _start(void)
   put_u32_dec(shifted_reg_offset_pc_ror_code_bytes);
   put_raw(" shifted_reg_offset_pc_ror_store_code_bytes=");
   put_u32_dec(shifted_reg_offset_pc_ror_store_code_bytes);
+  put_raw(" shifted_reg_offset_pc_lsl_word_code_bytes=");
+  put_u32_dec(shifted_reg_offset_pc_lsl_word_code_bytes);
+  put_raw(" shifted_reg_offset_pc_lsl_word_store_code_bytes=");
+  put_u32_dec(shifted_reg_offset_pc_lsl_word_store_code_bytes);
+  put_raw(" shifted_reg_offset_pc_lsr_word_code_bytes=");
+  put_u32_dec(shifted_reg_offset_pc_lsr_word_code_bytes);
+  put_raw(" shifted_reg_offset_pc_lsr_word_store_code_bytes=");
+  put_u32_dec(shifted_reg_offset_pc_lsr_word_store_code_bytes);
+  put_raw(" shifted_reg_offset_pc_asr_word_code_bytes=");
+  put_u32_dec(shifted_reg_offset_pc_asr_word_code_bytes);
+  put_raw(" shifted_reg_offset_pc_asr_word_store_code_bytes=");
+  put_u32_dec(shifted_reg_offset_pc_asr_word_store_code_bytes);
+  put_raw(" shifted_reg_offset_pc_ror_word_code_bytes=");
+  put_u32_dec(shifted_reg_offset_pc_ror_word_code_bytes);
+  put_raw(" shifted_reg_offset_pc_ror_word_store_code_bytes=");
+  put_u32_dec(shifted_reg_offset_pc_ror_word_store_code_bytes);
   put_raw(" shifted_reg_offset_lsr_code_bytes=");
   put_u32_dec(shifted_reg_offset_lsr_code_bytes);
   put_raw(" shifted_reg_offset_asr_code_bytes=");

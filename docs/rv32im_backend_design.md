@@ -246,7 +246,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - data-processing, flag-producing data-processing, multiply, long multiply,
   PSR, load/store, PC-relative load/store memory,
   register-offset load/store, PC-register-offset word/byte load/store, shifted-LSL/LSR/ASR/ROR
-  PC-register-offset byte load/store, writeback
+  PC-register-offset word/byte load/store, writeback
   memory, register-offset writeback memory, immediate, PC-relative,
   register-offset, PC-register-offset load/store, and writeback halfword memory, block memory, SWP, SWI,
   HLE div, and
@@ -325,9 +325,9 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   `STMIA`, `LDMIA`, `STMDB sp!`, `LDMIA ... {pc}`,
   `LDMIA ... {pc}^`,
   HLE `Div`, HLE `DivArm`, PC-source data-processing/test ops,
-  register-offset/shifted-LSL/shifted-LSL-with-PC/shifted-LSR/shifted-LSR-with-PC/shifted-ASR/shifted-ASR-with-PC/shifted-ROR/shifted-ROR-with-PC/RRX load ops,
+  register-offset/shifted-LSL/shifted-LSL-with-PC/shifted-LSR/shifted-LSR-with-PC/shifted-ASR/shifted-ASR-with-PC/shifted-ROR/shifted-ROR-with-PC/RRX load ops, including shifted-LSL/LSR/ASR/ROR PC-register-offset word loads,
   shifted-LSL/shifted-LSR/shifted-ASR/shifted-ROR/RRX register-offset stores and shifted-LSL/shifted-LSR/shifted-ASR/shifted-ROR/RRX-store
-  remaining-cycle handoffs, shifted-LSL/shifted-LSR/shifted-ASR/shifted-ROR PC-register-offset stores,
+  remaining-cycle handoffs, shifted-LSL/shifted-LSR/shifted-ASR/shifted-ROR PC-register-offset byte/word stores,
   pre/post-index writeback memory ops,
   register-offset writeback/post-index memory ops,
   `SWP`, `SWPB`,
@@ -346,8 +346,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   block-memory SMC/IRQ alert handling, SWP-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, ARM lookup-miss/invalid fallback, Thumb lookup-miss/invalid fallback, and Thumb unsupported-block fallback fixtures against a local ARM
   reference model, with
-  two hundred twenty five runtime blocks executed, sixty four total runtime
-  fallbacks split into four initial lookup fallbacks, fifty eight relookup
+  two hundred thirty seven runtime blocks executed, sixty eight total runtime
+  fallbacks split into four initial lookup fallbacks, sixty two relookup
   fallbacks, and two unsupported-block fallbacks, basic data-processing native fallthrough chaining, remaining-cycle and invalid re-lookup fallback handoffs,
   ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results and remaining-cycle handoff, MSR CPSR flag remaining-cycle handoff,
@@ -364,9 +364,9 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   register-offset byte-store, shifted-LSL/shifted-LSL-with-PC/shifted-LSR/shifted-LSR-with-PC/shifted-ASR/shifted-ASR-with-PC/shifted-ROR/shifted-ROR-with-PC register-offset byte-store, and RRX
   register-offset byte-store plus remaining-cycle handoffs, byte-store SMC/IRQ
   remaining-cycle handoff, and SMC/IRQ/HALT alert observations hashed,
-  PC-register-offset word/byte store remaining-cycle handoffs,
+  PC-register-offset word/byte store and shifted-PC word store remaining-cycle handoffs,
   register-offset, shifted register-offset load/store including shifted-LSL,
-  shifted-LSR, shifted-ASR, and shifted-ROR with `Rm == PC` load/store,
+  shifted-LSR, shifted-ASR, and shifted-ROR with `Rm == PC` byte/word load/store,
   ordinary shifted-LSR, shifted-ASR, and shifted-ROR loads, subtract-offset,
   RRX load/store, and register-offset writeback
   load/store address/value observations checked,
@@ -403,7 +403,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   lookup-misses, and SWPB remaining-cycle lookup-miss fallbacks observed
 
 The lower-level standalone runtime test also emits the PC-register-offset
-word/byte store, shifted-LSL/LSR/ASR/ROR PC-register-offset byte load/store, and halfword
+word/byte store, shifted-LSL/LSR/ASR/ROR PC-register-offset word/byte load/store, and halfword
 load/store blocks plus LSL/LSR/ASR/ROR/RRX register-offset load blocks and
 LSL/LSR/ASR/ROR/RRX register-offset store blocks, then checks their helper
 address, PC, value, and leftover-cycle handoff observations directly.
