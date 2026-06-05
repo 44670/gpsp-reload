@@ -339,9 +339,10 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   remaining-cycle lookup-misses, byte-store normal/alert, block-memory, and SWP alert remaining-cycle
   lookup-misses, and SWPB remaining-cycle lookup-miss fallbacks observed
 
-The lower-level standalone runtime test also emits LSL/LSR/ASR/ROR/RRX register-offset
-load/store blocks and checks their helper address, PC, value, and leftover-cycle
-handoff observations directly.
+The lower-level standalone runtime test also emits LSL/LSR/ASR/ROR/RRX
+register-offset load blocks and LSL/LSR/RRX register-offset store blocks, then
+checks their helper address, PC, value, and leftover-cycle handoff observations
+directly.
 
 Remaining first-phase gaps should stay narrow and evidence-driven:
 
