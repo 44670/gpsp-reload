@@ -276,9 +276,10 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - explicit runtime-snapshot `counters runtime` dump for selected-backend
   block/fallback/native counters, fallback source breakdown, state, memory,
   scheduler, and snapshot hashes
-- explicit RV32IM `rejects runtime` emitter-contract audit for unsafe PSR
-  opcodes that must stay rejected by native lowering, currently
-  `MRS r15,CPSR` and `MSR CPSR,r15`
+- explicit RV32IM `rejects runtime` emitter-contract audit for unsafe opcodes
+  that must stay rejected by native lowering, currently `MRS r15,CPSR`,
+  `MSR CPSR,r15`, multiply/long-multiply with `rm == pc`, HLE-reserved SWI,
+  and `SWP` with `rm == pc`
 - explicit RV32IM `fallbacks runtime [offset]` dump for observed runtime
   fallback events, including initial lookup, relookup, and unsupported-block
   categories plus PC, ARM/Thumb mode, lookup result, and cycle budget; the

@@ -228,6 +228,7 @@ typedef unsigned int usize;
   (RUNTIME_MULTIPLY_MUL_CYCLES + RUNTIME_MULTIPLY_MLA_CYCLES)
 #define RUNTIME_MULTIPLY_MUL_R4_R1_R2 0xe0040291u
 #define RUNTIME_MULTIPLY_MLA_R5_R1_R2_R3 0xe0253291u
+#define RUNTIME_MULTIPLY_MUL_R6_R15_R2 0xe006029fu
 #define RUNTIME_CPSR_LOW_VALUE 0x9fu
 #define RUNTIME_CPSR_V_LOW_VALUE \
   (0x10000000u | RUNTIME_CPSR_LOW_VALUE)
@@ -243,6 +244,7 @@ typedef unsigned int usize;
   (RUNTIME_MULTIPLY_LONG_UMULL_CYCLES + \
    RUNTIME_MULTIPLY_LONG_SMULL_CYCLES)
 #define RUNTIME_MULTIPLY_LONG_UMULL_R8_R9_R1_R2 0xe0898291u
+#define RUNTIME_MULTIPLY_LONG_UMULL_R8_R9_R15_R2 0xe089829fu
 #define RUNTIME_MULTIPLY_LONG_SMULL_R10_R11_R3_R4 0xe0cba493u
 #define RUNTIME_MULTIPLY_LONG_UMULL_R1_VALUE 0xffffffffu
 #define RUNTIME_MULTIPLY_LONG_UMULL_R2_VALUE 0x00000002u
@@ -699,6 +701,7 @@ typedef unsigned int usize;
   (RUNTIME_SWI_TOTAL_CYCLES + RUNTIME_SWI_FALLTHROUGH_CYCLES)
 #define RUNTIME_SWI_EXTRA_CYCLES 5u
 #define RUNTIME_SWI_OPCODE_5 0xef050000u
+#define RUNTIME_SWI_OPCODE_6 0xef060000u
 #define RUNTIME_SWI_INITIAL_CPSR 0xa000001fu
 #define RUNTIME_SWI_CPSR_VALUE \
   ((RUNTIME_SWI_INITIAL_CPSR & ~0x3fu) | MODE_SUPERVISOR | 0x80u)
@@ -1499,6 +1502,7 @@ typedef unsigned int usize;
 #define RUNTIME_SWP_HALT_EXTRA_CYCLES 3u
 #define RUNTIME_SWP_BYTE_EXTRA_CYCLES 5u
 #define RUNTIME_SWP_R4_R5_R3 0xe1034095u
+#define RUNTIME_SWP_R4_R15_R3 0xe103409fu
 #define RUNTIME_SWPB_R6_R7_R3 0xe1436097u
 #define RUNTIME_SWP_ADDR 0x02000200u
 #define RUNTIME_SWP_BYTE_ADDR (RUNTIME_SWP_ADDR + 1u)
@@ -2418,6 +2422,75 @@ static int runtime_expect_psr_rejected(const char **reason, u32 opcode,
   return 1;
 }
 
+static int runtime_expect_multiply_rejected(const char **reason, u32 opcode,
+                                            u32 cycles,
+                                            const char *accepted_reason)
+{
+  u8 *translation_ptr = g_runtime_reject_code;
+  riscv_jit_block_meta *meta;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  if (riscv_emit_native_arm_multiply(&translation_ptr, meta, opcode, cycles))
+  {
+    *reason = accepted_reason;
+    return 0;
+  }
+
+  return 1;
+}
+
+static int runtime_expect_multiply_long_rejected(const char **reason,
+                                                 u32 opcode, u32 cycles,
+                                                 const char *accepted_reason)
+{
+  u8 *translation_ptr = g_runtime_reject_code;
+  riscv_jit_block_meta *meta;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  if (riscv_emit_native_arm_multiply_long(&translation_ptr, meta, opcode,
+                                          cycles))
+  {
+    *reason = accepted_reason;
+    return 0;
+  }
+
+  return 1;
+}
+
+static int runtime_expect_swi_rejected(const char **reason, u32 opcode,
+                                       u32 pc, u32 cycles,
+                                       const char *accepted_reason)
+{
+  u8 *translation_ptr = g_runtime_reject_code;
+  riscv_jit_block_meta *meta;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  if (riscv_emit_native_arm_swi(&translation_ptr, meta, opcode, pc, cycles))
+  {
+    *reason = accepted_reason;
+    return 0;
+  }
+
+  return 1;
+}
+
+static int runtime_expect_swap_rejected(const char **reason, u32 opcode,
+                                        u32 pc, u32 cycles,
+                                        const char *accepted_reason)
+{
+  u8 *translation_ptr = g_runtime_reject_code;
+  riscv_jit_block_meta *meta;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  if (riscv_emit_native_arm_swap(&translation_ptr, meta, opcode, pc, cycles))
+  {
+    *reason = accepted_reason;
+    return 0;
+  }
+
+  return 1;
+}
+
 static int run_runtime_reject_audit(const char **reason,
                                     u32 *total_rejections,
                                     u32 *psr_rejections)
@@ -2442,6 +2515,40 @@ static int run_runtime_reject_audit(const char **reason,
   }
   (*total_rejections)++;
   (*psr_rejections)++;
+
+  if (!runtime_expect_multiply_rejected(
+        reason, RUNTIME_MULTIPLY_MUL_R6_R15_R2,
+        RUNTIME_MULTIPLY_MUL_CYCLES,
+        "runtime_reject_mul_r15_accepted"))
+  {
+    return 0;
+  }
+  (*total_rejections)++;
+
+  if (!runtime_expect_multiply_long_rejected(
+        reason, RUNTIME_MULTIPLY_LONG_UMULL_R8_R9_R15_R2,
+        RUNTIME_MULTIPLY_LONG_UMULL_CYCLES,
+        "runtime_reject_umull_r15_accepted"))
+  {
+    return 0;
+  }
+  (*total_rejections)++;
+
+  if (!runtime_expect_swi_rejected(
+        reason, RUNTIME_SWI_OPCODE_6, RUNTIME_SWI_START_PC,
+        RUNTIME_SWI_CYCLES, "runtime_reject_hle_swi_accepted"))
+  {
+    return 0;
+  }
+  (*total_rejections)++;
+
+  if (!runtime_expect_swap_rejected(
+        reason, RUNTIME_SWP_R4_R15_R3, RUNTIME_SWP_START_PC,
+        RUNTIME_SWP_BASE_CYCLES, "runtime_reject_swp_r15_accepted"))
+  {
+    return 0;
+  }
+  (*total_rejections)++;
 
   *reason = "runtime_rejections_preserved";
   return 1;
@@ -14326,7 +14433,8 @@ static void command_rejects(char *mode)
   put_u32_dec(total_rejections);
   put_raw(" psr_unsupported=");
   put_u32_dec(psr_rejections);
-  put_raw(" opcodes=mrs_r15_cpsr,msr_cpsr_r15");
+  put_raw(" opcodes=mrs_r15_cpsr,msr_cpsr_r15,mul_r15,umull_r15,");
+  put_raw("hle_swi,swp_r15");
   put_raw(" harness_mode=");
   put_raw(RUNTIME_FIXTURE_MODE);
   put_raw(" reject_mode=emitter_contract reason=");
