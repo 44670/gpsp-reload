@@ -136,7 +136,7 @@ exec: $(EXEC_TEST)
 runtime: $(RUNTIME_TEST)
 	$(QEMU_RISCV32) ./$(RUNTIME_TEST)
 
-test: codegen abi exec runtime smoke
+test: codegen abi exec runtime compare smoke
 
 clean:
 	rm -f $(HARNESS) $(CODEGEN) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST)
