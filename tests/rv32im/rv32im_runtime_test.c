@@ -729,10 +729,13 @@ typedef unsigned int usize;
 #define REG_OFFSET_RRX_STORE_END_PC (REG_OFFSET_RRX_STORE_START_PC + 4u)
 #define REG_OFFSET_RRX_STORE_TOTAL_CYCLES (REG_OFFSET_STORE_BASE_CYCLES + 1u)
 #define SHIFTED_REG_OFFSET_START_PC 0x08000680u
-#define SHIFTED_REG_OFFSET_END_PC (SHIFTED_REG_OFFSET_START_PC + 4u)
+#define SHIFTED_REG_OFFSET_PC_LDRB_PC (SHIFTED_REG_OFFSET_START_PC + 4u)
+#define SHIFTED_REG_OFFSET_END_PC (SHIFTED_REG_OFFSET_START_PC + 8u)
 #define SHIFTED_REG_OFFSET_CYCLES 7u
-#define SHIFTED_REG_OFFSET_TOTAL_CYCLES (SHIFTED_REG_OFFSET_CYCLES + 2u)
+#define SHIFTED_REG_OFFSET_TOTAL_CYCLES \
+  ((SHIFTED_REG_OFFSET_CYCLES + 2u) * 2u)
 #define SHIFTED_REG_OFFSET_LDRB_R10_R3_R2_LSL2 0xe7d3a102u
+#define SHIFTED_REG_OFFSET_LDRB_R11_R3_R15_LSL2 0xe7d3b10fu
 #define SHIFTED_REG_OFFSET_LSR_START_PC 0x08000f20u
 #define SHIFTED_REG_OFFSET_LSR_END_PC \
   (SHIFTED_REG_OFFSET_LSR_START_PC + 4u)
@@ -810,6 +813,8 @@ typedef unsigned int usize;
   (REG_OFFSET_BASE_ADDR - (REG_OFFSET_PC_BYTE_STORE_START_PC + 8u))
 #define SHIFTED_REG_OFFSET_BYTE_ADDR \
   (REG_OFFSET_BASE_ADDR + (REG_OFFSET_VALUE << 2))
+#define SHIFTED_REG_OFFSET_PC_BYTE_ADDR \
+  (REG_OFFSET_BASE_ADDR + ((SHIFTED_REG_OFFSET_PC_LDRB_PC + 8u) << 2))
 #define SHIFTED_REG_OFFSET_LSR_BYTE_ADDR \
   (REG_OFFSET_BASE_ADDR + (REG_OFFSET_VALUE >> 1))
 #define SHIFTED_REG_OFFSET_ASR_BYTE_ADDR (REG_OFFSET_BASE_ADDR - 8u)
@@ -825,6 +830,7 @@ typedef unsigned int usize;
 #define REG_OFFSET_PC_STORE_BYTE_VALUE 0x123456ddu
 #define REG_OFFSET_PC_STORE_U8_VALUE (REG_OFFSET_PC_STORE_BYTE_VALUE & 0xffu)
 #define SHIFTED_REG_OFFSET_BYTE_VALUE 0x5au
+#define SHIFTED_REG_OFFSET_PC_BYTE_VALUE 0xb7u
 #define SHIFTED_REG_OFFSET_LSR_BYTE_VALUE 0x6bu
 #define SHIFTED_REG_OFFSET_ASR_BYTE_VALUE 0x7cu
 #define SHIFTED_REG_OFFSET_ROR_BYTE_VALUE 0x8du
@@ -3151,6 +3157,17 @@ static u32 build_shifted_reg_offset_block(u8 *code)
         SHIFTED_REG_OFFSET_CYCLES))
   {
     put_raw("result=FAIL command=runtime reason=shifted_reg_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_access_memory(
+        &translation_ptr, meta,
+        SHIFTED_REG_OFFSET_LDRB_R11_R3_R15_LSL2,
+        SHIFTED_REG_OFFSET_PC_LDRB_PC,
+        SHIFTED_REG_OFFSET_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=shifted_reg_pc_emit_rejected\n");
     sys_exit(1);
   }
 
@@ -7087,17 +7104,20 @@ static void run_shifted_reg_offset_load_case(void)
   if (reg[10] != SHIFTED_REG_OFFSET_BYTE_VALUE)
     fail_u32("shifted_reg_offset", "r10",
              reg[10], SHIFTED_REG_OFFSET_BYTE_VALUE);
+  if (reg[11] != SHIFTED_REG_OFFSET_PC_BYTE_VALUE)
+    fail_u32("shifted_reg_offset", "r11",
+             reg[11], SHIFTED_REG_OFFSET_PC_BYTE_VALUE);
   if (reg[REG_PC] != SHIFTED_REG_OFFSET_END_PC)
     fail_u32("shifted_reg_offset", "pc",
              reg[REG_PC], SHIFTED_REG_OFFSET_END_PC);
-  if (g_read8_calls != 1)
-    fail_u32("shifted_reg_offset", "read8_calls", g_read8_calls, 1);
-  if (g_read8_addr != SHIFTED_REG_OFFSET_BYTE_ADDR)
+  if (g_read8_calls != 2)
+    fail_u32("shifted_reg_offset", "read8_calls", g_read8_calls, 2);
+  if (g_read8_addr != SHIFTED_REG_OFFSET_PC_BYTE_ADDR)
     fail_u32("shifted_reg_offset", "read8_addr",
-             g_read8_addr, SHIFTED_REG_OFFSET_BYTE_ADDR);
-  if (g_read8_pc != SHIFTED_REG_OFFSET_START_PC)
+             g_read8_addr, SHIFTED_REG_OFFSET_PC_BYTE_ADDR);
+  if (g_read8_pc != SHIFTED_REG_OFFSET_PC_LDRB_PC)
     fail_u32("shifted_reg_offset", "read8_pc",
-             g_read8_pc, SHIFTED_REG_OFFSET_START_PC);
+             g_read8_pc, SHIFTED_REG_OFFSET_PC_LDRB_PC);
   if (g_execute_calls != 1)
     fail_u32("shifted_reg_offset", "execute_calls", g_execute_calls, 1);
   if (g_execute_cycles != extra_cycles)
@@ -8531,6 +8551,8 @@ u32 function_cc read_memory8(u32 address)
     return REG_OFFSET_PC_BYTE_VALUE;
   if (address == SHIFTED_REG_OFFSET_BYTE_ADDR)
     return SHIFTED_REG_OFFSET_BYTE_VALUE;
+  if (address == SHIFTED_REG_OFFSET_PC_BYTE_ADDR)
+    return SHIFTED_REG_OFFSET_PC_BYTE_VALUE;
   if (address == SHIFTED_REG_OFFSET_LSR_BYTE_ADDR)
     return SHIFTED_REG_OFFSET_LSR_BYTE_VALUE;
   if (address == SHIFTED_REG_OFFSET_ASR_BYTE_ADDR)

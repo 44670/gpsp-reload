@@ -41,7 +41,7 @@ typedef unsigned int usize;
   "loadpc_loadpcremain_loadpcnative_pcstore_pcstoreremain_" \
   "pcbasestoreremain_storealert_storehalt_regoff_regoffremain_" \
   "regpcstore_regpcstoreremain_regpcbytestore_regpcbytestoreremain_" \
-  "regstore_regstoreremain_" \
+  "regstore_regstoreremain_shiftpcload_" \
   "shiftstore_shiftlsr_shiftasr_shiftror_" \
   "shiftstoreremain_shiftlsrstoreremain_shiftasrstoreremain_" \
   "shiftrorstoreremain_" \
@@ -1113,11 +1113,13 @@ typedef unsigned int usize;
   (RUNTIME_REG_OFFSET_LDRB_BASE_CYCLES + 2u)
 #define RUNTIME_REG_OFFSET_WRITEBACK_LOAD_EXTRA_CYCLES 3u
 #define RUNTIME_SHIFTED_REG_OFFSET_START_PC 0x08001020u
-#define RUNTIME_SHIFTED_REG_OFFSET_END_PC \
+#define RUNTIME_SHIFTED_REG_OFFSET_PC_LDRB_PC \
   (RUNTIME_SHIFTED_REG_OFFSET_START_PC + 4u)
+#define RUNTIME_SHIFTED_REG_OFFSET_END_PC \
+  (RUNTIME_SHIFTED_REG_OFFSET_START_PC + 8u)
 #define RUNTIME_SHIFTED_REG_OFFSET_CYCLES 7u
 #define RUNTIME_SHIFTED_REG_OFFSET_TOTAL_CYCLES \
-  (RUNTIME_SHIFTED_REG_OFFSET_CYCLES + 2u)
+  ((RUNTIME_SHIFTED_REG_OFFSET_CYCLES + 2u) * 2u)
 #define RUNTIME_SHIFTED_REG_OFFSET_STORE_START_PC 0x08001060u
 #define RUNTIME_SHIFTED_REG_OFFSET_STORE_END_PC \
   (RUNTIME_SHIFTED_REG_OFFSET_STORE_START_PC + 4u)
@@ -1158,17 +1160,17 @@ typedef unsigned int usize;
 #define RUNTIME_SHIFTED_REG_OFFSET_LSR_LOAD_END_PC \
   (RUNTIME_SHIFTED_REG_OFFSET_LSR_LOAD_START_PC + 4u)
 #define RUNTIME_SHIFTED_REG_OFFSET_LSR_LOAD_TOTAL_CYCLES \
-  RUNTIME_SHIFTED_REG_OFFSET_TOTAL_CYCLES
+  (RUNTIME_SHIFTED_REG_OFFSET_CYCLES + 2u)
 #define RUNTIME_SHIFTED_REG_OFFSET_ASR_LOAD_START_PC 0x08001680u
 #define RUNTIME_SHIFTED_REG_OFFSET_ASR_LOAD_END_PC \
   (RUNTIME_SHIFTED_REG_OFFSET_ASR_LOAD_START_PC + 4u)
 #define RUNTIME_SHIFTED_REG_OFFSET_ASR_LOAD_TOTAL_CYCLES \
-  RUNTIME_SHIFTED_REG_OFFSET_TOTAL_CYCLES
+  (RUNTIME_SHIFTED_REG_OFFSET_CYCLES + 2u)
 #define RUNTIME_SHIFTED_REG_OFFSET_ROR_LOAD_START_PC 0x080016a0u
 #define RUNTIME_SHIFTED_REG_OFFSET_ROR_LOAD_END_PC \
   (RUNTIME_SHIFTED_REG_OFFSET_ROR_LOAD_START_PC + 4u)
 #define RUNTIME_SHIFTED_REG_OFFSET_ROR_LOAD_TOTAL_CYCLES \
-  RUNTIME_SHIFTED_REG_OFFSET_TOTAL_CYCLES
+  (RUNTIME_SHIFTED_REG_OFFSET_CYCLES + 2u)
 #define RUNTIME_REG_OFFSET_LDR_R8_R3_R2 0xe7938002u
 #define RUNTIME_REG_OFFSET_LDRB_R9_R3_NEG_R2 0xe7539002u
 #define RUNTIME_REG_OFFSET_LDR_R8_R3_R15 0xe793800fu
@@ -1179,6 +1181,7 @@ typedef unsigned int usize;
 #define RUNTIME_REG_OFFSET_WRITEBACK_STR_R3_R3_R2_WB 0xe7a33002u
 #define RUNTIME_REG_OFFSET_WRITEBACK_LDRB_R5_R4_POST_NEG_R2 0xe6545002u
 #define RUNTIME_SHIFTED_REG_OFFSET_LDRB_R10_R3_R2_LSL2 0xe7d3a102u
+#define RUNTIME_SHIFTED_REG_OFFSET_LDRB_R11_R3_R15_LSL2 0xe7d3b10fu
 #define RUNTIME_SHIFTED_REG_OFFSET_LDRB_R10_R3_R2_LSR1 0xe7d3a0a2u
 #define RUNTIME_SHIFTED_REG_OFFSET_LDRB_R10_R3_R2_ASR2 0xe7d3a142u
 #define RUNTIME_SHIFTED_REG_OFFSET_LDRB_R10_R3_R2_ROR1 0xe7d3a0e2u
@@ -1209,6 +1212,9 @@ typedef unsigned int usize;
    (RUNTIME_REG_OFFSET_PC_BYTE_STORE_START_PC + 8u))
 #define RUNTIME_SHIFTED_REG_OFFSET_BYTE_ADDR \
   (RUNTIME_REG_OFFSET_BASE_ADDR + (RUNTIME_REG_OFFSET_VALUE << 2))
+#define RUNTIME_SHIFTED_REG_OFFSET_PC_BYTE_ADDR \
+  (RUNTIME_REG_OFFSET_BASE_ADDR + \
+   ((RUNTIME_SHIFTED_REG_OFFSET_PC_LDRB_PC + 8u) << 2))
 #define RUNTIME_SHIFTED_REG_OFFSET_LSR_BYTE_ADDR \
   (RUNTIME_REG_OFFSET_BASE_ADDR + (RUNTIME_REG_OFFSET_VALUE >> 1))
 #define RUNTIME_SHIFTED_REG_OFFSET_ASR_BYTE_ADDR \
@@ -1234,6 +1240,7 @@ typedef unsigned int usize;
   (RUNTIME_REG_OFFSET_WRITEBACK_BASE_ADDR - RUNTIME_REG_OFFSET_VALUE)
 #define RUNTIME_REG_OFFSET_WRITEBACK_LOAD_VALUE 0x3du
 #define RUNTIME_SHIFTED_REG_OFFSET_BYTE_VALUE 0x5au
+#define RUNTIME_SHIFTED_REG_OFFSET_PC_BYTE_VALUE 0xb7u
 #define RUNTIME_SHIFTED_REG_OFFSET_LSR_BYTE_VALUE 0x6bu
 #define RUNTIME_SHIFTED_REG_OFFSET_ASR_BYTE_VALUE 0x7cu
 #define RUNTIME_SHIFTED_REG_OFFSET_ROR_BYTE_VALUE 0x8du
@@ -4876,6 +4883,17 @@ static int build_runtime_fixture_block(const char **reason)
         RUNTIME_SHIFTED_REG_OFFSET_CYCLES))
   {
     *reason = "runtime_shifted_reg_offset_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  if (!riscv_emit_native_arm_access_memory(
+        &translation_ptr, meta,
+        RUNTIME_SHIFTED_REG_OFFSET_LDRB_R11_R3_R15_LSL2,
+        RUNTIME_SHIFTED_REG_OFFSET_PC_LDRB_PC,
+        RUNTIME_SHIFTED_REG_OFFSET_CYCLES))
+  {
+    *reason = "runtime_shifted_reg_offset_pc_emit_rejected";
     clear_runtime_fixture_entries();
     return 0;
   }
@@ -8567,6 +8585,7 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   values[2] = RUNTIME_REG_OFFSET_VALUE;
   values[3] = RUNTIME_REG_OFFSET_BASE_ADDR;
   values[10] = RUNTIME_SHIFTED_REG_OFFSET_BYTE_VALUE;
+  values[11] = RUNTIME_SHIFTED_REG_OFFSET_PC_BYTE_VALUE;
   values[REG_PC] = RUNTIME_SHIFTED_REG_OFFSET_END_PC;
   values[REG_CPSR] = 0;
   values[CPU_HALT_STATE] = CPU_ACTIVE;
@@ -8574,9 +8593,9 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   mem_hash = runtime_update_memory_hash(
     mem_hash,
     0, 0, 0, 0,
-    1, RUNTIME_SHIFTED_REG_OFFSET_BYTE_ADDR,
-    RUNTIME_SHIFTED_REG_OFFSET_START_PC,
-    RUNTIME_SHIFTED_REG_OFFSET_BYTE_VALUE,
+    2, RUNTIME_SHIFTED_REG_OFFSET_PC_BYTE_ADDR,
+    RUNTIME_SHIFTED_REG_OFFSET_PC_LDRB_PC,
+    RUNTIME_SHIFTED_REG_OFFSET_PC_BYTE_VALUE,
     0, 0, 0, 0,
     runtime_reference_sticky_hash());
   scheduler_hash = runtime_update_scheduler_hash(
@@ -9838,7 +9857,7 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   snapshot->unsupported_fallbacks = 2;
   snapshot->native_data_proc = 88;
   snapshot->native_branch = 7;
-  snapshot->native_load = 31;
+  snapshot->native_load = 32;
   snapshot->native_store = 22;
   snapshot->native_psr = 5;
   runtime_store_snapshot_regs(snapshot, values, 0, 0);
@@ -11677,6 +11696,8 @@ u32 function_cc read_memory8(u32 address)
     value = RUNTIME_REG_OFFSET_PC_BYTE_VALUE;
   else if (address == RUNTIME_SHIFTED_REG_OFFSET_BYTE_ADDR)
     value = RUNTIME_SHIFTED_REG_OFFSET_BYTE_VALUE;
+  else if (address == RUNTIME_SHIFTED_REG_OFFSET_PC_BYTE_ADDR)
+    value = RUNTIME_SHIFTED_REG_OFFSET_PC_BYTE_VALUE;
   else if (address == RUNTIME_SHIFTED_REG_OFFSET_LSR_BYTE_ADDR)
     value = RUNTIME_SHIFTED_REG_OFFSET_LSR_BYTE_VALUE;
   else if (address == RUNTIME_SHIFTED_REG_OFFSET_ASR_BYTE_ADDR)

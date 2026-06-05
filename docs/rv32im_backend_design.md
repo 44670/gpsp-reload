@@ -245,7 +245,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - qemu-riscv32 ABI entry/return checks
 - data-processing, flag-producing data-processing, multiply, long multiply,
   PSR, load/store, PC-relative load/store memory,
-  register-offset load/store, PC-register-offset word/byte load/store, writeback
+  register-offset load/store, PC-register-offset word/byte load/store, shifted-LSL
+  PC-register-offset byte load, writeback
   memory, register-offset writeback memory, immediate, PC-relative,
   register-offset, PC-register-offset load/store, and writeback halfword memory, block memory, SWP, SWI,
   HLE div, and
@@ -324,7 +325,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   `STMIA`, `LDMIA`, `STMDB sp!`, `LDMIA ... {pc}`,
   `LDMIA ... {pc}^`,
   HLE `Div`, HLE `DivArm`, PC-source data-processing/test ops,
-  register-offset/shifted-LSL/shifted-LSR/shifted-ASR/shifted-ROR/RRX load ops,
+  register-offset/shifted-LSL/shifted-LSL-with-PC/shifted-LSR/shifted-ASR/shifted-ROR/RRX load ops,
   shifted-LSL/shifted-LSR/shifted-ASR/shifted-ROR/RRX register-offset stores and shifted-LSL/shifted-LSR/shifted-ASR/shifted-ROR/RRX-store
   remaining-cycle handoffs,
   pre/post-index writeback memory ops,
@@ -364,7 +365,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   register-offset byte-store plus remaining-cycle handoffs, byte-store SMC/IRQ
   remaining-cycle handoff, and SMC/IRQ/HALT alert observations hashed,
   PC-register-offset word/byte store remaining-cycle handoffs,
-  register-offset, shifted register-offset load/store including shifted-LSR,
+  register-offset, shifted register-offset load/store including shifted-LSL with
+  `Rm == PC`, shifted-LSR,
   shifted-ASR, and shifted-ROR loads, subtract-offset, RRX load/store, and register-offset writeback
   load/store address/value observations checked,
   immediate, PC-relative, register-offset, and PC-register-offset halfword
@@ -400,7 +402,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   lookup-misses, and SWPB remaining-cycle lookup-miss fallbacks observed
 
 The lower-level standalone runtime test also emits the PC-register-offset
-word/byte store and halfword load/store blocks plus LSL/LSR/ASR/ROR/RRX register-offset load blocks and
+word/byte store, shifted-LSL PC-register-offset byte load, and halfword
+load/store blocks plus LSL/LSR/ASR/ROR/RRX register-offset load blocks and
 LSL/LSR/ASR/ROR/RRX register-offset store blocks, then checks their helper
 address, PC, value, and leftover-cycle handoff observations directly.
 
