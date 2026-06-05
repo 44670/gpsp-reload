@@ -32,6 +32,8 @@ typedef unsigned int usize;
 #define RUNTIME_FIXTURE_MODE "runtime_fixture"
 #define FRAME_MODE_RUNTIME_SNAPSHOT "runtime_snapshot"
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
+#define RUNTIME_MIXED_WORKLOAD \
+  "mixed_dataproc_load_pcload_alert_update_fallback"
 #define RUNTIME_COMPARE_WORKLOAD \
   "arm_add_armaddchain_armaddremain_arminvalidremain_multiply_multiplylong_" \
   "longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_" \
@@ -96,7 +98,7 @@ typedef unsigned int usize;
 #define RUNTIME_SCHED_EVENT_MAX 256u
 #define RUNTIME_FALLBACK_EVENT_MAX 256u
 #define RUNTIME_REJECT_CODE_BYTES 512u
-#define RUNTIME_EXEC_MAP_BYTES 77312u
+#define RUNTIME_EXEC_MAP_BYTES 79872u
 #define RUNTIME_LOAD_BLOCK_OFFSET 512u
 #define RUNTIME_STORE_BLOCK_OFFSET 1024u
 #define RUNTIME_BRANCH_BLOCK_OFFSET 1536u
@@ -229,6 +231,10 @@ typedef unsigned int usize;
 #define RUNTIME_LOAD_HALF_REG_PC_BLOCK_OFFSET 75776u
 #define RUNTIME_LOAD_SIGNED_BYTE_REG_PC_BLOCK_OFFSET 76288u
 #define RUNTIME_LOAD_SIGNED_HALF_REG_PC_BLOCK_OFFSET 76800u
+#define RUNTIME_MIXED_START_BLOCK_OFFSET 77312u
+#define RUNTIME_MIXED_LOAD_BLOCK_OFFSET 77824u
+#define RUNTIME_MIXED_PC_LOAD_BLOCK_OFFSET 78336u
+#define RUNTIME_MIXED_TARGET_BLOCK_OFFSET 78848u
 #define RUNTIME_START_PC 0x08000000u
 #define RUNTIME_END_PC (RUNTIME_START_PC + 4u)
 #define RUNTIME_CYCLES 7u
@@ -934,6 +940,30 @@ typedef unsigned int usize;
   (RUNTIME_LOAD_SIGNED_HALF_PC_TARGET + 4u)
 #define RUNTIME_LOAD_SIGNED_HALF_PC_TARGET_CYCLES 5u
 #define RUNTIME_LOAD_SIGNED_HALF_PC_TARGET_ADD_R3_R2_R1 0xe0823001u
+#define RUNTIME_MIXED_START_PC 0x08001b00u
+#define RUNTIME_MIXED_LOAD_PC (RUNTIME_MIXED_START_PC + 4u)
+#define RUNTIME_MIXED_PC_LOAD_PC (RUNTIME_MIXED_START_PC + 8u)
+#define RUNTIME_MIXED_TARGET_PC 0x08001b80u
+#define RUNTIME_MIXED_TARGET_STORE_PC (RUNTIME_MIXED_TARGET_PC + 4u)
+#define RUNTIME_MIXED_FALLBACK_PC (RUNTIME_MIXED_TARGET_PC + 8u)
+#define RUNTIME_MIXED_START_CYCLES 3u
+#define RUNTIME_MIXED_LOAD_CYCLES 5u
+#define RUNTIME_MIXED_PC_LOAD_CYCLES 6u
+#define RUNTIME_MIXED_TARGET_ADD_CYCLES 4u
+#define RUNTIME_MIXED_STORE_CYCLES 5u
+#define RUNTIME_MIXED_TOTAL_CYCLES \
+  (RUNTIME_MIXED_START_CYCLES + (RUNTIME_MIXED_LOAD_CYCLES + 2u) + \
+   (RUNTIME_MIXED_PC_LOAD_CYCLES + 2u) + \
+   RUNTIME_MIXED_TARGET_ADD_CYCLES + (RUNTIME_MIXED_STORE_CYCLES + 1u))
+#define RUNTIME_MIXED_REFILL_CYCLES 5u
+#define RUNTIME_MIXED_MEM_BASE_ADDR 0x02000900u
+#define RUNTIME_MIXED_PC_BASE_ADDR 0x02000980u
+#define RUNTIME_MIXED_LOAD_ADDR (RUNTIME_MIXED_MEM_BASE_ADDR + 0x24u)
+#define RUNTIME_MIXED_PC_LOAD_ADDR (RUNTIME_MIXED_PC_BASE_ADDR + 0x24u)
+#define RUNTIME_MIXED_STORE_ADDR (RUNTIME_MIXED_MEM_BASE_ADDR + 0x28u)
+#define RUNTIME_MIXED_ADD_R7_R2_R4 0xe0827004u
+#define RUNTIME_MIXED_LDR_PC_R5_0X24 0xe595f024u
+#define RUNTIME_MIXED_STR_R7_R3_0X28 0xe5837028u
 #define RUNTIME_PC_BASE_LOAD_WORD_ADDR \
   (RUNTIME_PC_BASE_LOAD_WORD_PC + 8u + 0x24u)
 #define RUNTIME_PC_BASE_LOAD_BYTE_ADDR \
@@ -1720,6 +1750,22 @@ struct compare_snapshot {
   u32 native_psr;
 };
 
+struct mixed_snapshot {
+  struct compare_snapshot state;
+  u32 trace_count;
+  u32 trace_hash;
+  u32 stepi_count;
+  u32 stepi_hash;
+  u32 mem_event_count;
+  u32 mem_event_hash;
+  u32 sched_event_count;
+  u32 sched_event_hash;
+  u32 fallback_event_count;
+  u32 fallback_event_hash;
+  u32 shadow_bytes;
+  u32 shadow_hash;
+};
+
 static struct harness_state g_state;
 static u8 g_frame[FRAME_BYTES];
 static u8 g_png_raw[PNG_RAW_SIZE];
@@ -1922,6 +1968,10 @@ static u8 *g_runtime_shifted_reg_offset_asr_store_entry;
 static u8 *g_runtime_shifted_reg_offset_ror_store_entry;
 static u8 *g_runtime_reg_offset_rrx_load_entry;
 static u8 *g_runtime_reg_offset_rrx_store_entry;
+static u8 *g_runtime_mixed_start_entry;
+static u8 *g_runtime_mixed_load_entry;
+static u8 *g_runtime_mixed_pc_load_entry;
+static u8 *g_runtime_mixed_target_entry;
 static u32 g_runtime_code_bytes;
 static u32 g_runtime_lookup_calls;
 static u32 g_runtime_lookup_pc;
@@ -1984,6 +2034,7 @@ static u32 g_runtime_fixture_store_word;
 static u32 g_runtime_fixture_swp_old_word;
 static u32 g_runtime_fixture_branch_r1;
 static u32 g_runtime_fixture_branch_r2;
+static u32 g_runtime_fixture_mixed_word;
 
 static void runtime_sched_event_record(void)
 {
@@ -2217,6 +2268,10 @@ static void clear_runtime_fixture_entries(void)
   g_runtime_shifted_reg_offset_ror_store_entry = (u8 *)0;
   g_runtime_reg_offset_rrx_load_entry = (u8 *)0;
   g_runtime_reg_offset_rrx_store_entry = (u8 *)0;
+  g_runtime_mixed_start_entry = (u8 *)0;
+  g_runtime_mixed_load_entry = (u8 *)0;
+  g_runtime_mixed_pc_load_entry = (u8 *)0;
+  g_runtime_mixed_target_entry = (u8 *)0;
 }
 
 static void render_frame(void);
@@ -3084,6 +3139,10 @@ static int build_runtime_fixture_block(const char **reason)
   u32 shifted_reg_offset_ror_store_code_bytes;
   u32 reg_offset_rrx_load_code_bytes;
   u32 reg_offset_rrx_store_code_bytes;
+  u32 mixed_start_code_bytes;
+  u32 mixed_load_code_bytes;
+  u32 mixed_pc_load_code_bytes;
+  u32 mixed_target_code_bytes;
   u32 condition;
   u8 *patch_branch_source;
   u8 *internal_branch_source;
@@ -6624,6 +6683,98 @@ static int build_runtime_fixture_block(const char **reason)
     (u32)(translation_ptr -
           (g_runtime_code + RUNTIME_STORE_ALERT_CHAIN_TARGET_BLOCK_OFFSET));
 
+  translation_ptr = g_runtime_code + RUNTIME_MIXED_START_BLOCK_OFFSET;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_runtime_mixed_start_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_data_proc(
+        &translation_ptr, meta, RUNTIME_ADD_R2_R0_R1,
+        RUNTIME_MIXED_START_CYCLES))
+  {
+    *reason = "runtime_mixed_start_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            RUNTIME_MIXED_START_PC,
+                            RUNTIME_MIXED_LOAD_PC, false);
+  mixed_start_code_bytes =
+    (u32)(translation_ptr -
+          (g_runtime_code + RUNTIME_MIXED_START_BLOCK_OFFSET));
+
+  translation_ptr = g_runtime_code + RUNTIME_MIXED_LOAD_BLOCK_OFFSET;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_runtime_mixed_load_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_access_memory(
+        &translation_ptr, meta, RUNTIME_LOAD_LDR_R4_R3_0X24,
+        RUNTIME_MIXED_LOAD_PC,
+        RUNTIME_MIXED_LOAD_CYCLES))
+  {
+    *reason = "runtime_mixed_load_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            RUNTIME_MIXED_LOAD_PC,
+                            RUNTIME_MIXED_PC_LOAD_PC, false);
+  mixed_load_code_bytes =
+    (u32)(translation_ptr -
+          (g_runtime_code + RUNTIME_MIXED_LOAD_BLOCK_OFFSET));
+
+  translation_ptr = g_runtime_code + RUNTIME_MIXED_PC_LOAD_BLOCK_OFFSET;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_runtime_mixed_pc_load_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_access_memory(
+        &translation_ptr, meta, RUNTIME_MIXED_LDR_PC_R5_0X24,
+        RUNTIME_MIXED_PC_LOAD_PC,
+        RUNTIME_MIXED_PC_LOAD_CYCLES))
+  {
+    *reason = "runtime_mixed_pc_load_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            RUNTIME_MIXED_PC_LOAD_PC,
+                            RUNTIME_MIXED_PC_LOAD_PC + 4u, false);
+  mixed_pc_load_code_bytes =
+    (u32)(translation_ptr -
+          (g_runtime_code + RUNTIME_MIXED_PC_LOAD_BLOCK_OFFSET));
+
+  translation_ptr = g_runtime_code + RUNTIME_MIXED_TARGET_BLOCK_OFFSET;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_runtime_mixed_target_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_data_proc(
+        &translation_ptr, meta, RUNTIME_MIXED_ADD_R7_R2_R4,
+        RUNTIME_MIXED_TARGET_ADD_CYCLES))
+  {
+    *reason = "runtime_mixed_target_add_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  if (!riscv_emit_native_arm_access_memory(
+        &translation_ptr, meta, RUNTIME_MIXED_STR_R7_R3_0X28,
+        RUNTIME_MIXED_TARGET_STORE_PC,
+        RUNTIME_MIXED_STORE_CYCLES))
+  {
+    *reason = "runtime_mixed_target_store_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            RUNTIME_MIXED_TARGET_PC,
+                            RUNTIME_MIXED_FALLBACK_PC, false);
+  mixed_target_code_bytes =
+    (u32)(translation_ptr -
+          (g_runtime_code + RUNTIME_MIXED_TARGET_BLOCK_OFFSET));
+
   g_runtime_code_bytes = add_code_bytes + fallthrough_target_code_bytes +
     load_code_bytes +
     store_code_bytes + store_alert_chain_target_code_bytes +
@@ -6716,7 +6867,9 @@ static int build_runtime_fixture_block(const char **reason)
     shifted_reg_offset_asr_store_code_bytes +
     shifted_reg_offset_ror_store_code_bytes +
     reg_offset_rrx_load_code_bytes +
-    reg_offset_rrx_store_code_bytes;
+    reg_offset_rrx_store_code_bytes +
+    mixed_start_code_bytes + mixed_load_code_bytes +
+    mixed_pc_load_code_bytes + mixed_target_code_bytes;
   flush_ret = syscall3(SYS_RISCV_FLUSH_ICACHE, (long)g_runtime_code,
                        (long)(g_runtime_code + RUNTIME_EXEC_MAP_BYTES), 0);
   if (flush_ret != 0)
@@ -6856,7 +7009,11 @@ static int ensure_runtime_fixture(const char **reason)
       g_runtime_shifted_reg_offset_asr_store_entry &&
       g_runtime_shifted_reg_offset_ror_store_entry &&
       g_runtime_reg_offset_rrx_load_entry &&
-      g_runtime_reg_offset_rrx_store_entry)
+      g_runtime_reg_offset_rrx_store_entry &&
+      g_runtime_mixed_start_entry &&
+      g_runtime_mixed_load_entry &&
+      g_runtime_mixed_pc_load_entry &&
+      g_runtime_mixed_target_entry)
     return 1;
 
   g_runtime_code = (u8 *)map_runtime_exec_page();
@@ -6923,6 +7080,17 @@ static u32 runtime_branch_r1_value(const struct harness_state *state)
 static u32 runtime_branch_r2_value(const struct harness_state *state)
 {
   return state->cycles ^ 0x00000034u;
+}
+
+static u32 runtime_mixed_load_word_value(const struct harness_state *state)
+{
+  return state->loaded_hash ^ state->cycles ^ 0x5aa55aa5u;
+}
+
+static u32 runtime_mixed_store_word_value(const struct harness_state *state)
+{
+  return runtime_initial_r0(state) + runtime_initial_r1(state) +
+         runtime_mixed_load_word_value(state);
 }
 
 static u32 runtime_cond_taken_cpsr(u32 condition)
@@ -12552,10 +12720,10 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   snapshot->initial_lookup_fallbacks = 4;
   snapshot->relookup_fallbacks = 78;
   snapshot->unsupported_fallbacks = 3;
-  snapshot->native_data_proc = 94;
+  snapshot->native_data_proc = 96;
   snapshot->native_branch = 7;
-  snapshot->native_load = 47;
-  snapshot->native_store = 32;
+  snapshot->native_load = 49;
+  snapshot->native_store = 33;
   snapshot->native_psr = 5;
   runtime_store_snapshot_regs(snapshot, values, 0, 0);
   snapshot->frame_hash = runtime_snapshot_frame_hash(snapshot);
@@ -14982,6 +15150,10 @@ u32 function_cc read_memory32(u32 address)
     value = g_runtime_fixture_load_word;
   else if (address == RUNTIME_LOAD_PC_ADDR)
     value = RUNTIME_LOAD_PC_TARGET;
+  else if (address == RUNTIME_MIXED_LOAD_ADDR)
+    value = g_runtime_fixture_mixed_word;
+  else if (address == RUNTIME_MIXED_PC_LOAD_ADDR)
+    value = RUNTIME_MIXED_TARGET_PC;
   else if (address == RUNTIME_PC_BASE_LOAD_WORD_ADDR)
     value = g_runtime_fixture_load_word;
   else if (address == RUNTIME_REG_OFFSET_WORD_ADDR)
@@ -15220,6 +15392,22 @@ static u32 runtime_mem_event_stored_count(void)
 {
   return g_runtime_mem_event_count < RUNTIME_MEM_EVENT_MAX ?
     g_runtime_mem_event_count : RUNTIME_MEM_EVENT_MAX;
+}
+
+static u32 runtime_mem_event_hash(u32 count)
+{
+  u32 i;
+  u32 hash = 2166136261u;
+
+  hash = fnv1a_update_u32(hash, g_runtime_mem_event_count);
+  for (i = 0; i < count; i++)
+  {
+    hash = fnv1a_update_u32(hash, g_runtime_mem_event_kind[i]);
+    hash = fnv1a_update_u32(hash, g_runtime_mem_event_addr[i]);
+    hash = fnv1a_update_u32(hash, g_runtime_mem_event_pc[i]);
+    hash = fnv1a_update_u32(hash, g_runtime_mem_event_value[i]);
+  }
+  return hash;
 }
 
 static void runtime_sched_event_reset(void)
@@ -15544,6 +15732,14 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
   if (g_runtime_load_pc_target_lookup &&
       g_runtime_load_pc_target_entry && pc == RUNTIME_LOAD_PC_TARGET)
     return g_runtime_load_pc_target_entry;
+  if (g_runtime_mixed_start_entry && pc == RUNTIME_MIXED_START_PC)
+    return g_runtime_mixed_start_entry;
+  if (g_runtime_mixed_load_entry && pc == RUNTIME_MIXED_LOAD_PC)
+    return g_runtime_mixed_load_entry;
+  if (g_runtime_mixed_pc_load_entry && pc == RUNTIME_MIXED_PC_LOAD_PC)
+    return g_runtime_mixed_pc_load_entry;
+  if (g_runtime_mixed_target_entry && pc == RUNTIME_MIXED_TARGET_PC)
+    return g_runtime_mixed_target_entry;
   if (g_runtime_load_pc_fallthrough_target_lookup &&
       g_runtime_pc_write_fallthrough_target_entry &&
       pc == RUNTIME_LOAD_PC_TARGET_END_PC)
@@ -16070,7 +16266,7 @@ static void command_help(void)
 {
   put_raw("result=PASS command=help commands=load reset backend run cont ");
   put_raw("stepi stepb regs mem watchio counters fallbacks sched tracepc bp ");
-  put_raw("framehash compare rejects png quit harness_mode=");
+  put_raw("framehash compare mixed rejects png quit harness_mode=");
   put_raw(HARNESS_MODE);
   put_raw(" reason=command_list\n");
 }
@@ -17865,6 +18061,426 @@ static void command_compare(void)
   put_raw(" reason=runtime_state_snapshot_frame_equal\n");
 }
 
+static u32 runtime_hash_pc_sequence(const u32 *pcs, u32 count)
+{
+  u32 i;
+  u32 hash = 2166136261u;
+
+  hash = fnv1a_update_u32(hash, count);
+  for (i = 0; i < count; i++)
+    hash = fnv1a_update_u32(hash, pcs[i]);
+  return hash;
+}
+
+static u32 runtime_mixed_expected_mem_event_hash(u32 load_value,
+                                                 u32 store_value)
+{
+  u32 hash = 2166136261u;
+
+  hash = fnv1a_update_u32(hash, 3u);
+  hash = fnv1a_update_u32(hash, RUNTIME_MEM_EVENT_R32);
+  hash = fnv1a_update_u32(hash, RUNTIME_MIXED_LOAD_ADDR);
+  hash = fnv1a_update_u32(hash, RUNTIME_MIXED_LOAD_PC);
+  hash = fnv1a_update_u32(hash, load_value);
+  hash = fnv1a_update_u32(hash, RUNTIME_MEM_EVENT_R32);
+  hash = fnv1a_update_u32(hash, RUNTIME_MIXED_PC_LOAD_ADDR);
+  hash = fnv1a_update_u32(hash, RUNTIME_MIXED_PC_LOAD_PC);
+  hash = fnv1a_update_u32(hash, RUNTIME_MIXED_TARGET_PC);
+  hash = fnv1a_update_u32(hash, RUNTIME_MEM_EVENT_W32);
+  hash = fnv1a_update_u32(hash, RUNTIME_MIXED_STORE_ADDR);
+  hash = fnv1a_update_u32(hash, RUNTIME_MIXED_FALLBACK_PC);
+  hash = fnv1a_update_u32(hash, store_value);
+  return hash;
+}
+
+static u32 runtime_mixed_expected_sched_event_hash(void)
+{
+  u32 hash = 2166136261u;
+
+  hash = fnv1a_update_u32(hash, 1u);
+  hash = fnv1a_update_u32(hash, 5u);
+  hash = fnv1a_update_u32(hash, RUNTIME_MIXED_FALLBACK_PC);
+  hash = fnv1a_update_u32(hash, 0u);
+  hash = fnv1a_update_u32(hash, 1u);
+  hash = fnv1a_update_u32(hash, 0u);
+  hash = fnv1a_update_u32(hash, 0u);
+  hash = fnv1a_update_u32(hash, 0u);
+  hash = fnv1a_update_u32(hash, 1u);
+  hash = fnv1a_update_u32(hash, RUNTIME_MIXED_REFILL_CYCLES);
+  hash = fnv1a_update_u32(hash, RUNTIME_MIXED_FALLBACK_PC);
+  hash = fnv1a_update_u32(hash, 1u);
+  hash = fnv1a_update_u32(hash, 1u);
+  hash = fnv1a_update_u32(hash, CPU_ACTIVE);
+  return hash;
+}
+
+static u32 runtime_mixed_expected_fallback_event_hash(void)
+{
+  u32 hash = 2166136261u;
+
+  hash = fnv1a_update_u32(hash, 1u);
+  hash = fnv1a_update_u32(hash, RISCV_RUNTIME_FALLBACK_RELOOKUP);
+  hash = fnv1a_update_u32(hash, RUNTIME_MIXED_FALLBACK_PC);
+  hash = fnv1a_update_u32(hash, 0u);
+  hash = fnv1a_update_u32(hash, RISCV_RUNTIME_LOOKUP_MISS);
+  hash = fnv1a_update_u32(hash, RUNTIME_MIXED_REFILL_CYCLES);
+  return hash;
+}
+
+static u32 runtime_mixed_expected_shadow_hash(u32 store_value)
+{
+  u32 hash = 2166136261u;
+
+  hash = fnv1a_update_u32(hash, RUNTIME_MIXED_STORE_ADDR);
+  hash = fnv1a_update_u32(hash, 4u);
+  hash = fnv1a_update_u32(hash, store_value & 0xffu);
+  hash = fnv1a_update_u32(hash, (store_value >> 8) & 0xffu);
+  hash = fnv1a_update_u32(hash, (store_value >> 16) & 0xffu);
+  hash = fnv1a_update_u32(hash, (store_value >> 24) & 0xffu);
+  return hash;
+}
+
+static void run_runtime_mixed_reference_workload(
+  const struct harness_state *base, struct mixed_snapshot *snapshot)
+{
+  static const u32 trace_pcs[] =
+  {
+    RUNTIME_MIXED_START_PC,
+    RUNTIME_MIXED_LOAD_PC,
+    RUNTIME_MIXED_PC_LOAD_PC,
+    RUNTIME_MIXED_TARGET_PC,
+    RUNTIME_MIXED_FALLBACK_PC
+  };
+  static const u32 stepi_pcs[] =
+  {
+    RUNTIME_MIXED_START_PC,
+    RUNTIME_MIXED_LOAD_PC,
+    RUNTIME_MIXED_PC_LOAD_PC,
+    RUNTIME_MIXED_TARGET_PC,
+    RUNTIME_MIXED_TARGET_STORE_PC
+  };
+  u32 values[REG_MAX];
+  u32 load_value = runtime_mixed_load_word_value(base);
+  u32 store_value = runtime_mixed_store_word_value(base);
+  u32 i;
+
+  for (i = 0; i < REG_MAX; i++)
+    values[i] = 0;
+
+  values[0] = runtime_initial_r0(base);
+  values[1] = runtime_initial_r1(base);
+  values[2] = values[0] + values[1];
+  values[3] = RUNTIME_MIXED_MEM_BASE_ADDR;
+  values[4] = load_value;
+  values[5] = RUNTIME_MIXED_PC_BASE_ADDR;
+  values[7] = store_value;
+  values[REG_PC] = RUNTIME_MIXED_FALLBACK_PC;
+  values[REG_CPSR] = 0;
+  values[CPU_HALT_STATE] = CPU_ACTIVE;
+
+  snapshot->state.reg_hash = runtime_update_reg_hash(2166136261u, values);
+  snapshot->state.mem_hash = runtime_update_memory_hash(
+    2166136261u,
+    2, RUNTIME_MIXED_PC_LOAD_ADDR, RUNTIME_MIXED_PC_LOAD_PC,
+    RUNTIME_MIXED_TARGET_PC,
+    0, 0, 0, 0,
+    1, RUNTIME_MIXED_STORE_ADDR, RUNTIME_MIXED_FALLBACK_PC,
+    store_value,
+    runtime_reference_sticky_hash());
+  snapshot->state.scheduler_hash = runtime_update_scheduler_hash(
+    2166136261u,
+    5, RUNTIME_MIXED_FALLBACK_PC, 0,
+    1, 0,
+    1, RUNTIME_MIXED_REFILL_CYCLES, RUNTIME_MIXED_FALLBACK_PC,
+    1, 1);
+  snapshot->state.blocks = 4;
+  snapshot->state.fallbacks = 1;
+  snapshot->state.initial_lookup_fallbacks = 0;
+  snapshot->state.relookup_fallbacks = 1;
+  snapshot->state.unsupported_fallbacks = 0;
+  snapshot->state.native_data_proc = 96;
+  snapshot->state.native_branch = 7;
+  snapshot->state.native_load = 49;
+  snapshot->state.native_store = 33;
+  snapshot->state.native_psr = 5;
+  runtime_store_snapshot_regs(&snapshot->state, values, 0, 0);
+  snapshot->state.frame_hash = runtime_snapshot_frame_hash(&snapshot->state);
+
+  snapshot->trace_count = ARRAY_SIZE(trace_pcs);
+  snapshot->trace_hash = runtime_hash_pc_sequence(trace_pcs,
+                                                  ARRAY_SIZE(trace_pcs));
+  snapshot->stepi_count = ARRAY_SIZE(stepi_pcs);
+  snapshot->stepi_hash = runtime_hash_pc_sequence(stepi_pcs,
+                                                  ARRAY_SIZE(stepi_pcs));
+  snapshot->mem_event_count = 3;
+  snapshot->mem_event_hash =
+    runtime_mixed_expected_mem_event_hash(load_value, store_value);
+  snapshot->sched_event_count = 1;
+  snapshot->sched_event_hash = runtime_mixed_expected_sched_event_hash();
+  snapshot->fallback_event_count = 1;
+  snapshot->fallback_event_hash =
+    runtime_mixed_expected_fallback_event_hash();
+  snapshot->shadow_bytes = 4;
+  snapshot->shadow_hash = runtime_mixed_expected_shadow_hash(store_value);
+}
+
+static void run_runtime_mixed_rv32im_workload(
+  const struct harness_state *base, struct mixed_snapshot *snapshot)
+{
+  riscv_runtime_stats before;
+  riscv_runtime_stats after;
+  u32 reg_hash;
+  u32 mem_hash;
+  u32 scheduler_hash;
+
+  g_runtime_fixture_mixed_word = runtime_mixed_load_word_value(base);
+
+  runtime_trace_reset();
+  runtime_stepi_reset();
+  runtime_mem_event_reset();
+  runtime_sched_event_reset();
+  runtime_fallback_event_reset();
+  runtime_shadow_reset();
+  g_runtime_trace_enabled = 1;
+  g_runtime_stepi_enabled = 1;
+  g_runtime_mem_event_enabled = 1;
+  g_runtime_sched_event_enabled = 1;
+  g_runtime_fallback_event_enabled = 1;
+  g_runtime_shadow_enabled = 1;
+
+  riscv_get_runtime_stats(&before);
+
+  reset_runtime_fixture_state(RUNTIME_MIXED_START_PC);
+  reg[0] = runtime_initial_r0(base);
+  reg[1] = runtime_initial_r1(base);
+  reg[3] = RUNTIME_MIXED_MEM_BASE_ADDR;
+  reg[5] = RUNTIME_MIXED_PC_BASE_ADDR;
+  g_runtime_update_first_return = RUNTIME_MIXED_REFILL_CYCLES;
+  g_runtime_store_alert = CPU_ALERT_SMC | CPU_ALERT_IRQ;
+  execute_arm_translate_internal(RUNTIME_MIXED_TOTAL_CYCLES, &reg[0]);
+  g_runtime_store_alert = CPU_ALERT_NONE;
+
+  reg_hash = runtime_update_reg_hash(2166136261u, &reg[0]);
+  mem_hash = runtime_update_current_memory_hash(2166136261u);
+  scheduler_hash = runtime_update_current_scheduler_hash(2166136261u);
+
+  riscv_get_runtime_stats(&after);
+  snapshot->state.reg_hash = reg_hash;
+  snapshot->state.mem_hash = mem_hash;
+  snapshot->state.scheduler_hash = scheduler_hash;
+  snapshot->state.blocks = after.blocks_executed - before.blocks_executed;
+  snapshot->state.fallbacks =
+    after.interpreter_fallbacks - before.interpreter_fallbacks;
+  snapshot->state.initial_lookup_fallbacks =
+    after.initial_lookup_fallbacks - before.initial_lookup_fallbacks;
+  snapshot->state.relookup_fallbacks =
+    after.relookup_fallbacks - before.relookup_fallbacks;
+  snapshot->state.unsupported_fallbacks =
+    after.unsupported_fallbacks - before.unsupported_fallbacks;
+  snapshot->state.native_data_proc = after.native_data_proc_insns;
+  snapshot->state.native_branch = after.native_branch_insns;
+  snapshot->state.native_load = after.native_load_insns;
+  snapshot->state.native_store = after.native_store_insns;
+  snapshot->state.native_psr = after.native_psr_insns;
+  runtime_store_current_snapshot_regs(&snapshot->state);
+  snapshot->state.frame_hash = runtime_snapshot_frame_hash(&snapshot->state);
+
+  snapshot->trace_count = g_runtime_trace_count;
+  snapshot->trace_hash = runtime_trace_hash(runtime_trace_stored_count());
+  snapshot->stepi_count = g_runtime_stepi_count;
+  snapshot->stepi_hash = runtime_stepi_hash(runtime_stepi_stored_count());
+  snapshot->mem_event_count = g_runtime_mem_event_count;
+  snapshot->mem_event_hash =
+    runtime_mem_event_hash(runtime_mem_event_stored_count());
+  snapshot->sched_event_count = g_runtime_sched_event_count;
+  snapshot->sched_event_hash =
+    runtime_sched_event_hash(runtime_sched_event_stored_count());
+  snapshot->fallback_event_count = g_runtime_fallback_event_count;
+  snapshot->fallback_event_hash =
+    runtime_fallback_event_hash(runtime_fallback_event_stored_count());
+  snapshot->shadow_bytes = g_runtime_shadow_write_bytes;
+  snapshot->shadow_hash = runtime_shadow_hash(RUNTIME_MIXED_STORE_ADDR, 4);
+
+  g_runtime_trace_enabled = 0;
+  g_runtime_stepi_enabled = 0;
+  g_runtime_mem_event_enabled = 0;
+  g_runtime_sched_event_enabled = 0;
+  g_runtime_fallback_event_enabled = 0;
+  g_runtime_shadow_enabled = 0;
+}
+
+static int runtime_mixed_snapshots_equal(const struct mixed_snapshot *a,
+                                         const struct mixed_snapshot *b)
+{
+  return a->state.frame_hash == b->state.frame_hash &&
+         a->state.reg_hash == b->state.reg_hash &&
+         a->state.mem_hash == b->state.mem_hash &&
+         a->state.scheduler_hash == b->state.scheduler_hash &&
+         runtime_snapshot_regs_equal(&a->state, &b->state) &&
+         a->state.blocks == b->state.blocks &&
+         a->state.fallbacks == b->state.fallbacks &&
+         a->state.initial_lookup_fallbacks ==
+           b->state.initial_lookup_fallbacks &&
+         a->state.relookup_fallbacks == b->state.relookup_fallbacks &&
+         a->state.unsupported_fallbacks == b->state.unsupported_fallbacks &&
+         a->state.native_data_proc == b->state.native_data_proc &&
+         a->state.native_branch == b->state.native_branch &&
+         a->state.native_load == b->state.native_load &&
+         a->state.native_store == b->state.native_store &&
+         a->state.native_psr == b->state.native_psr &&
+         a->trace_count == b->trace_count &&
+         a->trace_hash == b->trace_hash &&
+         a->stepi_count == b->stepi_count &&
+         a->stepi_hash == b->stepi_hash &&
+         a->mem_event_count == b->mem_event_count &&
+         a->mem_event_hash == b->mem_event_hash &&
+         a->sched_event_count == b->sched_event_count &&
+         a->sched_event_hash == b->sched_event_hash &&
+         a->fallback_event_count == b->fallback_event_count &&
+         a->fallback_event_hash == b->fallback_event_hash &&
+         a->shadow_bytes == b->shadow_bytes &&
+         a->shadow_hash == b->shadow_hash;
+}
+
+static void print_mixed_result(const char *result,
+                               const char *reason,
+                               const struct mixed_snapshot *interp,
+                               const struct mixed_snapshot *rv32im)
+{
+  put_raw("result=");
+  put_raw(result);
+  put_raw(" command=mixed workload=");
+  put_raw(RUNTIME_MIXED_WORKLOAD);
+  put_raw(" interp_frame_hash=");
+  put_u32_hex(interp->state.frame_hash);
+  put_raw(" rv32im_frame_hash=");
+  put_u32_hex(rv32im->state.frame_hash);
+  put_raw(" interp_reg_hash=");
+  put_u32_hex(interp->state.reg_hash);
+  put_raw(" rv32im_reg_hash=");
+  put_u32_hex(rv32im->state.reg_hash);
+  put_raw(" interp_mem_hash=");
+  put_u32_hex(interp->state.mem_hash);
+  put_raw(" rv32im_mem_hash=");
+  put_u32_hex(rv32im->state.mem_hash);
+  put_raw(" interp_scheduler_hash=");
+  put_u32_hex(interp->state.scheduler_hash);
+  put_raw(" rv32im_scheduler_hash=");
+  put_u32_hex(rv32im->state.scheduler_hash);
+  put_raw(" interp_trace_count=");
+  put_u32_dec(interp->trace_count);
+  put_raw(" rv32im_trace_count=");
+  put_u32_dec(rv32im->trace_count);
+  put_raw(" interp_trace_hash=");
+  put_u32_hex(interp->trace_hash);
+  put_raw(" rv32im_trace_hash=");
+  put_u32_hex(rv32im->trace_hash);
+  put_raw(" interp_stepi_count=");
+  put_u32_dec(interp->stepi_count);
+  put_raw(" rv32im_stepi_count=");
+  put_u32_dec(rv32im->stepi_count);
+  put_raw(" interp_stepi_hash=");
+  put_u32_hex(interp->stepi_hash);
+  put_raw(" rv32im_stepi_hash=");
+  put_u32_hex(rv32im->stepi_hash);
+  put_raw(" interp_mem_event_count=");
+  put_u32_dec(interp->mem_event_count);
+  put_raw(" rv32im_mem_event_count=");
+  put_u32_dec(rv32im->mem_event_count);
+  put_raw(" interp_mem_event_hash=");
+  put_u32_hex(interp->mem_event_hash);
+  put_raw(" rv32im_mem_event_hash=");
+  put_u32_hex(rv32im->mem_event_hash);
+  put_raw(" interp_sched_event_count=");
+  put_u32_dec(interp->sched_event_count);
+  put_raw(" rv32im_sched_event_count=");
+  put_u32_dec(rv32im->sched_event_count);
+  put_raw(" interp_sched_event_hash=");
+  put_u32_hex(interp->sched_event_hash);
+  put_raw(" rv32im_sched_event_hash=");
+  put_u32_hex(rv32im->sched_event_hash);
+  put_raw(" interp_fallback_event_count=");
+  put_u32_dec(interp->fallback_event_count);
+  put_raw(" rv32im_fallback_event_count=");
+  put_u32_dec(rv32im->fallback_event_count);
+  put_raw(" interp_fallback_event_hash=");
+  put_u32_hex(interp->fallback_event_hash);
+  put_raw(" rv32im_fallback_event_hash=");
+  put_u32_hex(rv32im->fallback_event_hash);
+  put_raw(" interp_shadow_bytes=");
+  put_u32_dec(interp->shadow_bytes);
+  put_raw(" rv32im_shadow_bytes=");
+  put_u32_dec(rv32im->shadow_bytes);
+  put_raw(" interp_shadow_hash=");
+  put_u32_hex(interp->shadow_hash);
+  put_raw(" rv32im_shadow_hash=");
+  put_u32_hex(rv32im->shadow_hash);
+  put_raw(" rv32im_blocks=");
+  put_u32_dec(rv32im->state.blocks);
+  put_raw(" rv32im_fallbacks=");
+  put_u32_dec(rv32im->state.fallbacks);
+  put_raw(" rv32im_initial_lookup_fallbacks=");
+  put_u32_dec(rv32im->state.initial_lookup_fallbacks);
+  put_raw(" rv32im_relookup_fallbacks=");
+  put_u32_dec(rv32im->state.relookup_fallbacks);
+  put_raw(" rv32im_unsupported_fallbacks=");
+  put_u32_dec(rv32im->state.unsupported_fallbacks);
+  put_raw(" rv32im_native_data_proc=");
+  put_u32_dec(rv32im->state.native_data_proc);
+  put_raw(" rv32im_native_branch=");
+  put_u32_dec(rv32im->state.native_branch);
+  put_raw(" rv32im_native_load=");
+  put_u32_dec(rv32im->state.native_load);
+  put_raw(" rv32im_native_store=");
+  put_u32_dec(rv32im->state.native_store);
+  put_raw(" rv32im_native_psr=");
+  put_u32_dec(rv32im->state.native_psr);
+  put_raw(" code_bytes=");
+  put_u32_dec(g_runtime_code_bytes);
+  put_raw(" harness_mode=");
+  put_raw(RUNTIME_FIXTURE_MODE);
+  put_raw(" frame_mode=runtime_snapshot mem_mode=runtime_events");
+  put_raw(" scheduler_mode=runtime_events fallback_mode=runtime_events");
+  put_raw(" reason=");
+  put_raw(reason);
+  put_chr('\n');
+}
+
+static void command_mixed(void)
+{
+  const char *runtime_reason = "runtime_unknown";
+  struct harness_state saved_state = g_state;
+  struct mixed_snapshot interp;
+  struct mixed_snapshot rv32im;
+
+  if (!ensure_runtime_fixture(&runtime_reason))
+  {
+    put_raw("result=FAIL command=mixed workload=");
+    put_raw(RUNTIME_MIXED_WORKLOAD);
+    put_raw(" harness_mode=");
+    put_raw(RUNTIME_FIXTURE_MODE);
+    put_raw(" frame_mode=runtime_snapshot mem_mode=runtime_events reason=");
+    put_raw(runtime_reason);
+    put_chr('\n');
+    return;
+  }
+
+  run_runtime_mixed_reference_workload(&saved_state, &interp);
+  run_runtime_mixed_rv32im_workload(&saved_state, &rv32im);
+  g_state = saved_state;
+  render_runtime_snapshot_frame(&rv32im.state);
+
+  if (!runtime_mixed_snapshots_equal(&interp, &rv32im))
+  {
+    print_mixed_result("FAIL", "runtime_mixed_state_or_event_mismatch",
+                       &interp, &rv32im);
+    return;
+  }
+
+  print_mixed_result("PASS", "runtime_mixed_contract_chain_equal",
+                     &interp, &rv32im);
+}
+
 static void command_png(char *path, char *mode)
 {
   if (!path || !*path)
@@ -18057,6 +18673,10 @@ static void process_line(char *line)
   else if (str_eq(cmd, "compare"))
   {
     command_compare();
+  }
+  else if (str_eq(cmd, "mixed"))
+  {
+    command_mixed();
   }
   else if (str_eq(cmd, "rejects"))
   {

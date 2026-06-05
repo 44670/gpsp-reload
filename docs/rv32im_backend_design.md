@@ -261,11 +261,12 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 | HLE-reserved SWI form | explicit reject | `rejects runtime` pins the reserved HLE SWI rejection. |
 | CPU alerts, cache flush, IRQ, HALT, idle-loop gate | native+compare | Runtime snapshots, `sched runtime`, and `fallbacks runtime` cover SMC/IRQ/HALT consumption, RAM flush, IRQ checks, HALT updates, and idle-loop gate exits. |
 | Scheduler exits, update_gba(), frame completion, fallback buckets | native+compare | `run runtime`, `cont runtime`, `sched runtime`, `counters runtime`, and `compare` pin update/refill, PC-change, frame-complete, fallback source breakdown, and snapshot hashes. |
+| Mixed contract chain across semantic boundaries | native+compare | `mixed` runs native data processing, helper-backed load, PC-writing load into a native target, alerting helper-backed store, scheduler refill, and deliberate fallback without resetting state. It pins register, memory, scheduler, trace, instruction-step, memory-event, scheduler-event, fallback-event, shadow-memory, counter, code-byte, and runtime-frame evidence. |
 | Thumb instruction lowering | helper fallback | Current harness proves Thumb lookup miss/invalid and unsupported-block fallback only; Thumb native lowering is deliberately out of first-phase scope. |
 
-Next milestone selection comes from this table: audit the `native+compare`
-rows for the smallest mixed-workload gap that blocks a more realistic
-qemu-user smoke.
+Next milestone selection comes from this table: move from the new mixed-chain
+proof toward the smallest deterministic real-workload smoke that can still be
+debugged from exact qemu-user logs and pinned counters.
 
 - raw RV32I/M emitter encoding checks against clang/LLVM reference output
 - qemu-riscv32 ABI entry/return checks
@@ -500,34 +501,29 @@ branches, block memory, SWP/SWPB, SWI/HLE, alerts, scheduler exits, fallback
 classes, cache flush observation, lookup traces, and generated-code patching.
 That is enough coverage to stop selecting milestones by adjacent opcode.
 
-The current evidence is still mostly fixture-local. `compare` is a long,
-deterministic workload, but many cases deliberately reset CPU state before the
-next semantic boundary. That is useful for isolating regressions, but it does
-not yet prove a longer production-like chain where values, PC writes,
-fallbacks, helper side effects, alerts, and scheduler refills interact without
-a reset between them.
+The current evidence now includes one chained qemu-user workload, not only
+fixture-local reset cases. The `mixed` command in
+`tests/rv32im/rv32im_harness.c` runs:
 
-The smallest missing set before a meaningful real-workload smoke is:
+- native ADD
+- helper-backed LDR
+- `LDR pc`
+- native ADD plus alerting STR
+- `update_gba()` refill
+- deliberate relookup fallback
 
-- Add one mixed qemu-user workload that runs as a chain, not a list of reset
-  fixtures. It should include native data processing, a helper-backed memory
-  read, a PC-writing load into a native target, a helper-backed store that
-  raises `CPU_ALERT_SMC | CPU_ALERT_IRQ`, a scheduler/update boundary, and one
-  deliberate fallback. The result must produce register, memory, scheduler,
-  fallback-counter, trace, and runtime snapshot frame evidence.
-- Keep the mixed workload deterministic and self-contained in
-  `tests/rv32im/rv32im_harness.c`. It should reuse the existing qemu-user
-  harness and pinned logs; it should not depend on a GBA ROM or host-specific
-  filesystem state beyond the current `.png`/stdio harness style.
-- Factor only the repeated compare plumbing needed by that workload. Small C
-  helpers for repeated PC-write load expectations are acceptable; a new
-  framework is not. The exact qemu-user summary lines and counter pins remain
-  the authority.
+That command compares an explicit reference snapshot against generated RV32IM
+execution and pins register, memory, scheduler, trace, instruction-step,
+memory-event, scheduler-event, fallback-event, shadow-memory, fallback-counter,
+native-counter, code-byte, and runtime snapshot frame evidence. The exact
+qemu-user summary line remains the authority; the standalone gate is
+`make -C tests/rv32im mixed`, and smoke drives the same command through stdin.
 
 Do not widen scope into Thumb native lowering, compressed RISC-V emission,
-guest register caching, performance tuning, or ESP32-specific work before the
-mixed workload exists. The next useful proof is interaction across backend
-contract boundaries, not another isolated instruction family.
+guest register caching, performance tuning, or ESP32-specific work before a
+small deterministic real-workload smoke is selected from the matrix. The next
+useful proof should reuse the same contract evidence style at a larger
+workload boundary, not return to adjacent isolated opcodes.
 
 Remaining first-phase gaps should stay narrow and evidence-driven:
 
@@ -581,7 +577,7 @@ Remaining first-phase gaps should stay narrow and evidence-driven:
 
 Every validated RV32IM semi-milestone should be committed separately. A typical
 gate is `git diff --check`, `make -C tests/rv32im compare`,
-`make -C tests/rv32im test`, which includes a `cpu_threaded.c` compile guard
-for `HAVE_DYNAREC` plus `RISCV_ARCH`, the `core-build` target for a top-level
-unix RV32IM dynarec libretro build, and `make -C tests/rv32im clean` before
-committing.
+`make -C tests/rv32im mixed`, `make -C tests/rv32im test`, which includes a
+`cpu_threaded.c` compile guard for `HAVE_DYNAREC` plus `RISCV_ARCH`, the
+`core-build` target for a top-level unix RV32IM dynarec libretro build, and
+`make -C tests/rv32im clean` before committing.

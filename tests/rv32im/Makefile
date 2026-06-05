@@ -15,6 +15,7 @@ SMOKE_PNG_SIG := $(OUT_DIR)/png_signature.bin
 SMOKE_LOAD := $(OUT_DIR)/rv32im_harness_load.bin
 SMOKE_LOG := $(OUT_DIR)/rv32im_harness.log
 COMPARE_LOG := $(OUT_DIR)/rv32im_harness_compare.log
+MIXED_LOG := $(OUT_DIR)/rv32im_harness_mixed.log
 REJECTS_LOG := $(OUT_DIR)/rv32im_harness_rejects.log
 CODEGEN_BIN := $(OUT_DIR)/rv32im_codegen.bin
 CODEGEN_REF_ELF := $(OUT_DIR)/rv32im_codegen_ref.elf
@@ -116,15 +117,15 @@ core-build:
 	$(MAKE) -C $(ROOT) $(CORE_BUILD_FLAGS) $(CORE_BUILD_TARGET)
 
 smoke: $(HARNESS) $(SMOKE_LOAD) $(SMOKE_PNG_SIG) $(OUT_DIR)
-	printf 'help\nload $(SMOKE_LOAD)\nbackend rv32im\nrejects runtime\nreset\nrun 2\nrun runtime\ncont 16\ncont runtime\nstepi 4\nstepi runtime 8\nstepb 3\nstepb runtime 5\nregs\nregs runtime\nmem 0x02000000 16\nmem 0x02000000 4096 runtime\nmem 0x02000000 4096 runtime 8\nmem 0x02000120 32 runtime-bytes\nwatchio 0x04000000 64 runtime\ncounters\ncounters runtime\nfallbacks runtime\nfallbacks runtime 8\nfallbacks runtime 16\nfallbacks runtime 40\nfallbacks runtime 48\nsched runtime\nsched runtime 8\nsched runtime 48\nsched runtime 108\nsched runtime 120\ntracepc 4\ntracepc runtime 8\ntracepc runtime 4 32\nbp 0x08000000 runtime\nframehash\ncompare\nframehash runtime\npng $(SMOKE_RUNTIME_PNG) runtime\npng $(SMOKE_PNG)\nquit\n' | $(QEMU_RISCV32) ./$(HARNESS) | tee $(SMOKE_LOG)
-	grep -q 'result=PASS command=help commands=load reset backend run cont stepi stepb regs mem watchio counters fallbacks sched tracepc bp framehash compare rejects png quit harness_mode=synthetic reason=command_list' $(SMOKE_LOG)
+	printf 'help\nload $(SMOKE_LOAD)\nbackend rv32im\nrejects runtime\nreset\nrun 2\nrun runtime\ncont 16\ncont runtime\nstepi 4\nstepi runtime 8\nstepb 3\nstepb runtime 5\nregs\nregs runtime\nmem 0x02000000 16\nmem 0x02000000 4096 runtime\nmem 0x02000000 4096 runtime 8\nmem 0x02000120 32 runtime-bytes\nwatchio 0x04000000 64 runtime\ncounters\ncounters runtime\nfallbacks runtime\nfallbacks runtime 8\nfallbacks runtime 16\nfallbacks runtime 40\nfallbacks runtime 48\nsched runtime\nsched runtime 8\nsched runtime 48\nsched runtime 108\nsched runtime 120\ntracepc 4\ntracepc runtime 8\ntracepc runtime 4 32\nbp 0x08000000 runtime\nframehash\ncompare\nmixed\nframehash runtime\npng $(SMOKE_RUNTIME_PNG) runtime\npng $(SMOKE_PNG)\nquit\n' | $(QEMU_RISCV32) ./$(HARNESS) | tee $(SMOKE_LOG)
+	grep -q 'result=PASS command=help commands=load reset backend run cont stepi stepb regs mem watchio counters fallbacks sched tracepc bp framehash compare mixed rejects png quit harness_mode=synthetic reason=command_list' $(SMOKE_LOG)
 	grep -q 'result=PASS command=load backend=interp bytes=23 hash=0x2b3be9fa harness_mode=synthetic reason=file_loaded' $(SMOKE_LOG)
 	grep -q 'result=PASS command=backend backend=rv32im harness_mode=synthetic reason=backend_selected' $(SMOKE_LOG)
 	grep -q 'result=PASS command=rejects backend=rv32im total=26 psr_unsupported=2 conditional=13 load_pc=0 pc_base_wb=6 shifted_reg_offset=1 opcodes=mrs_r15_cpsr,msr_cpsr_r15,mul_r15,umull_r15,hle_swi,swp_r15 harness_mode=runtime_fixture reject_mode=emitter_contract reason=runtime_rejections_preserved' $(SMOKE_LOG)
 	grep -q 'result=PASS command=reset backend=rv32im loaded_bytes=23 loaded_hash=0x2b3be9fa frame_hash=.* harness_mode=synthetic reason=state_reset' $(SMOKE_LOG)
 	grep -q 'result=PASS command=run backend=rv32im' $(SMOKE_LOG)
 	grep -q 'reason=synthetic_frame_workload' $(SMOKE_LOG)
-	grep -q 'result=PASS command=run backend=rv32im blocks=270 fallbacks=85 initial_lookup_fallbacks=4 relookup_fallbacks=78 unsupported_fallbacks=3 native_data_proc=94 native_branch=7 native_load=47 native_store=32 native_psr=5 .* harness_mode=runtime_fixture run_mode=runtime_snapshot counter_source=runtime_rv32im reason=runtime_snapshot_run' $(SMOKE_LOG)
+	grep -q 'result=PASS command=run backend=rv32im blocks=270 fallbacks=85 initial_lookup_fallbacks=4 relookup_fallbacks=78 unsupported_fallbacks=3 native_data_proc=96 native_branch=7 native_load=49 native_store=33 native_psr=5 .* harness_mode=runtime_fixture run_mode=runtime_snapshot counter_source=runtime_rv32im reason=runtime_snapshot_run' $(SMOKE_LOG)
 	grep -q 'result=PASS command=cont backend=rv32im' $(SMOKE_LOG)
 	grep -q 'reason=synthetic_scheduler_boundary' $(SMOKE_LOG)
 	grep -q 'result=PASS command=cont backend=rv32im total=.* stored=.* offset=0 events=l.* printed=.* hash=.* harness_mode=runtime_fixture cont_mode=runtime_scheduler event_encoding=l@pc:t:u:uc:uf:up:e@pc:ec:f:i:h reason=runtime_scheduler_continue' $(SMOKE_LOG)
@@ -144,7 +145,7 @@ smoke: $(HARNESS) $(SMOKE_LOAD) $(SMOKE_PNG_SIG) $(OUT_DIR)
 	grep -q 'result=PASS command=watchio backend=rv32im addr=0x04000000 len=64 total=.* stored=.* offset=0 events=w32@0x04000028:0x08000304:.* matched=1 printed=1 hash=.* harness_mode=runtime_fixture watch_mode=runtime_events event_encoding=kind@addr:pc:value reason=runtime_io_events' $(SMOKE_LOG)
 	grep -q 'result=PASS command=counters backend=rv32im frames=2 cycles=561824 blocks=260 instructions=2052 loaded_bytes=23 loaded_hash=0x2b3be9fa' $(SMOKE_LOG)
 	grep -q 'reason=synthetic_state_counters' $(SMOKE_LOG)
-	grep -q 'result=PASS command=counters backend=rv32im blocks=270 fallbacks=85 initial_lookup_fallbacks=4 relookup_fallbacks=78 unsupported_fallbacks=3 native_data_proc=94 native_branch=7 native_load=47 native_store=32 native_psr=5' $(SMOKE_LOG)
+	grep -q 'result=PASS command=counters backend=rv32im blocks=270 fallbacks=85 initial_lookup_fallbacks=4 relookup_fallbacks=78 unsupported_fallbacks=3 native_data_proc=96 native_branch=7 native_load=49 native_store=33 native_psr=5' $(SMOKE_LOG)
 	grep -q 'counters_mode=runtime_snapshot counter_source=runtime_rv32im reason=runtime_snapshot_counters' $(SMOKE_LOG)
 	grep -q 'result=PASS command=fallbacks backend=rv32im total=85 stored=85 offset=0 initial_lookup=4 relookup=78 unsupported=3 events=.* harness_mode=runtime_fixture fallback_mode=runtime_events event_encoding=kind@pc:mode:result:c reason=runtime_fallback_events' $(SMOKE_LOG)
 	grep -q 'result=PASS command=fallbacks backend=rv32im total=85 stored=85 offset=8 initial_lookup=4 relookup=78 unsupported=3 events=.* harness_mode=runtime_fixture fallback_mode=runtime_events event_encoding=kind@pc:mode:result:c reason=runtime_fallback_events' $(SMOKE_LOG)
@@ -168,9 +169,13 @@ smoke: $(HARNESS) $(SMOKE_LOAD) $(SMOKE_PNG_SIG) $(OUT_DIR)
 	grep -q 'storealert_storealertchain_storehalt.*halfpcstoreremain_halfpcnegstoreremain' $(SMOKE_LOG)
 	grep -q 'shiftpcwlslload_shiftpcwlslstore_shiftpcwlslstoreremain_shiftpcwlsrload_shiftpcwlsrstore_shiftpcwlsrstoreremain_shiftpcwasrload_shiftpcwasrstore_shiftpcwasrstoreremain_shiftpcwrorload_shiftpcwrorstore_shiftpcwrorstoreremain_partialunsupported' $(SMOKE_LOG)
 	grep -q 'interp_scheduler_hash=.*rv32im_scheduler_hash=' $(SMOKE_LOG)
-	grep -q 'rv32im_blocks=270 rv32im_fallbacks=85 rv32im_initial_lookup_fallbacks=4 rv32im_relookup_fallbacks=78 rv32im_unsupported_fallbacks=3 rv32im_native_data_proc=94 rv32im_native_branch=7 rv32im_native_load=47 rv32im_native_store=32 rv32im_native_psr=5' $(SMOKE_LOG)
+	grep -q 'rv32im_blocks=270 rv32im_fallbacks=85 rv32im_initial_lookup_fallbacks=4 rv32im_relookup_fallbacks=78 rv32im_unsupported_fallbacks=3 rv32im_native_data_proc=96 rv32im_native_branch=7 rv32im_native_load=49 rv32im_native_store=33 rv32im_native_psr=5' $(SMOKE_LOG)
 	grep -q 'command=compare.*harness_mode=runtime_fixture frame_mode=runtime_snapshot mem_mode=runtime_stickybits' $(SMOKE_LOG)
 	grep -q 'reason=runtime_state_snapshot_frame_equal' $(SMOKE_LOG)
+	grep -q 'result=PASS command=mixed workload=mixed_dataproc_load_pcload_alert_update_fallback' $(SMOKE_LOG)
+	grep -q 'command=mixed .*rv32im_blocks=4 rv32im_fallbacks=1 rv32im_initial_lookup_fallbacks=0 rv32im_relookup_fallbacks=1 rv32im_unsupported_fallbacks=0 rv32im_native_data_proc=96 rv32im_native_branch=7 rv32im_native_load=49 rv32im_native_store=33 rv32im_native_psr=5 code_bytes=33192' $(SMOKE_LOG)
+	grep -q 'command=mixed .*interp_trace_count=5 rv32im_trace_count=5 .*interp_stepi_count=5 rv32im_stepi_count=5 .*interp_mem_event_count=3 rv32im_mem_event_count=3 .*interp_sched_event_count=1 rv32im_sched_event_count=1 .*interp_fallback_event_count=1 rv32im_fallback_event_count=1 .*interp_shadow_bytes=4 rv32im_shadow_bytes=4' $(SMOKE_LOG)
+	grep -q 'command=mixed .*harness_mode=runtime_fixture frame_mode=runtime_snapshot mem_mode=runtime_events scheduler_mode=runtime_events fallback_mode=runtime_events reason=runtime_mixed_contract_chain_equal' $(SMOKE_LOG)
 	grep -q 'result=PASS command=framehash backend=rv32im width=240 height=160 bytes=76800 hash=.* snapshot_frame_hash=.* harness_mode=runtime_fixture frame_mode=runtime_snapshot reason=runtime_snapshot_frame' $(SMOKE_LOG)
 	grep -q 'result=PASS command=png backend=rv32im width=240 height=160 frame_hash=.* snapshot_frame_hash=.* harness_mode=runtime_fixture frame_mode=runtime_snapshot path=$(SMOKE_RUNTIME_PNG)' $(SMOKE_LOG)
 	grep -q 'result=PASS command=png backend=rv32im width=240 height=160' $(SMOKE_LOG)
@@ -186,9 +191,20 @@ compare: $(HARNESS) | $(OUT_DIR)
 	grep -q 'result=PASS command=compare workload=.*loadbytepcnative_loadhalfpc_loadhalfpcremain_loadhalfpcnative_loadhalfregpc_loadhalfregpcremain_loadhalfregpcnative_loadsignedbyteregpc_loadsignedbyteregpcremain_loadsignedbyteregpcnative_loadsignedhalfregpc_loadsignedhalfregpcremain_loadsignedhalfregpcnative_loadsignedbytepc_loadsignedbytepcremain_loadsignedbytepcnative_loadsignedhalfpc_loadsignedhalfpcremain_loadsignedhalfpcnative' $(COMPARE_LOG)
 	grep -q 'storealert_storealertchain_storehalt.*halfpcstoreremain_halfpcnegstoreremain' $(COMPARE_LOG)
 	grep -q 'shiftpcwlslload_shiftpcwlslstore_shiftpcwlslstoreremain_shiftpcwlsrload_shiftpcwlsrstore_shiftpcwlsrstoreremain_shiftpcwasrload_shiftpcwasrstore_shiftpcwasrstoreremain_shiftpcwrorload_shiftpcwrorstore_shiftpcwrorstoreremain_partialunsupported' $(COMPARE_LOG)
-	grep -q 'rv32im_blocks=270 rv32im_fallbacks=85 rv32im_initial_lookup_fallbacks=4 rv32im_relookup_fallbacks=78 rv32im_unsupported_fallbacks=3 rv32im_native_data_proc=94 rv32im_native_branch=7 rv32im_native_load=47 rv32im_native_store=32 rv32im_native_psr=5' $(COMPARE_LOG)
+	grep -q 'rv32im_blocks=270 rv32im_fallbacks=85 rv32im_initial_lookup_fallbacks=4 rv32im_relookup_fallbacks=78 rv32im_unsupported_fallbacks=3 rv32im_native_data_proc=96 rv32im_native_branch=7 rv32im_native_load=49 rv32im_native_store=33 rv32im_native_psr=5' $(COMPARE_LOG)
 	grep -q 'reason=runtime_state_snapshot_frame_equal' $(COMPARE_LOG)
 	grep -q 'result=PASS command=quit backend=interp' $(COMPARE_LOG)
+
+mixed: $(HARNESS) | $(OUT_DIR)
+	printf 'mixed\nquit\n' | $(QEMU_RISCV32) ./$(HARNESS) | tee $(MIXED_LOG)
+	grep -q 'result=PASS command=mixed workload=mixed_dataproc_load_pcload_alert_update_fallback' $(MIXED_LOG)
+	grep -q 'interp_frame_hash=0xdd46b9ac rv32im_frame_hash=0xdd46b9ac interp_reg_hash=0x0d6b4707 rv32im_reg_hash=0x0d6b4707 interp_mem_hash=0x8a8fc055 rv32im_mem_hash=0x8a8fc055 interp_scheduler_hash=0x2af66ad5 rv32im_scheduler_hash=0x2af66ad5' $(MIXED_LOG)
+	grep -q 'interp_trace_count=5 rv32im_trace_count=5 interp_trace_hash=0x5dea3b65 rv32im_trace_hash=0x5dea3b65 interp_stepi_count=5 rv32im_stepi_count=5 interp_stepi_hash=0xc1c4ce49 rv32im_stepi_hash=0xc1c4ce49' $(MIXED_LOG)
+	grep -q 'interp_mem_event_count=3 rv32im_mem_event_count=3 interp_mem_event_hash=0x9abf465c rv32im_mem_event_hash=0x9abf465c interp_sched_event_count=1 rv32im_sched_event_count=1 interp_sched_event_hash=0x0792f634 rv32im_sched_event_hash=0x0792f634' $(MIXED_LOG)
+	grep -q 'interp_fallback_event_count=1 rv32im_fallback_event_count=1 interp_fallback_event_hash=0xc4528507 rv32im_fallback_event_hash=0xc4528507 interp_shadow_bytes=4 rv32im_shadow_bytes=4 interp_shadow_hash=0x6c30726c rv32im_shadow_hash=0x6c30726c' $(MIXED_LOG)
+	grep -q 'rv32im_blocks=4 rv32im_fallbacks=1 rv32im_initial_lookup_fallbacks=0 rv32im_relookup_fallbacks=1 rv32im_unsupported_fallbacks=0 rv32im_native_data_proc=96 rv32im_native_branch=7 rv32im_native_load=49 rv32im_native_store=33 rv32im_native_psr=5 code_bytes=33192' $(MIXED_LOG)
+	grep -q 'harness_mode=runtime_fixture frame_mode=runtime_snapshot mem_mode=runtime_events scheduler_mode=runtime_events fallback_mode=runtime_events reason=runtime_mixed_contract_chain_equal' $(MIXED_LOG)
+	grep -q 'result=PASS command=quit backend=interp' $(MIXED_LOG)
 
 rejects: $(HARNESS) | $(OUT_DIR)
 	printf 'backend rv32im\nrejects runtime\nquit\n' | $(QEMU_RISCV32) ./$(HARNESS) | tee $(REJECTS_LOG)
@@ -205,10 +221,10 @@ exec: $(EXEC_TEST)
 runtime: $(RUNTIME_TEST)
 	$(QEMU_RISCV32) ./$(RUNTIME_TEST)
 
-test: codegen abi exec runtime frontend core-build rejects compare smoke
+test: codegen abi exec runtime frontend core-build rejects compare mixed smoke
 
 clean:
 	rm -f $(HARNESS) $(CODEGEN) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST)
 	rm -rf $(OUT_DIR)
 
-.PHONY: all codegen abi exec runtime frontend core-build smoke compare test clean
+.PHONY: all codegen abi exec runtime frontend core-build smoke compare mixed test clean
