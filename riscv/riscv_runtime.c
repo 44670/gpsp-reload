@@ -2055,7 +2055,8 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
       (pc_base && writeback_address) ||
       mem_type == 0 ||
       (load && rd == REG_PC &&
-       (mem_type != 1 || writeback_address || !immediate_offset || pc_base)) ||
+       ((mem_type != 1 && mem_type != 2) ||
+        writeback_address || !immediate_offset || pc_base)) ||
       (!load && mem_type != 1) ||
       (!immediate_offset && ((opcode >> 8) & 0xfu) != 0))
   {

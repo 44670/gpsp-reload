@@ -15,7 +15,7 @@ typedef unsigned int usize;
 #define PROT_EXEC 4
 #define MAP_PRIVATE 2
 #define MAP_ANONYMOUS 32
-#define EXEC_MAP_BYTES 76288u
+#define EXEC_MAP_BYTES 77312u
 
 #define BLOCK_START_PC 0x08000000u
 #define BLOCK_END_PC 0x08000004u
@@ -583,6 +583,15 @@ typedef unsigned int usize;
 #define HALF_LOAD_PC_TARGET 0x00000090u
 #define HALF_LOAD_PC_TARGET_END_PC (HALF_LOAD_PC_TARGET + 4u)
 #define HALF_LOAD_PC_TARGET_CYCLES 5u
+#define SIGNED_BYTE_LOAD_PC_START_PC 0x08000c40u
+#define SIGNED_BYTE_LOAD_PC_END_PC (SIGNED_BYTE_LOAD_PC_START_PC + 4u)
+#define SIGNED_BYTE_LOAD_PC_CYCLES 5u
+#define SIGNED_BYTE_LOAD_PC_BASE_ADDR 0x020006c0u
+#define SIGNED_BYTE_LOAD_PC_ADDR (SIGNED_BYTE_LOAD_PC_BASE_ADDR + 0x25u)
+#define SIGNED_BYTE_LOAD_PC_TARGET 0xfffffff0u
+#define SIGNED_BYTE_LOAD_PC_TARGET_END_PC \
+  (SIGNED_BYTE_LOAD_PC_TARGET + 4u)
+#define SIGNED_BYTE_LOAD_PC_TARGET_CYCLES 5u
 #define PC_BASE_LOAD_WORD_ADDR (PC_BASE_LOAD_WORD_PC + 8u + 0x24u)
 #define PC_BASE_LOAD_BYTE_ADDR (PC_BASE_LOAD_BYTE_PC + 8u - 0x10u)
 #define LOAD_WORD_VALUE 0xa1b2c3d4u
@@ -1293,6 +1302,8 @@ typedef unsigned int usize;
 #define LOAD_BYTE_PC_TARGET_BLOCK_OFFSET 74752u
 #define HALF_LOAD_PC_BLOCK_OFFSET 75264u
 #define HALF_LOAD_PC_TARGET_BLOCK_OFFSET 75776u
+#define SIGNED_BYTE_LOAD_PC_BLOCK_OFFSET 76288u
+#define SIGNED_BYTE_LOAD_PC_TARGET_BLOCK_OFFSET 76800u
 #define EXPECTED_INITIAL_ROM_WATERMARK 16u
 
 u32 reg[REG_MAX];
@@ -1358,6 +1369,8 @@ static u8 *g_load_byte_pc_entry;
 static u8 *g_load_byte_pc_target_entry;
 static u8 *g_half_load_pc_entry;
 static u8 *g_half_load_pc_target_entry;
+static u8 *g_signed_byte_load_pc_entry;
+static u8 *g_signed_byte_load_pc_target_entry;
 static u8 *g_pc_base_load_entry;
 static u8 *g_pc_base_store_entry;
 static u8 *g_pc_base_half_load_entry;
@@ -2968,6 +2981,32 @@ static u32 build_half_load_pc_block(u8 *code)
   return code_bytes;
 }
 
+static u32 build_signed_byte_load_pc_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_signed_byte_load_pc_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_access_memory(&translation_ptr, meta,
+                                           HALF_LDRSB_PC_R3_0X25,
+                                           SIGNED_BYTE_LOAD_PC_START_PC,
+                                           SIGNED_BYTE_LOAD_PC_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=signed_byte_load_pc_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            SIGNED_BYTE_LOAD_PC_START_PC,
+                            SIGNED_BYTE_LOAD_PC_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
 static u32 build_pc_base_load_block(u8 *code)
 {
   u8 *translation_ptr = code;
@@ -4186,21 +4225,18 @@ static void expect_conditional_arm_ops_rejected(u8 *code)
   }
 }
 
-static void expect_signed_load_pc_unsupported_rejected(u8 *code)
+static void expect_signed_halfword_load_pc_unsupported_rejected(u8 *code)
 {
   static const u32 rejected_opcodes[] =
   {
-    HALF_LDRSB_PC_R3_0X25,
     HALF_LDRSH_PC_R3_0X26
   };
   static const u32 rejected_pcs[] =
   {
-    HALF_LDRSB_PC,
     HALF_LDRSH_PC
   };
   static const u32 rejected_cycles[] =
   {
-    HALF_LDRSB_BASE_CYCLES,
     HALF_LDRSH_BASE_CYCLES
   };
   unsigned i;
@@ -6934,6 +6970,18 @@ static void expect_half_load_pc_helper(const char *test_name)
     fail_u32(test_name, "read16_pc", g_read16_pc, HALF_LOAD_PC_START_PC);
 }
 
+static void expect_signed_byte_load_pc_helper(const char *test_name)
+{
+  if (g_read8s_calls != 1)
+    fail_u32(test_name, "read8s_calls", g_read8s_calls, 1);
+  if (g_read8s_addr != SIGNED_BYTE_LOAD_PC_ADDR)
+    fail_u32(test_name, "read8s_addr",
+             g_read8s_addr, SIGNED_BYTE_LOAD_PC_ADDR);
+  if (g_read8s_pc != SIGNED_BYTE_LOAD_PC_START_PC)
+    fail_u32(test_name, "read8s_pc",
+             g_read8s_pc, SIGNED_BYTE_LOAD_PC_START_PC);
+}
+
 static void run_load_pc_boundary_case(void)
 {
   reset_runtime_observations(LOAD_PC_START_PC);
@@ -7220,6 +7268,110 @@ static void run_half_load_pc_native_target_case(void)
              g_execute_pc, HALF_LOAD_PC_TARGET_END_PC);
   expect_half_load_pc_helper("half_load_pc_native_target");
   expect_stickybits_cleared("half_load_pc_native_target");
+}
+
+static void run_signed_byte_load_pc_boundary_case(void)
+{
+  reset_runtime_observations(SIGNED_BYTE_LOAD_PC_START_PC);
+  g_lookup_entry = g_signed_byte_load_pc_entry;
+  reg[3] = SIGNED_BYTE_LOAD_PC_BASE_ADDR;
+
+  execute_arm_translate_internal(SIGNED_BYTE_LOAD_PC_CYCLES + 2u, &reg[0]);
+
+  if (reg[REG_PC] != SIGNED_BYTE_LOAD_PC_TARGET)
+    fail_u32("signed_byte_load_pc_boundary", "pc",
+             reg[REG_PC], SIGNED_BYTE_LOAD_PC_TARGET);
+  if (g_lookup_calls != 1)
+    fail_u32("signed_byte_load_pc_boundary", "lookup_calls",
+             g_lookup_calls, 1);
+  if (g_lookup_pc != SIGNED_BYTE_LOAD_PC_START_PC)
+    fail_u32("signed_byte_load_pc_boundary", "lookup_pc",
+             g_lookup_pc, SIGNED_BYTE_LOAD_PC_START_PC);
+  if (g_update_calls != 1)
+    fail_u32("signed_byte_load_pc_boundary", "update_calls",
+             g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("signed_byte_load_pc_boundary", "update_cycles",
+             (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("signed_byte_load_pc_boundary", "execute_calls",
+             g_execute_calls, 0);
+  expect_signed_byte_load_pc_helper("signed_byte_load_pc_boundary");
+  expect_stickybits_cleared("signed_byte_load_pc_boundary");
+}
+
+static void run_signed_byte_load_pc_remaining_case(void)
+{
+  const u32 extra_cycles = 5u;
+
+  reset_runtime_observations(SIGNED_BYTE_LOAD_PC_START_PC);
+  g_lookup_entry = g_signed_byte_load_pc_entry;
+  reg[3] = SIGNED_BYTE_LOAD_PC_BASE_ADDR;
+
+  execute_arm_translate_internal(SIGNED_BYTE_LOAD_PC_CYCLES + 2u +
+                                 extra_cycles, &reg[0]);
+
+  if (reg[REG_PC] != SIGNED_BYTE_LOAD_PC_TARGET)
+    fail_u32("signed_byte_load_pc_remaining", "pc",
+             reg[REG_PC], SIGNED_BYTE_LOAD_PC_TARGET);
+  if (g_update_calls != 0)
+    fail_u32("signed_byte_load_pc_remaining", "update_calls",
+             g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("signed_byte_load_pc_remaining", "execute_calls",
+             g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("signed_byte_load_pc_remaining", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != SIGNED_BYTE_LOAD_PC_TARGET)
+    fail_u32("signed_byte_load_pc_remaining", "execute_pc",
+             g_execute_pc, SIGNED_BYTE_LOAD_PC_TARGET);
+  expect_signed_byte_load_pc_helper("signed_byte_load_pc_remaining");
+  expect_stickybits_cleared("signed_byte_load_pc_remaining");
+}
+
+static void run_signed_byte_load_pc_native_target_case(void)
+{
+  const u32 extra_cycles = 4u;
+
+  reset_runtime_observations(SIGNED_BYTE_LOAD_PC_START_PC);
+  g_lookup_entry = g_signed_byte_load_pc_entry;
+  g_lookup_next_pc = SIGNED_BYTE_LOAD_PC_TARGET;
+  g_lookup_next_entry = g_signed_byte_load_pc_target_entry;
+  reg[1] = CHAIN_R1_VALUE;
+  reg[2] = CHAIN_R2_VALUE;
+  reg[3] = SIGNED_BYTE_LOAD_PC_BASE_ADDR;
+
+  execute_arm_translate_internal(SIGNED_BYTE_LOAD_PC_CYCLES + 2u +
+                                 SIGNED_BYTE_LOAD_PC_TARGET_CYCLES +
+                                 extra_cycles, &reg[0]);
+
+  if (reg[REG_PC] != SIGNED_BYTE_LOAD_PC_TARGET_END_PC)
+    fail_u32("signed_byte_load_pc_native_target", "pc",
+             reg[REG_PC], SIGNED_BYTE_LOAD_PC_TARGET_END_PC);
+  if (reg[3] != CHAIN_R3_VALUE)
+    fail_u32("signed_byte_load_pc_native_target", "r3",
+             reg[3], CHAIN_R3_VALUE);
+  if (g_lookup_calls != 3)
+    fail_u32("signed_byte_load_pc_native_target", "lookup_calls",
+             g_lookup_calls, 3);
+  if (g_lookup_pc != SIGNED_BYTE_LOAD_PC_TARGET_END_PC)
+    fail_u32("signed_byte_load_pc_native_target", "lookup_pc",
+             g_lookup_pc, SIGNED_BYTE_LOAD_PC_TARGET_END_PC);
+  if (g_update_calls != 0)
+    fail_u32("signed_byte_load_pc_native_target", "update_calls",
+             g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("signed_byte_load_pc_native_target", "execute_calls",
+             g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("signed_byte_load_pc_native_target", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != SIGNED_BYTE_LOAD_PC_TARGET_END_PC)
+    fail_u32("signed_byte_load_pc_native_target", "execute_pc",
+             g_execute_pc, SIGNED_BYTE_LOAD_PC_TARGET_END_PC);
+  expect_signed_byte_load_pc_helper("signed_byte_load_pc_native_target");
+  expect_stickybits_cleared("signed_byte_load_pc_native_target");
 }
 
 static void expect_pc_base_load_helpers(const char *test_name)
@@ -10021,6 +10173,8 @@ u32 function_cc read_memory8s(u32 address)
   g_read8s_calls++;
   g_read8s_addr = address;
   g_read8s_pc = reg[REG_PC];
+  if (address == SIGNED_BYTE_LOAD_PC_ADDR)
+    return SIGNED_BYTE_LOAD_PC_TARGET;
   if (address == HALF_REG_PC_S8_ADDR)
     return HALF_REG_PC_S8_VALUE;
   return HALF_S8_VALUE;
@@ -10200,6 +10354,8 @@ void _start(void)
   u32 load_byte_pc_target_code_bytes;
   u32 half_load_pc_code_bytes;
   u32 half_load_pc_target_code_bytes;
+  u32 signed_byte_load_pc_code_bytes;
+  u32 signed_byte_load_pc_target_code_bytes;
   u32 pc_base_load_code_bytes;
   u32 pc_base_store_code_bytes;
   u32 pc_base_half_load_code_bytes;
@@ -10577,6 +10733,15 @@ void _start(void)
                                  HALF_LOAD_PC_TARGET_CYCLES,
                                  &g_half_load_pc_target_entry,
                                  "half_load_pc_target_emit_rejected");
+  signed_byte_load_pc_code_bytes =
+    build_signed_byte_load_pc_block(code + SIGNED_BYTE_LOAD_PC_BLOCK_OFFSET);
+  signed_byte_load_pc_target_code_bytes =
+    build_single_data_proc_block(code + SIGNED_BYTE_LOAD_PC_TARGET_BLOCK_OFFSET,
+                                 ADD_R3_R2_R1,
+                                 SIGNED_BYTE_LOAD_PC_TARGET,
+                                 SIGNED_BYTE_LOAD_PC_TARGET_CYCLES,
+                                 &g_signed_byte_load_pc_target_entry,
+                                 "signed_byte_load_pc_target_emit_rejected");
   pc_base_load_code_bytes =
     build_pc_base_load_block(code + PC_BASE_LOAD_BLOCK_OFFSET);
   store_word_code_bytes =
@@ -10860,8 +11025,8 @@ void _start(void)
   expect_psr_unsupported_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_multiply_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_multiply_long_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
-  expect_signed_load_pc_unsupported_rejected(code +
-                                             REG_OFFSET_REJECT_BLOCK_OFFSET);
+  expect_signed_halfword_load_pc_unsupported_rejected(
+    code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_pc_base_writeback_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_swi_hle_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
   expect_swap_pc_rejected(code + REG_OFFSET_REJECT_BLOCK_OFFSET);
@@ -11045,6 +11210,9 @@ void _start(void)
   run_half_load_pc_boundary_case();
   run_half_load_pc_remaining_case();
   run_half_load_pc_native_target_case();
+  run_signed_byte_load_pc_boundary_case();
+  run_signed_byte_load_pc_remaining_case();
+  run_signed_byte_load_pc_native_target_case();
   run_pc_base_load_remaining_case();
   run_half_load_remaining_cycles_case();
   run_pc_base_half_load_remaining_case();
@@ -11241,6 +11409,10 @@ void _start(void)
   put_u32_dec(half_load_pc_code_bytes);
   put_raw(" half_load_pc_target_code_bytes=");
   put_u32_dec(half_load_pc_target_code_bytes);
+  put_raw(" signed_byte_load_pc_code_bytes=");
+  put_u32_dec(signed_byte_load_pc_code_bytes);
+  put_raw(" signed_byte_load_pc_target_code_bytes=");
+  put_u32_dec(signed_byte_load_pc_target_code_bytes);
   put_raw(" pc_base_load_code_bytes=");
   put_u32_dec(pc_base_load_code_bytes);
   put_raw(" pc_base_store_code_bytes=");
@@ -11517,6 +11689,10 @@ void _start(void)
   put_u32_hex((u32)g_half_load_pc_entry);
   put_raw(" half_load_pc_target_entry=");
   put_u32_hex((u32)g_half_load_pc_target_entry);
+  put_raw(" signed_byte_load_pc_entry=");
+  put_u32_hex((u32)g_signed_byte_load_pc_entry);
+  put_raw(" signed_byte_load_pc_target_entry=");
+  put_u32_hex((u32)g_signed_byte_load_pc_target_entry);
   put_raw(" pc_base_load_entry=");
   put_u32_hex((u32)g_pc_base_load_entry);
   put_raw(" pc_base_store_entry=");

@@ -2677,9 +2677,6 @@ static int run_runtime_reject_audit(const char **reason,
   };
   static const runtime_access_memory_reject_case load_pc_cases[] =
   {
-    { RUNTIME_HALF_LDRSB_PC_R3_0X25, RUNTIME_HALF_LDRSB_PC,
-      RUNTIME_HALF_LDRSB_BASE_CYCLES,
-      "runtime_reject_ldrsb_pc_accepted" },
     { RUNTIME_HALF_LDRSH_PC_R3_0X26, RUNTIME_HALF_LDRSH_PC,
       RUNTIME_HALF_LDRSH_BASE_CYCLES,
       "runtime_reject_ldrsh_pc_accepted" }
