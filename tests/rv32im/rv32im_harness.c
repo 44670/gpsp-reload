@@ -10445,6 +10445,18 @@ static u32 runtime_trace_hash(u32 count)
   return hash;
 }
 
+static u32 runtime_trace_window_hash(u32 offset, u32 count)
+{
+  u32 i;
+  u32 hash = 2166136261u;
+
+  hash = fnv1a_update_u32(hash, g_runtime_trace_count);
+  hash = fnv1a_update_u32(hash, offset);
+  for (i = 0; i < count; i++)
+    hash = fnv1a_update_u32(hash, g_runtime_trace_pcs[offset + i]);
+  return hash;
+}
+
 static void runtime_mem_event_reset(void)
 {
   u32 i;
@@ -11599,11 +11611,13 @@ static void command_counters(char *mode)
   put_raw(" reason=synthetic_state_counters\n");
 }
 
-static void command_tracepc(char *arg, char *mode_arg)
+static void command_tracepc(char *arg, char *mode_arg, char *offset_arg)
 {
   char *count_arg = arg;
+  char *skip_arg = (char *)0;
   u32 runtime_mode = 0;
   u32 count;
+  u32 offset = 0;
   u32 i;
   u32 hash = 2166136261u;
 
@@ -11611,12 +11625,20 @@ static void command_tracepc(char *arg, char *mode_arg)
   {
     runtime_mode = 1;
     count_arg = mode_arg;
+    skip_arg = offset_arg;
   }
   else if (mode_arg && str_eq(mode_arg, "runtime"))
   {
     runtime_mode = 1;
+    skip_arg = offset_arg;
   }
-  else if (mode_arg && *mode_arg)
+  else if (offset_arg && str_eq(offset_arg, "runtime"))
+  {
+    runtime_mode = 1;
+    skip_arg = mode_arg;
+  }
+  else if ((mode_arg && *mode_arg && !str_eq(mode_arg, "synthetic")) ||
+           (offset_arg && *offset_arg))
   {
     print_fail("tracepc", "unknown_trace_mode");
     return;
@@ -11625,11 +11647,14 @@ static void command_tracepc(char *arg, char *mode_arg)
   count = optional_count(count_arg, 8);
   if (count > 16)
     count = 16;
+  if (runtime_mode)
+    offset = optional_count(skip_arg, 0);
 
   if (runtime_mode)
   {
     const char *runtime_reason = "runtime_unknown";
     u32 stored_count;
+    u32 available_count;
 
     if (!capture_runtime_lookup_trace(&runtime_reason))
     {
@@ -11644,9 +11669,12 @@ static void command_tracepc(char *arg, char *mode_arg)
     }
 
     stored_count = runtime_trace_stored_count();
-    if (count > stored_count)
-      count = stored_count;
-    hash = runtime_trace_hash(count);
+    if (offset > stored_count)
+      offset = stored_count;
+    available_count = stored_count - offset;
+    if (count > available_count)
+      count = available_count;
+    hash = runtime_trace_window_hash(offset, count);
 
     put_raw("result=PASS command=tracepc backend=");
     put_raw(backend_name());
@@ -11656,12 +11684,14 @@ static void command_tracepc(char *arg, char *mode_arg)
     put_u32_dec(g_runtime_trace_count);
     put_raw(" stored=");
     put_u32_dec(stored_count);
+    put_raw(" offset=");
+    put_u32_dec(offset);
     put_raw(" pcs=");
     for (i = 0; i < count; i++)
     {
       if (i)
         put_chr(',');
-      put_u32_hex(g_runtime_trace_pcs[i]);
+      put_u32_hex(g_runtime_trace_pcs[offset + i]);
     }
     put_raw(" hash=");
     put_u32_hex(hash);
@@ -12403,7 +12433,8 @@ static void process_line(char *line)
   else if (str_eq(cmd, "tracepc"))
   {
     char *arg = next_token(&cursor);
-    command_tracepc(arg, next_token(&cursor));
+    char *mode = next_token(&cursor);
+    command_tracepc(arg, mode, next_token(&cursor));
   }
   else if (str_eq(cmd, "bp"))
   {
