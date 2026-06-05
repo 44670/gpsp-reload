@@ -6,6 +6,7 @@ QEMU_RISCV32 ?= qemu-riscv32
 HARNESS := rv32im_harness
 CODEGEN := rv32im_codegen
 ARMWRESTLER := rv32im_armwrestler
+ARMWRESTLER_INTERP := rv32im_armwrestler_interp
 ABI_TEST := rv32im_abi_test
 EXEC_TEST := rv32im_exec_test
 RUNTIME_TEST := rv32im_runtime_test
@@ -19,6 +20,7 @@ COMPARE_LOG := $(OUT_DIR)/rv32im_harness_compare.log
 MIXED_LOG := $(OUT_DIR)/rv32im_harness_mixed.log
 REJECTS_LOG := $(OUT_DIR)/rv32im_harness_rejects.log
 ARMWRESTLER_LOG := $(OUT_DIR)/rv32im_armwrestler.log
+ARMWRESTLER_INTERP_LOG := $(OUT_DIR)/rv32im_armwrestler_interp.log
 CODEGEN_BIN := $(OUT_DIR)/rv32im_codegen.bin
 CODEGEN_REF_ELF := $(OUT_DIR)/rv32im_codegen_ref.elf
 CODEGEN_REF_BIN := $(OUT_DIR)/rv32im_codegen_ref.bin
@@ -57,9 +59,10 @@ FRONTEND_WARNFLAGS := \
 	-Wno-implicit-fallthrough
 
 HOST_CC ?= cc
+HOST_CXX ?= c++
 LLVM_OBJCOPY ?= llvm-objcopy
 
-all: $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST)
+all: $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_INTERP) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST)
 
 $(HARNESS): rv32im_harness.c $(ROOT)/riscv/riscv_runtime.c \
 		$(ROOT)/riscv/riscv_emit.h $(ROOT)/riscv/riscv_codegen.h \
@@ -94,6 +97,14 @@ $(ARMWRESTLER): rv32im_armwrestler.c rv32im_frontend_shim.h \
 		-include rv32im_frontend_shim.h \
 		-o $@ rv32im_armwrestler.c $(ROOT)/cpu_threaded.c \
 		$(ROOT)/riscv/riscv_runtime.c
+
+$(ARMWRESTLER_INTERP): rv32im_armwrestler_interp.cc $(ROOT)/cpu.cc \
+		$(ROOT)/cpu.h $(ROOT)/gba_memory.h $(ROOT)/common.h
+	$(HOST_CXX) -std=c++11 -O2 -Wall -Wextra \
+		-DHAVE_STRINGS_H -DHAVE_STDINT_H -DHAVE_INTTYPES_H \
+		-I$(ROOT) -I$(ROOT)/libretro \
+		-I$(ROOT)/libretro/libretro-common/include \
+		-o $@ rv32im_armwrestler_interp.cc $(ROOT)/cpu.cc
 
 $(OUT_DIR):
 	mkdir -p $@
@@ -232,6 +243,18 @@ armwrestler-jit: $(ARMWRESTLER) | $(OUT_DIR)
 	grep -q 'fallbacks=0 fallback_events=0 execute_arm_calls=0' $(ARMWRESTLER_LOG)
 	grep -q 'harness_mode=armwrestler_frontend_jit_only reason=armwrestler_arm0_jit_only_passed' $(ARMWRESTLER_LOG)
 
+armwrestler-interp: $(ARMWRESTLER_INTERP) | $(OUT_DIR)
+	./$(ARMWRESTLER_INTERP) | tee $(ARMWRESTLER_INTERP_LOG)
+	grep -q 'result=PASS command=armwrestler-interp test=arm0' $(ARMWRESTLER_INTERP_LOG)
+	grep -q 'observed_results=15 failure_mask=0x00000000' $(ARMWRESTLER_INTERP_LOG)
+	grep -q 'harness_mode=armwrestler_interpreter reason=armwrestler_arm0_interpreter_passed' $(ARMWRESTLER_INTERP_LOG)
+
+armwrestler: armwrestler-interp armwrestler-jit
+	grep -q 'observed_results=15 failure_mask=0x00000000' $(ARMWRESTLER_INTERP_LOG)
+	grep -q 'observed_results=15 failure_mask=0x00000000' $(ARMWRESTLER_LOG)
+	grep -q 'native_blocks=[1-9][0-9]*' $(ARMWRESTLER_LOG)
+	grep -q 'code_bytes=[1-9][0-9]*' $(ARMWRESTLER_LOG)
+
 abi: $(ABI_TEST)
 	$(QEMU_RISCV32) ./$(ABI_TEST)
 
@@ -244,7 +267,7 @@ runtime: $(RUNTIME_TEST)
 test: codegen abi exec runtime frontend core-build rejects compare mixed smoke
 
 clean:
-	rm -f $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST)
+	rm -f $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_INTERP) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST)
 	rm -rf $(OUT_DIR)
 
-.PHONY: all codegen abi exec runtime frontend core-build smoke compare mixed rejects armwrestler-jit test clean
+.PHONY: all codegen abi exec runtime frontend core-build smoke compare mixed rejects armwrestler-jit armwrestler-interp armwrestler test clean
