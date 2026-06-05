@@ -369,8 +369,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   partial-unsupported native discard
   fallback, ARM lookup-miss/invalid fallback, Thumb lookup-miss/invalid fallback, and Thumb unsupported-block fallback fixtures against a local ARM
   reference model, with
-  two hundred forty six runtime blocks executed, seventy three total runtime
-  fallbacks split into four initial lookup fallbacks, sixty six relookup
+  two hundred fifty runtime blocks executed, seventy five total runtime
+  fallbacks split into four initial lookup fallbacks, sixty eight relookup
   fallbacks, and three unsupported-block fallbacks, basic data-processing native fallthrough chaining, remaining-cycle and invalid re-lookup fallback handoffs,
   ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results and remaining-cycle handoff, MSR CPSR flag remaining-cycle handoff,
@@ -381,7 +381,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   checked, carry-input data-processing, carry-input flag, logical flag, and
   extended shifted and register-shifted data-processing results checked,
   register-shifted flag/test and TEQ/CMN CPSR results checked,
-  helper memory, helper load, word/byte load-to-PC, word/byte load-to-PC native target chaining, halfword load-to-PC standalone native target chaining, PC-write native target chaining, PC-write target native fallthrough chaining, PC-write Thumb fallback, PC-relative load, and register-offset load plus writeback store/load remaining-cycle handoffs, PC-relative store memory and remaining-cycle handoff,
+  helper memory, helper load, word/byte/halfword load-to-PC, word/byte/halfword load-to-PC native target chaining, PC-write native target chaining, PC-write target native fallthrough chaining, PC-write Thumb fallback, PC-relative load, and register-offset load plus writeback store/load remaining-cycle handoffs, PC-relative store memory and remaining-cycle handoff,
   source-PC store value and remaining-cycle handoff, word-store,
   IO-window word-store helper observation, byte-store,
   register-offset byte-store, shifted-LSL/shifted-LSL-with-PC/shifted-LSR/shifted-LSR-with-PC/shifted-ASR/shifted-ASR-with-PC/shifted-ROR/shifted-ROR-with-PC register-offset byte-store, and RRX
@@ -425,7 +425,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   PC-write ADD remaining-cycle execution exercised,
   scheduler/update cycle-refill, PC-change chaining, and frame-complete PC-change exit, HALT/idle-loop/Thumb-lookup observations hashed, with
   unsupported-block, Thumb unsupported-block, Thumb lookup-miss/invalid, helper load, load-to-PC, PC-relative load/store, PSR read/write, word store, register-offset load/store, PC-register-offset word/byte store, immediate/PC-relative/register-offset halfword load, PC-register-offset halfword load/store, register-offset halfword store, direct-branch, BL, BX ARM, BX Thumb, SWI, and PC-write ADD
-  remaining-cycle lookup-misses, byte load-to-PC remaining-cycle,
+  remaining-cycle lookup-misses, byte and halfword load-to-PC remaining-cycle,
   byte-store normal/alert, block-memory, and SWP alert remaining-cycle
   lookup-misses, and SWPB remaining-cycle lookup-miss fallbacks observed
 
@@ -442,12 +442,12 @@ signed load-to-PC forms (`LDRSB` and `LDRSH` with `Rd=PC`) stay rejected by
 the native emitter until a separate interpreter-parity proof exists.
 Immediate no-writeback `LDRB pc` now has standalone and qemu-user compare
 proof for boundary, remaining-cycle, and native-target chaining behavior.
-Immediate no-writeback `LDRH pc` has the same standalone proof shape; qemu-user
-compare coverage should follow before widening that form. PC-base writeback
-and post-index load/store forms are likewise proven rejected for word/byte and
-halfword memory classes. A standalone partial-unsupported block remains as the
-focused `riscv_emit_block_finalize()` proof for the same discard-and-fallback
-contract.
+Immediate no-writeback `LDRH pc` now has standalone and qemu-user compare
+proof for the same boundary, remaining-cycle, and native-target chaining
+behavior. PC-base writeback and post-index load/store forms are likewise proven
+rejected for word/byte and halfword memory classes. A standalone
+partial-unsupported block remains as the focused `riscv_emit_block_finalize()`
+proof for the same discard-and-fallback contract.
 A standalone patch-site
 case rewrites the same `riscv_patch_unconditional_branch()` slot from one
 native target block to another for the same guest branch target PC, flushes the
