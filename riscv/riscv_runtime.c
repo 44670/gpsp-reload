@@ -2042,7 +2042,7 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
       (pc_base && writeback_address) ||
       mem_type == 0 || (load && rd == REG_PC) ||
       (!load && mem_type != 1) ||
-      (!immediate_offset && (((opcode >> 8) & 0xfu) != 0 || rm == REG_PC)))
+      (!immediate_offset && ((opcode >> 8) & 0xfu) != 0))
   {
     return false;
   }
@@ -2070,7 +2070,7 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
   {
     u8 *translation_ptr;
 
-    riscv_emit_arm_reg_load(&ptr, riscv_reg_t0, rm);
+    riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t0, rm, pc + 8u);
     translation_ptr = ptr;
     if (!pre_index)
     {
