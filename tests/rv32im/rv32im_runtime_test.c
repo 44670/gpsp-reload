@@ -15,7 +15,7 @@ typedef unsigned int usize;
 #define PROT_EXEC 4
 #define MAP_PRIVATE 2
 #define MAP_ANONYMOUS 32
-#define EXEC_MAP_BYTES 73728u
+#define EXEC_MAP_BYTES 74240u
 
 #define BLOCK_START_PC 0x08000000u
 #define BLOCK_END_PC 0x08000004u
@@ -596,6 +596,10 @@ typedef unsigned int usize;
 #define PC_BASE_STORE_ADDR (PC_BASE_STORE_START_PC + 8u + 0x20u)
 #define STORE_VALUE 0x13579bdfu
 #define STORE_PC_VALUE (STORE_PC_START_PC + 12u)
+#define STORE_ALERT_CHAIN_END_PC (STORE_WORD_END_PC + 4u)
+#define STORE_ALERT_CHAIN_CYCLES 5u
+#define STORE_ALERT_CHAIN_TOTAL_CYCLES \
+  (STORE_TOTAL_CYCLES + STORE_ALERT_CHAIN_CYCLES)
 #define STORE_WORD_BLOCK_OFFSET 1536u
 #define STORE_BYTE_BLOCK_OFFSET 2048u
 #define STORE_PC_BLOCK_OFFSET 2560u
@@ -1269,6 +1273,7 @@ typedef unsigned int usize;
 #define REPATCH_BRANCH_BLOCK_OFFSET 72192u
 #define REPATCH_BRANCH_TARGET_A_BLOCK_OFFSET 72704u
 #define REPATCH_BRANCH_TARGET_B_BLOCK_OFFSET 73216u
+#define STORE_ALERT_CHAIN_BLOCK_OFFSET 73728u
 #define EXPECTED_INITIAL_ROM_WATERMARK 16u
 
 u32 reg[REG_MAX];
@@ -1335,6 +1340,7 @@ static u8 *g_pc_base_store_entry;
 static u8 *g_pc_base_half_load_entry;
 static u8 *g_pc_base_half_store_entry;
 static u8 *g_pc_base_half_neg_store_entry;
+static u8 *g_store_alert_chain_entry;
 static u8 *g_store_word_entry;
 static u8 *g_store_byte_entry;
 static u8 *g_store_pc_entry;
@@ -9566,6 +9572,51 @@ static void run_store_smc_irq_alert_case(void)
   expect_stickybits_cleared("store_smc_irq");
 }
 
+static void run_store_smc_irq_native_chain_case(void)
+{
+  riscv_runtime_stats stats_before;
+
+  reset_runtime_observations(STORE_WORD_START_PC);
+  g_lookup_entry = g_store_word_entry;
+  g_lookup_next_pc = STORE_WORD_END_PC;
+  g_lookup_next_entry = g_store_alert_chain_entry;
+  g_store_alert = CPU_ALERT_SMC | CPU_ALERT_IRQ;
+  reg[1] = CHAIN_R1_VALUE;
+  reg[2] = CHAIN_R2_VALUE;
+  reg[3] = STORE_BASE_ADDR;
+  reg[6] = STORE_VALUE;
+  riscv_get_runtime_stats(&stats_before);
+
+  execute_arm_translate_internal(STORE_ALERT_CHAIN_TOTAL_CYCLES, &reg[0]);
+
+  expect_store_word("store_smc_irq_chain", STORE_WORD_END_PC);
+  if (reg[3] != CHAIN_R3_VALUE)
+    fail_u32("store_smc_irq_chain", "r3", reg[3], CHAIN_R3_VALUE);
+  if (reg[REG_PC] != STORE_ALERT_CHAIN_END_PC)
+    fail_u32("store_smc_irq_chain", "pc",
+             reg[REG_PC], STORE_ALERT_CHAIN_END_PC);
+  if (g_lookup_calls != 2)
+    fail_u32("store_smc_irq_chain", "lookup_calls", g_lookup_calls, 2);
+  if (g_lookup_pc != STORE_WORD_END_PC)
+    fail_u32("store_smc_irq_chain", "lookup_pc",
+             g_lookup_pc, STORE_WORD_END_PC);
+  if (g_flush_calls != 1)
+    fail_u32("store_smc_irq_chain", "flush_calls", g_flush_calls, 1);
+  if (g_irq_check_calls != 1)
+    fail_u32("store_smc_irq_chain", "irq_calls", g_irq_check_calls, 1);
+  if (g_update_calls != 1)
+    fail_u32("store_smc_irq_chain", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("store_smc_irq_chain", "update_cycles",
+             (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("store_smc_irq_chain", "execute_calls",
+             g_execute_calls, 0);
+  expect_runtime_fallback_delta("store_smc_irq_chain_stats",
+                                &stats_before, 2, 0, 0, 0, 0);
+  expect_stickybits_cleared("store_smc_irq_chain");
+}
+
 static void run_store_halt_alert_case(void)
 {
   const u32 extra_cycles = 2u;
@@ -9863,6 +9914,7 @@ void _start(void)
   u32 pc_base_half_load_code_bytes;
   u32 pc_base_half_store_code_bytes;
   u32 pc_base_half_neg_store_code_bytes;
+  u32 store_alert_chain_code_bytes;
   u32 store_word_code_bytes;
   u32 store_byte_code_bytes;
   u32 store_pc_code_bytes;
@@ -10223,6 +10275,13 @@ void _start(void)
                       STORE_STR_R6_R3_0X28,
                       STORE_WORD_START_PC,
                       &g_store_word_entry);
+  store_alert_chain_code_bytes =
+    build_single_data_proc_block(code + STORE_ALERT_CHAIN_BLOCK_OFFSET,
+                                 ADD_R3_R2_R1,
+                                 STORE_WORD_END_PC,
+                                 STORE_ALERT_CHAIN_CYCLES,
+                                 &g_store_alert_chain_entry,
+                                 "store_alert_chain_rejected");
   store_byte_code_bytes =
     build_store_block(code + STORE_BYTE_BLOCK_OFFSET,
                       STORE_STRB_R6_R3_0X29,
@@ -10725,6 +10784,7 @@ void _start(void)
   run_store_byte_smc_irq_alert_case();
   run_store_byte_halt_alert_case();
   run_store_smc_irq_alert_case();
+  run_store_smc_irq_native_chain_case();
   run_store_halt_alert_case();
   run_half_store_smc_irq_alert_case();
   run_half_store_halt_alert_case();
@@ -10869,6 +10929,8 @@ void _start(void)
   put_u32_dec(pc_base_half_neg_store_code_bytes);
   put_raw(" store_word_code_bytes=");
   put_u32_dec(store_word_code_bytes);
+  put_raw(" store_alert_chain_code_bytes=");
+  put_u32_dec(store_alert_chain_code_bytes);
   put_raw(" store_byte_code_bytes=");
   put_u32_dec(store_byte_code_bytes);
   put_raw(" store_pc_code_bytes=");
@@ -11133,6 +11195,8 @@ void _start(void)
   put_u32_hex((u32)g_pc_base_half_neg_store_entry);
   put_raw(" store_word_entry=");
   put_u32_hex((u32)g_store_word_entry);
+  put_raw(" store_alert_chain_entry=");
+  put_u32_hex((u32)g_store_alert_chain_entry);
   put_raw(" store_byte_entry=");
   put_u32_hex((u32)g_store_byte_entry);
   put_raw(" store_pc_entry=");

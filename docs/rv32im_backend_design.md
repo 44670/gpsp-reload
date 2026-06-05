@@ -343,7 +343,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   conditional-header truth-table taken/skipped behavior for ARM conditions `0..13`,
   conditional-header target native fallthrough chaining,
   `MOV pc, r14` PC-write behavior, `MOVS pc, r14` SPSR restore behavior,
-  store-triggered SMC/IRQ/HALT alert handling, byte-store SMC/IRQ/HALT alert handling,
+  store-triggered SMC/IRQ/HALT alert handling, store-triggered SMC/IRQ native
+  chaining after alert handling, byte-store SMC/IRQ/HALT alert handling,
   halfword SMC/IRQ alert handling, store/halfword/block/SWP HALT-alert handling,
   block-memory SMC/IRQ alert handling, SWP-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, ARM lookup-miss/invalid fallback, Thumb lookup-miss/invalid fallback, and Thumb unsupported-block fallback fixtures against a local ARM
@@ -424,7 +425,10 @@ without applying that partial native register write. A standalone patch-site
 case rewrites the same `riscv_patch_unconditional_branch()` slot from one
 native target block to another for the same guest branch target PC, flushes the
 patched instruction range each time, and proves execution follows the updated
-host target.
+host target. A store-alert native-chain case proves that a helper-returned
+`CPU_ALERT_SMC | CPU_ALERT_IRQ` is consumed exactly once, runs the RAM cache
+flush and IRQ hooks, then continues to a native block at the store fallthrough
+PC without falling back or leaking the alert into the chained block.
 
 Remaining first-phase gaps should stay narrow and evidence-driven:
 
