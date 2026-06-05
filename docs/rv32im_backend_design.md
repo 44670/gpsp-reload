@@ -331,6 +331,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   `BL` link-register branch-to-native-target, and `BX r7`
   indirect-branch-to-native-target runtime fixtures, SWI-to-BIOS target
   mode/bus/banked-state effects, patchable SWI-to-native-target chaining,
+  patchable SWI target native fallthrough chaining,
   conditional-header truth-table taken/skipped behavior for ARM conditions `0..13`,
   conditional-header target native fallthrough chaining,
   `MOV pc, r14` PC-write behavior, `MOVS pc, r14` SPSR restore behavior,
@@ -339,7 +340,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   block-memory SMC/IRQ alert handling, SWP-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, ARM lookup-miss/invalid fallback, Thumb lookup-miss/invalid fallback, and Thumb unsupported-block fallback fixtures against a local ARM
   reference model, with
-  two hundred two runtime blocks executed, fifty five total runtime
+  two hundred four runtime blocks executed, fifty five total runtime
   fallbacks split into four initial lookup fallbacks, forty nine relookup
   fallbacks, and two unsupported-block fallbacks, basic data-processing native fallthrough chaining, remaining-cycle and invalid re-lookup fallback handoffs,
   ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
@@ -382,7 +383,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   patched-branch target native fallthrough chaining, and
   conditional-header target native fallthrough chaining, and
   BL target native fallthrough chaining, SWI target native fallthrough
-  chaining, PC-write target native fallthrough chaining, LDM-PC target native
+  chaining, patchable SWI target native fallthrough chaining,
+  PC-write target native fallthrough chaining, LDM-PC target native
   fallthrough chaining, and direct-branch, BL, BX ARM, BX Thumb, SWI, and
   PC-write ADD remaining-cycle execution exercised,
   scheduler/update cycle-refill, PC-change chaining, and frame-complete PC-change exit, HALT/idle-loop/Thumb-lookup observations hashed, with

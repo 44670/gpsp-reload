@@ -56,7 +56,8 @@ typedef unsigned int usize;
   "branch_patch_externalfallthrough_" \
   "branch_patch_internal_blremain_bl_bltargetchain_bxremain_bx_bxtargetchain_" \
   "bxthumbremain_" \
-  "swiremain_swi_switargetchain_swipatch_condtruth_condfallthrough_" \
+  "swiremain_swi_switargetchain_swipatch_swipatchfallthrough_" \
+  "condtruth_condfallthrough_" \
   "pcwrite_pcwritenative_" \
   "pcwritefallthrough_pcwritethumb_pcaddremain_spsr_idle_" \
   "thumb_fallback_thumbinvalidlookup_" \
@@ -66,7 +67,7 @@ typedef unsigned int usize;
 #define ZLIB_BLOCK_MAX 65535u
 #define ZLIB_BLOCKS ((PNG_RAW_SIZE + ZLIB_BLOCK_MAX - 1) / ZLIB_BLOCK_MAX)
 #define ZLIB_SIZE (2 + PNG_RAW_SIZE + (ZLIB_BLOCKS * 5) + 4)
-#define RUNTIME_TRACE_MAX 256u
+#define RUNTIME_TRACE_MAX 512u
 #define RUNTIME_MEM_EVENT_MAX 256u
 #define RUNTIME_SCHED_EVENT_MAX 256u
 #define RUNTIME_FALLBACK_EVENT_MAX 256u
@@ -8967,6 +8968,34 @@ static void run_runtime_reference_workload(const struct harness_state *base,
                                                  0, 0, 0,
                                                  0, 0);
 
+  for (i = 0; i < REG_MAX; i++)
+    values[i] = 0;
+  values[1] = branch_r1;
+  values[2] = branch_r2;
+  values[9] = branch_r1 + branch_r2;
+  values[10] = values[9] + branch_r1;
+  values[REG_LR] = RUNTIME_SWI_LINK_PC;
+  values[REG_PC] = RUNTIME_SWI_FALLTHROUGH_END_PC;
+  values[REG_CPSR] = RUNTIME_SWI_CPSR_VALUE;
+  values[CPU_MODE] = MODE_SUPERVISOR;
+  values[CPU_HALT_STATE] = CPU_ACTIVE;
+  values[REG_BUS_VALUE] = RUNTIME_SWI_BUS_VALUE;
+  reg_hash = runtime_update_reg_hash(reg_hash, values);
+  reg_hash = runtime_update_supervisor_state_hash(reg_hash,
+                                                  RUNTIME_SWI_LINK_PC,
+                                                  RUNTIME_SWI_INITIAL_CPSR);
+  mem_hash = runtime_update_memory_hash(mem_hash,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        runtime_reference_sticky_hash());
+  scheduler_hash = runtime_update_scheduler_hash(
+    scheduler_hash,
+    2, RUNTIME_SWI_TARGET_END_PC, 0,
+    1, 0,
+    0, 0, 0,
+    0, 0);
+
   for (condition = 0; condition < RUNTIME_COND_CONDITIONS; condition++)
   {
     for (i = 0; i < REG_MAX; i++)
@@ -9270,7 +9299,7 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   snapshot->reg_hash = reg_hash;
   snapshot->mem_hash = mem_hash;
   snapshot->scheduler_hash = scheduler_hash;
-  snapshot->blocks = 202;
+  snapshot->blocks = 204;
   snapshot->fallbacks = 55;
   snapshot->initial_lookup_fallbacks = 4;
   snapshot->relookup_fallbacks = 49;
@@ -10785,6 +10814,28 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   reg[1] = g_runtime_fixture_branch_r1;
   reg[2] = g_runtime_fixture_branch_r2;
   execute_arm_translate_internal(RUNTIME_SWI_TOTAL_CYCLES, &reg[0]);
+  g_runtime_swi_patch_lookup = 0;
+  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+  reg_hash = runtime_update_supervisor_state_hash(
+    reg_hash,
+    reg_mode[MODE_SUPERVISOR & 0xfu][6],
+    spsr[MODE_SUPERVISOR & 0xfu]);
+  mem_hash = runtime_update_current_memory_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+
+  reset_runtime_fixture_state(RUNTIME_SWI_START_PC);
+  g_runtime_swi_patch_lookup = 1;
+  g_runtime_swi_fallthrough_target_lookup = 1;
+  reg[REG_CPSR] = RUNTIME_SWI_INITIAL_CPSR;
+  reg[CPU_MODE] = 0x1fu;
+  reg[REG_LR] = 0x12345678u;
+  reg_mode[MODE_SUPERVISOR & 0xfu][6] = 0xa5a5a5a5u;
+  spsr[MODE_SUPERVISOR & 0xfu] = 0x11111111u;
+  reg[1] = g_runtime_fixture_branch_r1;
+  reg[2] = g_runtime_fixture_branch_r2;
+  execute_arm_translate_internal(RUNTIME_SWI_FALLTHROUGH_TOTAL_CYCLES,
+                                 &reg[0]);
+  g_runtime_swi_fallthrough_target_lookup = 0;
   g_runtime_swi_patch_lookup = 0;
   reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
   reg_hash = runtime_update_supervisor_state_hash(
