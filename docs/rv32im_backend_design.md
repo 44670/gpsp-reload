@@ -367,8 +367,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   partial-unsupported native discard
   fallback, ARM lookup-miss/invalid fallback, Thumb lookup-miss/invalid fallback, and Thumb unsupported-block fallback fixtures against a local ARM
   reference model, with
-  two hundred fifty runtime blocks executed, seventy five total runtime
-  fallbacks split into four initial lookup fallbacks, sixty eight relookup
+  two hundred fifty eight runtime blocks executed, seventy nine total runtime
+  fallbacks split into four initial lookup fallbacks, seventy two relookup
   fallbacks, and three unsupported-block fallbacks, basic data-processing native fallthrough chaining, remaining-cycle and invalid re-lookup fallback handoffs,
   ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results and remaining-cycle handoff, MSR CPSR flag remaining-cycle handoff,
@@ -431,7 +431,8 @@ The qemu-user harness now proves that partial native bytes emitted before a
 block is marked unsupported are discarded, then the block routes through the
 interpreter fallback without applying the partial native register write. The
 lower-level standalone runtime test also emits the PC-relative signed-byte
-load and positive/negative halfword store, PC-register-offset word/byte store, shifted-LSL/LSR/ASR/ROR
+load and positive/negative halfword store, register-offset `LDRH pc`,
+PC-register-offset word/byte store, shifted-LSL/LSR/ASR/ROR
 PC-register-offset word/byte load/store, and halfword load/store blocks plus
 LSL/LSR/ASR/ROR/RRX register-offset load blocks and LSL/LSR/ASR/ROR/RRX
 register-offset store blocks, then checks their helper address, PC, value,
@@ -445,7 +446,10 @@ compare proof for the same boundary, remaining-cycle, and native-target
 chaining behavior with a sign-extended PC target. Immediate no-writeback
 `LDRSH pc` now has standalone and qemu-user compare proof for the same
 boundary, remaining-cycle, and native-target chaining behavior with a
-sign-extended PC target. PC-base writeback and post-index load/store forms are
+sign-extended PC target. Register-offset `LDRH pc` now has standalone proof
+for boundary, remaining-cycle, and native-target chaining behavior; qemu-user
+compare coverage should follow before widening signed register-offset
+load-to-PC forms. PC-base writeback and post-index load/store forms are
 likewise proven rejected for word/byte and halfword memory classes. A
 standalone partial-unsupported block remains as the focused
 `riscv_emit_block_finalize()` proof for the same discard-and-fallback contract.
