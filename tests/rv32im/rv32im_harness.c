@@ -50,7 +50,8 @@ typedef unsigned int usize;
   "blockpushremain_blockpc_blockpcnative_blockspsr_hle_" \
   "hledivarmremain_pcsrc_pcsrcremain_writeback_writebackstoreremain_" \
   "writebackloadremain_swp_swpalert_swphalt_swpb_alert_branchremain_" \
-  "branchchainremain_armlookupmiss_arminvalidlookup_branchupdaterefill_" \
+  "branchtargetchain_branchchainremain_armlookupmiss_arminvalidlookup_" \
+  "branchupdaterefill_" \
   "branchupdatepc_branchupdateframepc_branch_patch_external_" \
   "branch_patch_internal_blremain_bl_bxremain_bx_bxthumbremain_" \
   "swiremain_swi_swipatch_condtruth_pcwrite_pcwritenative_" \
@@ -65,7 +66,7 @@ typedef unsigned int usize;
 #define RUNTIME_MEM_EVENT_MAX 256u
 #define RUNTIME_SCHED_EVENT_MAX 256u
 #define RUNTIME_FALLBACK_EVENT_MAX 256u
-#define RUNTIME_EXEC_MAP_BYTES 55808u
+#define RUNTIME_EXEC_MAP_BYTES 56320u
 #define RUNTIME_LOAD_BLOCK_OFFSET 512u
 #define RUNTIME_STORE_BLOCK_OFFSET 1024u
 #define RUNTIME_BRANCH_BLOCK_OFFSET 1536u
@@ -156,6 +157,7 @@ typedef unsigned int usize;
 #define RUNTIME_SHIFTED_REG_OFFSET_ASR_STORE_BLOCK_OFFSET 54272u
 #define RUNTIME_SHIFTED_REG_OFFSET_ROR_STORE_BLOCK_OFFSET 54784u
 #define RUNTIME_FALLTHROUGH_TARGET_BLOCK_OFFSET 55296u
+#define RUNTIME_BRANCH_FALLTHROUGH_TARGET_BLOCK_OFFSET 55808u
 #define RUNTIME_START_PC 0x08000000u
 #define RUNTIME_END_PC (RUNTIME_START_PC + 4u)
 #define RUNTIME_CYCLES 7u
@@ -542,6 +544,11 @@ typedef unsigned int usize;
 #define RUNTIME_BRANCH_TARGET_CYCLES 5u
 #define RUNTIME_BRANCH_TOTAL_CYCLES \
   (RUNTIME_BRANCH_CYCLES + RUNTIME_BRANCH_TARGET_CYCLES)
+#define RUNTIME_BRANCH_FALLTHROUGH_CYCLES 4u
+#define RUNTIME_BRANCH_FALLTHROUGH_END_PC \
+  (RUNTIME_BRANCH_TARGET_END_PC + 4u)
+#define RUNTIME_BRANCH_FALLTHROUGH_TOTAL_CYCLES \
+  (RUNTIME_BRANCH_TOTAL_CYCLES + RUNTIME_BRANCH_FALLTHROUGH_CYCLES)
 #define RUNTIME_BRANCH_EXTRA_CYCLES 3u
 #define RUNTIME_BRANCH_CHAIN_EXTRA_CYCLES 3u
 #define RUNTIME_BRANCH_IDLE_EXTRA_CYCLES 5u
@@ -549,6 +556,7 @@ typedef unsigned int usize;
   (RUNTIME_BRANCH_CYCLES + RUNTIME_BRANCH_IDLE_EXTRA_CYCLES)
 #define RUNTIME_BRANCH_B_PLUS_12 0xea000001u
 #define RUNTIME_BRANCH_TARGET_ADD_R3_R2_R1 0xe0823001u
+#define RUNTIME_BRANCH_FALLTHROUGH_ADD_R4_R3_R1 0xe0834001u
 #define RUNTIME_BX_START_PC 0x08000400u
 #define RUNTIME_BX_TARGET_PC 0x02001000u
 #define RUNTIME_BX_TARGET_END_PC (RUNTIME_BX_TARGET_PC + 4u)
@@ -1236,6 +1244,8 @@ static u8 *g_runtime_store_entry;
 static u8 *g_runtime_store_byte_entry;
 static u8 *g_runtime_branch_entry;
 static u8 *g_runtime_branch_target_entry;
+static u8 *g_runtime_branch_fallthrough_target_entry;
+static u32 g_runtime_branch_fallthrough_target_lookup;
 static u8 *g_runtime_unsupported_entry;
 static u8 *g_runtime_thumb_unsupported_entry;
 static u8 *g_runtime_bx_entry;
@@ -1447,6 +1457,8 @@ static void clear_runtime_fixture_entries(void)
   g_runtime_store_byte_entry = (u8 *)0;
   g_runtime_branch_entry = (u8 *)0;
   g_runtime_branch_target_entry = (u8 *)0;
+  g_runtime_branch_fallthrough_target_entry = (u8 *)0;
+  g_runtime_branch_fallthrough_target_lookup = 0;
   g_runtime_unsupported_entry = (u8 *)0;
   g_runtime_thumb_unsupported_entry = (u8 *)0;
   g_runtime_bx_entry = (u8 *)0;
@@ -1791,6 +1803,7 @@ static void reset_runtime_fixture_state(u32 pc)
   reg[CPU_HALT_STATE] = CPU_ACTIVE;
   idle_loop_target_pc = IDLE_LOOP_DISABLED;
   g_runtime_fallthrough_target_lookup = 0;
+  g_runtime_branch_fallthrough_target_lookup = 0;
   g_runtime_swi_patch_lookup = 0;
   g_runtime_load_pc_target_lookup = 0;
   g_runtime_cond_lookup_condition = RUNTIME_COND_NE;
@@ -1907,6 +1920,7 @@ static int build_runtime_fixture_block(const char **reason)
   u32 store_byte_code_bytes;
   u32 branch_code_bytes;
   u32 branch_target_code_bytes;
+  u32 branch_fallthrough_target_code_bytes;
   u32 unsupported_code_bytes;
   u32 thumb_unsupported_code_bytes;
   u32 bx_code_bytes;
@@ -2149,6 +2163,30 @@ static int build_runtime_fixture_block(const char **reason)
   branch_target_code_bytes =
     (u32)(translation_ptr -
           (g_runtime_code + RUNTIME_BRANCH_TARGET_BLOCK_OFFSET));
+
+  translation_ptr =
+    g_runtime_code + RUNTIME_BRANCH_FALLTHROUGH_TARGET_BLOCK_OFFSET;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_runtime_branch_fallthrough_target_entry =
+    ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_data_proc(
+        &translation_ptr, meta,
+        RUNTIME_BRANCH_FALLTHROUGH_ADD_R4_R3_R1,
+        RUNTIME_BRANCH_FALLTHROUGH_CYCLES))
+  {
+    *reason = "runtime_branch_fallthrough_target_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            RUNTIME_BRANCH_TARGET_END_PC,
+                            RUNTIME_BRANCH_FALLTHROUGH_END_PC, false);
+  branch_fallthrough_target_code_bytes =
+    (u32)(translation_ptr -
+          (g_runtime_code +
+           RUNTIME_BRANCH_FALLTHROUGH_TARGET_BLOCK_OFFSET));
 
   translation_ptr = g_runtime_code + RUNTIME_UNSUPPORTED_BLOCK_OFFSET;
   riscv_emit_block_prologue(&translation_ptr, &meta);
@@ -4596,7 +4634,8 @@ static int build_runtime_fixture_block(const char **reason)
   g_runtime_code_bytes = add_code_bytes + fallthrough_target_code_bytes +
     load_code_bytes +
     store_code_bytes + store_byte_code_bytes +
-    branch_code_bytes + branch_target_code_bytes + unsupported_code_bytes +
+    branch_code_bytes + branch_target_code_bytes +
+    branch_fallthrough_target_code_bytes + unsupported_code_bytes +
     thumb_unsupported_code_bytes + bx_code_bytes + bx_target_code_bytes +
     patch_branch_code_bytes +
     patch_branch_target_code_bytes + internal_branch_code_bytes +
@@ -4680,6 +4719,7 @@ static int ensure_runtime_fixture(const char **reason)
       g_runtime_load_entry && g_runtime_store_entry &&
       g_runtime_store_byte_entry &&
       g_runtime_branch_entry && g_runtime_branch_target_entry &&
+      g_runtime_branch_fallthrough_target_entry &&
       g_runtime_unsupported_entry && g_runtime_bx_entry &&
       g_runtime_thumb_unsupported_entry &&
       g_runtime_bx_target_entry && g_runtime_patch_branch_entry &&
@@ -8160,6 +8200,28 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   values[1] = branch_r1;
   values[2] = branch_r2;
   values[3] = branch_r1 + branch_r2;
+  values[4] = values[3] + branch_r1;
+  values[REG_PC] = RUNTIME_BRANCH_FALLTHROUGH_END_PC;
+  values[REG_CPSR] = 0;
+  values[CPU_HALT_STATE] = CPU_ACTIVE;
+  reg_hash = runtime_update_reg_hash(reg_hash, values);
+  mem_hash = runtime_update_memory_hash(mem_hash,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        runtime_reference_sticky_hash());
+  scheduler_hash = runtime_update_scheduler_hash(
+    scheduler_hash,
+    3, RUNTIME_BRANCH_TARGET_END_PC, 0,
+    1, 0,
+    0, 0, 0,
+    0, 0);
+
+  for (i = 0; i < REG_MAX; i++)
+    values[i] = 0;
+  values[1] = branch_r1;
+  values[2] = branch_r2;
+  values[3] = branch_r1 + branch_r2;
   values[REG_PC] = RUNTIME_BRANCH_TARGET_END_PC;
   values[REG_CPSR] = 0;
   values[CPU_HALT_STATE] = CPU_ACTIVE;
@@ -8761,12 +8823,12 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   snapshot->reg_hash = reg_hash;
   snapshot->mem_hash = mem_hash;
   snapshot->scheduler_hash = scheduler_hash;
-  snapshot->blocks = 178;
+  snapshot->blocks = 181;
   snapshot->fallbacks = 55;
   snapshot->initial_lookup_fallbacks = 4;
   snapshot->relookup_fallbacks = 49;
   snapshot->unsupported_fallbacks = 2;
-  snapshot->native_data_proc = 81;
+  snapshot->native_data_proc = 82;
   snapshot->native_branch = 7;
   snapshot->native_load = 26;
   snapshot->native_store = 19;
@@ -10013,6 +10075,17 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
 
   reset_runtime_fixture_state(RUNTIME_BRANCH_START_PC);
+  g_runtime_branch_fallthrough_target_lookup = 1;
+  reg[1] = g_runtime_fixture_branch_r1;
+  reg[2] = g_runtime_fixture_branch_r2;
+  execute_arm_translate_internal(RUNTIME_BRANCH_FALLTHROUGH_TOTAL_CYCLES,
+                                 &reg[0]);
+  g_runtime_branch_fallthrough_target_lookup = 0;
+  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+  mem_hash = runtime_update_current_memory_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+
+  reset_runtime_fixture_state(RUNTIME_BRANCH_START_PC);
   reg[1] = g_runtime_fixture_branch_r1;
   reg[2] = g_runtime_fixture_branch_r2;
   execute_arm_translate_internal(RUNTIME_BRANCH_TOTAL_CYCLES +
@@ -11062,6 +11135,10 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
     return g_runtime_branch_entry;
   if (g_runtime_branch_target_entry && pc == RUNTIME_BRANCH_TARGET_PC)
     return g_runtime_branch_target_entry;
+  if (g_runtime_branch_fallthrough_target_lookup &&
+      g_runtime_branch_fallthrough_target_entry &&
+      pc == RUNTIME_BRANCH_TARGET_END_PC)
+    return g_runtime_branch_fallthrough_target_entry;
   if (g_runtime_unsupported_entry && pc == RUNTIME_UNSUPPORTED_START_PC)
     return g_runtime_unsupported_entry;
   if (g_runtime_bx_entry && pc == RUNTIME_BX_START_PC)
