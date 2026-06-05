@@ -9,12 +9,16 @@
 - Host-specific entry/exit stubs live in files such as `mips/mips_stub.S` and `arm/arm_stub.S`.
 - There is also an experimental JS backend (`jsjit_*`), but the ESP32-S3 target should not grow new JS work.
 - Current ESP32-S3 phase is CoreS3 SE playable firmware with experimental Xtensa JIT enabled by default.
-- Main development goal now: add a native RV32IM dynarec backend by first
-  learning the current good MIPS backend carefully.
+- Main development goal now: prove the native RV32IM dynarec works by running
+  real gpSP frontend-translated ARM code and matching interpreter-visible
+  behavior. The first external acceptance ROM is Armwrestler.
 
 ## Active RV32IM Backend Goal
 
-- Primary goal: add a new native RV32IM backend for gpSP.
+- Primary goal: verify the native RV32IM JIT, not just add more backend code.
+  The backend is not meaningfully "working" until a real ARM workload runs
+  through `cpu_threaded.c` into generated RV32IM code and matches the
+  interpreter.
 - Before implementing RV32IM code emission or stubs, study the MIPS backend
   carefully enough to preserve the existing gpSP dynarec contract.
 - Treat `cpu_threaded.c` as the frontend contract and `mips/mips_emit.h` plus
@@ -37,9 +41,34 @@
 - Validate behavior against the interpreter first. RISC-V disassembly or ISA
   execution tests are useful, but they do not replace ARM guest-state
   equivalence against `cpu.cc` and `gba_memory.c`.
+- Current acceptance target: run the ARM Armwrestler test ROM at
+  `/home/john/ref/armwrestler-gba-fixed/armwrestler-gba-fixed.gba` through the
+  real gpSP dynarec frontend and compare it against an interpreter run.
+- The Armwrestler gate must provide machine-readable evidence, not only a
+  screenshot. Acceptable result sources include a RAM result buffer, a VRAM text
+  decode/hash, an ELF-symbol-guided hook, or a minimal deterministic ROM patch.
+- The same Armwrestler ARM test group must run under both interpreter and
+  RV32IM dynarec. First scope is ARM-state Armwrestler; Thumbwrestler is a
+  separate milestone unless explicitly selected.
+- RV32IM success must prove native JIT execution:
+  - native blocks executed is greater than zero
+  - native instruction or operation counters are greater than zero
+  - generated code bytes are greater than zero
+  - traced guest PCs land in the Armwrestler ROM range
+  - fallback counters are pinned and explained, not allowed to hide an
+    interpreter-only run
+- Interpreter and RV32IM evidence should be compared with stable summaries:
+  pass/fail signal, selected RAM/VRAM hash, frame hash where available,
+  scheduler counters, fallback counters, native counters, generated-code bytes,
+  and a bounded trace window.
 - A qemu-user based RV32IM development harness is part of the backend goal, not
   a nice-to-have afterthought. Build it early enough that emitter, stub, helper
   call, scheduler, and frame-output behavior can be tested before hardware.
+- Add an automation gate named `make -C tests/rv32im armwrestler` for the
+  external-ROM proof. This target should fail on timeout, mismatch, missing ROM,
+  missing native execution evidence, or unexplained fallback-only execution.
+- Synthetic fixtures and `runtime_fixture` commands remain useful regression
+  tests, but they do not satisfy the Armwrestler acceptance gate by themselves.
 - Commit at coherent semi-milestones after local validation. Do not wait for
   the entire backend to be finished before making commits, but keep each commit
   scoped to one validated step and do not include unrelated worktree changes.
@@ -63,6 +92,12 @@
   - print parseable summary lines with backend, result, frame count, cycle or
     block counters, framebuffer hash, and failure reason
   - exit cleanly on `PASS`/`FAIL`/timeout so automation never hangs
+- For Armwrestler, the harness must be able to drive a deterministic test
+  selection without manual menu input. Prefer an ELF-symbol-guided hook or a
+  minimal ROM patch over input timing whenever possible.
+- Armwrestler output must include a parseable comparison summary with the
+  selected test group, interpreter result, RV32IM result, native block count,
+  generated-code byte count, fallback breakdown, and trace PCs.
 - Prefer a small command protocol over ad hoc logs. Useful commands include
   `load`, `reset`, `backend`, `run`, `cont`, `stepi`, `stepb`, `regs`, `mem`,
   `watchio`, `bp`, `tracepc`, `framehash`, `png`, and `quit`.
@@ -95,6 +130,13 @@
 - When a semi-milestone is coherent and locally validated, make a git commit for
   it instead of letting unrelated phases accumulate.
 - Good commit boundaries include:
+  - Armwrestler symbol/result-path discovery documented with exact addresses
+    and a chosen machine-readable signal
+  - first deterministic headless Armwrestler interpreter run
+  - first deterministic headless Armwrestler RV32IM run through the real
+    frontend with native blocks executed
+  - interpreter-vs-RV32IM Armwrestler compare gate wired to
+    `make -C tests/rv32im armwrestler`
   - RV32I/M raw emitter plus disassembly/encoding tests
   - qemu-user smoke harness bootstrapped with stdin/stdout control
   - qemu-user PNG/framehash capture working
@@ -324,6 +366,9 @@ QEMU runs. Do not introduce custom build directories such as
 ~/CardPuterADV/esp-walkie-talkie/refs -> CoreS3SE, not CoreS3
 ~/work/refs/tinyemu -> TinyEMU RISC-V reference, if present
 ~/work/refs/tinyemu-2019-12-21 -> local TinyEMU snapshot observed here
+~/ref/armwrestler-gba-fixed -> external ARM/Thumb GBA conformance ROM source
+~/ref/armwrestler-gba-fixed/armwrestler-gba-fixed.gba -> current RV32IM
+  Armwrestler acceptance ROM
 
 TinyEMU may help as a compact RISC-V ISA/interpreter and system-emulation
 reference for RV32 behavior tests. Do not use it as the gpSP dynarec contract
