@@ -2187,7 +2187,7 @@ static void riscv_emit_arm_memory_imm_offset(u8 **ptr_ref,
   *ptr_ref = ptr;
 }
 
-static bool riscv_emit_arm_memory_reg_offset(u8 **ptr_ref, u32 opcode)
+static bool riscv_emit_arm_memory_reg_offset(u8 **ptr_ref, u32 opcode, u32 pc)
 {
   u32 rm = opcode & 0xfu;
   u32 shift_type = (opcode >> 5) & 0x3u;
@@ -2195,10 +2195,10 @@ static bool riscv_emit_arm_memory_reg_offset(u8 **ptr_ref, u32 opcode)
   u8 *ptr = *ptr_ref;
   u8 *translation_ptr;
 
-  if (((opcode >> 4) & 1u) || rm == REG_PC)
+  if ((opcode >> 4) & 1u)
     return false;
 
-  riscv_emit_arm_reg_load(&ptr, riscv_reg_t0, rm);
+  riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t0, rm, pc + 8u);
   translation_ptr = ptr;
 
   switch (shift_type)
@@ -2284,7 +2284,7 @@ bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,
   {
     u8 *translation_ptr;
 
-    if (!riscv_emit_arm_memory_reg_offset(&ptr, opcode))
+    if (!riscv_emit_arm_memory_reg_offset(&ptr, opcode, pc))
       return false;
 
     translation_ptr = ptr;

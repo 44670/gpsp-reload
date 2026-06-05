@@ -15,7 +15,7 @@ typedef unsigned int usize;
 #define PROT_EXEC 4
 #define MAP_PRIVATE 2
 #define MAP_ANONYMOUS 32
-#define EXEC_MAP_BYTES 60416u
+#define EXEC_MAP_BYTES 60928u
 
 #define BLOCK_START_PC 0x08000000u
 #define BLOCK_END_PC 0x08000004u
@@ -669,6 +669,10 @@ typedef unsigned int usize;
 #define REG_OFFSET_LDR_PC REG_OFFSET_LOAD_START_PC
 #define REG_OFFSET_LDRB_PC (REG_OFFSET_LOAD_START_PC + 4u)
 #define REG_OFFSET_LOAD_END_PC (REG_OFFSET_LOAD_START_PC + 8u)
+#define REG_OFFSET_PC_LOAD_START_PC 0x08001000u
+#define REG_OFFSET_PC_LDR_PC REG_OFFSET_PC_LOAD_START_PC
+#define REG_OFFSET_PC_LDRB_PC (REG_OFFSET_PC_LOAD_START_PC + 4u)
+#define REG_OFFSET_PC_LOAD_END_PC (REG_OFFSET_PC_LOAD_START_PC + 8u)
 #define REG_OFFSET_LDR_BASE_CYCLES 5u
 #define REG_OFFSET_LDRB_BASE_CYCLES 6u
 #define REG_OFFSET_LOAD_TOTAL_CYCLES \
@@ -679,6 +683,8 @@ typedef unsigned int usize;
 #define REG_OFFSET_STORE_TOTAL_CYCLES (REG_OFFSET_STORE_BASE_CYCLES + 1u)
 #define REG_OFFSET_LDR_R8_R3_R2 0xe7938002u
 #define REG_OFFSET_LDRB_R9_R3_NEG_R2 0xe7539002u
+#define REG_OFFSET_LDR_R8_R3_R15 0xe793800fu
+#define REG_OFFSET_LDRB_R9_R3_NEG_R15 0xe753900fu
 #define REG_OFFSET_STRB_R9_R3_NEG_R2 0xe7439002u
 #define REG_OFFSET_LDR_R8_R3_R2_LSL2 0xe7938102u
 #define REG_OFFSET_LDR_R8_R3_R2_LSL_R1 0xe7938112u
@@ -764,6 +770,10 @@ typedef unsigned int usize;
 #define SHIFTED_REG_OFFSET_ROR_VALUE 0x00000011u
 #define REG_OFFSET_WORD_ADDR (REG_OFFSET_BASE_ADDR + REG_OFFSET_VALUE)
 #define REG_OFFSET_BYTE_ADDR (REG_OFFSET_BASE_ADDR - REG_OFFSET_VALUE)
+#define REG_OFFSET_PC_WORD_ADDR \
+  (REG_OFFSET_BASE_ADDR + (REG_OFFSET_PC_LDR_PC + 8u))
+#define REG_OFFSET_PC_BYTE_ADDR \
+  (REG_OFFSET_BASE_ADDR - (REG_OFFSET_PC_LDRB_PC + 8u))
 #define SHIFTED_REG_OFFSET_BYTE_ADDR \
   (REG_OFFSET_BASE_ADDR + (REG_OFFSET_VALUE << 2))
 #define SHIFTED_REG_OFFSET_LSR_BYTE_ADDR \
@@ -775,6 +785,8 @@ typedef unsigned int usize;
 #define REG_OFFSET_WORD_VALUE 0x55667788u
 #define REG_OFFSET_RRX_WORD_VALUE 0xaabbccddu
 #define REG_OFFSET_BYTE_VALUE 0xa5u
+#define REG_OFFSET_PC_WORD_VALUE 0x13579bdfu
+#define REG_OFFSET_PC_BYTE_VALUE 0x9eu
 #define SHIFTED_REG_OFFSET_BYTE_VALUE 0x5au
 #define SHIFTED_REG_OFFSET_LSR_BYTE_VALUE 0x6bu
 #define SHIFTED_REG_OFFSET_ASR_BYTE_VALUE 0x7cu
@@ -976,6 +988,7 @@ typedef unsigned int usize;
 #define SHIFTED_REG_OFFSET_LSR_STORE_BLOCK_OFFSET 58880u
 #define SHIFTED_REG_OFFSET_ASR_STORE_BLOCK_OFFSET 59392u
 #define SHIFTED_REG_OFFSET_ROR_STORE_BLOCK_OFFSET 59904u
+#define REG_OFFSET_PC_LOAD_BLOCK_OFFSET 60416u
 #define EXPECTED_INITIAL_ROM_WATERMARK 16u
 
 u32 reg[REG_MAX];
@@ -1045,6 +1058,7 @@ static u8 *g_half_reg_store_entry;
 static u8 *g_half_writeback_store_entry;
 static u8 *g_half_writeback_load_entry;
 static u8 *g_reg_offset_load_entry;
+static u8 *g_reg_offset_pc_load_entry;
 static u8 *g_reg_offset_store_entry;
 static u8 *g_reg_offset_rrx_load_entry;
 static u8 *g_reg_offset_rrx_store_entry;
@@ -2837,6 +2851,41 @@ static u32 build_reg_offset_load_block(u8 *code)
 
   riscv_emit_block_finalize(meta, &translation_ptr, REG_OFFSET_LOAD_START_PC,
                             REG_OFFSET_LOAD_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_reg_offset_pc_load_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_reg_offset_pc_load_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_access_memory(&translation_ptr, meta,
+                                           REG_OFFSET_LDR_R8_R3_R15,
+                                           REG_OFFSET_PC_LDR_PC,
+                                           REG_OFFSET_LDR_BASE_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=reg_pc_ldr_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_access_memory(&translation_ptr, meta,
+                                           REG_OFFSET_LDRB_R9_R3_NEG_R15,
+                                           REG_OFFSET_PC_LDRB_PC,
+                                           REG_OFFSET_LDRB_BASE_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=reg_pc_ldrb_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            REG_OFFSET_PC_LOAD_START_PC,
+                            REG_OFFSET_PC_LOAD_END_PC, false);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -6617,6 +6666,55 @@ static void run_reg_offset_load_remaining_cycles_case(void)
   expect_stickybits_cleared("reg_offset_load");
 }
 
+static void run_reg_offset_pc_load_remaining_cycles_case(void)
+{
+  const u32 extra_cycles = 3u;
+
+  reset_runtime_observations(REG_OFFSET_PC_LOAD_START_PC);
+  g_lookup_entry = g_reg_offset_pc_load_entry;
+  reg[3] = REG_OFFSET_BASE_ADDR;
+
+  execute_arm_translate_internal(REG_OFFSET_LOAD_TOTAL_CYCLES + extra_cycles,
+                                 &reg[0]);
+
+  if (reg[8] != REG_OFFSET_PC_WORD_VALUE)
+    fail_u32("reg_offset_pc_load", "r8",
+             reg[8], REG_OFFSET_PC_WORD_VALUE);
+  if (reg[9] != REG_OFFSET_PC_BYTE_VALUE)
+    fail_u32("reg_offset_pc_load", "r9",
+             reg[9], REG_OFFSET_PC_BYTE_VALUE);
+  if (reg[REG_PC] != REG_OFFSET_PC_LOAD_END_PC)
+    fail_u32("reg_offset_pc_load", "pc",
+             reg[REG_PC], REG_OFFSET_PC_LOAD_END_PC);
+  if (g_read32_calls != 1)
+    fail_u32("reg_offset_pc_load", "read32_calls", g_read32_calls, 1);
+  if (g_read32_addr != REG_OFFSET_PC_WORD_ADDR)
+    fail_u32("reg_offset_pc_load", "read32_addr",
+             g_read32_addr, REG_OFFSET_PC_WORD_ADDR);
+  if (g_read32_pc != REG_OFFSET_PC_LDR_PC)
+    fail_u32("reg_offset_pc_load", "read32_pc",
+             g_read32_pc, REG_OFFSET_PC_LDR_PC);
+  if (g_read8_calls != 1)
+    fail_u32("reg_offset_pc_load", "read8_calls", g_read8_calls, 1);
+  if (g_read8_addr != REG_OFFSET_PC_BYTE_ADDR)
+    fail_u32("reg_offset_pc_load", "read8_addr",
+             g_read8_addr, REG_OFFSET_PC_BYTE_ADDR);
+  if (g_read8_pc != REG_OFFSET_PC_LDRB_PC)
+    fail_u32("reg_offset_pc_load", "read8_pc",
+             g_read8_pc, REG_OFFSET_PC_LDRB_PC);
+  if (g_update_calls != 0)
+    fail_u32("reg_offset_pc_load", "update_calls", g_update_calls, 0);
+  if (g_execute_calls != 1)
+    fail_u32("reg_offset_pc_load", "execute_calls", g_execute_calls, 1);
+  if (g_execute_cycles != extra_cycles)
+    fail_u32("reg_offset_pc_load", "execute_cycles",
+             g_execute_cycles, extra_cycles);
+  if (g_execute_pc != REG_OFFSET_PC_LOAD_END_PC)
+    fail_u32("reg_offset_pc_load", "execute_pc",
+             g_execute_pc, REG_OFFSET_PC_LOAD_END_PC);
+  expect_stickybits_cleared("reg_offset_pc_load");
+}
+
 static void run_reg_offset_store_remaining_cycles_case(void)
 {
   const u32 extra_cycles = 4u;
@@ -8081,6 +8179,8 @@ u32 function_cc read_memory32(u32 address)
     return LOAD_PC_TARGET;
   if (address == REG_OFFSET_RRX_WORD_ADDR)
     return REG_OFFSET_RRX_WORD_VALUE;
+  if (address == REG_OFFSET_PC_WORD_ADDR)
+    return REG_OFFSET_PC_WORD_VALUE;
   if (address == REG_OFFSET_WORD_ADDR)
     return REG_OFFSET_WORD_VALUE;
   if (address == BLOCK_MEM_BASE)
@@ -8107,6 +8207,8 @@ u32 function_cc read_memory8(u32 address)
     return SWP_BYTE_OLD_VALUE;
   if (address == REG_OFFSET_BYTE_ADDR)
     return REG_OFFSET_BYTE_VALUE;
+  if (address == REG_OFFSET_PC_BYTE_ADDR)
+    return REG_OFFSET_PC_BYTE_VALUE;
   if (address == SHIFTED_REG_OFFSET_BYTE_ADDR)
     return SHIFTED_REG_OFFSET_BYTE_VALUE;
   if (address == SHIFTED_REG_OFFSET_LSR_BYTE_ADDR)
@@ -8324,6 +8426,7 @@ void _start(void)
   u32 half_writeback_store_code_bytes;
   u32 half_writeback_load_code_bytes;
   u32 reg_offset_load_code_bytes;
+  u32 reg_offset_pc_load_code_bytes;
   u32 reg_offset_store_code_bytes;
   u32 reg_offset_rrx_load_code_bytes;
   u32 reg_offset_rrx_store_code_bytes;
@@ -8665,6 +8768,8 @@ void _start(void)
     build_half_writeback_load_block(code + HALF_WRITEBACK_LOAD_BLOCK_OFFSET);
   reg_offset_load_code_bytes =
     build_reg_offset_load_block(code + REG_OFFSET_LOAD_BLOCK_OFFSET);
+  reg_offset_pc_load_code_bytes =
+    build_reg_offset_pc_load_block(code + REG_OFFSET_PC_LOAD_BLOCK_OFFSET);
   reg_offset_store_code_bytes =
     build_reg_offset_store_block(code + REG_OFFSET_STORE_BLOCK_OFFSET);
   reg_offset_rrx_load_code_bytes =
@@ -8960,6 +9065,7 @@ void _start(void)
   run_pc_base_half_load_remaining_case();
   run_half_reg_load_remaining_cycles_case();
   run_reg_offset_load_remaining_cycles_case();
+  run_reg_offset_pc_load_remaining_cycles_case();
   run_shifted_reg_offset_load_case();
   run_shifted_reg_offset_store_remaining_case();
   run_shifted_reg_offset_lsr_load_case();
@@ -9145,6 +9251,8 @@ void _start(void)
   put_u32_dec(half_writeback_load_code_bytes);
   put_raw(" reg_offset_load_code_bytes=");
   put_u32_dec(reg_offset_load_code_bytes);
+  put_raw(" reg_offset_pc_load_code_bytes=");
+  put_u32_dec(reg_offset_pc_load_code_bytes);
   put_raw(" reg_offset_store_code_bytes=");
   put_u32_dec(reg_offset_store_code_bytes);
   put_raw(" reg_offset_rrx_load_code_bytes=");
@@ -9357,6 +9465,8 @@ void _start(void)
   put_u32_hex((u32)g_half_writeback_load_entry);
   put_raw(" reg_offset_load_entry=");
   put_u32_hex((u32)g_reg_offset_load_entry);
+  put_raw(" reg_offset_pc_load_entry=");
+  put_u32_hex((u32)g_reg_offset_pc_load_entry);
   put_raw(" reg_offset_store_entry=");
   put_u32_hex((u32)g_reg_offset_store_entry);
   put_raw(" reg_offset_rrx_load_entry=");
