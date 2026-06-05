@@ -297,7 +297,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   handling, SWP-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, and Thumb lookup-miss fallback fixtures against a local ARM
   reference model, with
-  one hundred twenty six runtime blocks executed, basic data-processing remaining-cycle and invalid re-lookup fallback handoffs,
+  one hundred twenty eight runtime blocks executed, basic data-processing remaining-cycle and invalid re-lookup fallback handoffs,
   ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results and remaining-cycle handoff, MSR CPSR flag remaining-cycle handoff,
   MSR CPSR control mode/banked-LR effects and remaining-cycle handoff, SPSR helper-write effects and remaining-cycle handoff, and native PSR
@@ -329,7 +329,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   `SWPB`,
   direct, indirect, conditional, SWI, PC-write, SPSR-restore, patched branch,
   direct-branch target native-chain remaining-cycle execution, and direct-branch, BL, BX ARM, BX Thumb, SWI, and PC-write ADD remaining-cycle execution exercised,
-  scheduler/update cycle-refill, HALT/idle-loop/Thumb-lookup observations hashed, with
+  scheduler/update cycle-refill and PC-change chaining, HALT/idle-loop/Thumb-lookup observations hashed, with
   unsupported-block, Thumb lookup-miss, helper load, load-to-PC, PC-relative load/store, PSR read/write, word store, register-offset load/store, immediate/PC-relative/register-offset halfword load, register-offset halfword store, direct-branch, BL, BX ARM, BX Thumb, SWI, and PC-write ADD
   remaining-cycle lookup-misses, byte-store normal/alert, block-memory, and SWP alert remaining-cycle
   lookup-misses, and SWPB remaining-cycle lookup-miss fallbacks observed
