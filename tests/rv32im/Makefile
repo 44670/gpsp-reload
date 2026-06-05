@@ -13,6 +13,7 @@ SMOKE_PNG := $(OUT_DIR)/rv32im_harness.png
 SMOKE_PNG_SIG := $(OUT_DIR)/png_signature.bin
 SMOKE_LOAD := $(OUT_DIR)/rv32im_harness_load.bin
 SMOKE_LOG := $(OUT_DIR)/rv32im_harness.log
+COMPARE_LOG := $(OUT_DIR)/rv32im_harness_compare.log
 CODEGEN_BIN := $(OUT_DIR)/rv32im_codegen.bin
 CODEGEN_REF_ELF := $(OUT_DIR)/rv32im_codegen_ref.elf
 CODEGEN_REF_BIN := $(OUT_DIR)/rv32im_codegen_ref.bin
@@ -119,6 +120,13 @@ smoke: $(HARNESS) $(SMOKE_LOAD) $(SMOKE_PNG_SIG) $(OUT_DIR)
 	test -s $(SMOKE_PNG)
 	cmp -n 8 $(SMOKE_PNG_SIG) $(SMOKE_PNG)
 
+compare: $(HARNESS) | $(OUT_DIR)
+	printf 'compare\nquit\n' | $(QEMU_RISCV32) ./$(HARNESS) | tee $(COMPARE_LOG)
+	grep -q 'result=PASS command=compare workload=.*shiftstore_shiftlsr_shiftasr_shiftror_shiftstoreremain_shiftlsrstoreremain_shiftasrstoreremain_shiftrorstoreremain' $(COMPARE_LOG)
+	grep -q 'rv32im_blocks=175 rv32im_fallbacks=55 rv32im_native_data_proc=80 rv32im_native_branch=7 rv32im_native_load=26 rv32im_native_store=19 rv32im_native_psr=5' $(COMPARE_LOG)
+	grep -q 'reason=runtime_state_synthetic_frame_equal' $(COMPARE_LOG)
+	grep -q 'result=PASS command=quit backend=interp' $(COMPARE_LOG)
+
 abi: $(ABI_TEST)
 	$(QEMU_RISCV32) ./$(ABI_TEST)
 
@@ -134,4 +142,4 @@ clean:
 	rm -f $(HARNESS) $(CODEGEN) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST)
 	rm -rf $(OUT_DIR)
 
-.PHONY: all codegen abi exec runtime smoke test clean
+.PHONY: all codegen abi exec runtime smoke compare test clean

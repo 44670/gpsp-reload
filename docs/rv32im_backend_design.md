@@ -369,6 +369,7 @@ Remaining first-phase gaps should stay narrow and evidence-driven:
 ## Semi-Milestone Gate
 
 Every validated RV32IM semi-milestone should be committed separately. A typical
-gate is `git diff --check`, `make -C tests/rv32im test`, a top-level unix
-RV32IM dynarec smoke build when production backend code changed, and
-`make -C tests/rv32im clean` before committing.
+gate is `git diff --check`, `make -C tests/rv32im compare`,
+`make -C tests/rv32im test`, a top-level unix RV32IM dynarec smoke build when
+production backend code changed, and `make -C tests/rv32im clean` before
+committing.
