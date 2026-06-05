@@ -261,6 +261,9 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - scriptable qemu-user harness commands for `load`, `reset`, `backend`, `run`,
   `cont`, `stepi`, `stepb`, `regs`, `mem`, `watchio`, `counters`,
   `sched`, `tracepc`, `bp`, `framehash`, `compare`, `png`, and `quit`
+- successful qemu-user harness commands use stable
+  `result=PASS command=...` summary lines, and failure paths use
+  `result=FAIL command=...`
 - explicit runtime-snapshot `framehash runtime` and `png <path> runtime`
   artifact paths derived from the selected backend's compare snapshot
 - explicit runtime-snapshot `regs runtime` dump for the selected backend's

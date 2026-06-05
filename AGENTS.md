@@ -82,6 +82,9 @@
 - Keep harness output stable and machine-parseable so CI/scripts can compare
   summaries, hashes, frame PNGs, register snapshots, and failure reasons across
   interpreter and RV32IM runs.
+- Successful harness commands should emit `result=PASS command=...` lines, and
+  failure paths should emit `result=FAIL command=...` lines. Do not add new
+  ad hoc success-only prefixes such as bare `ok`.
 - When a harness path is still synthetic or fixture-backed rather than real
   emulator execution, label the output explicitly, for example with
   `harness_mode=synthetic` and a synthetic-specific failure/pass reason. Do not

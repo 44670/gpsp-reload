@@ -11095,20 +11095,32 @@ static void print_fail(const char *command, const char *reason)
 
 static void command_help(void)
 {
-  put_raw("commands=load reset backend run cont stepi stepb regs mem watchio counters sched tracepc bp framehash compare png quit\n");
+  put_raw("result=PASS command=help commands=load reset backend run cont ");
+  put_raw("stepi stepb regs mem watchio counters sched tracepc bp framehash ");
+  put_raw("compare png quit harness_mode=");
+  put_raw(HARNESS_MODE);
+  put_raw(" reason=command_list\n");
 }
 
 static void command_backend(char *arg)
 {
-  if (str_eq(arg, "interp"))
+  if (!arg || !*arg)
+  {
+    print_fail("backend", "missing_backend");
+  }
+  else if (str_eq(arg, "interp"))
   {
     g_state.backend = BACKEND_INTERP;
-    put_raw("ok backend=interp\n");
+    put_raw("result=PASS command=backend backend=interp harness_mode=");
+    put_raw(HARNESS_MODE);
+    put_raw(" reason=backend_selected\n");
   }
   else if (str_eq(arg, "rv32im"))
   {
     g_state.backend = BACKEND_RV32IM;
-    put_raw("ok backend=rv32im\n");
+    put_raw("result=PASS command=backend backend=rv32im harness_mode=");
+    put_raw(HARNESS_MODE);
+    put_raw(" reason=backend_selected\n");
   }
   else
   {
@@ -11155,11 +11167,15 @@ static void command_load(char *path)
   g_state.loaded_hash = hash;
   g_state.loaded_bytes = total;
 
-  put_raw("ok command=load bytes=");
+  put_raw("result=PASS command=load backend=");
+  put_raw(backend_name());
+  put_raw(" bytes=");
   put_u32_dec(total);
   put_raw(" hash=");
   put_u32_hex(hash);
-  put_chr('\n');
+  put_raw(" harness_mode=");
+  put_raw(HARNESS_MODE);
+  put_raw(" reason=file_loaded\n");
 }
 
 static void command_reset(void)
@@ -11173,13 +11189,17 @@ static void command_reset(void)
   g_state.loaded_bytes = loaded_bytes;
   g_state.loaded_hash = loaded_hash;
   render_frame();
-  put_raw("ok command=reset backend=");
+  put_raw("result=PASS command=reset backend=");
   put_raw(backend_name());
   put_raw(" loaded_bytes=");
   put_u32_dec(g_state.loaded_bytes);
   put_raw(" loaded_hash=");
   put_u32_hex(g_state.loaded_hash);
-  put_chr('\n');
+  put_raw(" frame_hash=");
+  put_u32_hex(g_state.last_frame_hash);
+  put_raw(" harness_mode=");
+  put_raw(HARNESS_MODE);
+  put_raw(" reason=state_reset\n");
 }
 
 static u32 optional_count(char *arg, u32 fallback)
@@ -11489,7 +11509,8 @@ static void command_regs(char *mode)
     return;
   }
 
-  put_raw("regs");
+  put_raw("result=PASS command=regs backend=");
+  put_raw(backend_name());
   for (i = 0; i < 16; i++)
   {
     put_raw(" r");
@@ -11499,7 +11520,7 @@ static void command_regs(char *mode)
   }
   put_raw(" harness_mode=");
   put_raw(HARNESS_MODE);
-  put_chr('\n');
+  put_raw(" regs_mode=synthetic reason=synthetic_regs\n");
 }
 
 static void command_mem(char *addr_arg, char *len_arg, char *mode,
@@ -11608,7 +11629,9 @@ static void command_mem(char *addr_arg, char *len_arg, char *mode,
   if (len > 64)
     len = 64;
 
-  put_raw("mem addr=");
+  put_raw("result=PASS command=mem backend=");
+  put_raw(backend_name());
+  put_raw(" addr=");
   put_u32_hex(addr);
   put_raw(" len=");
   put_u32_dec(len);
@@ -11621,7 +11644,7 @@ static void command_mem(char *addr_arg, char *len_arg, char *mode,
   }
   put_raw(" harness_mode=");
   put_raw(HARNESS_MODE);
-  put_chr('\n');
+  put_raw(" mem_mode=synthetic reason=synthetic_memory\n");
 }
 
 static int runtime_io_range_valid(u32 addr, u32 len)
@@ -11925,7 +11948,7 @@ static void command_tracepc(char *arg, char *mode_arg, char *offset_arg)
     return;
   }
 
-  put_raw("tracepc backend=");
+  put_raw("result=PASS command=tracepc backend=");
   put_raw(backend_name());
   put_raw(" count=");
   put_u32_dec(count);
@@ -11942,7 +11965,7 @@ static void command_tracepc(char *arg, char *mode_arg, char *offset_arg)
   put_u32_hex(hash);
   put_raw(" harness_mode=");
   put_raw(HARNESS_MODE);
-  put_raw(" reason=synthetic_pc_trace\n");
+  put_raw(" trace_mode=synthetic reason=synthetic_pc_trace\n");
 }
 
 static int runtime_trace_find_pc(u32 pc, u32 stored_count, u32 *index)
@@ -12384,7 +12407,9 @@ static void command_framehash(char *mode)
   }
 
   render_frame();
-  put_raw("framehash width=");
+  put_raw("result=PASS command=framehash backend=");
+  put_raw(backend_name());
+  put_raw(" width=");
   put_u32_dec(FRAME_W);
   put_raw(" height=");
   put_u32_dec(FRAME_H);
@@ -12394,7 +12419,7 @@ static void command_framehash(char *mode)
   put_u32_hex(g_state.last_frame_hash);
   put_raw(" harness_mode=");
   put_raw(HARNESS_MODE);
-  put_chr('\n');
+  put_raw(" frame_mode=synthetic reason=synthetic_frame\n");
 }
 
 static void command_compare(void)
