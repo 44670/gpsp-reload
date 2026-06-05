@@ -375,8 +375,9 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   `SWPB`,
   direct, indirect, conditional, SWI, PC-write, SPSR-restore, external and internal patched branch,
   direct-branch target native-chain remaining-cycle execution, branch-target
-  native fallthrough chaining, and direct-branch, BL, BX ARM, BX Thumb, SWI,
-  and PC-write ADD remaining-cycle execution exercised,
+  native fallthrough chaining, BX ARM-target native fallthrough chaining, and
+  direct-branch, BL, BX ARM, BX Thumb, SWI, and PC-write ADD remaining-cycle
+  execution exercised,
   scheduler/update cycle-refill, PC-change chaining, and frame-complete PC-change exit, HALT/idle-loop/Thumb-lookup observations hashed, with
   unsupported-block, Thumb unsupported-block, Thumb lookup-miss/invalid, helper load, load-to-PC, PC-relative load/store, PSR read/write, word store, register-offset load/store, immediate/PC-relative/register-offset halfword load, register-offset halfword store, direct-branch, BL, BX ARM, BX Thumb, SWI, and PC-write ADD
   remaining-cycle lookup-misses, byte-store normal/alert, block-memory, and SWP alert remaining-cycle
