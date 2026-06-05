@@ -32,7 +32,7 @@ typedef unsigned int usize;
 #define RUNTIME_FIXTURE_MODE "runtime_fixture"
 #define FRAME_MODE_RUNTIME_SNAPSHOT "runtime_snapshot"
 #define RUNTIME_COMPARE_WORKLOAD \
-  "arm_add_armaddremain_arminvalidremain_multiply_multiplylong_" \
+  "arm_add_armaddchain_armaddremain_arminvalidremain_multiply_multiplylong_" \
   "longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_" \
   "subflags_logicalflags_dataext_regshift_regshiftflags_flags_" \
   "testops_psr_psrremain_msr_msrremain_msrctrl_msrctrlremain_" \
@@ -65,7 +65,7 @@ typedef unsigned int usize;
 #define RUNTIME_MEM_EVENT_MAX 256u
 #define RUNTIME_SCHED_EVENT_MAX 256u
 #define RUNTIME_FALLBACK_EVENT_MAX 256u
-#define RUNTIME_EXEC_MAP_BYTES 55296u
+#define RUNTIME_EXEC_MAP_BYTES 55808u
 #define RUNTIME_LOAD_BLOCK_OFFSET 512u
 #define RUNTIME_STORE_BLOCK_OFFSET 1024u
 #define RUNTIME_BRANCH_BLOCK_OFFSET 1536u
@@ -155,12 +155,18 @@ typedef unsigned int usize;
 #define RUNTIME_SHIFTED_REG_OFFSET_LSR_STORE_BLOCK_OFFSET 53760u
 #define RUNTIME_SHIFTED_REG_OFFSET_ASR_STORE_BLOCK_OFFSET 54272u
 #define RUNTIME_SHIFTED_REG_OFFSET_ROR_STORE_BLOCK_OFFSET 54784u
+#define RUNTIME_FALLTHROUGH_TARGET_BLOCK_OFFSET 55296u
 #define RUNTIME_START_PC 0x08000000u
 #define RUNTIME_END_PC (RUNTIME_START_PC + 4u)
 #define RUNTIME_CYCLES 7u
+#define RUNTIME_FALLTHROUGH_TARGET_END_PC (RUNTIME_END_PC + 4u)
+#define RUNTIME_FALLTHROUGH_TARGET_CYCLES 5u
+#define RUNTIME_FALLTHROUGH_CHAIN_TOTAL_CYCLES \
+  (RUNTIME_CYCLES + RUNTIME_FALLTHROUGH_TARGET_CYCLES)
 #define RUNTIME_EXTRA_CYCLES 5u
 #define RUNTIME_INVALID_LOOKUP_EXTRA_CYCLES 5u
 #define RUNTIME_ADD_R2_R0_R1 0xe0802001u
+#define RUNTIME_FALLTHROUGH_TARGET_ADD_R3_R2_R1 0xe0823001u
 #define RUNTIME_INVALID_BLOCK_ENTRY ((u8 *)(usize)~(usize)0)
 #define RUNTIME_MULTIPLY_START_PC 0x08000b00u
 #define RUNTIME_MULTIPLY_END_PC (RUNTIME_MULTIPLY_START_PC + 8u)
@@ -1223,6 +1229,8 @@ u32 gamepak_sticky_bit[1024 / 32];
 
 static u8 *g_runtime_code;
 static u8 *g_runtime_entry;
+static u8 *g_runtime_fallthrough_target_entry;
+static u32 g_runtime_fallthrough_target_lookup;
 static u8 *g_runtime_load_entry;
 static u8 *g_runtime_store_entry;
 static u8 *g_runtime_store_byte_entry;
@@ -1432,6 +1440,8 @@ static void clear_runtime_cond_entries(void)
 static void clear_runtime_fixture_entries(void)
 {
   g_runtime_entry = (u8 *)0;
+  g_runtime_fallthrough_target_entry = (u8 *)0;
+  g_runtime_fallthrough_target_lookup = 0;
   g_runtime_load_entry = (u8 *)0;
   g_runtime_store_entry = (u8 *)0;
   g_runtime_store_byte_entry = (u8 *)0;
@@ -1780,6 +1790,7 @@ static void reset_runtime_fixture_state(u32 pc)
   reg[REG_CPSR] = 0;
   reg[CPU_HALT_STATE] = CPU_ACTIVE;
   idle_loop_target_pc = IDLE_LOOP_DISABLED;
+  g_runtime_fallthrough_target_lookup = 0;
   g_runtime_swi_patch_lookup = 0;
   g_runtime_load_pc_target_lookup = 0;
   g_runtime_cond_lookup_condition = RUNTIME_COND_NE;
@@ -1890,6 +1901,7 @@ static int build_runtime_fixture_block(const char **reason)
   riscv_jit_block_meta *meta;
   long flush_ret;
   u32 add_code_bytes;
+  u32 fallthrough_target_code_bytes;
   u32 load_code_bytes;
   u32 store_code_bytes;
   u32 store_byte_code_bytes;
@@ -1999,6 +2011,27 @@ static int build_runtime_fixture_block(const char **reason)
   riscv_emit_block_finalize(meta, &translation_ptr, RUNTIME_START_PC,
                             RUNTIME_END_PC, false);
   add_code_bytes = (u32)(translation_ptr - g_runtime_code);
+
+  translation_ptr = g_runtime_code + RUNTIME_FALLTHROUGH_TARGET_BLOCK_OFFSET;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_runtime_fallthrough_target_entry =
+    ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_data_proc(
+        &translation_ptr, meta,
+        RUNTIME_FALLTHROUGH_TARGET_ADD_R3_R2_R1,
+        RUNTIME_FALLTHROUGH_TARGET_CYCLES))
+  {
+    *reason = "runtime_fallthrough_target_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, RUNTIME_END_PC,
+                            RUNTIME_FALLTHROUGH_TARGET_END_PC, false);
+  fallthrough_target_code_bytes =
+    (u32)(translation_ptr -
+          (g_runtime_code + RUNTIME_FALLTHROUGH_TARGET_BLOCK_OFFSET));
 
   translation_ptr = g_runtime_code + RUNTIME_LOAD_BLOCK_OFFSET;
   riscv_emit_block_prologue(&translation_ptr, &meta);
@@ -4560,7 +4593,8 @@ static int build_runtime_fixture_block(const char **reason)
     (u32)(translation_ptr -
           (g_runtime_code + RUNTIME_REG_OFFSET_RRX_STORE_BLOCK_OFFSET));
 
-  g_runtime_code_bytes = add_code_bytes + load_code_bytes +
+  g_runtime_code_bytes = add_code_bytes + fallthrough_target_code_bytes +
+    load_code_bytes +
     store_code_bytes + store_byte_code_bytes +
     branch_code_bytes + branch_target_code_bytes + unsupported_code_bytes +
     thumb_unsupported_code_bytes + bx_code_bytes + bx_target_code_bytes +
@@ -4642,7 +4676,8 @@ static int runtime_cond_entries_ready(void)
 
 static int ensure_runtime_fixture(const char **reason)
 {
-  if (g_runtime_entry && g_runtime_load_entry && g_runtime_store_entry &&
+  if (g_runtime_entry && g_runtime_fallthrough_target_entry &&
+      g_runtime_load_entry && g_runtime_store_entry &&
       g_runtime_store_byte_entry &&
       g_runtime_branch_entry && g_runtime_branch_target_entry &&
       g_runtime_unsupported_entry && g_runtime_bx_entry &&
@@ -5174,6 +5209,28 @@ static void run_runtime_reference_workload(const struct harness_state *base,
                                                  1, 0,
                                                  0, 0, 0,
                                                  0, 0);
+
+  for (i = 0; i < REG_MAX; i++)
+    values[i] = 0;
+  values[0] = runtime_initial_r0(base);
+  values[1] = runtime_initial_r1(base);
+  values[2] = values[0] + values[1];
+  values[3] = values[2] + values[1];
+  values[REG_PC] = RUNTIME_FALLTHROUGH_TARGET_END_PC;
+  values[REG_CPSR] = 0;
+  values[CPU_HALT_STATE] = CPU_ACTIVE;
+  reg_hash = runtime_update_reg_hash(reg_hash, values);
+  mem_hash = runtime_update_memory_hash(mem_hash,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        runtime_reference_sticky_hash());
+  scheduler_hash = runtime_update_scheduler_hash(
+    scheduler_hash,
+    2, RUNTIME_END_PC, 0,
+    1, 0,
+    0, 0, 0,
+    0, 0);
 
   for (i = 0; i < REG_MAX; i++)
     values[i] = 0;
@@ -8704,12 +8761,12 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   snapshot->reg_hash = reg_hash;
   snapshot->mem_hash = mem_hash;
   snapshot->scheduler_hash = scheduler_hash;
-  snapshot->blocks = 176;
+  snapshot->blocks = 178;
   snapshot->fallbacks = 55;
   snapshot->initial_lookup_fallbacks = 4;
   snapshot->relookup_fallbacks = 49;
   snapshot->unsupported_fallbacks = 2;
-  snapshot->native_data_proc = 80;
+  snapshot->native_data_proc = 81;
   snapshot->native_branch = 7;
   snapshot->native_load = 26;
   snapshot->native_store = 19;
@@ -8745,6 +8802,17 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   reg[0] = runtime_initial_r0(base);
   reg[1] = runtime_initial_r1(base);
   execute_arm_translate_internal(RUNTIME_CYCLES, &reg[0]);
+  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+  mem_hash = runtime_update_current_memory_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+
+  reset_runtime_fixture_state(RUNTIME_START_PC);
+  g_runtime_fallthrough_target_lookup = 1;
+  reg[0] = runtime_initial_r0(base);
+  reg[1] = runtime_initial_r1(base);
+  execute_arm_translate_internal(RUNTIME_FALLTHROUGH_CHAIN_TOTAL_CYCLES,
+                                 &reg[0]);
+  g_runtime_fallthrough_target_lookup = 0;
   reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
   mem_hash = runtime_update_current_memory_hash(mem_hash);
   scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
@@ -10805,6 +10873,9 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
     return RUNTIME_INVALID_BLOCK_ENTRY;
   if (g_runtime_entry && pc == RUNTIME_START_PC)
     return g_runtime_entry;
+  if (g_runtime_fallthrough_target_lookup &&
+      g_runtime_fallthrough_target_entry && pc == RUNTIME_END_PC)
+    return g_runtime_fallthrough_target_entry;
   if (g_runtime_multiply_entry && pc == RUNTIME_MULTIPLY_START_PC)
     return g_runtime_multiply_entry;
   if (g_runtime_multiply_long_entry &&
