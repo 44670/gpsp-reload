@@ -520,14 +520,14 @@ typedef unsigned int usize;
 #define RUNTIME_BX_THUMB_TARGET_PC (RUNTIME_BX_THUMB_TARGET_RAW & ~1u)
 #define RUNTIME_PATCH_BRANCH_START_PC 0x08000500u
 #define RUNTIME_PATCH_BRANCH_TARGET_PC \
-  (RUNTIME_PATCH_BRANCH_START_PC + 12u)
+  (RUNTIME_PATCH_BRANCH_START_PC + 0x40u)
 #define RUNTIME_PATCH_BRANCH_TARGET_END_PC \
   (RUNTIME_PATCH_BRANCH_TARGET_PC + 4u)
 #define RUNTIME_PATCH_BRANCH_CYCLES 10u
 #define RUNTIME_PATCH_BRANCH_TARGET_CYCLES 6u
 #define RUNTIME_PATCH_BRANCH_TOTAL_CYCLES \
   (RUNTIME_PATCH_BRANCH_CYCLES + RUNTIME_PATCH_BRANCH_TARGET_CYCLES)
-#define RUNTIME_PATCH_BRANCH_B_PLUS_12 0xea000001u
+#define RUNTIME_PATCH_BRANCH_B_PLUS_0X40 0xea00000eu
 #define RUNTIME_PATCH_BRANCH_TARGET_ADD_R5_R1_R2 0xe0815002u
 #define RUNTIME_INTERNAL_BRANCH_START_PC 0x08000a40u
 #define RUNTIME_INTERNAL_BRANCH_TARGET_PC \
@@ -1994,7 +1994,7 @@ static int build_runtime_fixture_block(const char **reason)
 
   if (!riscv_emit_native_arm_b_patchable(&translation_ptr, meta,
                                          &patch_branch_source,
-                                         RUNTIME_PATCH_BRANCH_B_PLUS_12,
+                                         RUNTIME_PATCH_BRANCH_B_PLUS_0X40,
                                          RUNTIME_PATCH_BRANCH_START_PC,
                                          RUNTIME_PATCH_BRANCH_CYCLES))
   {

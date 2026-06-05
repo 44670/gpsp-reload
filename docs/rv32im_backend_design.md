@@ -286,7 +286,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   register-offset/shifted/RRX load ops, pre/post-index writeback memory ops,
   register-offset writeback/post-index memory ops,
   `SWP`, `SWPB`,
-  direct-branch-to-native-target, external patched-branch target chaining,
+  direct-branch-to-native-target, far external patched-branch target chaining,
   internal patched-branch target chaining, and
   `BL` link-register branch-to-native-target, and `BX r7`
   indirect-branch-to-native-target runtime fixtures, SWI-to-BIOS target
