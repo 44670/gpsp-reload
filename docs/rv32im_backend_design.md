@@ -346,12 +346,13 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   store-triggered SMC/IRQ/HALT alert handling, store-triggered SMC/IRQ native
   chaining after alert handling, byte-store SMC/IRQ/HALT alert handling,
   halfword SMC/IRQ alert handling, store/halfword/block/SWP HALT-alert handling,
-  block-memory SMC/IRQ alert handling, SWP-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
+  block-memory SMC/IRQ alert handling, SWP-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block,
+  partial-unsupported native discard
   fallback, ARM lookup-miss/invalid fallback, Thumb lookup-miss/invalid fallback, and Thumb unsupported-block fallback fixtures against a local ARM
   reference model, with
-  two hundred forty one runtime blocks executed, seventy total runtime
+  two hundred forty two runtime blocks executed, seventy one total runtime
   fallbacks split into four initial lookup fallbacks, sixty four relookup
-  fallbacks, and two unsupported-block fallbacks, basic data-processing native fallthrough chaining, remaining-cycle and invalid re-lookup fallback handoffs,
+  fallbacks, and three unsupported-block fallbacks, basic data-processing native fallthrough chaining, remaining-cycle and invalid re-lookup fallback handoffs,
   ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results and remaining-cycle handoff, MSR CPSR flag remaining-cycle handoff,
   MSR CPSR control mode/banked-LR effects and remaining-cycle handoff, SPSR helper-write effects and remaining-cycle handoff, and native PSR
@@ -408,7 +409,10 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   remaining-cycle lookup-misses, byte-store normal/alert, block-memory, and SWP alert remaining-cycle
   lookup-misses, and SWPB remaining-cycle lookup-miss fallbacks observed
 
-The lower-level standalone runtime test also emits the PC-relative signed-byte
+The qemu-user harness now proves that partial native bytes emitted before a
+block is marked unsupported are discarded, then the block routes through the
+interpreter fallback without applying the partial native register write. The
+lower-level standalone runtime test also emits the PC-relative signed-byte
 load and positive/negative halfword store, PC-register-offset word/byte store, shifted-LSL/LSR/ASR/ROR
 PC-register-offset word/byte load/store, and halfword load/store blocks plus
 LSL/LSR/ASR/ROR/RRX register-offset load blocks and LSL/LSR/ASR/ROR/RRX
@@ -418,10 +422,9 @@ unsupported byte and halfword load-to-PC forms (`LDRB`, `LDRH`, `LDRSB`,
 and `LDRSH` with `Rd=PC`) stay rejected by the native emitter until a
 separate interpreter-parity proof exists. PC-base writeback and post-index
 load/store forms are likewise proven rejected for word/byte and halfword
-memory classes. A standalone partial-unsupported block proves that
-`riscv_emit_block_finalize()` discards a partially emitted native body when
-the block is marked unsupported, then routes through the interpreter fallback
-without applying that partial native register write. A standalone patch-site
+memory classes. A standalone partial-unsupported block remains as the focused
+`riscv_emit_block_finalize()` proof for the same discard-and-fallback contract.
+A standalone patch-site
 case rewrites the same `riscv_patch_unconditional_branch()` slot from one
 native target block to another for the same guest branch target PC, flushes the
 patched instruction range each time, and proves execution follows the updated
