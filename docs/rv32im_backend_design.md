@@ -393,8 +393,8 @@ qemu-user smoke.
   partial-unsupported native discard
   fallback, ARM lookup-miss/invalid fallback, Thumb lookup-miss/invalid fallback, and Thumb unsupported-block fallback fixtures against a local ARM
   reference model, with
-  two hundred sixty two runtime blocks executed, eighty one total runtime
-  fallbacks split into four initial lookup fallbacks, seventy four relookup
+  two hundred seventy runtime blocks executed, eighty five total runtime
+  fallbacks split into four initial lookup fallbacks, seventy eight relookup
   fallbacks, and three unsupported-block fallbacks, basic data-processing native fallthrough chaining, remaining-cycle and invalid re-lookup fallback handoffs,
   ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results and remaining-cycle handoff, MSR CPSR flag remaining-cycle handoff,
@@ -405,7 +405,7 @@ qemu-user smoke.
   checked, carry-input data-processing, carry-input flag, logical flag, and
   extended shifted and register-shifted data-processing results checked,
   register-shifted flag/test and TEQ/CMN CPSR results checked,
-  helper memory, helper load, word/byte/halfword load-to-PC, word/byte/halfword load-to-PC native target chaining, register-offset halfword load-to-PC, PC-write native target chaining, PC-write target native fallthrough chaining, PC-write Thumb fallback, PC-relative load, and register-offset load plus writeback store/load remaining-cycle handoffs, PC-relative store memory and remaining-cycle handoff,
+  helper memory, helper load, word/byte/halfword load-to-PC, word/byte/halfword load-to-PC native target chaining, register-offset halfword and signed load-to-PC, PC-write native target chaining, PC-write target native fallthrough chaining, PC-write Thumb fallback, PC-relative load, and register-offset load plus writeback store/load remaining-cycle handoffs, PC-relative store memory and remaining-cycle handoff,
   source-PC store value and remaining-cycle handoff, word-store,
   IO-window word-store helper observation, byte-store,
   register-offset byte-store, shifted-LSL/shifted-LSL-with-PC/shifted-LSR/shifted-LSR-with-PC/shifted-ASR/shifted-ASR-with-PC/shifted-ROR/shifted-ROR-with-PC register-offset byte-store, and RRX
@@ -491,6 +491,43 @@ prove that a store helper-returned `CPU_ALERT_SMC | CPU_ALERT_IRQ` is consumed
 exactly once, runs the RAM cache flush and IRQ hooks, then continues to a
 native block at the store fallthrough PC without falling back or leaking the
 alert into the chained block.
+
+## Minimal Correct Backend Audit
+
+The first correctness surface is no longer blocked by an obvious missing ARM
+family. The table above now covers arithmetic, PSR, memory, PC-write memory,
+branches, block memory, SWP/SWPB, SWI/HLE, alerts, scheduler exits, fallback
+classes, cache flush observation, lookup traces, and generated-code patching.
+That is enough coverage to stop selecting milestones by adjacent opcode.
+
+The current evidence is still mostly fixture-local. `compare` is a long,
+deterministic workload, but many cases deliberately reset CPU state before the
+next semantic boundary. That is useful for isolating regressions, but it does
+not yet prove a longer production-like chain where values, PC writes,
+fallbacks, helper side effects, alerts, and scheduler refills interact without
+a reset between them.
+
+The smallest missing set before a meaningful real-workload smoke is:
+
+- Add one mixed qemu-user workload that runs as a chain, not a list of reset
+  fixtures. It should include native data processing, a helper-backed memory
+  read, a PC-writing load into a native target, a helper-backed store that
+  raises `CPU_ALERT_SMC | CPU_ALERT_IRQ`, a scheduler/update boundary, and one
+  deliberate fallback. The result must produce register, memory, scheduler,
+  fallback-counter, trace, and runtime snapshot frame evidence.
+- Keep the mixed workload deterministic and self-contained in
+  `tests/rv32im/rv32im_harness.c`. It should reuse the existing qemu-user
+  harness and pinned logs; it should not depend on a GBA ROM or host-specific
+  filesystem state beyond the current `.png`/stdio harness style.
+- Factor only the repeated compare plumbing needed by that workload. Small C
+  helpers for repeated PC-write load expectations are acceptable; a new
+  framework is not. The exact qemu-user summary lines and counter pins remain
+  the authority.
+
+Do not widen scope into Thumb native lowering, compressed RISC-V emission,
+guest register caching, performance tuning, or ESP32-specific work before the
+mixed workload exists. The next useful proof is interaction across backend
+contract boundaries, not another isolated instruction family.
 
 Remaining first-phase gaps should stay narrow and evidence-driven:
 
