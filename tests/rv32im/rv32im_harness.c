@@ -61,6 +61,7 @@ typedef unsigned int usize;
 #define ZLIB_BLOCK_MAX 65535u
 #define ZLIB_BLOCKS ((PNG_RAW_SIZE + ZLIB_BLOCK_MAX - 1) / ZLIB_BLOCK_MAX)
 #define ZLIB_SIZE (2 + PNG_RAW_SIZE + (ZLIB_BLOCKS * 5) + 4)
+#define RUNTIME_TRACE_MAX 64u
 #define RUNTIME_EXEC_MAP_BYTES 55296u
 #define RUNTIME_LOAD_BLOCK_OFFSET 512u
 #define RUNTIME_STORE_BLOCK_OFFSET 1024u
@@ -1157,6 +1158,9 @@ static u8 g_frame[FRAME_BYTES];
 static u8 g_png_raw[PNG_RAW_SIZE];
 static u8 g_zlib[ZLIB_SIZE];
 static char g_line[512];
+static u32 g_runtime_trace_enabled;
+static u32 g_runtime_trace_count;
+static u32 g_runtime_trace_pcs[RUNTIME_TRACE_MAX];
 
 u32 reg[REG_MAX];
 u32 spsr[6];
@@ -10330,9 +10334,49 @@ u32 function_cc update_gba(int remaining_cycles)
   return g_runtime_update_later_return;
 }
 
+static void runtime_trace_reset(void)
+{
+  u32 i;
+
+  g_runtime_trace_count = 0;
+  for (i = 0; i < RUNTIME_TRACE_MAX; i++)
+    g_runtime_trace_pcs[i] = 0;
+}
+
+static void runtime_trace_record(u32 pc, u32 is_thumb)
+{
+  u32 tagged_pc;
+
+  if (!g_runtime_trace_enabled)
+    return;
+
+  tagged_pc = is_thumb ? (pc | 1u) : (pc & ~1u);
+  if (g_runtime_trace_count < RUNTIME_TRACE_MAX)
+    g_runtime_trace_pcs[g_runtime_trace_count] = tagged_pc;
+  g_runtime_trace_count++;
+}
+
+static u32 runtime_trace_stored_count(void)
+{
+  return g_runtime_trace_count < RUNTIME_TRACE_MAX ?
+    g_runtime_trace_count : RUNTIME_TRACE_MAX;
+}
+
+static u32 runtime_trace_hash(u32 count)
+{
+  u32 i;
+  u32 hash = 2166136261u;
+
+  hash = fnv1a_update_u32(hash, g_runtime_trace_count);
+  for (i = 0; i < count; i++)
+    hash = fnv1a_update_u32(hash, g_runtime_trace_pcs[i]);
+  return hash;
+}
+
 u8 function_cc *block_lookup_address_arm(u32 pc)
 {
   g_runtime_lookup_calls++;
+  runtime_trace_record(pc, 0);
   g_runtime_lookup_pc = pc;
   if (g_runtime_invalid_lookup_pc && pc == g_runtime_invalid_lookup_pc)
     return RUNTIME_INVALID_BLOCK_ENTRY;
@@ -10571,6 +10615,7 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
 u8 function_cc *block_lookup_address_thumb(u32 pc)
 {
   g_runtime_thumb_lookup_calls++;
+  runtime_trace_record(pc, 1);
   if (g_runtime_invalid_thumb_lookup_pc &&
       pc == g_runtime_invalid_thumb_lookup_pc)
     return RUNTIME_INVALID_BLOCK_ENTRY;
@@ -10600,6 +10645,8 @@ static void reset_state(void)
   g_state.loaded_bytes = 0;
   g_state.loaded_hash = 2166136261u;
   g_state.last_frame_hash = 0;
+  g_runtime_trace_enabled = 0;
+  runtime_trace_reset();
 }
 
 static void render_frame(void)
@@ -10847,6 +10894,7 @@ static u32 synthetic_trace_pc(const struct harness_state *state, u32 index)
 
 static int capture_runtime_snapshot(struct compare_snapshot *snapshot,
                                     const char **reason);
+static int capture_runtime_lookup_trace(const char **reason);
 
 static void command_stepi(char *arg)
 {
@@ -11048,14 +11096,78 @@ static void command_counters(char *mode)
   put_raw(" reason=synthetic_state_counters\n");
 }
 
-static void command_tracepc(char *arg)
+static void command_tracepc(char *arg, char *mode_arg)
 {
-  u32 count = optional_count(arg, 8);
+  char *count_arg = arg;
+  u32 runtime_mode = 0;
+  u32 count;
   u32 i;
   u32 hash = 2166136261u;
 
+  if (arg && str_eq(arg, "runtime"))
+  {
+    runtime_mode = 1;
+    count_arg = mode_arg;
+  }
+  else if (mode_arg && str_eq(mode_arg, "runtime"))
+  {
+    runtime_mode = 1;
+  }
+  else if (mode_arg && *mode_arg)
+  {
+    print_fail("tracepc", "unknown_trace_mode");
+    return;
+  }
+
+  count = optional_count(count_arg, 8);
   if (count > 16)
     count = 16;
+
+  if (runtime_mode)
+  {
+    const char *runtime_reason = "runtime_unknown";
+    u32 stored_count;
+
+    if (!capture_runtime_lookup_trace(&runtime_reason))
+    {
+      put_raw("result=FAIL command=tracepc backend=");
+      put_raw(backend_name());
+      put_raw(" harness_mode=");
+      put_raw(RUNTIME_FIXTURE_MODE);
+      put_raw(" trace_mode=runtime_lookup reason=");
+      put_raw(runtime_reason);
+      put_chr('\n');
+      return;
+    }
+
+    stored_count = runtime_trace_stored_count();
+    if (count > stored_count)
+      count = stored_count;
+    hash = runtime_trace_hash(count);
+
+    put_raw("result=PASS command=tracepc backend=");
+    put_raw(backend_name());
+    put_raw(" count=");
+    put_u32_dec(count);
+    put_raw(" total=");
+    put_u32_dec(g_runtime_trace_count);
+    put_raw(" stored=");
+    put_u32_dec(stored_count);
+    put_raw(" pcs=");
+    for (i = 0; i < count; i++)
+    {
+      if (i)
+        put_chr(',');
+      put_u32_hex(g_runtime_trace_pcs[i]);
+    }
+    put_raw(" hash=");
+    put_u32_hex(hash);
+    put_raw(" harness_mode=");
+    put_raw(RUNTIME_FIXTURE_MODE);
+    put_raw(" trace_mode=runtime_lookup trace_encoding=thumb_lowbit");
+    put_raw(" reason=runtime_lookup_trace\n");
+    return;
+  }
 
   put_raw("tracepc backend=");
   put_raw(backend_name());
@@ -11252,6 +11364,28 @@ static int capture_runtime_snapshot(struct compare_snapshot *snapshot,
   else
     run_runtime_reference_workload(&saved_state, snapshot);
 
+  g_state = saved_state;
+  return 1;
+}
+
+static int capture_runtime_lookup_trace(const char **reason)
+{
+  struct harness_state saved_state = g_state;
+  struct compare_snapshot snapshot;
+
+  if (saved_state.backend != BACKEND_RV32IM)
+  {
+    *reason = "runtime_trace_requires_rv32im";
+    return 0;
+  }
+
+  if (!ensure_runtime_fixture(reason))
+    return 0;
+
+  runtime_trace_reset();
+  g_runtime_trace_enabled = 1;
+  run_runtime_rv32im_workload(&saved_state, &snapshot);
+  g_runtime_trace_enabled = 0;
   g_state = saved_state;
   return 1;
 }
@@ -11598,7 +11732,8 @@ static void process_line(char *line)
   }
   else if (str_eq(cmd, "tracepc"))
   {
-    command_tracepc(next_token(&cursor));
+    char *arg = next_token(&cursor);
+    command_tracepc(arg, next_token(&cursor));
   }
   else if (str_eq(cmd, "framehash"))
   {
