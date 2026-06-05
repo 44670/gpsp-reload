@@ -1166,6 +1166,9 @@ struct compare_snapshot {
   u32 supervisor_spsr;
   u32 blocks;
   u32 fallbacks;
+  u32 initial_lookup_fallbacks;
+  u32 relookup_fallbacks;
+  u32 unsupported_fallbacks;
   u32 native_data_proc;
   u32 native_branch;
   u32 native_load;
@@ -8671,6 +8674,9 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   snapshot->scheduler_hash = scheduler_hash;
   snapshot->blocks = 176;
   snapshot->fallbacks = 55;
+  snapshot->initial_lookup_fallbacks = 4;
+  snapshot->relookup_fallbacks = 49;
+  snapshot->unsupported_fallbacks = 2;
   snapshot->native_data_proc = 80;
   snapshot->native_branch = 7;
   snapshot->native_load = 26;
@@ -10218,6 +10224,12 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   snapshot->scheduler_hash = scheduler_hash;
   snapshot->blocks = after.blocks_executed - before.blocks_executed;
   snapshot->fallbacks = after.interpreter_fallbacks - before.interpreter_fallbacks;
+  snapshot->initial_lookup_fallbacks =
+    after.initial_lookup_fallbacks - before.initial_lookup_fallbacks;
+  snapshot->relookup_fallbacks =
+    after.relookup_fallbacks - before.relookup_fallbacks;
+  snapshot->unsupported_fallbacks =
+    after.unsupported_fallbacks - before.unsupported_fallbacks;
   snapshot->native_data_proc = after.native_data_proc_insns;
   snapshot->native_branch = after.native_branch_insns;
   snapshot->native_load = after.native_load_insns;
@@ -11671,6 +11683,12 @@ static void command_counters(char *mode)
     put_u32_dec(snapshot.blocks);
     put_raw(" fallbacks=");
     put_u32_dec(snapshot.fallbacks);
+    put_raw(" initial_lookup_fallbacks=");
+    put_u32_dec(snapshot.initial_lookup_fallbacks);
+    put_raw(" relookup_fallbacks=");
+    put_u32_dec(snapshot.relookup_fallbacks);
+    put_raw(" unsupported_fallbacks=");
+    put_u32_dec(snapshot.unsupported_fallbacks);
     put_raw(" native_data_proc=");
     put_u32_dec(snapshot.native_data_proc);
     put_raw(" native_branch=");
@@ -12401,6 +12419,9 @@ static void command_compare(void)
       !runtime_snapshot_regs_equal(&interp, &rv32im) ||
       rv32im.blocks != interp.blocks ||
       rv32im.fallbacks != interp.fallbacks ||
+      rv32im.initial_lookup_fallbacks != interp.initial_lookup_fallbacks ||
+      rv32im.relookup_fallbacks != interp.relookup_fallbacks ||
+      rv32im.unsupported_fallbacks != interp.unsupported_fallbacks ||
       rv32im.native_data_proc != interp.native_data_proc ||
       rv32im.native_branch != interp.native_branch ||
       rv32im.native_load != interp.native_load ||
@@ -12429,6 +12450,12 @@ static void command_compare(void)
     put_u32_dec(rv32im.blocks);
     put_raw(" rv32im_fallbacks=");
     put_u32_dec(rv32im.fallbacks);
+    put_raw(" rv32im_initial_lookup_fallbacks=");
+    put_u32_dec(rv32im.initial_lookup_fallbacks);
+    put_raw(" rv32im_relookup_fallbacks=");
+    put_u32_dec(rv32im.relookup_fallbacks);
+    put_raw(" rv32im_unsupported_fallbacks=");
+    put_u32_dec(rv32im.unsupported_fallbacks);
     put_raw(" rv32im_native_data_proc=");
     put_u32_dec(rv32im.native_data_proc);
     put_raw(" rv32im_native_branch=");
@@ -12470,6 +12497,12 @@ static void command_compare(void)
   put_u32_dec(rv32im.blocks);
   put_raw(" rv32im_fallbacks=");
   put_u32_dec(rv32im.fallbacks);
+  put_raw(" rv32im_initial_lookup_fallbacks=");
+  put_u32_dec(rv32im.initial_lookup_fallbacks);
+  put_raw(" rv32im_relookup_fallbacks=");
+  put_u32_dec(rv32im.relookup_fallbacks);
+  put_raw(" rv32im_unsupported_fallbacks=");
+  put_u32_dec(rv32im.unsupported_fallbacks);
   put_raw(" rv32im_native_data_proc=");
   put_u32_dec(rv32im.native_data_proc);
   put_raw(" rv32im_native_branch=");

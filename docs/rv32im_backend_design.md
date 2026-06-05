@@ -266,8 +266,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 - explicit runtime-snapshot `regs runtime` dump for the selected backend's
   final compare fixture CPU state
 - explicit runtime-snapshot `counters runtime` dump for selected-backend
-  block/fallback/native counters plus state, memory, scheduler, and snapshot
-  hashes
+  block/fallback/native counters, fallback source breakdown, state, memory,
+  scheduler, and snapshot hashes
 - explicit RV32IM `sched runtime [offset]` dump for scheduler-boundary events
   observed during the runtime workload, including lookup, update, interpreter
   remainder, flush, and IRQ-check counters
@@ -325,7 +325,9 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   block-memory SMC/IRQ alert handling, SWP-triggered SMC/IRQ alert handling, idle-loop gate, unsupported-block
   fallback, ARM lookup-miss/invalid fallback, Thumb lookup-miss/invalid fallback, and Thumb unsupported-block fallback fixtures against a local ARM
   reference model, with
-  one hundred seventy six runtime blocks executed, basic data-processing remaining-cycle and invalid re-lookup fallback handoffs,
+  one hundred seventy six runtime blocks executed, fifty five total runtime
+  fallbacks split into four initial lookup fallbacks, forty nine relookup
+  fallbacks, and two unsupported-block fallbacks, basic data-processing remaining-cycle and invalid re-lookup fallback handoffs,
   ADDS/SUBS/RSBS/CMP/logical/test-op CPSR flag results and
   low-bit preservation checked, MRS CPSR/SPSR read results and remaining-cycle handoff, MSR CPSR flag remaining-cycle handoff,
   MSR CPSR control mode/banked-LR effects and remaining-cycle handoff, SPSR helper-write effects and remaining-cycle handoff, and native PSR

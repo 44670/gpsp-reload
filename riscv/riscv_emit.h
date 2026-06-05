@@ -30,6 +30,9 @@ typedef struct riscv_runtime_stats
   u32 blocks_emitted;
   u32 blocks_executed;
   u32 interpreter_fallbacks;
+  u32 initial_lookup_fallbacks;
+  u32 relookup_fallbacks;
+  u32 unsupported_fallbacks;
   u32 native_data_proc_insns;
   u32 native_branch_insns;
   u32 native_load_insns;

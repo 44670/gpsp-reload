@@ -38,6 +38,9 @@ static s32 riscv_cycles_remaining;
 static u32 riscv_blocks_emitted;
 static u32 riscv_blocks_executed;
 static u32 riscv_interpreter_fallbacks;
+static u32 riscv_initial_lookup_fallbacks;
+static u32 riscv_relookup_fallbacks;
+static u32 riscv_unsupported_fallbacks;
 static u32 riscv_native_data_proc_insns;
 static u32 riscv_native_branch_insns;
 static u32 riscv_native_load_insns;
@@ -483,6 +486,7 @@ static u8 *riscv_lookup_or_fallback(void)
   if (!entry || entry == RISCV_INVALID_BLOCK_ENTRY)
   {
     riscv_interpreter_fallbacks++;
+    riscv_relookup_fallbacks++;
     riscv_run_interpreter_remainder();
     return NULL;
   }
@@ -714,6 +718,7 @@ static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta)
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
   {
     riscv_interpreter_fallbacks++;
+    riscv_unsupported_fallbacks++;
     riscv_run_interpreter_remainder();
     return NULL;
   }
@@ -2331,6 +2336,9 @@ void init_emitter(bool must_swap)
   riscv_blocks_emitted = 0;
   riscv_blocks_executed = 0;
   riscv_interpreter_fallbacks = 0;
+  riscv_initial_lookup_fallbacks = 0;
+  riscv_relookup_fallbacks = 0;
+  riscv_unsupported_fallbacks = 0;
   riscv_native_data_proc_insns = 0;
   riscv_native_branch_insns = 0;
   riscv_native_load_insns = 0;
@@ -2349,6 +2357,9 @@ void riscv_get_runtime_stats(riscv_runtime_stats *stats)
   stats->blocks_emitted = riscv_blocks_emitted;
   stats->blocks_executed = riscv_blocks_executed;
   stats->interpreter_fallbacks = riscv_interpreter_fallbacks;
+  stats->initial_lookup_fallbacks = riscv_initial_lookup_fallbacks;
+  stats->relookup_fallbacks = riscv_relookup_fallbacks;
+  stats->unsupported_fallbacks = riscv_unsupported_fallbacks;
   stats->native_data_proc_insns = riscv_native_data_proc_insns;
   stats->native_branch_insns = riscv_native_branch_insns;
   stats->native_load_insns = riscv_native_load_insns;
@@ -2383,6 +2394,7 @@ u32 execute_arm_translate_internal(u32 cycles, void *regptr)
   if (!entry_data || entry_data == RISCV_INVALID_BLOCK_ENTRY)
   {
     riscv_interpreter_fallbacks++;
+    riscv_initial_lookup_fallbacks++;
     execute_arm(cycles);
     riscv_cycles_remaining = 0;
     return 0;

@@ -1354,6 +1354,15 @@ static void run_init_emitter_contract_case(void)
   if (stats.interpreter_fallbacks != 0)
     fail_u32("init_emitter_contract", "interpreter_fallbacks",
              stats.interpreter_fallbacks, 0);
+  if (stats.initial_lookup_fallbacks != 0)
+    fail_u32("init_emitter_contract", "initial_lookup_fallbacks",
+             stats.initial_lookup_fallbacks, 0);
+  if (stats.relookup_fallbacks != 0)
+    fail_u32("init_emitter_contract", "relookup_fallbacks",
+             stats.relookup_fallbacks, 0);
+  if (stats.unsupported_fallbacks != 0)
+    fail_u32("init_emitter_contract", "unsupported_fallbacks",
+             stats.unsupported_fallbacks, 0);
   if (stats.native_data_proc_insns != 0)
     fail_u32("init_emitter_contract", "native_data_proc",
              stats.native_data_proc_insns, 0);
@@ -1384,6 +1393,15 @@ static void run_first_emit_stats_case(void)
   if (g_first_emit_stats.interpreter_fallbacks != 0)
     fail_u32("first_emit_stats", "interpreter_fallbacks",
              g_first_emit_stats.interpreter_fallbacks, 0);
+  if (g_first_emit_stats.initial_lookup_fallbacks != 0)
+    fail_u32("first_emit_stats", "initial_lookup_fallbacks",
+             g_first_emit_stats.initial_lookup_fallbacks, 0);
+  if (g_first_emit_stats.relookup_fallbacks != 0)
+    fail_u32("first_emit_stats", "relookup_fallbacks",
+             g_first_emit_stats.relookup_fallbacks, 0);
+  if (g_first_emit_stats.unsupported_fallbacks != 0)
+    fail_u32("first_emit_stats", "unsupported_fallbacks",
+             g_first_emit_stats.unsupported_fallbacks, 0);
   if (g_first_emit_stats.native_data_proc_insns != 1)
     fail_u32("first_emit_stats", "native_data_proc",
              g_first_emit_stats.native_data_proc_insns, 1);
@@ -1428,6 +1446,15 @@ static void run_first_execute_stats_case(void)
   if (g_first_execute_stats.interpreter_fallbacks != 0)
     fail_u32("first_execute_stats", "interpreter_fallbacks",
              g_first_execute_stats.interpreter_fallbacks, 0);
+  if (g_first_execute_stats.initial_lookup_fallbacks != 0)
+    fail_u32("first_execute_stats", "initial_lookup_fallbacks",
+             g_first_execute_stats.initial_lookup_fallbacks, 0);
+  if (g_first_execute_stats.relookup_fallbacks != 0)
+    fail_u32("first_execute_stats", "relookup_fallbacks",
+             g_first_execute_stats.relookup_fallbacks, 0);
+  if (g_first_execute_stats.unsupported_fallbacks != 0)
+    fail_u32("first_execute_stats", "unsupported_fallbacks",
+             g_first_execute_stats.unsupported_fallbacks, 0);
   if (g_first_execute_stats.native_data_proc_insns != 1)
     fail_u32("first_execute_stats", "native_data_proc",
              g_first_execute_stats.native_data_proc_insns, 1);
@@ -1436,11 +1463,17 @@ static void run_first_execute_stats_case(void)
 static void expect_runtime_fallback_delta(const char *test_name,
                                           const riscv_runtime_stats *before,
                                           u32 blocks_executed_delta,
-                                          u32 interpreter_fallback_delta)
+                                          u32 interpreter_fallback_delta,
+                                          u32 initial_lookup_delta,
+                                          u32 relookup_delta,
+                                          u32 unsupported_delta)
 {
   riscv_runtime_stats after;
+  u32 fallback_sum;
 
   riscv_get_runtime_stats(&after);
+  fallback_sum = after.initial_lookup_fallbacks +
+    after.relookup_fallbacks + after.unsupported_fallbacks;
 
   if (after.blocks_emitted != before->blocks_emitted)
     fail_u32(test_name, "blocks_emitted",
@@ -1455,6 +1488,24 @@ static void expect_runtime_fallback_delta(const char *test_name,
     fail_u32(test_name, "interpreter_fallback_delta",
              after.interpreter_fallbacks - before->interpreter_fallbacks,
              interpreter_fallback_delta);
+  if ((after.initial_lookup_fallbacks - before->initial_lookup_fallbacks) !=
+      initial_lookup_delta)
+    fail_u32(test_name, "initial_lookup_fallback_delta",
+             after.initial_lookup_fallbacks - before->initial_lookup_fallbacks,
+             initial_lookup_delta);
+  if ((after.relookup_fallbacks - before->relookup_fallbacks) !=
+      relookup_delta)
+    fail_u32(test_name, "relookup_fallback_delta",
+             after.relookup_fallbacks - before->relookup_fallbacks,
+             relookup_delta);
+  if ((after.unsupported_fallbacks - before->unsupported_fallbacks) !=
+      unsupported_delta)
+    fail_u32(test_name, "unsupported_fallback_delta",
+             after.unsupported_fallbacks - before->unsupported_fallbacks,
+             unsupported_delta);
+  if (fallback_sum != after.interpreter_fallbacks)
+    fail_u32(test_name, "fallback_source_sum",
+             fallback_sum, after.interpreter_fallbacks);
   if (after.native_data_proc_insns != before->native_data_proc_insns)
     fail_u32(test_name, "native_data_proc",
              after.native_data_proc_insns, before->native_data_proc_insns);
@@ -3680,7 +3731,7 @@ static void run_unsupported_block_fallback_case(void)
     fail_u32("unsupported_fallback", "execute_pc",
              g_execute_pc, UNSUPPORTED_START_PC);
   expect_runtime_fallback_delta("unsupported_fallback_stats",
-                                &stats_before, 1, 1);
+                                &stats_before, 1, 1, 0, 0, 1);
   expect_stickybits_cleared("unsupported_fallback");
 }
 
@@ -3724,7 +3775,7 @@ static void run_thumb_unsupported_block_fallback_case(void)
     fail_u32("thumb_unsupported_fallback", "execute_pc",
              g_execute_pc, THUMB_UNSUPPORTED_START_PC);
   expect_runtime_fallback_delta("thumb_unsupported_fallback_stats",
-                                &stats_before, 1, 1);
+                                &stats_before, 1, 1, 0, 0, 1);
   expect_stickybits_cleared("thumb_unsupported_fallback");
 }
 
@@ -3758,7 +3809,7 @@ static void run_initial_lookup_fallback_case(const char *test_name,
     fail_u32(test_name, "execute_cycles", g_execute_cycles, cycles);
   if (g_execute_pc != BLOCK_START_PC)
     fail_u32(test_name, "execute_pc", g_execute_pc, BLOCK_START_PC);
-  expect_runtime_fallback_delta(test_name, &stats_before, 0, 1);
+  expect_runtime_fallback_delta(test_name, &stats_before, 0, 1, 1, 0, 0);
   expect_stickybits_cleared(test_name);
 }
 
@@ -3807,7 +3858,7 @@ static void run_initial_thumb_lookup_fallback_case(const char *test_name,
     fail_u32(test_name, "execute_cycles", g_execute_cycles, cycles);
   if (g_execute_pc != BX_THUMB_TARGET_PC)
     fail_u32(test_name, "execute_pc", g_execute_pc, BX_THUMB_TARGET_PC);
-  expect_runtime_fallback_delta(test_name, &stats_before, 0, 1);
+  expect_runtime_fallback_delta(test_name, &stats_before, 0, 1, 1, 0, 0);
   expect_stickybits_cleared(test_name);
 }
 
@@ -3887,7 +3938,7 @@ static void run_invalid_relookup_fallback_case(void)
     fail_u32("invalid_relookup", "execute_pc",
              g_execute_pc, BLOCK_END_PC);
   expect_runtime_fallback_delta("invalid_relookup_stats",
-                                &stats_before, 1, 1);
+                                &stats_before, 1, 1, 0, 1, 0);
   expect_stickybits_cleared("invalid_relookup");
 }
 
@@ -5459,7 +5510,7 @@ static void run_pc_write_movs_thumb_fallback_case(void)
     fail_u32("pc_write_movs_thumb", "execute_pc",
              g_execute_pc, BX_THUMB_TARGET_PC);
   expect_runtime_fallback_delta("pc_write_movs_thumb_stats",
-                                &stats_before, 1, 1);
+                                &stats_before, 1, 1, 0, 1, 0);
   expect_stickybits_cleared("pc_write_movs_thumb");
 }
 
@@ -8202,6 +8253,7 @@ void init_bios_hooks(void)
 void _start(void)
 {
   u8 *code = (u8 *)map_exec_page();
+  riscv_runtime_stats final_stats;
   u32 data_code_bytes;
   u32 chain_second_code_bytes;
   u32 cycle_update_code_bytes;
@@ -8951,6 +9003,8 @@ void _start(void)
   run_half_post_load_case();
   run_reg_offset_store_remaining_cycles_case();
 
+  riscv_get_runtime_stats(&final_stats);
+
   put_raw("result=PASS command=runtime code_bytes=");
   put_u32_dec(data_code_bytes);
   put_raw(" chain_second_code_bytes=");
@@ -9155,6 +9209,14 @@ void _start(void)
   put_u32_dec(g_first_execute_stats.blocks_executed);
   put_raw(" first_exec_fallbacks=");
   put_u32_dec(g_first_execute_stats.interpreter_fallbacks);
+  put_raw(" final_fallbacks=");
+  put_u32_dec(final_stats.interpreter_fallbacks);
+  put_raw(" final_initial_lookup_fallbacks=");
+  put_u32_dec(final_stats.initial_lookup_fallbacks);
+  put_raw(" final_relookup_fallbacks=");
+  put_u32_dec(final_stats.relookup_fallbacks);
+  put_raw(" final_unsupported_fallbacks=");
+  put_u32_dec(final_stats.unsupported_fallbacks);
   put_raw(" data_entry=");
   put_u32_hex((u32)g_data_entry);
   put_raw(" chain_second_entry=");
