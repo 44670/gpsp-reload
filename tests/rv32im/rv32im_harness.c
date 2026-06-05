@@ -53,7 +53,7 @@ typedef unsigned int usize;
   "branchtargetchain_branchchainremain_armlookupmiss_arminvalidlookup_" \
   "branchupdaterefill_" \
   "branchupdatepc_branchupdateframepc_branch_patch_external_" \
-  "branch_patch_internal_blremain_bl_bxremain_bx_bxtargetchain_" \
+  "branch_patch_internal_blremain_bl_bltargetchain_bxremain_bx_bxtargetchain_" \
   "bxthumbremain_" \
   "swiremain_swi_swipatch_condtruth_pcwrite_pcwritenative_" \
   "pcwritethumb_pcaddremain_spsr_idle_thumb_fallback_thumbinvalidlookup_" \
@@ -67,7 +67,7 @@ typedef unsigned int usize;
 #define RUNTIME_MEM_EVENT_MAX 256u
 #define RUNTIME_SCHED_EVENT_MAX 256u
 #define RUNTIME_FALLBACK_EVENT_MAX 256u
-#define RUNTIME_EXEC_MAP_BYTES 56832u
+#define RUNTIME_EXEC_MAP_BYTES 57344u
 #define RUNTIME_LOAD_BLOCK_OFFSET 512u
 #define RUNTIME_STORE_BLOCK_OFFSET 1024u
 #define RUNTIME_BRANCH_BLOCK_OFFSET 1536u
@@ -160,6 +160,7 @@ typedef unsigned int usize;
 #define RUNTIME_FALLTHROUGH_TARGET_BLOCK_OFFSET 55296u
 #define RUNTIME_BRANCH_FALLTHROUGH_TARGET_BLOCK_OFFSET 55808u
 #define RUNTIME_BX_FALLTHROUGH_TARGET_BLOCK_OFFSET 56320u
+#define RUNTIME_BL_FALLTHROUGH_TARGET_BLOCK_OFFSET 56832u
 #define RUNTIME_START_PC 0x08000000u
 #define RUNTIME_END_PC (RUNTIME_START_PC + 4u)
 #define RUNTIME_CYCLES 7u
@@ -612,9 +613,14 @@ typedef unsigned int usize;
 #define RUNTIME_BL_TARGET_CYCLES 5u
 #define RUNTIME_BL_TOTAL_CYCLES \
   (RUNTIME_BL_CYCLES + RUNTIME_BL_TARGET_CYCLES)
+#define RUNTIME_BL_FALLTHROUGH_CYCLES 4u
+#define RUNTIME_BL_FALLTHROUGH_END_PC (RUNTIME_BL_TARGET_END_PC + 4u)
+#define RUNTIME_BL_FALLTHROUGH_TOTAL_CYCLES \
+  (RUNTIME_BL_TOTAL_CYCLES + RUNTIME_BL_FALLTHROUGH_CYCLES)
 #define RUNTIME_BL_EXTRA_CYCLES 4u
 #define RUNTIME_BL_PLUS_16 0xeb000002u
 #define RUNTIME_BL_TARGET_ADD_R8_R1_R2 0xe0818002u
+#define RUNTIME_BL_FALLTHROUGH_ADD_R9_R8_R1 0xe0889001u
 #define RUNTIME_SWI_START_PC 0x08000700u
 #define RUNTIME_SWI_END_PC (RUNTIME_SWI_START_PC + 4u)
 #define RUNTIME_SWI_TARGET_PC 0x00000008u
@@ -1264,6 +1270,8 @@ static u8 *g_runtime_patch_branch_target_entry;
 static u8 *g_runtime_internal_branch_entry;
 static u8 *g_runtime_bl_entry;
 static u8 *g_runtime_bl_target_entry;
+static u8 *g_runtime_bl_fallthrough_target_entry;
+static u32 g_runtime_bl_fallthrough_target_lookup;
 static u8 *g_runtime_swi_entry;
 static u8 *g_runtime_swi_target_entry;
 static u8 *g_runtime_swi_patch_entry;
@@ -1479,6 +1487,8 @@ static void clear_runtime_fixture_entries(void)
   g_runtime_internal_branch_entry = (u8 *)0;
   g_runtime_bl_entry = (u8 *)0;
   g_runtime_bl_target_entry = (u8 *)0;
+  g_runtime_bl_fallthrough_target_entry = (u8 *)0;
+  g_runtime_bl_fallthrough_target_lookup = 0;
   g_runtime_swi_entry = (u8 *)0;
   g_runtime_swi_target_entry = (u8 *)0;
   g_runtime_swi_patch_entry = (u8 *)0;
@@ -1816,6 +1826,7 @@ static void reset_runtime_fixture_state(u32 pc)
   g_runtime_fallthrough_target_lookup = 0;
   g_runtime_branch_fallthrough_target_lookup = 0;
   g_runtime_bx_fallthrough_target_lookup = 0;
+  g_runtime_bl_fallthrough_target_lookup = 0;
   g_runtime_swi_patch_lookup = 0;
   g_runtime_load_pc_target_lookup = 0;
   g_runtime_cond_lookup_condition = RUNTIME_COND_NE;
@@ -1943,6 +1954,7 @@ static int build_runtime_fixture_block(const char **reason)
   u32 internal_branch_code_bytes;
   u32 bl_code_bytes;
   u32 bl_target_code_bytes;
+  u32 bl_fallthrough_target_code_bytes;
   u32 swi_code_bytes;
   u32 swi_target_code_bytes;
   u32 swi_patch_code_bytes;
@@ -2484,6 +2496,27 @@ static int build_runtime_fixture_block(const char **reason)
   bl_target_code_bytes =
     (u32)(translation_ptr -
           (g_runtime_code + RUNTIME_BL_TARGET_BLOCK_OFFSET));
+
+  translation_ptr = g_runtime_code + RUNTIME_BL_FALLTHROUGH_TARGET_BLOCK_OFFSET;
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_runtime_bl_fallthrough_target_entry =
+    ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_data_proc(
+        &translation_ptr, meta,
+        RUNTIME_BL_FALLTHROUGH_ADD_R9_R8_R1,
+        RUNTIME_BL_FALLTHROUGH_CYCLES))
+  {
+    *reason = "runtime_bl_fallthrough_target_emit_rejected";
+    clear_runtime_fixture_entries();
+    return 0;
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, RUNTIME_BL_TARGET_END_PC,
+                            RUNTIME_BL_FALLTHROUGH_END_PC, false);
+  bl_fallthrough_target_code_bytes =
+    (u32)(translation_ptr -
+          (g_runtime_code + RUNTIME_BL_FALLTHROUGH_TARGET_BLOCK_OFFSET));
 
   translation_ptr = g_runtime_code + RUNTIME_SWI_BLOCK_OFFSET;
   riscv_emit_block_prologue(&translation_ptr, &meta);
@@ -4674,7 +4707,7 @@ static int build_runtime_fixture_block(const char **reason)
     bx_fallthrough_target_code_bytes +
     patch_branch_code_bytes +
     patch_branch_target_code_bytes + internal_branch_code_bytes +
-    bl_code_bytes + bl_target_code_bytes +
+    bl_code_bytes + bl_target_code_bytes + bl_fallthrough_target_code_bytes +
     swi_code_bytes + swi_target_code_bytes + swi_patch_code_bytes +
     cond_code_bytes +
     pc_write_mov_code_bytes + pc_write_movs_code_bytes +
@@ -4762,7 +4795,9 @@ static int ensure_runtime_fixture(const char **reason)
       g_runtime_patch_branch_entry &&
       g_runtime_patch_branch_target_entry &&
       g_runtime_internal_branch_entry && g_runtime_bl_entry &&
-      g_runtime_bl_target_entry && g_runtime_swi_entry &&
+      g_runtime_bl_target_entry &&
+      g_runtime_bl_fallthrough_target_entry &&
+      g_runtime_swi_entry &&
       g_runtime_swi_target_entry && g_runtime_swi_patch_entry &&
       runtime_cond_entries_ready() &&
       g_runtime_pc_write_mov_entry &&
@@ -8570,6 +8605,29 @@ static void run_runtime_reference_workload(const struct harness_state *base,
 
   for (i = 0; i < REG_MAX; i++)
     values[i] = 0;
+  values[1] = branch_r1;
+  values[2] = branch_r2;
+  values[8] = branch_r1 + branch_r2;
+  values[9] = values[8] + branch_r1;
+  values[REG_LR] = RUNTIME_BL_LINK_PC;
+  values[REG_PC] = RUNTIME_BL_FALLTHROUGH_END_PC;
+  values[REG_CPSR] = 0;
+  values[CPU_HALT_STATE] = CPU_ACTIVE;
+  reg_hash = runtime_update_reg_hash(reg_hash, values);
+  mem_hash = runtime_update_memory_hash(mem_hash,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        0, 0, 0, 0,
+                                        runtime_reference_sticky_hash());
+  scheduler_hash = runtime_update_scheduler_hash(
+    scheduler_hash,
+    3, RUNTIME_BL_TARGET_END_PC, 0,
+    1, 0,
+    0, 0, 0,
+    0, 0);
+
+  for (i = 0; i < REG_MAX; i++)
+    values[i] = 0;
   values[REG_LR] = RUNTIME_SWI_LINK_PC;
   values[REG_PC] = RUNTIME_SWI_TARGET_PC;
   values[REG_CPSR] = RUNTIME_SWI_CPSR_VALUE;
@@ -8883,12 +8941,12 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   snapshot->reg_hash = reg_hash;
   snapshot->mem_hash = mem_hash;
   snapshot->scheduler_hash = scheduler_hash;
-  snapshot->blocks = 184;
+  snapshot->blocks = 187;
   snapshot->fallbacks = 55;
   snapshot->initial_lookup_fallbacks = 4;
   snapshot->relookup_fallbacks = 49;
   snapshot->unsupported_fallbacks = 2;
-  snapshot->native_data_proc = 83;
+  snapshot->native_data_proc = 84;
   snapshot->native_branch = 7;
   snapshot->native_load = 26;
   snapshot->native_store = 19;
@@ -10295,6 +10353,17 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   mem_hash = runtime_update_current_memory_hash(mem_hash);
   scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
 
+  reset_runtime_fixture_state(RUNTIME_BL_START_PC);
+  g_runtime_bl_fallthrough_target_lookup = 1;
+  reg[1] = g_runtime_fixture_branch_r1;
+  reg[2] = g_runtime_fixture_branch_r2;
+  execute_arm_translate_internal(RUNTIME_BL_FALLTHROUGH_TOTAL_CYCLES,
+                                 &reg[0]);
+  g_runtime_bl_fallthrough_target_lookup = 0;
+  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+  mem_hash = runtime_update_current_memory_hash(mem_hash);
+  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+
   reset_runtime_fixture_state(RUNTIME_SWI_START_PC);
   saved_swi_target_entry = g_runtime_swi_target_entry;
   g_runtime_swi_target_entry = (u8 *)0;
@@ -11232,6 +11301,9 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
     return g_runtime_bl_entry;
   if (g_runtime_bl_target_entry && pc == RUNTIME_BL_TARGET_PC)
     return g_runtime_bl_target_entry;
+  if (g_runtime_bl_fallthrough_target_lookup &&
+      g_runtime_bl_fallthrough_target_entry && pc == RUNTIME_BL_TARGET_END_PC)
+    return g_runtime_bl_fallthrough_target_entry;
   if (g_runtime_swi_patch_lookup &&
       g_runtime_swi_patch_entry && pc == RUNTIME_SWI_START_PC)
     return g_runtime_swi_patch_entry;
