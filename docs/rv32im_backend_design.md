@@ -272,6 +272,9 @@ The RV32IM backend now has a standalone qemu-user proof suite in
   workload, with Thumb lookups tagged in bit 0
 - explicit RV32IM `mem <addr> <len> runtime` helper-event dump for observed
   runtime memory reads/writes in the selected address range
+- explicit RV32IM `mem <addr> <len> runtime-bytes` shadow byte dump for the
+  `0x02000000..0x0200ffff` fixture window, populated by actual RV32IM helper
+  writes during the runtime workload
 - explicit RV32IM `watchio <addr> <len> runtime` helper-event view for observed
   runtime IO-window reads/writes, currently exercised by a real store helper
   event at `0x04000028`
@@ -367,13 +370,16 @@ Remaining first-phase gaps should stay narrow and evidence-driven:
   and default frame paths outside the runtime-backed fixture commands. Synthetic
   paths stay labeled with `harness_mode=synthetic`; the `compare`,
   `regs runtime`, `mem <addr> <len> runtime`,
+  `mem <addr> <len> runtime-bytes`,
   `watchio <addr> <len> runtime`, `counters runtime`,
   `tracepc runtime`, `framehash runtime`, and `png <path> runtime` fixture paths are labeled
   `harness_mode=runtime_fixture`; the snapshot commands derive output from the
   runtime state/memory/scheduler/native-counter snapshot, `mem ... runtime`
-  and `watchio ... runtime` record actual RV32IM helper memory/IO events, and
-  `tracepc runtime` records actual RV32IM lookup PCs. Full addressable emulator RAM/IO dumps and real
-  emulator frame output are still not wired in.
+  and `watchio ... runtime` record actual RV32IM helper memory/IO events,
+  `mem ... runtime-bytes` records a bounded shadow-memory byte view of actual
+  RV32IM helper writes, and `tracepc runtime` records actual RV32IM lookup PCs.
+  Full addressable emulator RAM/IO dumps and real emulator frame output are
+  still not wired in.
 - Thumb instruction lowering remains deliberately unsupported; the harness
   compare path now proves Thumb lookup-miss/invalid fallback and unsupported
   Thumb block fallback only, and Thumb blocks must keep routing through

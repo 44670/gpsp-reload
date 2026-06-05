@@ -715,6 +715,10 @@ typedef unsigned int usize;
 #define RUNTIME_IO_BASE_ADDR 0x04000000u
 #define RUNTIME_IO_STORE_ADDR (RUNTIME_IO_BASE_ADDR + 0x28u)
 #define RUNTIME_IO_END_ADDR 0x04000400u
+#define RUNTIME_SHADOW_BASE_ADDR 0x02000000u
+#define RUNTIME_SHADOW_SIZE 0x00010000u
+#define RUNTIME_SHADOW_END_ADDR \
+  (RUNTIME_SHADOW_BASE_ADDR + RUNTIME_SHADOW_SIZE)
 #define RUNTIME_PC_BASE_STORE_ADDR \
   (RUNTIME_PC_BASE_STORE_START_PC + 8u + 0x20u)
 #define RUNTIME_HALF_LOAD_START_PC 0x08000e00u
@@ -1182,6 +1186,9 @@ static u32 g_runtime_mem_event_kind[RUNTIME_MEM_EVENT_MAX];
 static u32 g_runtime_mem_event_addr[RUNTIME_MEM_EVENT_MAX];
 static u32 g_runtime_mem_event_pc[RUNTIME_MEM_EVENT_MAX];
 static u32 g_runtime_mem_event_value[RUNTIME_MEM_EVENT_MAX];
+static u32 g_runtime_shadow_enabled;
+static u32 g_runtime_shadow_write_bytes;
+static u8 g_runtime_shadow_mem[RUNTIME_SHADOW_SIZE];
 
 u32 reg[REG_MAX];
 u32 spsr[6];
@@ -10190,6 +10197,9 @@ void execute_arm(u32 cycles)
 }
 
 static void runtime_mem_event_record(u32 kind, u32 address, u32 pc, u32 value);
+static void runtime_shadow_write8(u32 address, u8 value);
+static void runtime_shadow_write16(u32 address, u16 value);
+static void runtime_shadow_write32(u32 address, u32 value);
 
 u32 function_cc read_memory8(u32 address)
 {
@@ -10329,6 +10339,7 @@ cpu_alert_type function_cc write_memory8(u32 address, u8 value)
   g_runtime_write8_pc = reg[REG_PC];
   g_runtime_write8_value = value;
   runtime_mem_event_record(RUNTIME_MEM_EVENT_W8, address, reg[REG_PC], value);
+  runtime_shadow_write8(address, value);
   if (g_runtime_store_alert & CPU_ALERT_HALT)
     reg[CPU_HALT_STATE] = CPU_HALT;
   return g_runtime_store_alert;
@@ -10342,6 +10353,7 @@ cpu_alert_type function_cc write_memory16(u32 address, u16 value)
   g_runtime_write16_pc = reg[REG_PC];
   g_runtime_write16_value = value;
   runtime_mem_event_record(RUNTIME_MEM_EVENT_W16, address, reg[REG_PC], value);
+  runtime_shadow_write16(address, value);
   if (g_runtime_store_alert & CPU_ALERT_HALT)
     reg[CPU_HALT_STATE] = CPU_HALT;
   return g_runtime_store_alert;
@@ -10358,6 +10370,7 @@ cpu_alert_type function_cc write_memory32(u32 address, u32 value)
     g_runtime_block_mem32_hash, RUNTIME_BLOCK_MEM_WRITE32_TAG,
     address, reg[REG_PC], value);
   runtime_mem_event_record(RUNTIME_MEM_EVENT_W32, address, reg[REG_PC], value);
+  runtime_shadow_write32(address, value);
   if (g_runtime_store_alert & CPU_ALERT_HALT)
     reg[CPU_HALT_STATE] = CPU_HALT;
   return g_runtime_store_alert;
@@ -10508,6 +10521,69 @@ static int runtime_mem_event_in_range(u32 index, u32 addr, u32 len)
   if (end < addr)
     return event_addr >= addr || event_addr < end;
   return event_addr >= addr && event_addr < end;
+}
+
+static void runtime_shadow_reset(void)
+{
+  u32 i;
+
+  g_runtime_shadow_write_bytes = 0;
+  for (i = 0; i < RUNTIME_SHADOW_SIZE; i++)
+    g_runtime_shadow_mem[i] = 0;
+}
+
+static int runtime_shadow_range_valid(u32 addr, u32 len)
+{
+  u32 end;
+
+  if (len == 0)
+    return 0;
+
+  end = addr + len;
+  if (end < addr)
+    return 0;
+
+  return addr >= RUNTIME_SHADOW_BASE_ADDR && end <= RUNTIME_SHADOW_END_ADDR;
+}
+
+static void runtime_shadow_write8(u32 address, u8 value)
+{
+  if (!g_runtime_shadow_enabled)
+    return;
+
+  if (address < RUNTIME_SHADOW_BASE_ADDR ||
+      address >= RUNTIME_SHADOW_END_ADDR)
+    return;
+
+  g_runtime_shadow_mem[address - RUNTIME_SHADOW_BASE_ADDR] = value;
+  g_runtime_shadow_write_bytes++;
+}
+
+static void runtime_shadow_write16(u32 address, u16 value)
+{
+  runtime_shadow_write8(address, (u8)value);
+  runtime_shadow_write8(address + 1u, (u8)(value >> 8));
+}
+
+static void runtime_shadow_write32(u32 address, u32 value)
+{
+  runtime_shadow_write8(address, (u8)value);
+  runtime_shadow_write8(address + 1u, (u8)(value >> 8));
+  runtime_shadow_write8(address + 2u, (u8)(value >> 16));
+  runtime_shadow_write8(address + 3u, (u8)(value >> 24));
+}
+
+static u32 runtime_shadow_hash(u32 addr, u32 len)
+{
+  u32 i;
+  u32 hash = 2166136261u;
+  u32 offset = addr - RUNTIME_SHADOW_BASE_ADDR;
+
+  hash = fnv1a_update_u32(hash, addr);
+  hash = fnv1a_update_u32(hash, len);
+  for (i = 0; i < len; i++)
+    hash = fnv1a_update_u32(hash, g_runtime_shadow_mem[offset + i]);
+  return hash;
 }
 
 u8 function_cc *block_lookup_address_arm(u32 pc)
@@ -10786,6 +10862,8 @@ static void reset_state(void)
   runtime_trace_reset();
   g_runtime_mem_event_enabled = 0;
   runtime_mem_event_reset();
+  g_runtime_shadow_enabled = 0;
+  runtime_shadow_reset();
 }
 
 static void render_frame(void)
@@ -11035,6 +11113,7 @@ static int capture_runtime_snapshot(struct compare_snapshot *snapshot,
                                     const char **reason);
 static int capture_runtime_lookup_trace(const char **reason);
 static int capture_runtime_memory_events(const char **reason);
+static int capture_runtime_shadow_memory(const char **reason);
 
 static void command_runtime_event_range(const char *command,
                                         u32 addr,
@@ -11225,6 +11304,75 @@ static void command_mem(char *addr_arg, char *len_arg, char *mode)
   {
     command_runtime_event_range("mem", addr, len, "mem_mode",
                                 "runtime_memory_events");
+    return;
+  }
+
+  if (mode && str_eq(mode, "runtime-bytes"))
+  {
+    const char *runtime_reason = "runtime_unknown";
+    u32 offset;
+    u32 hash;
+
+    if (len > 64)
+      len = 64;
+
+    if (!runtime_shadow_range_valid(addr, len))
+    {
+      put_raw("result=FAIL command=mem backend=");
+      put_raw(backend_name());
+      put_raw(" addr=");
+      put_u32_hex(addr);
+      put_raw(" len=");
+      put_u32_dec(len);
+      put_raw(" harness_mode=");
+      put_raw(RUNTIME_FIXTURE_MODE);
+      put_raw(" mem_mode=runtime_shadow reason=runtime_shadow_bad_range\n");
+      return;
+    }
+
+    if (!capture_runtime_shadow_memory(&runtime_reason))
+    {
+      put_raw("result=FAIL command=mem backend=");
+      put_raw(backend_name());
+      put_raw(" addr=");
+      put_u32_hex(addr);
+      put_raw(" len=");
+      put_u32_dec(len);
+      put_raw(" harness_mode=");
+      put_raw(RUNTIME_FIXTURE_MODE);
+      put_raw(" mem_mode=runtime_shadow reason=");
+      put_raw(runtime_reason);
+      put_chr('\n');
+      return;
+    }
+
+    offset = addr - RUNTIME_SHADOW_BASE_ADDR;
+    hash = runtime_shadow_hash(addr, len);
+
+    put_raw("result=PASS command=mem backend=");
+    put_raw(backend_name());
+    put_raw(" addr=");
+    put_u32_hex(addr);
+    put_raw(" len=");
+    put_u32_dec(len);
+    put_raw(" data=");
+    for (i = 0; i < len; i++)
+    {
+      u8 value = g_runtime_shadow_mem[offset + i];
+      put_chr(hex_digit(value >> 4));
+      put_chr(hex_digit(value));
+    }
+    put_raw(" shadow_base=");
+    put_u32_hex(RUNTIME_SHADOW_BASE_ADDR);
+    put_raw(" shadow_size=");
+    put_u32_dec(RUNTIME_SHADOW_SIZE);
+    put_raw(" shadow_write_bytes=");
+    put_u32_dec(g_runtime_shadow_write_bytes);
+    put_raw(" hash=");
+    put_u32_hex(hash);
+    put_raw(" harness_mode=");
+    put_raw(RUNTIME_FIXTURE_MODE);
+    put_raw(" mem_mode=runtime_shadow reason=runtime_shadow_memory\n");
     return;
   }
 
@@ -11688,6 +11836,28 @@ static int capture_runtime_memory_events(const char **reason)
   g_runtime_mem_event_enabled = 1;
   run_runtime_rv32im_workload(&saved_state, &snapshot);
   g_runtime_mem_event_enabled = 0;
+  g_state = saved_state;
+  return 1;
+}
+
+static int capture_runtime_shadow_memory(const char **reason)
+{
+  struct harness_state saved_state = g_state;
+  struct compare_snapshot snapshot;
+
+  if (saved_state.backend != BACKEND_RV32IM)
+  {
+    *reason = "runtime_shadow_requires_rv32im";
+    return 0;
+  }
+
+  if (!ensure_runtime_fixture(reason))
+    return 0;
+
+  runtime_shadow_reset();
+  g_runtime_shadow_enabled = 1;
+  run_runtime_rv32im_workload(&saved_state, &snapshot);
+  g_runtime_shadow_enabled = 0;
   g_state = saved_state;
   return 1;
 }
