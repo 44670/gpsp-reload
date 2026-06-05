@@ -35,7 +35,7 @@ typedef unsigned int usize;
 #define ZLIB_BLOCK_MAX 65535u
 #define ZLIB_BLOCKS ((PNG_RAW_SIZE + ZLIB_BLOCK_MAX - 1) / ZLIB_BLOCK_MAX)
 #define ZLIB_SIZE (2 + PNG_RAW_SIZE + (ZLIB_BLOCKS * 5) + 4)
-#define RUNTIME_EXEC_MAP_BYTES 43008u
+#define RUNTIME_EXEC_MAP_BYTES 50176u
 #define RUNTIME_LOAD_BLOCK_OFFSET 512u
 #define RUNTIME_STORE_BLOCK_OFFSET 1024u
 #define RUNTIME_BRANCH_BLOCK_OFFSET 1536u
@@ -49,7 +49,6 @@ typedef unsigned int usize;
 #define RUNTIME_BL_TARGET_BLOCK_OFFSET 5632u
 #define RUNTIME_SWI_BLOCK_OFFSET 6144u
 #define RUNTIME_SWI_TARGET_BLOCK_OFFSET 6656u
-#define RUNTIME_COND_BLOCK_OFFSET 7168u
 #define RUNTIME_PC_WRITE_MOVS_BLOCK_OFFSET 7680u
 #define RUNTIME_SWP_BLOCK_OFFSET 8192u
 #define RUNTIME_MULTIPLY_BLOCK_OFFSET 8704u
@@ -113,6 +112,8 @@ typedef unsigned int usize;
 #define RUNTIME_HALF_WRITEBACK_LOAD_BLOCK_OFFSET 41472u
 #define RUNTIME_SWP_BYTE_BLOCK_OFFSET 41984u
 #define RUNTIME_THUMB_UNSUPPORTED_BLOCK_OFFSET 42496u
+#define RUNTIME_COND_TABLE_BLOCK_OFFSET 43008u
+#define RUNTIME_COND_BLOCK_STRIDE 512u
 #define RUNTIME_START_PC 0x08000000u
 #define RUNTIME_END_PC (RUNTIME_START_PC + 4u)
 #define RUNTIME_CYCLES 7u
@@ -556,8 +557,11 @@ typedef unsigned int usize;
 #define RUNTIME_COND_END_PC (RUNTIME_COND_START_PC + 4u)
 #define RUNTIME_COND_CYCLES 4u
 #define RUNTIME_COND_NE 0x1u
+#define RUNTIME_COND_CONDITIONS 14u
 #define RUNTIME_COND_ADD_R10_R1_R2 0xe081a002u
+#define RUNTIME_CPSR_N_BIT 0x80000000u
 #define RUNTIME_CPSR_Z_BIT 0x40000000u
+#define RUNTIME_CPSR_V_BIT 0x10000000u
 #define RUNTIME_PC_WRITE_MOVS_START_PC 0x08000900u
 #define RUNTIME_PC_WRITE_MOVS_END_PC (RUNTIME_PC_WRITE_MOVS_START_PC + 4u)
 #define RUNTIME_PC_WRITE_MOVS_CYCLES 5u
@@ -1045,7 +1049,8 @@ static u8 *g_runtime_bl_entry;
 static u8 *g_runtime_bl_target_entry;
 static u8 *g_runtime_swi_entry;
 static u8 *g_runtime_swi_target_entry;
-static u8 *g_runtime_cond_entry;
+static u8 *g_runtime_cond_entry[RUNTIME_COND_CONDITIONS];
+static u32 g_runtime_cond_lookup_condition;
 static u8 *g_runtime_pc_write_mov_entry;
 static u8 *g_runtime_pc_write_movs_entry;
 static u8 *g_runtime_pc_write_add_entry;
@@ -1168,6 +1173,15 @@ static u32 g_runtime_fixture_swp_old_word;
 static u32 g_runtime_fixture_branch_r1;
 static u32 g_runtime_fixture_branch_r2;
 
+static void clear_runtime_cond_entries(void)
+{
+  u32 condition;
+
+  for (condition = 0; condition < RUNTIME_COND_CONDITIONS; condition++)
+    g_runtime_cond_entry[condition] = (u8 *)0;
+  g_runtime_cond_lookup_condition = RUNTIME_COND_NE;
+}
+
 static void clear_runtime_fixture_entries(void)
 {
   g_runtime_entry = (u8 *)0;
@@ -1186,7 +1200,7 @@ static void clear_runtime_fixture_entries(void)
   g_runtime_bl_target_entry = (u8 *)0;
   g_runtime_swi_entry = (u8 *)0;
   g_runtime_swi_target_entry = (u8 *)0;
-  g_runtime_cond_entry = (u8 *)0;
+  clear_runtime_cond_entries();
   g_runtime_pc_write_mov_entry = (u8 *)0;
   g_runtime_pc_write_movs_entry = (u8 *)0;
   g_runtime_pc_write_add_entry = (u8 *)0;
@@ -1506,6 +1520,7 @@ static void reset_runtime_fixture_state(u32 pc)
   reg[REG_CPSR] = 0;
   reg[CPU_HALT_STATE] = CPU_ACTIVE;
   idle_loop_target_pc = IDLE_LOOP_DISABLED;
+  g_runtime_cond_lookup_condition = RUNTIME_COND_NE;
   g_runtime_lookup_calls = 0;
   g_runtime_lookup_pc = 0;
   g_runtime_invalid_lookup_pc = 0;
@@ -1558,6 +1573,53 @@ static void reset_runtime_fixture_state(u32 pc)
   g_runtime_store_alert = CPU_ALERT_NONE;
   g_runtime_flush_calls = 0;
   g_runtime_irq_check_calls = 0;
+}
+
+static int build_runtime_conditional_block(const char **reason,
+                                           u8 *block_base,
+                                           u32 condition,
+                                           u8 **entry_out,
+                                           u32 *code_bytes_out)
+{
+  u8 *translation_ptr = block_base;
+  riscv_jit_block_meta *meta;
+  u8 *cond_skip_source;
+
+  *entry_out = (u8 *)0;
+  *code_bytes_out = 0;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  *entry_out = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_arm_conditional_block_header(
+        &translation_ptr, meta, condition, RUNTIME_COND_CYCLES,
+        &cond_skip_source))
+  {
+    *reason = "runtime_cond_header_emit_rejected";
+    *entry_out = (u8 *)0;
+    return 0;
+  }
+
+  if (!cond_skip_source)
+  {
+    *reason = "runtime_cond_header_no_patch_site";
+    *entry_out = (u8 *)0;
+    return 0;
+  }
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       RUNTIME_COND_ADD_R10_R1_R2, 0))
+  {
+    *reason = "runtime_cond_data_emit_rejected";
+    *entry_out = (u8 *)0;
+    return 0;
+  }
+
+  riscv_patch_unconditional_branch(cond_skip_source, translation_ptr);
+  riscv_emit_block_finalize(meta, &translation_ptr, RUNTIME_COND_START_PC,
+                            RUNTIME_COND_END_PC, false);
+  *code_bytes_out = (u32)(translation_ptr - block_base);
+  return 1;
 }
 
 static int build_runtime_fixture_block(const char **reason)
@@ -1643,8 +1705,8 @@ static int build_runtime_fixture_block(const char **reason)
   u32 half_writeback_load_code_bytes;
   u32 shifted_reg_offset_code_bytes;
   u32 reg_offset_rrx_load_code_bytes;
+  u32 condition;
   u8 *patch_branch_source;
-  u8 *cond_skip_source;
 
   riscv_emit_block_prologue(&translation_ptr, &meta);
   g_runtime_entry = ((u8 *)meta) + block_prologue_size;
@@ -2051,81 +2113,31 @@ static int build_runtime_fixture_block(const char **reason)
     (u32)(translation_ptr -
           (g_runtime_code + RUNTIME_SWI_TARGET_BLOCK_OFFSET));
 
-  translation_ptr = g_runtime_code + RUNTIME_COND_BLOCK_OFFSET;
-  riscv_emit_block_prologue(&translation_ptr, &meta);
-  g_runtime_cond_entry = ((u8 *)meta) + block_prologue_size;
-
-  if (!riscv_emit_arm_conditional_block_header(
-        &translation_ptr, meta, RUNTIME_COND_NE, RUNTIME_COND_CYCLES,
-        &cond_skip_source))
+  cond_code_bytes = 0;
+  for (condition = 0; condition < RUNTIME_COND_CONDITIONS; condition++)
   {
-    *reason = "runtime_cond_header_emit_rejected";
-    g_runtime_entry = (u8 *)0;
-    g_runtime_load_entry = (u8 *)0;
-    g_runtime_store_entry = (u8 *)0;
-    g_runtime_branch_entry = (u8 *)0;
-    g_runtime_branch_target_entry = (u8 *)0;
-    g_runtime_unsupported_entry = (u8 *)0;
-    g_runtime_bx_entry = (u8 *)0;
-    g_runtime_bx_target_entry = (u8 *)0;
-    g_runtime_patch_branch_entry = (u8 *)0;
-    g_runtime_patch_branch_target_entry = (u8 *)0;
-    g_runtime_bl_entry = (u8 *)0;
-    g_runtime_bl_target_entry = (u8 *)0;
-    g_runtime_swi_entry = (u8 *)0;
-    g_runtime_swi_target_entry = (u8 *)0;
-    g_runtime_cond_entry = (u8 *)0;
-    return 0;
-  }
+    u32 cond_block_code_bytes;
+    u8 *block_base =
+      g_runtime_code + RUNTIME_COND_TABLE_BLOCK_OFFSET +
+      (condition * RUNTIME_COND_BLOCK_STRIDE);
 
-  if (!cond_skip_source)
-  {
-    *reason = "runtime_cond_header_no_patch_site";
-    g_runtime_entry = (u8 *)0;
-    g_runtime_load_entry = (u8 *)0;
-    g_runtime_store_entry = (u8 *)0;
-    g_runtime_branch_entry = (u8 *)0;
-    g_runtime_branch_target_entry = (u8 *)0;
-    g_runtime_unsupported_entry = (u8 *)0;
-    g_runtime_bx_entry = (u8 *)0;
-    g_runtime_bx_target_entry = (u8 *)0;
-    g_runtime_patch_branch_entry = (u8 *)0;
-    g_runtime_patch_branch_target_entry = (u8 *)0;
-    g_runtime_bl_entry = (u8 *)0;
-    g_runtime_bl_target_entry = (u8 *)0;
-    g_runtime_swi_entry = (u8 *)0;
-    g_runtime_swi_target_entry = (u8 *)0;
-    g_runtime_cond_entry = (u8 *)0;
-    return 0;
-  }
+    if (!build_runtime_conditional_block(reason, block_base, condition,
+                                         &g_runtime_cond_entry[condition],
+                                         &cond_block_code_bytes))
+    {
+      clear_runtime_fixture_entries();
+      return 0;
+    }
 
-  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
-                                       RUNTIME_COND_ADD_R10_R1_R2, 0))
-  {
-    *reason = "runtime_cond_data_emit_rejected";
-    g_runtime_entry = (u8 *)0;
-    g_runtime_load_entry = (u8 *)0;
-    g_runtime_store_entry = (u8 *)0;
-    g_runtime_branch_entry = (u8 *)0;
-    g_runtime_branch_target_entry = (u8 *)0;
-    g_runtime_unsupported_entry = (u8 *)0;
-    g_runtime_bx_entry = (u8 *)0;
-    g_runtime_bx_target_entry = (u8 *)0;
-    g_runtime_patch_branch_entry = (u8 *)0;
-    g_runtime_patch_branch_target_entry = (u8 *)0;
-    g_runtime_bl_entry = (u8 *)0;
-    g_runtime_bl_target_entry = (u8 *)0;
-    g_runtime_swi_entry = (u8 *)0;
-    g_runtime_swi_target_entry = (u8 *)0;
-    g_runtime_cond_entry = (u8 *)0;
-    return 0;
-  }
+    if (cond_block_code_bytes > RUNTIME_COND_BLOCK_STRIDE)
+    {
+      *reason = "runtime_cond_block_overflow";
+      clear_runtime_fixture_entries();
+      return 0;
+    }
 
-  riscv_patch_unconditional_branch(cond_skip_source, translation_ptr);
-  riscv_emit_block_finalize(meta, &translation_ptr, RUNTIME_COND_START_PC,
-                            RUNTIME_COND_END_PC, false);
-  cond_code_bytes =
-    (u32)(translation_ptr - (g_runtime_code + RUNTIME_COND_BLOCK_OFFSET));
+    cond_code_bytes += cond_block_code_bytes;
+  }
 
   translation_ptr = g_runtime_code + RUNTIME_PC_WRITE_MOV_BLOCK_OFFSET;
   riscv_emit_block_prologue(&translation_ptr, &meta);
@@ -2190,7 +2202,7 @@ static int build_runtime_fixture_block(const char **reason)
     g_runtime_bl_target_entry = (u8 *)0;
     g_runtime_swi_entry = (u8 *)0;
     g_runtime_swi_target_entry = (u8 *)0;
-    g_runtime_cond_entry = (u8 *)0;
+    clear_runtime_cond_entries();
     g_runtime_pc_write_mov_entry = (u8 *)0;
     g_runtime_pc_write_movs_entry = (u8 *)0;
     g_runtime_pc_write_add_entry = (u8 *)0;
@@ -2228,7 +2240,7 @@ static int build_runtime_fixture_block(const char **reason)
     g_runtime_bl_target_entry = (u8 *)0;
     g_runtime_swi_entry = (u8 *)0;
     g_runtime_swi_target_entry = (u8 *)0;
-    g_runtime_cond_entry = (u8 *)0;
+    clear_runtime_cond_entries();
     g_runtime_pc_write_mov_entry = (u8 *)0;
     g_runtime_pc_write_movs_entry = (u8 *)0;
     g_runtime_swp_entry = (u8 *)0;
@@ -2285,7 +2297,7 @@ static int build_runtime_fixture_block(const char **reason)
     g_runtime_bl_target_entry = (u8 *)0;
     g_runtime_swi_entry = (u8 *)0;
     g_runtime_swi_target_entry = (u8 *)0;
-    g_runtime_cond_entry = (u8 *)0;
+    clear_runtime_cond_entries();
     g_runtime_pc_write_mov_entry = (u8 *)0;
     g_runtime_pc_write_movs_entry = (u8 *)0;
     g_runtime_swp_entry = (u8 *)0;
@@ -2312,7 +2324,7 @@ static int build_runtime_fixture_block(const char **reason)
     g_runtime_bl_target_entry = (u8 *)0;
     g_runtime_swi_entry = (u8 *)0;
     g_runtime_swi_target_entry = (u8 *)0;
-    g_runtime_cond_entry = (u8 *)0;
+    clear_runtime_cond_entries();
     g_runtime_pc_write_mov_entry = (u8 *)0;
     g_runtime_pc_write_movs_entry = (u8 *)0;
     g_runtime_swp_entry = (u8 *)0;
@@ -2960,7 +2972,7 @@ static int build_runtime_fixture_block(const char **reason)
     g_runtime_bl_target_entry = (u8 *)0;
     g_runtime_swi_entry = (u8 *)0;
     g_runtime_swi_target_entry = (u8 *)0;
-    g_runtime_cond_entry = (u8 *)0;
+    clear_runtime_cond_entries();
     g_runtime_pc_write_mov_entry = (u8 *)0;
     g_runtime_pc_write_movs_entry = (u8 *)0;
     g_runtime_swp_entry = (u8 *)0;
@@ -3000,7 +3012,7 @@ static int build_runtime_fixture_block(const char **reason)
     g_runtime_bl_target_entry = (u8 *)0;
     g_runtime_swi_entry = (u8 *)0;
     g_runtime_swi_target_entry = (u8 *)0;
-    g_runtime_cond_entry = (u8 *)0;
+    clear_runtime_cond_entries();
     g_runtime_pc_write_mov_entry = (u8 *)0;
     g_runtime_pc_write_movs_entry = (u8 *)0;
     g_runtime_swp_entry = (u8 *)0;
@@ -3080,7 +3092,7 @@ static int build_runtime_fixture_block(const char **reason)
     g_runtime_bl_target_entry = (u8 *)0;
     g_runtime_swi_entry = (u8 *)0;
     g_runtime_swi_target_entry = (u8 *)0;
-    g_runtime_cond_entry = (u8 *)0;
+    clear_runtime_cond_entries();
     g_runtime_pc_write_mov_entry = (u8 *)0;
     g_runtime_pc_write_movs_entry = (u8 *)0;
     g_runtime_swp_entry = (u8 *)0;
@@ -3110,7 +3122,7 @@ static int build_runtime_fixture_block(const char **reason)
     g_runtime_bl_target_entry = (u8 *)0;
     g_runtime_swi_entry = (u8 *)0;
     g_runtime_swi_target_entry = (u8 *)0;
-    g_runtime_cond_entry = (u8 *)0;
+    clear_runtime_cond_entries();
     g_runtime_pc_write_mov_entry = (u8 *)0;
     g_runtime_pc_write_movs_entry = (u8 *)0;
     g_runtime_swp_entry = (u8 *)0;
@@ -3151,7 +3163,7 @@ static int build_runtime_fixture_block(const char **reason)
     g_runtime_bl_target_entry = (u8 *)0;
     g_runtime_swi_entry = (u8 *)0;
     g_runtime_swi_target_entry = (u8 *)0;
-    g_runtime_cond_entry = (u8 *)0;
+    clear_runtime_cond_entries();
     g_runtime_pc_write_mov_entry = (u8 *)0;
     g_runtime_pc_write_movs_entry = (u8 *)0;
     g_runtime_swp_entry = (u8 *)0;
@@ -3218,7 +3230,7 @@ static int build_runtime_fixture_block(const char **reason)
     g_runtime_bl_target_entry = (u8 *)0;
     g_runtime_swi_entry = (u8 *)0;
     g_runtime_swi_target_entry = (u8 *)0;
-    g_runtime_cond_entry = (u8 *)0;
+    clear_runtime_cond_entries();
     g_runtime_pc_write_mov_entry = (u8 *)0;
     g_runtime_pc_write_movs_entry = (u8 *)0;
     g_runtime_swp_entry = (u8 *)0;
@@ -4022,6 +4034,19 @@ static int build_runtime_fixture_block(const char **reason)
   return 1;
 }
 
+static int runtime_cond_entries_ready(void)
+{
+  u32 condition;
+
+  for (condition = 0; condition < RUNTIME_COND_CONDITIONS; condition++)
+  {
+    if (!g_runtime_cond_entry[condition])
+      return 0;
+  }
+
+  return 1;
+}
+
 static int ensure_runtime_fixture(const char **reason)
 {
   if (g_runtime_entry && g_runtime_load_entry && g_runtime_store_entry &&
@@ -4032,7 +4057,7 @@ static int ensure_runtime_fixture(const char **reason)
       g_runtime_bx_target_entry && g_runtime_patch_branch_entry &&
       g_runtime_patch_branch_target_entry && g_runtime_bl_entry &&
       g_runtime_bl_target_entry && g_runtime_swi_entry &&
-      g_runtime_swi_target_entry && g_runtime_cond_entry &&
+      g_runtime_swi_target_entry && runtime_cond_entries_ready() &&
       g_runtime_pc_write_mov_entry &&
       g_runtime_pc_write_movs_entry && g_runtime_pc_write_add_entry &&
       g_runtime_swp_entry &&
@@ -4148,6 +4173,52 @@ static u32 runtime_branch_r1_value(const struct harness_state *state)
 static u32 runtime_branch_r2_value(const struct harness_state *state)
 {
   return state->cycles ^ 0x00000034u;
+}
+
+static u32 runtime_cond_taken_cpsr(u32 condition)
+{
+  static const u32 taken[RUNTIME_COND_CONDITIONS] =
+  {
+    RUNTIME_CPSR_Z_BIT,
+    0,
+    RUNTIME_CPSR_C_BIT,
+    0,
+    RUNTIME_CPSR_N_BIT,
+    0,
+    RUNTIME_CPSR_V_BIT,
+    0,
+    RUNTIME_CPSR_C_BIT,
+    RUNTIME_CPSR_Z_BIT,
+    RUNTIME_CPSR_N_BIT | RUNTIME_CPSR_V_BIT,
+    RUNTIME_CPSR_N_BIT,
+    RUNTIME_CPSR_N_BIT | RUNTIME_CPSR_V_BIT,
+    RUNTIME_CPSR_Z_BIT
+  };
+
+  return taken[condition];
+}
+
+static u32 runtime_cond_skipped_cpsr(u32 condition)
+{
+  static const u32 skipped[RUNTIME_COND_CONDITIONS] =
+  {
+    0,
+    RUNTIME_CPSR_Z_BIT,
+    0,
+    RUNTIME_CPSR_C_BIT,
+    0,
+    RUNTIME_CPSR_N_BIT,
+    0,
+    RUNTIME_CPSR_V_BIT,
+    RUNTIME_CPSR_C_BIT | RUNTIME_CPSR_Z_BIT,
+    RUNTIME_CPSR_C_BIT,
+    RUNTIME_CPSR_N_BIT,
+    RUNTIME_CPSR_N_BIT | RUNTIME_CPSR_V_BIT,
+    RUNTIME_CPSR_Z_BIT,
+    RUNTIME_CPSR_N_BIT | RUNTIME_CPSR_V_BIT
+  };
+
+  return skipped[condition];
 }
 
 static u32 runtime_update_reg_hash(u32 hash, const u32 *values)
@@ -4406,6 +4477,7 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   u32 reg_hash = 2166136261u;
   u32 mem_hash = 2166136261u;
   u32 scheduler_hash = 2166136261u;
+  u32 condition;
   u32 multiply_r1 = runtime_multiply_r1_value(base);
   u32 multiply_r2 = runtime_multiply_r2_value(base);
   u32 multiply_r3 = runtime_multiply_r3_value(base);
@@ -7329,46 +7401,49 @@ static void run_runtime_reference_workload(const struct harness_state *base,
                                                  0, 0, 0,
                                                  0, 0);
 
-  for (i = 0; i < REG_MAX; i++)
-    values[i] = 0;
-  values[1] = branch_r1;
-  values[2] = branch_r2;
-  values[10] = branch_r1 + branch_r2;
-  values[REG_PC] = RUNTIME_COND_END_PC;
-  values[REG_CPSR] = 0;
-  values[CPU_HALT_STATE] = CPU_ACTIVE;
-  reg_hash = runtime_update_reg_hash(reg_hash, values);
-  mem_hash = runtime_update_memory_hash(mem_hash,
-                                        0, 0, 0, 0,
-                                        0, 0, 0, 0,
-                                        0, 0, 0, 0,
-                                        runtime_reference_sticky_hash());
-  scheduler_hash = runtime_update_scheduler_hash(scheduler_hash,
-                                                 1,
-                                                 RUNTIME_COND_START_PC, 0,
-                                                 1, 0,
-                                                 0, 0, 0,
-                                                 0, 0);
+  for (condition = 0; condition < RUNTIME_COND_CONDITIONS; condition++)
+  {
+    for (i = 0; i < REG_MAX; i++)
+      values[i] = 0;
+    values[1] = branch_r1;
+    values[2] = branch_r2;
+    values[10] = branch_r1 + branch_r2;
+    values[REG_PC] = RUNTIME_COND_END_PC;
+    values[REG_CPSR] = runtime_cond_taken_cpsr(condition);
+    values[CPU_HALT_STATE] = CPU_ACTIVE;
+    reg_hash = runtime_update_reg_hash(reg_hash, values);
+    mem_hash = runtime_update_memory_hash(mem_hash,
+                                          0, 0, 0, 0,
+                                          0, 0, 0, 0,
+                                          0, 0, 0, 0,
+                                          runtime_reference_sticky_hash());
+    scheduler_hash = runtime_update_scheduler_hash(scheduler_hash,
+                                                   1,
+                                                   RUNTIME_COND_START_PC, 0,
+                                                   1, 0,
+                                                   0, 0, 0,
+                                                   0, 0);
 
-  for (i = 0; i < REG_MAX; i++)
-    values[i] = 0;
-  values[1] = branch_r1;
-  values[2] = branch_r2;
-  values[REG_PC] = RUNTIME_COND_END_PC;
-  values[REG_CPSR] = RUNTIME_CPSR_Z_BIT;
-  values[CPU_HALT_STATE] = CPU_ACTIVE;
-  reg_hash = runtime_update_reg_hash(reg_hash, values);
-  mem_hash = runtime_update_memory_hash(mem_hash,
-                                        0, 0, 0, 0,
-                                        0, 0, 0, 0,
-                                        0, 0, 0, 0,
-                                        runtime_reference_sticky_hash());
-  scheduler_hash = runtime_update_scheduler_hash(scheduler_hash,
-                                                 1,
-                                                 RUNTIME_COND_START_PC, 0,
-                                                 1, 0,
-                                                 0, 0, 0,
-                                                 0, 0);
+    for (i = 0; i < REG_MAX; i++)
+      values[i] = 0;
+    values[1] = branch_r1;
+    values[2] = branch_r2;
+    values[REG_PC] = RUNTIME_COND_END_PC;
+    values[REG_CPSR] = runtime_cond_skipped_cpsr(condition);
+    values[CPU_HALT_STATE] = CPU_ACTIVE;
+    reg_hash = runtime_update_reg_hash(reg_hash, values);
+    mem_hash = runtime_update_memory_hash(mem_hash,
+                                          0, 0, 0, 0,
+                                          0, 0, 0, 0,
+                                          0, 0, 0, 0,
+                                          runtime_reference_sticky_hash());
+    scheduler_hash = runtime_update_scheduler_hash(scheduler_hash,
+                                                   1,
+                                                   RUNTIME_COND_START_PC, 0,
+                                                   1, 0,
+                                                   0, 0, 0,
+                                                   0, 0);
+  }
 
   for (i = 0; i < REG_MAX; i++)
     values[i] = 0;
@@ -7519,9 +7594,9 @@ static void run_runtime_reference_workload(const struct harness_state *base,
   snapshot->reg_hash = reg_hash;
   snapshot->mem_hash = mem_hash;
   snapshot->scheduler_hash = scheduler_hash;
-  snapshot->blocks = 130;
+  snapshot->blocks = 156;
   snapshot->fallbacks = 46;
-  snapshot->native_data_proc = 64;
+  snapshot->native_data_proc = 77;
   snapshot->native_branch = 5;
   snapshot->native_load = 23;
   snapshot->native_store = 14;
@@ -7540,6 +7615,7 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   u32 reg_hash = 2166136261u;
   u32 mem_hash = 2166136261u;
   u32 scheduler_hash = 2166136261u;
+  u32 condition;
 
   g_runtime_fixture_load_word = runtime_load_word_value(base);
   g_runtime_fixture_load_byte = runtime_load_byte_value(base);
@@ -8764,23 +8840,28 @@ static void run_runtime_rv32im_workload(const struct harness_state *base,
   mem_hash = runtime_update_current_memory_hash(mem_hash);
   scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
 
-  reset_runtime_fixture_state(RUNTIME_COND_START_PC);
-  reg[1] = g_runtime_fixture_branch_r1;
-  reg[2] = g_runtime_fixture_branch_r2;
-  reg[REG_CPSR] = 0;
-  execute_arm_translate_internal(RUNTIME_COND_CYCLES, &reg[0]);
-  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
-  mem_hash = runtime_update_current_memory_hash(mem_hash);
-  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+  for (condition = 0; condition < RUNTIME_COND_CONDITIONS; condition++)
+  {
+    reset_runtime_fixture_state(RUNTIME_COND_START_PC);
+    g_runtime_cond_lookup_condition = condition;
+    reg[1] = g_runtime_fixture_branch_r1;
+    reg[2] = g_runtime_fixture_branch_r2;
+    reg[REG_CPSR] = runtime_cond_taken_cpsr(condition);
+    execute_arm_translate_internal(RUNTIME_COND_CYCLES, &reg[0]);
+    reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+    mem_hash = runtime_update_current_memory_hash(mem_hash);
+    scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
 
-  reset_runtime_fixture_state(RUNTIME_COND_START_PC);
-  reg[1] = g_runtime_fixture_branch_r1;
-  reg[2] = g_runtime_fixture_branch_r2;
-  reg[REG_CPSR] = RUNTIME_CPSR_Z_BIT;
-  execute_arm_translate_internal(RUNTIME_COND_CYCLES, &reg[0]);
-  reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
-  mem_hash = runtime_update_current_memory_hash(mem_hash);
-  scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+    reset_runtime_fixture_state(RUNTIME_COND_START_PC);
+    g_runtime_cond_lookup_condition = condition;
+    reg[1] = g_runtime_fixture_branch_r1;
+    reg[2] = g_runtime_fixture_branch_r2;
+    reg[REG_CPSR] = runtime_cond_skipped_cpsr(condition);
+    execute_arm_translate_internal(RUNTIME_COND_CYCLES, &reg[0]);
+    reg_hash = runtime_update_reg_hash(reg_hash, &reg[0]);
+    mem_hash = runtime_update_current_memory_hash(mem_hash);
+    scheduler_hash = runtime_update_current_scheduler_hash(scheduler_hash);
+  }
 
   reset_runtime_fixture_state(RUNTIME_PC_WRITE_MOV_START_PC);
   reg[REG_LR] = RUNTIME_PC_WRITE_MOV_TARGET;
@@ -9235,8 +9316,10 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
     return g_runtime_swi_entry;
   if (g_runtime_swi_target_entry && pc == RUNTIME_SWI_TARGET_PC)
     return g_runtime_swi_target_entry;
-  if (g_runtime_cond_entry && pc == RUNTIME_COND_START_PC)
-    return g_runtime_cond_entry;
+  if (pc == RUNTIME_COND_START_PC &&
+      g_runtime_cond_lookup_condition < RUNTIME_COND_CONDITIONS &&
+      g_runtime_cond_entry[g_runtime_cond_lookup_condition])
+    return g_runtime_cond_entry[g_runtime_cond_lookup_condition];
   if (g_runtime_pc_write_mov_entry && pc == RUNTIME_PC_WRITE_MOV_START_PC)
     return g_runtime_pc_write_mov_entry;
   if (g_runtime_pc_write_movs_entry &&
@@ -9787,7 +9870,7 @@ static void command_compare(void)
 
   if (!ensure_runtime_fixture(&runtime_reason))
   {
-    put_raw("result=FAIL command=compare workload=arm_add_armaddremain_arminvalidremain_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_psrremain_msr_msrremain_msrctrl_msrctrlremain_msrspsrremain_load_loadremain_store_storeremain_storebyte_storebyteremain_storebytealert_storehalt_pcmem_pcmemremain_loadpc_loadpcremain_pcstore_pcstoreremain_pcbasestoreremain_regoff_regoffremain_regstore_regstoreremain_regwb_regwbstoreremain_regwbloadremain_halfremain_halfreg_halfregremain_halfregstoreremain_halfpc_halfpcremain_halfwb_halfwbstoreremain_halfwbloadremain_halfhalt_blockmem_blockldmremain_blockalert_blockhalt_blockpush_blockpushremain_blockpc_blockspsr_hle_hledivarmremain_pcsrc_pcsrcremain_writeback_writebackstoreremain_writebackloadremain_swp_swpalert_swphalt_swpb_alert_branchremain_branchchainremain_armlookupmiss_arminvalidlookup_branchupdaterefill_branchupdatepc_branchupdateframepc_branch_patch_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_cond_pcwrite_pcaddremain_spsr_idle_thumb_fallback_thumbinvalidlookup_thumbunsupported");
+    put_raw("result=FAIL command=compare workload=arm_add_armaddremain_arminvalidremain_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_psrremain_msr_msrremain_msrctrl_msrctrlremain_msrspsrremain_load_loadremain_store_storeremain_storebyte_storebyteremain_storebytealert_storehalt_pcmem_pcmemremain_loadpc_loadpcremain_pcstore_pcstoreremain_pcbasestoreremain_regoff_regoffremain_regstore_regstoreremain_regwb_regwbstoreremain_regwbloadremain_halfremain_halfreg_halfregremain_halfregstoreremain_halfpc_halfpcremain_halfwb_halfwbstoreremain_halfwbloadremain_halfhalt_blockmem_blockldmremain_blockalert_blockhalt_blockpush_blockpushremain_blockpc_blockspsr_hle_hledivarmremain_pcsrc_pcsrcremain_writeback_writebackstoreremain_writebackloadremain_swp_swpalert_swphalt_swpb_alert_branchremain_branchchainremain_armlookupmiss_arminvalidlookup_branchupdaterefill_branchupdatepc_branchupdateframepc_branch_patch_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_condtruth_pcwrite_pcaddremain_spsr_idle_thumb_fallback_thumbinvalidlookup_thumbunsupported");
     put_raw(" harness_mode=");
     put_raw(RUNTIME_FIXTURE_MODE);
     put_raw(" frame_mode=synthetic mem_mode=runtime_stickybits reason=");
@@ -9813,7 +9896,7 @@ static void command_compare(void)
       rv32im.native_store != interp.native_store ||
       rv32im.native_psr != interp.native_psr)
   {
-    put_raw("result=FAIL command=compare workload=arm_add_armaddremain_arminvalidremain_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_psrremain_msr_msrremain_msrctrl_msrctrlremain_msrspsrremain_load_loadremain_store_storeremain_storebyte_storebyteremain_storebytealert_storehalt_pcmem_pcmemremain_loadpc_loadpcremain_pcstore_pcstoreremain_pcbasestoreremain_regoff_regoffremain_regstore_regstoreremain_regwb_regwbstoreremain_regwbloadremain_halfremain_halfreg_halfregremain_halfregstoreremain_halfpc_halfpcremain_halfwb_halfwbstoreremain_halfwbloadremain_halfhalt_blockmem_blockldmremain_blockalert_blockhalt_blockpush_blockpushremain_blockpc_blockspsr_hle_hledivarmremain_pcsrc_pcsrcremain_writeback_writebackstoreremain_writebackloadremain_swp_swpalert_swphalt_swpb_alert_branchremain_branchchainremain_armlookupmiss_arminvalidlookup_branchupdaterefill_branchupdatepc_branchupdateframepc_branch_patch_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_cond_pcwrite_pcaddremain_spsr_idle_thumb_fallback_thumbinvalidlookup_thumbunsupported interp_frame_hash=");
+    put_raw("result=FAIL command=compare workload=arm_add_armaddremain_arminvalidremain_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_psrremain_msr_msrremain_msrctrl_msrctrlremain_msrspsrremain_load_loadremain_store_storeremain_storebyte_storebyteremain_storebytealert_storehalt_pcmem_pcmemremain_loadpc_loadpcremain_pcstore_pcstoreremain_pcbasestoreremain_regoff_regoffremain_regstore_regstoreremain_regwb_regwbstoreremain_regwbloadremain_halfremain_halfreg_halfregremain_halfregstoreremain_halfpc_halfpcremain_halfwb_halfwbstoreremain_halfwbloadremain_halfhalt_blockmem_blockldmremain_blockalert_blockhalt_blockpush_blockpushremain_blockpc_blockspsr_hle_hledivarmremain_pcsrc_pcsrcremain_writeback_writebackstoreremain_writebackloadremain_swp_swpalert_swphalt_swpb_alert_branchremain_branchchainremain_armlookupmiss_arminvalidlookup_branchupdaterefill_branchupdatepc_branchupdateframepc_branch_patch_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_condtruth_pcwrite_pcaddremain_spsr_idle_thumb_fallback_thumbinvalidlookup_thumbunsupported interp_frame_hash=");
     put_u32_hex(interp.frame_hash);
     put_raw(" rv32im_frame_hash=");
     put_u32_hex(rv32im.frame_hash);
@@ -9852,7 +9935,7 @@ static void command_compare(void)
     return;
   }
 
-  put_raw("result=PASS command=compare workload=arm_add_armaddremain_arminvalidremain_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_psrremain_msr_msrremain_msrctrl_msrctrlremain_msrspsrremain_load_loadremain_store_storeremain_storebyte_storebyteremain_storebytealert_storehalt_pcmem_pcmemremain_loadpc_loadpcremain_pcstore_pcstoreremain_pcbasestoreremain_regoff_regoffremain_regstore_regstoreremain_regwb_regwbstoreremain_regwbloadremain_halfremain_halfreg_halfregremain_halfregstoreremain_halfpc_halfpcremain_halfwb_halfwbstoreremain_halfwbloadremain_halfhalt_blockmem_blockldmremain_blockalert_blockhalt_blockpush_blockpushremain_blockpc_blockspsr_hle_hledivarmremain_pcsrc_pcsrcremain_writeback_writebackstoreremain_writebackloadremain_swp_swpalert_swphalt_swpb_alert_branchremain_branchchainremain_armlookupmiss_arminvalidlookup_branchupdaterefill_branchupdatepc_branchupdateframepc_branch_patch_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_cond_pcwrite_pcaddremain_spsr_idle_thumb_fallback_thumbinvalidlookup_thumbunsupported interp_frame_hash=");
+  put_raw("result=PASS command=compare workload=arm_add_armaddremain_arminvalidremain_multiply_multiplylong_longmulflags_longmulacc_longmulaccflags_carrydata_carryflags_subflags_logicalflags_dataext_regshift_regshiftflags_flags_testops_psr_psrremain_msr_msrremain_msrctrl_msrctrlremain_msrspsrremain_load_loadremain_store_storeremain_storebyte_storebyteremain_storebytealert_storehalt_pcmem_pcmemremain_loadpc_loadpcremain_pcstore_pcstoreremain_pcbasestoreremain_regoff_regoffremain_regstore_regstoreremain_regwb_regwbstoreremain_regwbloadremain_halfremain_halfreg_halfregremain_halfregstoreremain_halfpc_halfpcremain_halfwb_halfwbstoreremain_halfwbloadremain_halfhalt_blockmem_blockldmremain_blockalert_blockhalt_blockpush_blockpushremain_blockpc_blockspsr_hle_hledivarmremain_pcsrc_pcsrcremain_writeback_writebackstoreremain_writebackloadremain_swp_swpalert_swphalt_swpb_alert_branchremain_branchchainremain_armlookupmiss_arminvalidlookup_branchupdaterefill_branchupdatepc_branchupdateframepc_branch_patch_blremain_bl_bxremain_bx_bxthumbremain_swiremain_swi_condtruth_pcwrite_pcaddremain_spsr_idle_thumb_fallback_thumbinvalidlookup_thumbunsupported interp_frame_hash=");
   put_u32_hex(interp.frame_hash);
   put_raw(" rv32im_frame_hash=");
   put_u32_hex(rv32im.frame_hash);
