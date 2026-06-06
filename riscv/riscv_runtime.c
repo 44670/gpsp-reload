@@ -2237,15 +2237,19 @@ static bool riscv_emit_arm_data_proc_operand2_with_carry(u8 **ptr_ref,
 
   if ((opcode >> 4) & 1u)
   {
+    u8 *carry_done;
+
     riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t1, meta, rm, pc + 12u);
     riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t4, meta, rs, pc + 8u);
-    riscv_emit_arm_cpsr_c_load(&ptr, riscv_reg_t6);
+    riscv_emit_arm_cpsr_c_load(&ptr, riscv_reg_t3);
     translation_ptr = ptr;
     riscv_emit_andi(riscv_reg_t4, riscv_reg_t4, 0xff);
 
     switch (shift_type)
     {
       case 0:
+        riscv_emit_branch_with_source(&translation_ptr, &carry_done, 0x0,
+                                      riscv_reg_t4, riscv_reg_zero, 0);
         riscv_emit_sub(riscv_reg_t3, riscv_reg_zero, riscv_reg_t4);
         riscv_emit_srl(riscv_reg_t3, riscv_reg_t1, riscv_reg_t3);
         riscv_emit_andi(riscv_reg_t3, riscv_reg_t3, 1);
@@ -2253,16 +2257,15 @@ static bool riscv_emit_arm_data_proc_operand2_with_carry(u8 **ptr_ref,
         riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t5, 32);
         riscv_emit_sub(riscv_reg_t5, riscv_reg_zero, riscv_reg_t5);
         riscv_emit_and(riscv_reg_t3, riscv_reg_t3, riscv_reg_t5);
-        riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t4, 1);
-        riscv_emit_sub(riscv_reg_t5, riscv_reg_zero, riscv_reg_t5);
-        riscv_emit_and(riscv_reg_t6, riscv_reg_t6, riscv_reg_t5);
-        riscv_emit_or(riscv_reg_t3, riscv_reg_t3, riscv_reg_t6);
+        riscv_patch_local_branch(carry_done, translation_ptr);
         riscv_emit_sll(riscv_reg_t1, riscv_reg_t1, riscv_reg_t4);
         riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t4, 32);
         riscv_emit_sub(riscv_reg_t5, riscv_reg_zero, riscv_reg_t5);
         riscv_emit_and(riscv_reg_t1, riscv_reg_t1, riscv_reg_t5);
         break;
       case 1:
+        riscv_emit_branch_with_source(&translation_ptr, &carry_done, 0x0,
+                                      riscv_reg_t4, riscv_reg_zero, 0);
         riscv_emit_addi(riscv_reg_t3, riscv_reg_t4, -1);
         riscv_emit_srl(riscv_reg_t3, riscv_reg_t1, riscv_reg_t3);
         riscv_emit_andi(riscv_reg_t3, riscv_reg_t3, 1);
@@ -2270,16 +2273,15 @@ static bool riscv_emit_arm_data_proc_operand2_with_carry(u8 **ptr_ref,
         riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t5, 32);
         riscv_emit_sub(riscv_reg_t5, riscv_reg_zero, riscv_reg_t5);
         riscv_emit_and(riscv_reg_t3, riscv_reg_t3, riscv_reg_t5);
-        riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t4, 1);
-        riscv_emit_sub(riscv_reg_t5, riscv_reg_zero, riscv_reg_t5);
-        riscv_emit_and(riscv_reg_t6, riscv_reg_t6, riscv_reg_t5);
-        riscv_emit_or(riscv_reg_t3, riscv_reg_t3, riscv_reg_t6);
+        riscv_patch_local_branch(carry_done, translation_ptr);
         riscv_emit_srl(riscv_reg_t1, riscv_reg_t1, riscv_reg_t4);
         riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t4, 32);
         riscv_emit_sub(riscv_reg_t5, riscv_reg_zero, riscv_reg_t5);
         riscv_emit_and(riscv_reg_t1, riscv_reg_t1, riscv_reg_t5);
         break;
       case 2:
+        riscv_emit_branch_with_source(&translation_ptr, &carry_done, 0x0,
+                                      riscv_reg_t4, riscv_reg_zero, 0);
         riscv_emit_addi(riscv_reg_t3, riscv_reg_t4, -1);
         riscv_emit_srl(riscv_reg_t3, riscv_reg_t1, riscv_reg_t3);
         riscv_emit_andi(riscv_reg_t3, riscv_reg_t3, 1);
@@ -2292,10 +2294,7 @@ static bool riscv_emit_arm_data_proc_operand2_with_carry(u8 **ptr_ref,
         riscv_emit_addi(riscv_reg_t2, riscv_reg_t2, -1);
         riscv_emit_and(riscv_reg_t5, riscv_reg_t5, riscv_reg_t2);
         riscv_emit_or(riscv_reg_t3, riscv_reg_t3, riscv_reg_t5);
-        riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t4, 1);
-        riscv_emit_sub(riscv_reg_t5, riscv_reg_zero, riscv_reg_t5);
-        riscv_emit_and(riscv_reg_t6, riscv_reg_t6, riscv_reg_t5);
-        riscv_emit_or(riscv_reg_t3, riscv_reg_t3, riscv_reg_t6);
+        riscv_patch_local_branch(carry_done, translation_ptr);
         riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t4, 32);
         riscv_emit_addi(riscv_reg_t5, riscv_reg_t5, -1);
         riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
@@ -2303,15 +2302,12 @@ static bool riscv_emit_arm_data_proc_operand2_with_carry(u8 **ptr_ref,
         riscv_emit_sra(riscv_reg_t1, riscv_reg_t1, riscv_reg_t4);
         break;
       default:
+        riscv_emit_branch_with_source(&translation_ptr, &carry_done, 0x0,
+                                      riscv_reg_t4, riscv_reg_zero, 0);
         riscv_emit_addi(riscv_reg_t3, riscv_reg_t4, -1);
         riscv_emit_srl(riscv_reg_t3, riscv_reg_t1, riscv_reg_t3);
         riscv_emit_andi(riscv_reg_t3, riscv_reg_t3, 1);
-        riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t4, 1);
-        riscv_emit_sub(riscv_reg_t5, riscv_reg_zero, riscv_reg_t5);
-        riscv_emit_and(riscv_reg_t6, riscv_reg_t6, riscv_reg_t5);
-        riscv_emit_xori(riscv_reg_t5, riscv_reg_t5, -1);
-        riscv_emit_and(riscv_reg_t3, riscv_reg_t3, riscv_reg_t5);
-        riscv_emit_or(riscv_reg_t3, riscv_reg_t3, riscv_reg_t6);
+        riscv_patch_local_branch(carry_done, translation_ptr);
         riscv_emit_sub(riscv_reg_t5, riscv_reg_zero, riscv_reg_t4);
         riscv_emit_srl(riscv_reg_t2, riscv_reg_t1, riscv_reg_t4);
         riscv_emit_sll(riscv_reg_t1, riscv_reg_t1, riscv_reg_t5);
