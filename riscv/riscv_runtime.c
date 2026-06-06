@@ -2143,6 +2143,7 @@ bool riscv_emit_native_arm_data_proc_with_pc_ex(u8 **translation_ptr_ref,
                                                 u32 opcode,
                                                 u32 pc,
                                                 u32 cycles,
+                                                u32 flag_status,
                                                 bool emit_cycles,
                                                 bool *cycles_emitted)
 {
@@ -2157,6 +2158,7 @@ bool riscv_emit_native_arm_data_proc_with_pc_ex(u8 **translation_ptr_ref,
   bool logical_flags = set_flags &&
     (op == 0x0 || op == 0x1 || op == 0xc ||
      op == 0xd || op == 0xe || op == 0xf);
+  bool live_flags = set_flags && ((flag_status & 0x0fu) != 0);
   u8 *ptr = *translation_ptr_ref;
   bool writes_pc;
 
@@ -2183,7 +2185,7 @@ bool riscv_emit_native_arm_data_proc_with_pc_ex(u8 **translation_ptr_ref,
   if (op != 0xd && op != 0xf)
     riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t0, rn, pc + 8u);
 
-  if (logical_flags)
+  if (logical_flags && live_flags)
   {
     if (!riscv_emit_arm_data_proc_operand2_with_carry(&ptr, opcode, pc))
       return false;
@@ -2258,7 +2260,7 @@ bool riscv_emit_native_arm_data_proc_with_pc_ex(u8 **translation_ptr_ref,
     ptr = translation_ptr;
   }
 
-  if (arithmetic_flags)
+  if (arithmetic_flags && live_flags)
   {
     u8 *translation_ptr = ptr;
 
@@ -2325,9 +2327,9 @@ bool riscv_emit_native_arm_data_proc_with_pc_ex(u8 **translation_ptr_ref,
   riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_t2);
   if (writes_pc)
     meta->flags |= RISCV_BLOCK_PC_WRITTEN;
-  if (arithmetic_flags)
+  if (arithmetic_flags && live_flags)
     riscv_emit_arm_cpsr_store_nzcv(&ptr);
-  else if (logical_flags)
+  else if (logical_flags && live_flags)
     riscv_emit_arm_cpsr_store_nzc_preserve_v(&ptr);
   if (writes_pc && set_flags)
     riscv_emit_c_call(&ptr, (uintptr_t)riscv_execute_spsr_restore);
@@ -2351,7 +2353,7 @@ bool riscv_emit_native_arm_data_proc_with_pc(u8 **translation_ptr_ref,
 {
   return riscv_emit_native_arm_data_proc_with_pc_ex(translation_ptr_ref, meta,
                                                    opcode, pc, cycles,
-                                                   true, NULL);
+                                                   0x0fu, true, NULL);
 }
 
 bool riscv_emit_native_arm_data_proc(u8 **translation_ptr_ref,
@@ -2368,6 +2370,7 @@ bool riscv_emit_native_arm_data_proc_test_with_pc_ex(u8 **translation_ptr_ref,
                                                      u32 opcode,
                                                      u32 pc,
                                                      u32 cycles,
+                                                     u32 flag_status,
                                                      bool emit_cycles,
                                                      bool *cycles_emitted)
 {
@@ -2376,6 +2379,7 @@ bool riscv_emit_native_arm_data_proc_test_with_pc_ex(u8 **translation_ptr_ref,
   u32 set_flags = (opcode >> 20) & 1u;
   u32 rn = (opcode >> 16) & 0xfu;
   u32 logical_test = (op == 0x8 || op == 0x9);
+  bool live_flags = set_flags && ((flag_status & 0x0fu) != 0);
   u8 *ptr = *translation_ptr_ref;
 
   if (cycles_emitted)
@@ -2389,6 +2393,19 @@ bool riscv_emit_native_arm_data_proc_test_with_pc_ex(u8 **translation_ptr_ref,
 
   if (!logical_test && op != 0xa && op != 0xb)
     return false;
+
+  if (!live_flags)
+  {
+    if (emit_cycles)
+    {
+      riscv_emit_adjust_cycles(&ptr, cycles);
+      if (cycles_emitted)
+        *cycles_emitted = true;
+    }
+    *translation_ptr_ref = ptr;
+    riscv_native_data_proc_insns++;
+    return true;
+  }
 
   riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t0, rn, pc + 8u);
 
@@ -2463,7 +2480,8 @@ bool riscv_emit_native_arm_data_proc_test_with_pc(u8 **translation_ptr_ref,
 {
   return riscv_emit_native_arm_data_proc_test_with_pc_ex(translation_ptr_ref,
                                                         meta, opcode, pc,
-                                                        cycles, true, NULL);
+                                                        cycles, 0x0fu, true,
+                                                        NULL);
 }
 
 bool riscv_emit_native_arm_data_proc_test(u8 **translation_ptr_ref,

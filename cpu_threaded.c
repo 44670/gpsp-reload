@@ -306,6 +306,7 @@ void translate_icache_sync() {
   check_pc_region(pc);                                                        \
   opcode = address32(pc_address_block, (pc & 0x7FFF));                        \
   condition = block_data[block_data_position].condition;                      \
+  arm_load_flag_status();                                                     \
                                                                               \
   if((condition != last_condition) || (condition >= 0x20))                    \
   {                                                                           \
@@ -1761,7 +1762,214 @@ void translate_icache_sync() {
                                                                               \
   pc += 4                                                                     \
 
+#if defined(RISCV_ARCH)
+
+#define arm_flag_modifies(_mask)                                              \
+  do                                                                          \
+  {                                                                           \
+    flag_status |= (_mask);                                                   \
+    if(condition == 0x0E)                                                     \
+      flag_status |= ((_mask) << 4);                                          \
+  } while(0)                                                                  \
+
+#define arm_flag_modifies_maybe(_mask)                                        \
+  do                                                                          \
+  {                                                                           \
+    flag_status |= (_mask);                                                   \
+  } while(0)                                                                  \
+
+#define arm_flag_modifies_all()                                               \
+  arm_flag_modifies(0x0F)                                                     \
+
+#define arm_flag_modifies_nz()                                                \
+  arm_flag_modifies(0x0C)                                                     \
+
+#define arm_flag_modifies_nzc()                                               \
+  arm_flag_modifies(0x0E)                                                     \
+
+#define arm_flag_modifies_c_maybe()                                           \
+  arm_flag_modifies_maybe(0x02)                                               \
+
+#define arm_flag_modifies_c()                                                 \
+  arm_flag_modifies(0x02)                                                     \
+
+#define arm_flag_requires(_mask)                                              \
+  do                                                                          \
+  {                                                                           \
+    flag_status |= ((_mask) << 8);                                            \
+  } while(0)                                                                  \
+
+#define arm_flag_requires_all()                                               \
+  arm_flag_requires(0x0F)                                                     \
+
+#define arm_flag_requires_c()                                                 \
+  arm_flag_requires(0x02)                                                     \
+
+#define arm_flag_requires_condition(_condition)                               \
+  switch((_condition) & 0x0F)                                                 \
+  {                                                                           \
+    case 0x00:                                                                \
+    case 0x01:                                                                \
+      arm_flag_requires(0x04);                                                \
+      break;                                                                  \
+                                                                              \
+    case 0x02:                                                                \
+    case 0x03:                                                                \
+      arm_flag_requires(0x02);                                                \
+      break;                                                                  \
+                                                                              \
+    case 0x04:                                                                \
+    case 0x05:                                                                \
+      arm_flag_requires(0x08);                                                \
+      break;                                                                  \
+                                                                              \
+    case 0x06:                                                                \
+    case 0x07:                                                                \
+      arm_flag_requires(0x01);                                                \
+      break;                                                                  \
+                                                                              \
+    case 0x08:                                                                \
+    case 0x09:                                                                \
+      arm_flag_requires(0x06);                                                \
+      break;                                                                  \
+                                                                              \
+    case 0x0A:                                                                \
+    case 0x0B:                                                                \
+      arm_flag_requires(0x09);                                                \
+      break;                                                                  \
+                                                                              \
+    case 0x0C:                                                                \
+    case 0x0D:                                                                \
+      arm_flag_requires(0x0D);                                                \
+      break;                                                                  \
+                                                                              \
+    case 0x0F:                                                                \
+      arm_flag_requires_all();                                                \
+      break;                                                                  \
+  }                                                                           \
+
+#define arm_opcode_uses_rrx_carry()                                           \
+  ((opcode & 0x00000FF0) == 0x00000060)                                      \
+
+#define arm_data_proc_opcode()                                                \
+  (((opcode & 0x0C000000) == 0x00000000) &&                                  \
+   (((opcode & 0x02000000) == 0x02000000) ||                                 \
+    ((opcode & 0x00000090) != 0x00000090)))                                  \
+
+#define arm_multiply_opcode()                                                 \
+  ((opcode & 0x0FC000F0) == 0x00000090)                                      \
+
+#define arm_multiply_long_opcode()                                            \
+  ((opcode & 0x0F8000F0) == 0x00800090)                                      \
+
+#define arm_data_proc_logical_opcode(_op)                                     \
+  ((_op) == 0x00 || (_op) == 0x01 || (_op) == 0x08 || (_op) == 0x09 ||       \
+   (_op) == 0x0C || (_op) == 0x0D || (_op) == 0x0E || (_op) == 0x0F)         \
+
+#define arm_data_proc_arithmetic_opcode(_op)                                  \
+  (((_op) >= 0x02 && (_op) <= 0x07) || (_op) == 0x0A || (_op) == 0x0B)       \
+
+#define arm_data_proc_requires_c()                                            \
+  if(arm_data_proc_opcode())                                                  \
+  {                                                                           \
+    u32 arm_flag_op = (opcode >> 21) & 0x0F;                                  \
+    if(arm_flag_op == 0x05 || arm_flag_op == 0x06 || arm_flag_op == 0x07)     \
+      arm_flag_requires_c();                                                  \
+  }                                                                           \
+  if((((opcode & 0x0C000000) == 0x00000000) ||                               \
+      ((opcode & 0x0E000000) == 0x06000000)) &&                              \
+     arm_opcode_uses_rrx_carry())                                             \
+    arm_flag_requires_c()                                                     \
+
+#define arm_data_proc_shifter_c_status()                                      \
+  if(opcode & 0x02000000)                                                     \
+  {                                                                           \
+    if((opcode >> 8) & 0x0F)                                                   \
+    {                                                                         \
+      arm_flag_modifies_c();                                                  \
+    }                                                                         \
+    else                                                                      \
+    {                                                                         \
+      arm_flag_requires_c();                                                  \
+    }                                                                         \
+  }                                                                           \
+  else if(opcode & 0x00000010)                                                \
+  {                                                                           \
+    arm_flag_modifies_c_maybe();                                              \
+    arm_flag_requires_c();                                                    \
+  }                                                                           \
+  else                                                                        \
+  {                                                                           \
+    u32 arm_flag_shift_type = (opcode >> 5) & 0x03;                           \
+    u32 arm_flag_shift = (opcode >> 7) & 0x1F;                                \
+    if(arm_flag_shift_type != 0 || arm_flag_shift != 0)                       \
+    {                                                                         \
+      arm_flag_modifies_c();                                                  \
+    }                                                                         \
+    else                                                                      \
+    {                                                                         \
+      arm_flag_requires_c();                                                  \
+    }                                                                         \
+  }                                                                           \
+
 #define arm_flag_status()                                                     \
+{                                                                             \
+  u16 flag_status = 0;                                                        \
+  arm_flag_requires_condition(condition);                                     \
+  arm_data_proc_requires_c();                                                 \
+  if(arm_exit_point)                                                          \
+    arm_flag_requires_all();                                                  \
+                                                                              \
+  if((opcode >> 20) & 1)                                                      \
+  {                                                                           \
+    u32 arm_flag_op = (opcode >> 21) & 0x0F;                                  \
+    if(arm_multiply_opcode() || arm_multiply_long_opcode())                   \
+    {                                                                         \
+      arm_flag_modifies_nz();                                                 \
+    }                                                                         \
+    else if(arm_data_proc_opcode())                                           \
+    {                                                                         \
+      if(arm_data_proc_logical_opcode(arm_flag_op))                           \
+      {                                                                       \
+        arm_flag_modifies_nz();                                               \
+        arm_data_proc_shifter_c_status();                                     \
+      }                                                                       \
+      else if(arm_data_proc_arithmetic_opcode(arm_flag_op))                   \
+      {                                                                       \
+        arm_flag_modifies_all();                                              \
+      }                                                                       \
+    }                                                                         \
+  }                                                                           \
+  block_data[block_data_position].flag_data = flag_status;                    \
+}                                                                             \
+
+#define arm_load_flag_status()                                                \
+  flag_status = block_data[block_data_position].flag_data
+
+#define arm_dead_flag_eliminate()                                             \
+{                                                                             \
+  u32 needed_mask = 0xff;                                                     \
+                                                                              \
+  while(--block_data_position >= 0)                                           \
+  {                                                                           \
+    flag_status = block_data[block_data_position].flag_data;                  \
+    block_data[block_data_position].flag_data =                               \
+     (flag_status & needed_mask);                                             \
+    needed_mask &= ~((flag_status >> 4) & 0x0F);                              \
+    needed_mask |= flag_status >> 8;                                          \
+  }                                                                           \
+}                                                                             \
+
+#else
+
+#define arm_flag_status()                                                     \
+
+#define arm_load_flag_status()                                                \
+
+#define arm_dead_flag_eliminate()                                             \
+  flag_status = 0xF                                                           \
+
+#endif
 
 #define translate_thumb_instruction()                                         \
   flag_status = block_data[block_data_position].flag_data;                    \
@@ -2793,12 +3001,6 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
 
 #define arm_base_cycles()                                                     \
   cycle_count += def_seq_cycles[pc >> 24][1]                                  \
-
-// For now this just sets a variable that says flags should always be
-// computed.
-
-#define arm_dead_flag_eliminate()                                             \
-  flag_status = 0xF                                                           \
 
 // The following Thumb instructions can exit:
 // b, bl, bx, swi, pop {... pc}, and mov pc, ..., the latter being a hireg

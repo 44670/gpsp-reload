@@ -76,6 +76,7 @@ bool riscv_emit_native_arm_data_proc_with_pc_ex(u8 **translation_ptr,
                                                 u32 opcode,
                                                 u32 pc,
                                                 u32 cycles,
+                                                u32 flag_status,
                                                 bool emit_cycles,
                                                 bool *cycles_emitted);
 bool riscv_emit_native_arm_data_proc_test(u8 **translation_ptr,
@@ -92,6 +93,7 @@ bool riscv_emit_native_arm_data_proc_test_with_pc_ex(u8 **translation_ptr,
                                                      u32 opcode,
                                                      u32 pc,
                                                      u32 cycles,
+                                                     u32 flag_status,
                                                      bool emit_cycles,
                                                      bool *cycles_emitted);
 bool riscv_emit_native_arm_multiply(u8 **translation_ptr,
@@ -339,7 +341,7 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
     bool riscv_arm_cycles_emitted = false;                                    \
     if (riscv_emit_native_arm_data_proc_with_pc_ex(                           \
           &translation_ptr, riscv_block_meta, riscv_arm_effective_opcode(),   \
-          pc, cycle_count, riscv_arm_emit_cycles_here(),                      \
+          pc, cycle_count, flag_status, riscv_arm_emit_cycles_here(),         \
           &riscv_arm_cycles_emitted))                                         \
     {                                                                         \
       if (riscv_arm_cycles_emitted)                                           \
@@ -357,7 +359,7 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
     bool riscv_arm_cycles_emitted = false;                                    \
     if (riscv_emit_native_arm_data_proc_test_with_pc_ex(                      \
           &translation_ptr, riscv_block_meta, riscv_arm_effective_opcode(),   \
-          pc, cycle_count, riscv_arm_emit_cycles_here(),                      \
+          pc, cycle_count, flag_status, riscv_arm_emit_cycles_here(),         \
           &riscv_arm_cycles_emitted))                                         \
     {                                                                         \
       if (riscv_arm_cycles_emitted)                                           \
