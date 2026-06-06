@@ -101,7 +101,7 @@ BEGIN {
 	track("store_word_code_bytes", 80, "arm_word_memory");
 	track("store_alert_chain_code_bytes", 64, "arm_word_memory");
 	track("store_byte_code_bytes", 80, "arm_word_memory");
-	track("store_pc_code_bytes", 84, "arm_word_memory");
+	track("store_pc_code_bytes", 80, "arm_word_memory");
 	track("reg_offset_load_code_bytes", 112, "arm_word_memory");
 	track("reg_offset_pc_load_code_bytes", 116, "arm_word_memory");
 	track("reg_offset_pc_store_code_bytes", 88, "arm_word_memory");

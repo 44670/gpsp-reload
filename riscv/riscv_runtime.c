@@ -5439,13 +5439,8 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
     ptr = translation_ptr;
   }
 
-  if (!load)
-  {
-    if (rd == REG_PC)
-      riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_a1, pc + 12u);
-    else
-      riscv_emit_arm_reg_load(&ptr, riscv_reg_a1, rd);
-  }
+  if (!load && rd != REG_PC)
+    riscv_emit_arm_reg_load(&ptr, riscv_reg_a1, rd);
 
   if (writeback_address && !writeback_same_as_base)
     riscv_emit_arm_reg_store(&ptr, rn, writeback_reg);
@@ -5486,7 +5481,15 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
   }
   else
   {
+    u8 *translation_ptr;
+
     riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_a2, pc + 4u);
+    if (rd == REG_PC)
+    {
+      translation_ptr = ptr;
+      riscv_emit_addi(riscv_reg_a1, riscv_reg_a2, 8);
+      ptr = translation_ptr;
+    }
     riscv_emit_c_call_stack(&ptr, RISCV_STACK_HELPER_STORE16);
     riscv_emit_adjust_cycles(&ptr, cycles + 1u);
     if (cycles_emitted)
@@ -5773,13 +5776,8 @@ bool riscv_emit_native_arm_access_memory_ex(u8 **translation_ptr_ref,
                                      offset, up);
   }
 
-  if (!load)
-  {
-    if (rd == REG_PC)
-      riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_a1, pc + 12u);
-    else
-      riscv_emit_arm_reg_load(&ptr, riscv_reg_a1, rd);
-  }
+  if (!load && rd != REG_PC)
+    riscv_emit_arm_reg_load(&ptr, riscv_reg_a1, rd);
 
   if (writeback_address && !writeback_same_as_base)
     riscv_emit_arm_reg_store(&ptr, rn, writeback_reg);
@@ -5804,7 +5802,15 @@ bool riscv_emit_native_arm_access_memory_ex(u8 **translation_ptr_ref,
   }
   else
   {
+    u8 *translation_ptr;
+
     riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_a2, pc + 4u);
+    if (rd == REG_PC)
+    {
+      translation_ptr = ptr;
+      riscv_emit_addi(riscv_reg_a1, riscv_reg_a2, 8);
+      ptr = translation_ptr;
+    }
     if (byte)
       riscv_emit_c_call_reg(&ptr, riscv_reg_s7);
     else
