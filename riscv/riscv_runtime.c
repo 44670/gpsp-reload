@@ -3719,7 +3719,8 @@ static bool riscv_emit_native_arm_data_proc_with_pc_ex2(
   }
 
   writes_pc = rd == REG_PC;
-  riscv_emit_arm_reg_store(&ptr, rd, result_reg);
+  if (result_reg != riscv_reg_t0 || rd != rn || writes_pc)
+    riscv_emit_arm_reg_store(&ptr, rd, result_reg);
   if (writes_pc)
     meta->flags |= RISCV_BLOCK_PC_WRITTEN;
   if (addsub_zero_flags)
