@@ -1992,16 +1992,12 @@ static bool riscv_emit_arm_data_proc_operand2(u8 **ptr_ref,
         break;
       case 2:
         riscv_emit_sltiu(riscv_reg_t4, riscv_reg_t3, 32);
-        riscv_emit_sub(riscv_reg_t4, riscv_reg_zero, riscv_reg_t4);
-        riscv_emit_and(riscv_reg_t5, riscv_reg_t3, riscv_reg_t4);
-        riscv_emit_xori(riscv_reg_t4, riscv_reg_t4, -1);
-        riscv_emit_addi(riscv_reg_t6, riscv_reg_zero, 31);
-        riscv_emit_and(riscv_reg_t6, riscv_reg_t6, riscv_reg_t4);
-        riscv_emit_or(riscv_reg_t3, riscv_reg_t5, riscv_reg_t6);
+        riscv_emit_addi(riscv_reg_t4, riscv_reg_t4, -1);
+        riscv_emit_or(riscv_reg_t3, riscv_reg_t3, riscv_reg_t4);
+        riscv_emit_andi(riscv_reg_t3, riscv_reg_t3, 31);
         riscv_emit_sra(riscv_reg_t1, riscv_reg_t1, riscv_reg_t3);
         break;
       default:
-        riscv_emit_andi(riscv_reg_t3, riscv_reg_t3, 31);
         riscv_emit_sub(riscv_reg_t4, riscv_reg_zero, riscv_reg_t3);
         riscv_emit_srl(riscv_reg_t5, riscv_reg_t1, riscv_reg_t3);
         riscv_emit_sll(riscv_reg_t1, riscv_reg_t1, riscv_reg_t4);
@@ -2168,12 +2164,9 @@ static bool riscv_emit_arm_data_proc_operand2_with_carry(u8 **ptr_ref,
         riscv_emit_and(riscv_reg_t6, riscv_reg_t6, riscv_reg_t5);
         riscv_emit_or(riscv_reg_t3, riscv_reg_t3, riscv_reg_t6);
         riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t4, 32);
-        riscv_emit_sub(riscv_reg_t5, riscv_reg_zero, riscv_reg_t5);
-        riscv_emit_and(riscv_reg_t2, riscv_reg_t4, riscv_reg_t5);
-        riscv_emit_xori(riscv_reg_t5, riscv_reg_t5, -1);
-        riscv_emit_addi(riscv_reg_t6, riscv_reg_zero, 31);
-        riscv_emit_and(riscv_reg_t6, riscv_reg_t6, riscv_reg_t5);
-        riscv_emit_or(riscv_reg_t4, riscv_reg_t2, riscv_reg_t6);
+        riscv_emit_addi(riscv_reg_t5, riscv_reg_t5, -1);
+        riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
+        riscv_emit_andi(riscv_reg_t4, riscv_reg_t4, 31);
         riscv_emit_sra(riscv_reg_t1, riscv_reg_t1, riscv_reg_t4);
         break;
       default:
@@ -2186,7 +2179,6 @@ static bool riscv_emit_arm_data_proc_operand2_with_carry(u8 **ptr_ref,
         riscv_emit_xori(riscv_reg_t5, riscv_reg_t5, -1);
         riscv_emit_and(riscv_reg_t3, riscv_reg_t3, riscv_reg_t5);
         riscv_emit_or(riscv_reg_t3, riscv_reg_t3, riscv_reg_t6);
-        riscv_emit_andi(riscv_reg_t4, riscv_reg_t4, 31);
         riscv_emit_sub(riscv_reg_t5, riscv_reg_zero, riscv_reg_t4);
         riscv_emit_srl(riscv_reg_t2, riscv_reg_t1, riscv_reg_t4);
         riscv_emit_sll(riscv_reg_t1, riscv_reg_t1, riscv_reg_t5);
