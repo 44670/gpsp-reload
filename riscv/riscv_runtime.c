@@ -2703,6 +2703,52 @@ static void riscv_emit_arm_cpsr_store_nzc_const_c_preserve_v(
                                              carry);
 }
 
+static void riscv_emit_arm_cpsr_store_selected_nzc_const_c_preserve_v(
+  u8 **ptr_ref, u32 flag_mask, riscv_reg_number result_reg, u32 carry)
+{
+  u8 *ptr;
+  u8 *translation_ptr;
+
+  flag_mask &= 0x0eu;
+  if (!flag_mask)
+    return;
+
+  if (flag_mask == 0x0eu)
+  {
+    riscv_emit_arm_cpsr_store_nzc_const_c_preserve_v(ptr_ref, result_reg,
+                                                    carry);
+    return;
+  }
+
+  ptr = *ptr_ref;
+  riscv_emit_arm_reg_load(&ptr, riscv_reg_t6, REG_CPSR);
+  translation_ptr = ptr;
+
+  riscv_emit_slli(riscv_reg_t4, riscv_reg_t6, 3);
+  riscv_emit_srli(riscv_reg_t4, riscv_reg_t4, 3);
+  if (flag_mask & 0x08u)
+  {
+    riscv_emit_srli(riscv_reg_t5, result_reg, 31);
+    riscv_emit_slli(riscv_reg_t5, riscv_reg_t5, 31);
+    riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
+  }
+  if (flag_mask & 0x04u)
+  {
+    riscv_emit_sltiu(riscv_reg_t5, result_reg, 1);
+    riscv_emit_slli(riscv_reg_t5, riscv_reg_t5, 30);
+    riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
+  }
+  if ((flag_mask & 0x02u) && carry)
+  {
+    riscv_emit_lui(riscv_reg_t5, 0x20000u);
+    riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
+  }
+  ptr = translation_ptr;
+
+  riscv_emit_arm_reg_store(&ptr, REG_CPSR, riscv_reg_t4);
+  *ptr_ref = ptr;
+}
+
 static void riscv_emit_arm_cpsr_store_nz_preserve_cv(
   u8 **ptr_ref, riscv_reg_number result_reg)
 {
@@ -3691,7 +3737,7 @@ static bool riscv_emit_native_arm_data_proc_with_pc_ex2(
   if (imm_op)
   {
     immediate = riscv_arm_expand_imm(opcode);
-    if (logical_flags && generated_flag_mask == 0x0eu &&
+    if (logical_flags && (generated_flag_mask & 0x0eu) &&
         ((opcode >> 8) & 0xfu))
     {
       logical_const_c = true;
@@ -3968,8 +4014,8 @@ static bool riscv_emit_native_arm_data_proc_with_pc_ex2(
   else if (logical_flags && live_flags)
   {
     if (logical_const_c)
-      riscv_emit_arm_cpsr_store_nzc_const_c_preserve_v(
-        &ptr, result_reg, logical_carry);
+      riscv_emit_arm_cpsr_store_selected_nzc_const_c_preserve_v(
+        &ptr, generated_flag_mask, result_reg, logical_carry);
     else
       riscv_emit_arm_cpsr_store_selected_nzcv(
         &ptr, generated_flag_mask, result_reg);
@@ -4103,7 +4149,7 @@ static bool riscv_emit_native_arm_data_proc_test_with_pc_ex2(
   {
     u32 immediate = riscv_arm_expand_imm(opcode);
 
-    if (logical_test && generated_flag_mask == 0x0eu &&
+    if (logical_test && (generated_flag_mask & 0x0eu) &&
         ((opcode >> 8) & 0xfu))
     {
       logical_const_c = true;
@@ -4215,8 +4261,8 @@ static bool riscv_emit_native_arm_data_proc_test_with_pc_ex2(
     if (logical_test)
     {
       if (logical_const_c)
-        riscv_emit_arm_cpsr_store_nzc_const_c_preserve_v(
-          &ptr, riscv_reg_t2, logical_carry);
+        riscv_emit_arm_cpsr_store_selected_nzc_const_c_preserve_v(
+          &ptr, generated_flag_mask, riscv_reg_t2, logical_carry);
       else
         riscv_emit_arm_cpsr_store_selected_nzcv(
           &ptr, generated_flag_mask, riscv_reg_t2);
