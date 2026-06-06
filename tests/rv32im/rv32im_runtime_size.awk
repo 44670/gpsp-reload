@@ -75,11 +75,44 @@ BEGIN {
 	track("reg_shift_flag_asr_code_bytes", 172, "arm_flags_shift");
 	track("reg_shift_flag_ror0_code_bytes", 160, "arm_flags_shift");
 	track("reg_shift_test_code_bytes", 168, "arm_flags_shift");
+	track("pc_source_code_bytes", 388, "arm_control_flow");
+	track("conditional_code_bytes", 1152, "arm_control_flow");
+	track("pc_write_mov_code_bytes", 48, "arm_control_flow");
+	track("pc_write_movs_code_bytes", 96, "arm_control_flow");
+	track("pc_write_add_code_bytes", 52, "arm_control_flow");
+	track("branch_code_bytes", 52, "arm_control_flow");
+	track("internal_branch_code_bytes", 96, "arm_control_flow");
+	track("external_branch_code_bytes", 60, "arm_control_flow");
+	track("bl_code_bytes", 64, "arm_control_flow");
+	track("bx_code_bytes", 76, "arm_control_flow");
 
 	track("psr_code_bytes", 96, "arm_psr");
 	track("msr_cpsr_flags_code_bytes", 80, "arm_psr");
 	track("msr_cpsr_control_code_bytes", 68, "arm_psr");
 	track("msr_spsr_code_bytes", 68, "arm_psr");
+
+	track("load_code_bytes", 112, "arm_word_memory");
+	track("load_pc_code_bytes", 68, "arm_word_memory");
+	track("load_byte_pc_code_bytes", 68, "arm_word_memory");
+	track("pc_base_load_code_bytes", 112, "arm_word_memory");
+	track("pc_base_store_code_bytes", 84, "arm_word_memory");
+	track("store_word_code_bytes", 84, "arm_word_memory");
+	track("store_alert_chain_code_bytes", 64, "arm_word_memory");
+	track("store_byte_code_bytes", 84, "arm_word_memory");
+	track("store_pc_code_bytes", 88, "arm_word_memory");
+	track("reg_offset_load_code_bytes", 120, "arm_word_memory");
+	track("reg_offset_pc_load_code_bytes", 124, "arm_word_memory");
+	track("reg_offset_pc_store_code_bytes", 92, "arm_word_memory");
+	track("reg_offset_pc_byte_store_code_bytes", 92, "arm_word_memory");
+	track("reg_offset_store_code_bytes", 88, "arm_word_memory");
+	track("shifted_reg_offset_pc_lsl_word_code_bytes", 88, "arm_word_memory");
+	track("shifted_reg_offset_pc_lsl_word_store_code_bytes", 92, "arm_word_memory");
+	track("shifted_reg_offset_pc_lsr_word_code_bytes", 88, "arm_word_memory");
+	track("shifted_reg_offset_pc_lsr_word_store_code_bytes", 92, "arm_word_memory");
+	track("shifted_reg_offset_pc_asr_word_code_bytes", 88, "arm_word_memory");
+	track("shifted_reg_offset_pc_asr_word_store_code_bytes", 92, "arm_word_memory");
+	track("shifted_reg_offset_pc_ror_word_code_bytes", 84, "arm_word_memory");
+	track("shifted_reg_offset_pc_ror_word_store_code_bytes", 92, "arm_word_memory");
 
 	track("half_load_pc_code_bytes", 68, "arm_half_signed_memory");
 	track("half_reg_load_pc_code_bytes", 72, "arm_half_signed_memory");
@@ -126,6 +159,9 @@ BEGIN {
 	track("block_mem_ldm_pc_code_bytes", 116, "arm_block_memory");
 	track("block_mem_ldm_base_list_code_bytes", 116, "arm_block_memory");
 	track("block_mem_ldm_pc_s_code_bytes", 64, "arm_block_memory");
+
+	track("swp_word_code_bytes", 68, "arm_swap");
+	track("swp_byte_code_bytes", 68, "arm_swap");
 
 	track("swi_code_bytes", 56, "arm_swi_hle");
 	track("swi_patch_code_bytes", 64, "arm_swi_hle");
