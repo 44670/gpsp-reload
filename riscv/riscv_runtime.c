@@ -4107,8 +4107,14 @@ static bool riscv_emit_native_arm_data_proc_with_pc_ex2(
       riscv_emit_arm_cpsr_store_arithmetic_selected_nzcv(
         &ptr, generated_flag_mask, result_reg);
     else
-      riscv_emit_arm_cpsr_store_selected_nzcv(
-        &ptr, generated_flag_mask, result_reg);
+    {
+      if (can_clobber_dead_logical_flags)
+        riscv_emit_arm_cpsr_store_arithmetic_selected_nzcv(
+          &ptr, generated_flag_mask, result_reg);
+      else
+        riscv_emit_arm_cpsr_store_selected_nzcv(
+          &ptr, generated_flag_mask, result_reg);
+    }
   }
   else if (logical_flags && live_flags)
   {
@@ -4378,8 +4384,14 @@ static bool riscv_emit_native_arm_data_proc_test_with_pc_ex2(
             &ptr, generated_flag_mask, riscv_reg_t2, logical_carry);
       }
       else
-        riscv_emit_arm_cpsr_store_selected_nzcv(
-          &ptr, generated_flag_mask, riscv_reg_t2);
+      {
+        if (can_clobber_dead_logical_flags)
+          riscv_emit_arm_cpsr_store_arithmetic_selected_nzcv(
+            &ptr, generated_flag_mask, riscv_reg_t2);
+        else
+          riscv_emit_arm_cpsr_store_selected_nzcv(
+            &ptr, generated_flag_mask, riscv_reg_t2);
+      }
     }
     else if (clobber_dead_arithmetic_flags)
       riscv_emit_arm_cpsr_store_arithmetic_selected_nzcv(
