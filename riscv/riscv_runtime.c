@@ -3247,33 +3247,25 @@ static bool riscv_emit_arm_data_proc_arithmetic_immediate_flags(
         return false;
       if ((need_c || need_v) && !riscv_i12_fits(immediate))
         return false;
-      if (need_c && immediate != 0xffffffffu)
-      {
-        next_immediate = immediate + 1u;
-        if (!riscv_i12_fits(next_immediate))
-          return false;
-      }
       riscv_emit_arm_cpsr_c_load(&ptr, riscv_reg_t3);
       translation_ptr = ptr;
       riscv_emit_addi(riscv_reg_t2, riscv_reg_t0, (s32)not_immediate);
       riscv_emit_add(riscv_reg_t2, riscv_reg_t2, riscv_reg_t3);
       if (need_c)
       {
-        riscv_emit_sltiu(riscv_reg_t4, riscv_reg_t0, (s32)immediate);
-        riscv_emit_xori(riscv_reg_t4, riscv_reg_t4, 1);
         if (immediate == 0xffffffffu)
         {
-          riscv_emit_add(riscv_reg_t5, riscv_reg_zero, riscv_reg_zero);
+          riscv_emit_xori(riscv_reg_t4, riscv_reg_t0, -1);
+          riscv_emit_sltiu(riscv_reg_t4, riscv_reg_t4, 1);
+          riscv_emit_and(riscv_reg_t3, riscv_reg_t3, riscv_reg_t4);
         }
         else
         {
-          riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t0,
-                           (s32)next_immediate);
-          riscv_emit_xori(riscv_reg_t5, riscv_reg_t5, 1);
+          riscv_emit_xori(riscv_reg_t4, riscv_reg_t3, 1);
+          riscv_emit_addi(riscv_reg_t4, riscv_reg_t4, (s32)immediate);
+          riscv_emit_sltu(riscv_reg_t3, riscv_reg_t0, riscv_reg_t4);
+          riscv_emit_xori(riscv_reg_t3, riscv_reg_t3, 1);
         }
-        riscv_emit_xor(riscv_reg_t6, riscv_reg_t4, riscv_reg_t5);
-        riscv_emit_and(riscv_reg_t6, riscv_reg_t6, riscv_reg_t3);
-        riscv_emit_xor(riscv_reg_t3, riscv_reg_t5, riscv_reg_t6);
       }
       if (need_v)
       {
@@ -3285,12 +3277,6 @@ static bool riscv_emit_arm_data_proc_arithmetic_immediate_flags(
     case 0x7:
       if (!riscv_i12_fits(immediate))
         return false;
-      if (need_c && immediate != 0xffffffffu)
-      {
-        next_immediate = immediate + 1u;
-        if (!riscv_i12_fits(next_immediate))
-          return false;
-      }
       riscv_emit_arm_cpsr_c_load(&ptr, riscv_reg_t3);
       translation_ptr = ptr;
       riscv_emit_xori(riscv_reg_t2, riscv_reg_t0, -1);
@@ -3301,17 +3287,17 @@ static bool riscv_emit_arm_data_proc_arithmetic_immediate_flags(
       {
         if (immediate == 0xffffffffu)
         {
-          riscv_emit_addi(riscv_reg_t4, riscv_reg_zero, 1);
+          riscv_emit_sltiu(riscv_reg_t4, riscv_reg_t0,
+                           (s32)immediate);
+          riscv_emit_or(riscv_reg_t3, riscv_reg_t3, riscv_reg_t4);
         }
         else
         {
-          riscv_emit_sltiu(riscv_reg_t4, riscv_reg_t0,
-                           (s32)next_immediate);
+          riscv_emit_addi(riscv_reg_t3, riscv_reg_t3,
+                          (s32)immediate);
+          riscv_emit_sltu(riscv_reg_t3, riscv_reg_t0,
+                          riscv_reg_t3);
         }
-        riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t0, (s32)immediate);
-        riscv_emit_xor(riscv_reg_t6, riscv_reg_t4, riscv_reg_t5);
-        riscv_emit_and(riscv_reg_t6, riscv_reg_t6, riscv_reg_t3);
-        riscv_emit_xor(riscv_reg_t3, riscv_reg_t5, riscv_reg_t6);
       }
       if (need_v)
       {
@@ -3711,12 +3697,10 @@ static bool riscv_emit_native_arm_data_proc_with_pc_ex2(
     {
       if (need_c)
       {
-        riscv_emit_sltu(riscv_reg_t4, riscv_reg_t1, riscv_reg_t0);
-        riscv_emit_xori(riscv_reg_t4, riscv_reg_t4, 1);
-        riscv_emit_sltu(riscv_reg_t5, riscv_reg_t0, riscv_reg_t1);
-        riscv_emit_xor(riscv_reg_t6, riscv_reg_t4, riscv_reg_t5);
-        riscv_emit_and(riscv_reg_t6, riscv_reg_t6, riscv_reg_t3);
-        riscv_emit_xor(riscv_reg_t3, riscv_reg_t5, riscv_reg_t6);
+        riscv_emit_add(riscv_reg_t5, riscv_reg_t1, riscv_reg_t3);
+        riscv_emit_sltu(riscv_reg_t6, riscv_reg_t5, riscv_reg_t1);
+        riscv_emit_sltu(riscv_reg_t3, riscv_reg_t0, riscv_reg_t5);
+        riscv_emit_or(riscv_reg_t3, riscv_reg_t3, riscv_reg_t6);
       }
       if (need_v)
       {

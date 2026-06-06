@@ -65,8 +65,8 @@ BEGIN {
 	track("flag_adds_code_bytes", 140, "arm_flags_shift");
 	track("flag_rsbs_code_bytes", 136, "arm_flags_shift");
 	track("carry_flag_adcs_code_bytes", 164, "arm_flags_shift");
-	track("carry_flag_sbcs_code_bytes", 176, "arm_flags_shift");
-	track("carry_flag_rscs_code_bytes", 172, "arm_flags_shift");
+	track("carry_flag_sbcs_code_bytes", 164, "arm_flags_shift");
+	track("carry_flag_rscs_code_bytes", 160, "arm_flags_shift");
 	track("logical_flag_code_bytes", 452, "arm_flags_shift");
 	track("data_ext_code_bytes", 244, "arm_flags_shift");
 	track("reg_shift_data_code_bytes", 212, "arm_flags_shift");
