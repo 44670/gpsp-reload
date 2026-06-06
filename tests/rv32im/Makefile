@@ -266,6 +266,30 @@ armwrestler: armwrestler-interp armwrestler-jit
 	grep -q 'code_bytes=[1-9][0-9]*' $(ARMWRESTLER_LOG)
 	grep -Eq 'command=armwrestler test=all .* arm_code_bytes_total=[1-9][0-9]* thumb_code_bytes_total=[1-9][0-9]*' $(ARMWRESTLER_LOG)
 
+armwrestler-report: armwrestler
+	@awk -v arm_max="$(ARMWRESTLER_ARM_CODE_BYTES_MAX)" \
+		-v thumb_max="$(ARMWRESTLER_THUMB_CODE_BYTES_MAX)" ' \
+		function field(name, i, kv) { \
+			for (i = 1; i <= NF; i++) { \
+				split($$i, kv, "="); \
+				if (kv[1] == name) \
+					return kv[2]; \
+			} \
+			return ""; \
+		} \
+		/command=armwrestler-jit-test/ { \
+			test = field("test"); \
+			mode = (test ~ /^thumb/) ? "thumb" : "arm"; \
+			printf("armwrestler_code_size test=%s mode=%s code_bytes=%s arm_cumulative=%s thumb_cumulative=%s\n", \
+				test, mode, field("code_bytes"), field("arm_code_bytes_total"), \
+				field("thumb_code_bytes_total")); \
+		} \
+		/command=armwrestler test=all/ { \
+			printf("armwrestler_code_size arm_total=%s thumb_total=%s arm_max=%s thumb_max=%s\n", \
+				field("arm_code_bytes_total"), field("thumb_code_bytes_total"), \
+				arm_max, thumb_max); \
+		}' $(ARMWRESTLER_LOG)
+
 abi: $(ABI_TEST)
 	$(QEMU_RISCV32) ./$(ABI_TEST)
 
@@ -281,4 +305,4 @@ clean:
 	rm -f $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_INTERP) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST)
 	rm -rf $(OUT_DIR)
 
-.PHONY: all codegen abi exec runtime frontend core-build smoke compare mixed rejects armwrestler-jit armwrestler-interp armwrestler test clean
+.PHONY: all codegen abi exec runtime frontend core-build smoke compare mixed rejects armwrestler-jit armwrestler-interp armwrestler armwrestler-report test clean
