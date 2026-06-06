@@ -2985,6 +2985,32 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
 #define arm_branch_target()                                                   \
   branch_target = (block_end_pc + 4 + (((s32)(opcode & 0xFFFFFF) << 8) >> 6)) \
 
+#if defined(RISCV_ARCH)
+
+#define arm_data_proc_pc_operand()                                            \
+  (arm_data_proc_opcode() &&                                                  \
+   ((((opcode >> 16) & 0x0F) == REG_PC) ||                                    \
+    ((opcode & 0x0F) == REG_PC) ||                                            \
+    (((opcode & 0x00000010) != 0) && (((opcode >> 8) & 0x0F) == REG_PC))))    \
+
+#define arm_pc_base_status()                                                  \
+  do                                                                          \
+  {                                                                           \
+    if(arm_data_proc_pc_operand() ||                                          \
+       ((opcode & 0x0C000000) == 0x04000000) ||                               \
+       ((opcode & 0x0E000000) == 0x08000000) ||                               \
+       ((opcode & 0x0E000090) == 0x00000090))                                 \
+    {                                                                         \
+      block_needs_pc_base = true;                                             \
+    }                                                                         \
+  } while(0)
+
+#else
+
+#define arm_pc_base_status()                                                  \
+
+#endif
+
 // Contiguous conditional block flags modification - it will set 0x20 in the
 // condition's bits if this instruction modifies flags. Taken from the CPU
 // switch so it'd better be right this time.
@@ -3098,6 +3124,28 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
     }                                                                         \
   }                                                                           \
 
+#if defined(RISCV_ARCH)
+
+#define thumb_pc_base_status()                                                \
+  do                                                                          \
+  {                                                                           \
+    u8 thumb_hiop = opcode >> 8;                                              \
+    if((thumb_hiop >= 0x44 && thumb_hiop <= 0x47) ||                          \
+       (thumb_hiop >= 0x48 && thumb_hiop <= 0x9F) ||                          \
+       (thumb_hiop >= 0xA0 && thumb_hiop <= 0xA7) ||                          \
+       (thumb_hiop >= 0xB4 && thumb_hiop <= 0xBD) ||                          \
+       (thumb_hiop >= 0xC0 && thumb_hiop <= 0xCF))                            \
+    {                                                                         \
+      block_needs_pc_base = true;                                             \
+    }                                                                         \
+  } while(0)
+
+#else
+
+#define thumb_pc_base_status()                                                \
+
+#endif
+
 #define thumb_set_condition(_condition)                                       \
 
 #define thumb_instruction_width 2
@@ -3189,6 +3237,7 @@ block_exit_type block_exits[MAX_EXITS];
     check_pc_region(block_end_pc);                                            \
     smc_write_##type##_##smc_write_op();                                      \
     type##_load_opcode();                                                     \
+    type##_pc_base_status();                                                  \
     type##_flag_status();                                                     \
                                                                               \
     if(type##_exit_point)                                                     \
@@ -3298,6 +3347,9 @@ bool translate_block_arm(u32 pc, bool ram_region)
   s32 i;
   u32 flag_status;
   block_exit_type external_block_exits[MAX_EXITS];
+#if defined(RISCV_ARCH)
+  bool block_needs_pc_base = false;
+#endif
   generate_block_extra_vars_arm();
   arm_fix_pc();
 
@@ -3324,7 +3376,9 @@ bool translate_block_arm(u32 pc, bool ram_region)
     return false;
   }
 
+#if !defined(RISCV_ARCH)
   generate_block_prologue();
+#endif
 
   /* This is a function because it's used a lot more than it might seem (all
      of the data processing functions can access it), and its expansion was
@@ -3352,6 +3406,10 @@ bool translate_block_arm(u32 pc, bool ram_region)
   }
 
   arm_dead_flag_eliminate();
+
+#if defined(RISCV_ARCH)
+  generate_block_prologue();
+#endif
 
   block_exit_position = 0;
   block_data_position = 0;
@@ -3483,6 +3541,9 @@ bool translate_block_thumb(u32 pc, bool ram_region)
   s32 i;
   u32 flag_status;
   block_exit_type external_block_exits[MAX_EXITS];
+#if defined(RISCV_ARCH)
+  bool block_needs_pc_base = false;
+#endif
   generate_block_extra_vars_thumb();
   thumb_fix_pc();
 
@@ -3508,7 +3569,9 @@ bool translate_block_thumb(u32 pc, bool ram_region)
     return false;
   }
 
+#if !defined(RISCV_ARCH)
   generate_block_prologue();
+#endif
 
   /* This is a function because it's used a lot more than it might seem (all
      of the data processing functions can access it), and its expansion was
@@ -3536,6 +3599,10 @@ bool translate_block_thumb(u32 pc, bool ram_region)
   }
 
   thumb_dead_flag_eliminate();
+
+#if defined(RISCV_ARCH)
+  generate_block_prologue();
+#endif
 
   block_exit_position = 0;
   block_data_position = 0;

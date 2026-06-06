@@ -288,26 +288,57 @@ static bool riscv_arm_data_proc_is_noop(u32 opcode)
   return op == 0xdu && rd == (opcode & 0xfu);
 }
 
-static void riscv_emit_guest_pc_load(u8 **ptr_ref,
-                                     const riscv_jit_block_meta *meta,
-                                     riscv_reg_number rd,
-                                     u32 pc_value)
+static bool riscv_pc_base_delta(const riscv_jit_block_meta *meta,
+                                u32 pc_value,
+                                s32 *delta_out)
 {
-  if (meta && (meta->flags & RISCV_BLOCK_PC_BASE_EMITTED))
+  int64_t delta;
+
+  if (!meta)
+    return false;
+
+  delta = (int64_t)pc_value - (int64_t)meta->start_pc;
+  if (delta < -2048 || delta > 2047)
+    return false;
+
+  *delta_out = (s32)delta;
+  return true;
+}
+
+static void riscv_emit_guest_pc_load_ex(u8 **ptr_ref,
+                                        riscv_jit_block_meta *meta,
+                                        riscv_reg_number rd,
+                                        u32 pc_value)
+{
+  s32 delta;
+
+  if (riscv_pc_base_delta(meta, pc_value, &delta) &&
+      (meta->flags & RISCV_BLOCK_PC_BASE_EMITTED))
   {
-    int64_t delta = (int64_t)pc_value - (int64_t)meta->start_pc;
+    u8 *translation_ptr = *ptr_ref;
 
-    if (delta >= -2048 && delta <= 2047)
-    {
-      u8 *translation_ptr = *ptr_ref;
-
-      riscv_emit_addi(rd, riscv_reg_s2, (s32)delta);
-      *ptr_ref = translation_ptr;
-      return;
-    }
+    riscv_emit_addi(rd, riscv_reg_s2, delta);
+    *ptr_ref = translation_ptr;
+    return;
   }
 
   riscv_emit_li(ptr_ref, rd, pc_value);
+}
+
+static void riscv_emit_guest_pc_load(u8 **ptr_ref,
+                                     riscv_jit_block_meta *meta,
+                                     riscv_reg_number rd,
+                                     u32 pc_value)
+{
+  riscv_emit_guest_pc_load_ex(ptr_ref, meta, rd, pc_value);
+}
+
+static void riscv_emit_guest_pc_load_existing_base(u8 **ptr_ref,
+                                                   riscv_jit_block_meta *meta,
+                                                   riscv_reg_number rd,
+                                                   u32 pc_value)
+{
+  riscv_emit_guest_pc_load_ex(ptr_ref, meta, rd, pc_value);
 }
 
 static void riscv_emit_arm_reg_load(u8 **ptr, riscv_reg_number rd,
@@ -331,7 +362,7 @@ static void riscv_emit_arm_reg_store(u8 **ptr, u32 reg_index,
 }
 
 static void riscv_emit_arm_reg_or_pc_load(u8 **ptr, riscv_reg_number rd,
-                                          const riscv_jit_block_meta *meta,
+                                          riscv_jit_block_meta *meta,
                                           u32 reg_index, u32 pc_value)
 {
   if (reg_index == REG_PC)
@@ -2052,15 +2083,20 @@ void riscv_emit_block_prologue(u8 **translation_ptr_ref,
   *translation_ptr_ref = ptr + block_prologue_size;
 }
 
+void riscv_record_block_start_pc(riscv_jit_block_meta *meta,
+                                 u32 block_start_pc)
+{
+  if (meta)
+    meta->start_pc = block_start_pc;
+}
+
 void riscv_emit_block_pc_base(u8 **translation_ptr_ref,
                               riscv_jit_block_meta *meta,
                               u32 block_start_pc)
 {
+  riscv_record_block_start_pc(meta, block_start_pc);
   if (meta)
-  {
-    meta->start_pc = block_start_pc;
     meta->flags |= RISCV_BLOCK_PC_BASE_EMITTED;
-  }
 
   riscv_emit_li(translation_ptr_ref, riscv_reg_s2, block_start_pc);
 }
@@ -2089,7 +2125,7 @@ static bool riscv_arm_operand2_preserves_carry(u32 opcode)
 }
 
 static bool riscv_emit_arm_data_proc_operand2(u8 **ptr_ref,
-                                              const riscv_jit_block_meta *meta,
+                                              riscv_jit_block_meta *meta,
                                               u32 opcode,
                                               u32 pc)
 {
@@ -2203,7 +2239,7 @@ static void riscv_emit_arm_cpsr_c_load(u8 **ptr_ref, riscv_reg_number rd)
 }
 
 static bool riscv_emit_arm_data_proc_operand2_with_carry(u8 **ptr_ref,
-                                                         const riscv_jit_block_meta *meta,
+                                                         riscv_jit_block_meta *meta,
                                                          u32 opcode,
                                                          u32 pc)
 {
@@ -4699,7 +4735,7 @@ static void riscv_emit_arm_memory_imm_offset(u8 **ptr_ref,
 }
 
 static bool riscv_emit_arm_memory_reg_offset(u8 **ptr_ref,
-                                             const riscv_jit_block_meta *meta,
+                                             riscv_jit_block_meta *meta,
                                              u32 opcode,
                                              u32 pc)
 {
@@ -6529,7 +6565,8 @@ void riscv_emit_block_finalize(riscv_jit_block_meta *meta,
   {
     if (!(meta->flags & RISCV_BLOCK_PC_WRITTEN))
     {
-      riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_t0, block_end_pc);
+      riscv_emit_guest_pc_load_existing_base(&ptr, meta, riscv_reg_t0,
+                                             block_end_pc);
       riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
     }
 

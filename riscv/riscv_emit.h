@@ -58,6 +58,8 @@ typedef enum riscv_runtime_lookup_result
 
 void riscv_emit_block_prologue(u8 **translation_ptr,
                                riscv_jit_block_meta **meta);
+void riscv_record_block_start_pc(riscv_jit_block_meta *meta,
+                                 u32 block_start_pc);
 void riscv_emit_block_pc_base(u8 **translation_ptr,
                               riscv_jit_block_meta *meta,
                               u32 block_start_pc);
@@ -292,8 +294,11 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target);
   do                                                                          \
   {                                                                           \
     riscv_emit_block_prologue(&translation_ptr, &riscv_block_meta);           \
-    riscv_emit_block_pc_base(&translation_ptr, riscv_block_meta,              \
-                             block_start_pc);                                 \
+    if (block_needs_pc_base)                                                  \
+      riscv_emit_block_pc_base(&translation_ptr, riscv_block_meta,            \
+                               block_start_pc);                               \
+    else                                                                      \
+      riscv_record_block_start_pc(riscv_block_meta, block_start_pc);          \
   } while (0)
 
 #define generate_cycle_update()                                               \
