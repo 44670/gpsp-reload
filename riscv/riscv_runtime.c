@@ -26,11 +26,10 @@ typedef u8 *(*riscv_jit_block_fn)(void);
 extern u32 rom_cache_watermark;
 
 static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta);
-static void function_cc riscv_thumb_execute(u32 opcode, u32 pc, u32 cycles);
+static u32 function_cc riscv_thumb_execute(u32 opcode, u32 pc);
 static void function_cc riscv_thumb_execute_bl_pair(u32 first_opcode,
                                                     u32 second_opcode,
-                                                    u32 pc,
-                                                    u32 cycles);
+                                                    u32 pc);
 
 enum
 {
@@ -89,12 +88,12 @@ __asm__(
   "  lw s7, 12(a5)\n"
   "  lw s8, 16(a5)\n"
   "  lw s9, 20(a5)\n"
-  "  lw s10, 24(a5)\n"
-  "  lw s11, 28(a5)\n"
+  "  lw s10, 28(a5)\n"
   "1:\n"
   "  beqz a0, 2f\n"
   "  addi t0, zero, -1\n"
   "  beq a0, t0, 2f\n"
+  "  lw s11, 0(s10)\n"
   "  auipc s3, 0\n"
   "  addi s3, s3, 12\n"
   "  jalr ra, a0, 0\n"
@@ -247,19 +246,17 @@ static void riscv_emit_adjust_cycles(u8 **ptr, u32 cycles)
     return;
 
   translation_ptr = *ptr;
-  riscv_emit_lw(riscv_reg_t3, riscv_reg_s11, 0);
   if (cycles <= 2047u)
   {
-    riscv_emit_addi(riscv_reg_t3, riscv_reg_t3, -(int)cycles);
+    riscv_emit_addi(riscv_reg_s11, riscv_reg_s11, -(int)cycles);
   }
   else
   {
     *ptr = translation_ptr;
     riscv_emit_li(ptr, riscv_reg_t4, cycles);
     translation_ptr = *ptr;
-    riscv_emit_sub(riscv_reg_t3, riscv_reg_t3, riscv_reg_t4);
+    riscv_emit_sub(riscv_reg_s11, riscv_reg_s11, riscv_reg_t4);
   }
-  riscv_emit_sw(riscv_reg_t3, riscv_reg_s11, 0);
 
   *ptr = translation_ptr;
 }
@@ -1066,18 +1063,16 @@ static void riscv_thumb_memory_store(u32 address, u32 value, u32 type)
 
 static void function_cc riscv_thumb_execute_bl_pair(u32 first_opcode,
                                                     u32 second_opcode,
-                                                    u32 pc,
-                                                    u32 cycles)
+                                                    u32 pc)
 {
   s32 high_offset = (s32)((first_opcode & 0x07ffu) << 21) >> 9;
   u32 low_offset = (second_opcode & 0x07ffu) * 2u;
 
   reg[REG_LR] = (pc + 2u) | 1u;
   reg[REG_PC] = pc + 2u + (u32)high_offset + low_offset;
-  riscv_cycles_remaining -= (s32)cycles;
 }
 
-static void function_cc riscv_thumb_execute(u32 opcode, u32 pc, u32 cycles)
+static u32 function_cc riscv_thumb_execute(u32 opcode, u32 pc)
 {
   u32 hi = opcode >> 8;
   u32 rd = opcode & 7u;
@@ -1446,7 +1441,7 @@ static void function_cc riscv_thumb_execute(u32 opcode, u32 pc, u32 cycles)
       break;
   }
 
-  riscv_cycles_remaining -= (s32)(cycles + extra_cycles);
+  return extra_cycles;
 }
 
 static const u32 riscv_psr_cpsr_masks[4][2] =
@@ -1641,6 +1636,7 @@ static void riscv_emit_helper_call(u8 **ptr, const riscv_jit_block_meta *meta)
   {
     u8 *translation_ptr = *ptr;
 
+    riscv_emit_sw(riscv_reg_s11, riscv_reg_s10, 0);
     riscv_emit_add(riscv_reg_ra, riscv_reg_s3, riscv_reg_zero);
     riscv_emit_jalr(riscv_reg_zero, riscv_reg_s1, 0);
     *ptr = translation_ptr;
@@ -3102,7 +3098,7 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
         read_helper_reg = riscv_reg_s8;
         break;
       case 2:
-        read_helper_reg = riscv_reg_s10;
+        read_helper = (uintptr_t)read_memory8s;
         break;
       default:
         read_helper_reg = riscv_reg_zero;
@@ -3924,7 +3920,7 @@ bool riscv_emit_native_thumb_b_patchable(u8 **translation_ptr_ref,
   {
     u8 *translation_ptr = ptr;
 
-    riscv_emit_bge(riscv_reg_zero, riscv_reg_t3, 16);
+    riscv_emit_bge(riscv_reg_zero, riscv_reg_s11, 16);
     ptr = translation_ptr;
   }
 
@@ -4011,8 +4007,14 @@ bool riscv_emit_native_thumb_instruction(u8 **translation_ptr_ref,
 
   riscv_emit_li(&ptr, riscv_reg_a0, opcode & 0xffffu);
   riscv_emit_li(&ptr, riscv_reg_a1, pc);
-  riscv_emit_li(&ptr, riscv_reg_a2, cycles);
   riscv_emit_c_call_reg(&ptr, riscv_reg_s2);
+  riscv_emit_adjust_cycles(&ptr, cycles);
+  {
+    u8 *translation_ptr = ptr;
+
+    riscv_emit_sub(riscv_reg_s11, riscv_reg_s11, riscv_reg_a0);
+    ptr = translation_ptr;
+  }
   if (cycles_emitted)
     *cycles_emitted = true;
 
@@ -4069,8 +4071,8 @@ bool riscv_emit_native_thumb_bl_pair(u8 **translation_ptr_ref,
   riscv_emit_li(&ptr, riscv_reg_a0, first_opcode & 0xffffu);
   riscv_emit_li(&ptr, riscv_reg_a1, second_opcode & 0xffffu);
   riscv_emit_li(&ptr, riscv_reg_a2, pc);
-  riscv_emit_li(&ptr, riscv_reg_a3, cycles);
   riscv_emit_c_call(&ptr, (uintptr_t)riscv_thumb_execute_bl_pair);
+  riscv_emit_adjust_cycles(&ptr, cycles);
   meta->flags |= RISCV_BLOCK_PC_WRITTEN;
   riscv_emit_helper_call(&ptr, meta);
 
