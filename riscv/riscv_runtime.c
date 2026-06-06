@@ -83,7 +83,6 @@ __asm__(
   "  mv s0, a1\n"
   "  mv s1, a2\n"
   "  mv s2, a3\n"
-  "  mv s3, a4\n"
   "  lw s4, 0(a5)\n"
   "  lw s5, 4(a5)\n"
   "  lw s6, 8(a5)\n"
@@ -96,6 +95,8 @@ __asm__(
   "  beqz a0, 2f\n"
   "  addi t0, zero, -1\n"
   "  beq a0, t0, 2f\n"
+  "  auipc s3, 0\n"
+  "  addi s3, s3, 12\n"
   "  jalr ra, a0, 0\n"
   "  j 1b\n"
   "2:\n"
@@ -268,15 +269,9 @@ static void riscv_emit_c_call(u8 **ptr, uintptr_t function_addr)
   u8 *translation_ptr;
 
   translation_ptr = *ptr;
-  riscv_emit_addi(riscv_reg_sp, riscv_reg_sp, -16);
-  riscv_emit_sw(riscv_reg_ra, riscv_reg_sp, 12);
-  *ptr = translation_ptr;
-
   riscv_emit_li(ptr, riscv_reg_t0, (u32)function_addr);
   translation_ptr = *ptr;
   riscv_emit_jalr(riscv_reg_ra, riscv_reg_t0, 0);
-  riscv_emit_lw(riscv_reg_ra, riscv_reg_sp, 12);
-  riscv_emit_addi(riscv_reg_sp, riscv_reg_sp, 16);
 
   *ptr = translation_ptr;
 }
@@ -285,11 +280,7 @@ static void riscv_emit_c_call_reg(u8 **ptr, riscv_reg_number function_reg)
 {
   u8 *translation_ptr = *ptr;
 
-  riscv_emit_addi(riscv_reg_sp, riscv_reg_sp, -16);
-  riscv_emit_sw(riscv_reg_ra, riscv_reg_sp, 12);
   riscv_emit_jalr(riscv_reg_ra, function_reg, 0);
-  riscv_emit_lw(riscv_reg_ra, riscv_reg_sp, 12);
-  riscv_emit_addi(riscv_reg_sp, riscv_reg_sp, 16);
 
   *ptr = translation_ptr;
 }
@@ -1650,6 +1641,7 @@ static void riscv_emit_helper_call(u8 **ptr, const riscv_jit_block_meta *meta)
   {
     u8 *translation_ptr = *ptr;
 
+    riscv_emit_add(riscv_reg_ra, riscv_reg_s3, riscv_reg_zero);
     riscv_emit_jalr(riscv_reg_zero, riscv_reg_s1, 0);
     *ptr = translation_ptr;
   }
@@ -4078,7 +4070,7 @@ bool riscv_emit_native_thumb_bl_pair(u8 **translation_ptr_ref,
   riscv_emit_li(&ptr, riscv_reg_a1, second_opcode & 0xffffu);
   riscv_emit_li(&ptr, riscv_reg_a2, pc);
   riscv_emit_li(&ptr, riscv_reg_a3, cycles);
-  riscv_emit_c_call_reg(&ptr, riscv_reg_s3);
+  riscv_emit_c_call(&ptr, (uintptr_t)riscv_thumb_execute_bl_pair);
   meta->flags |= RISCV_BLOCK_PC_WRITTEN;
   riscv_emit_helper_call(&ptr, meta);
 
