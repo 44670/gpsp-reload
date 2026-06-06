@@ -484,6 +484,17 @@ static u8 *riscv_emit_unconditional_branch_patch_site(u8 **ptr_ref)
   return source;
 }
 
+static u8 *riscv_emit_unconditional_branch_patch_site_short(u8 **ptr_ref)
+{
+  u8 *translation_ptr = *ptr_ref;
+  u8 *source = translation_ptr;
+
+  riscv_emit_nop();
+
+  *ptr_ref = translation_ptr;
+  return source;
+}
+
 void riscv_patch_unconditional_branch(u8 *source, const u8 *target)
 {
   s32 offset;
@@ -502,6 +513,17 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target)
   ((u32 *)source)[1] =
     riscv_encode_i(riscv_opcode_jalr, 0x0,
                    riscv_reg_zero, riscv_reg_t6, lower);
+}
+
+void riscv_patch_unconditional_branch_short(u8 *source, const u8 *target)
+{
+  s32 offset;
+
+  if (!source || !target)
+    return;
+
+  offset = (s32)((intptr_t)target - (intptr_t)source);
+  ((u32 *)source)[0] = riscv_encode_j_inst(riscv_reg_zero, offset);
 }
 
 void riscv_patch_conditional_branch(u8 *source, const u8 *target)
@@ -4257,7 +4279,8 @@ static bool riscv_emit_native_arm_direct_branch(u8 **translation_ptr_ref,
                                                 u32 pc,
                                                 u32 cycles,
                                                 bool link,
-                                                bool patchable)
+                                                bool patchable,
+                                                bool short_patch_site)
 {
   u32 condition = opcode >> 28;
   u8 *ptr = *translation_ptr_ref;
@@ -4290,9 +4313,16 @@ static bool riscv_emit_native_arm_direct_branch(u8 **translation_ptr_ref,
   {
     /* The frontend patches direct branches before publishing the block. */
     if (branch_source)
-      *branch_source = riscv_emit_unconditional_branch_patch_site(&ptr);
+      *branch_source = short_patch_site ?
+        riscv_emit_unconditional_branch_patch_site_short(&ptr) :
+        riscv_emit_unconditional_branch_patch_site(&ptr);
     else
-      riscv_emit_unconditional_branch_patch_site(&ptr);
+    {
+      if (short_patch_site)
+        riscv_emit_unconditional_branch_patch_site_short(&ptr);
+      else
+        riscv_emit_unconditional_branch_patch_site(&ptr);
+    }
   }
   else
   {
@@ -4312,7 +4342,7 @@ bool riscv_emit_native_arm_b(u8 **translation_ptr_ref,
 {
   return riscv_emit_native_arm_direct_branch(translation_ptr_ref, meta,
                                             NULL, opcode, pc, cycles,
-                                            false, false);
+                                            false, false, false);
 }
 
 bool riscv_emit_native_arm_bl(u8 **translation_ptr_ref,
@@ -4323,7 +4353,7 @@ bool riscv_emit_native_arm_bl(u8 **translation_ptr_ref,
 {
   return riscv_emit_native_arm_direct_branch(translation_ptr_ref, meta,
                                             NULL, opcode, pc, cycles,
-                                            true, false);
+                                            true, false, false);
 }
 
 bool riscv_emit_native_arm_b_patchable(u8 **translation_ptr_ref,
@@ -4331,11 +4361,13 @@ bool riscv_emit_native_arm_b_patchable(u8 **translation_ptr_ref,
                                        u8 **branch_source,
                                        u32 opcode,
                                        u32 pc,
-                                       u32 cycles)
+                                       u32 cycles,
+                                       bool short_patch_site)
 {
   return riscv_emit_native_arm_direct_branch(translation_ptr_ref, meta,
                                             branch_source, opcode, pc,
-                                            cycles, false, true);
+                                            cycles, false, true,
+                                            short_patch_site);
 }
 
 bool riscv_emit_native_arm_bl_patchable(u8 **translation_ptr_ref,
@@ -4343,11 +4375,13 @@ bool riscv_emit_native_arm_bl_patchable(u8 **translation_ptr_ref,
                                         u8 **branch_source,
                                         u32 opcode,
                                         u32 pc,
-                                        u32 cycles)
+                                        u32 cycles,
+                                        bool short_patch_site)
 {
   return riscv_emit_native_arm_direct_branch(translation_ptr_ref, meta,
                                             branch_source, opcode, pc,
-                                            cycles, true, true);
+                                            cycles, true, true,
+                                            short_patch_site);
 }
 
 bool riscv_emit_native_arm_bx(u8 **translation_ptr_ref,
@@ -6563,7 +6597,8 @@ bool riscv_emit_native_thumb_conditional_branch(u8 **translation_ptr_ref,
                                                 u8 **branch_source,
                                                 u32 opcode,
                                                 u32 pc,
-                                                u32 cycles)
+                                                u32 cycles,
+                                                bool short_patch_site)
 {
   u32 hi = opcode >> 8;
   u32 condition = hi & 0x0fu;
@@ -6589,9 +6624,16 @@ bool riscv_emit_native_thumb_conditional_branch(u8 **translation_ptr_ref,
 
   /* Taken path is patched to the target; fallthrough exits via finalizer. */
   if (branch_source)
-    *branch_source = riscv_emit_unconditional_branch_patch_site(&ptr);
+    *branch_source = short_patch_site ?
+      riscv_emit_unconditional_branch_patch_site_short(&ptr) :
+      riscv_emit_unconditional_branch_patch_site(&ptr);
   else
-    riscv_emit_unconditional_branch_patch_site(&ptr);
+  {
+    if (short_patch_site)
+      riscv_emit_unconditional_branch_patch_site_short(&ptr);
+    else
+      riscv_emit_unconditional_branch_patch_site(&ptr);
+  }
 
   riscv_patch_local_branch(branch_skip, ptr);
 
@@ -6605,10 +6647,13 @@ bool riscv_emit_native_thumb_b_patchable(u8 **translation_ptr_ref,
                                          u8 **branch_source,
                                          u32 opcode,
                                          u32 pc,
-                                         u32 cycles)
+                                         u32 cycles,
+                                         bool short_patch_site)
 {
   u32 hi = opcode >> 8;
   u32 target_pc;
+  u32 patch_bytes = short_patch_site ? RISCV_BRANCH_PATCH_SHORT_BYTES :
+    RISCV_BRANCH_PATCH_BYTES;
   u8 *ptr = *translation_ptr_ref;
 
   if (branch_source)
@@ -6628,14 +6673,21 @@ bool riscv_emit_native_thumb_b_patchable(u8 **translation_ptr_ref,
     u8 *translation_ptr = ptr;
 
     riscv_emit_bge(riscv_reg_zero, riscv_reg_s11,
-                   4 + RISCV_BRANCH_PATCH_BYTES);
+                   4 + patch_bytes);
     ptr = translation_ptr;
   }
 
   if (branch_source)
-    *branch_source = riscv_emit_unconditional_branch_patch_site(&ptr);
+    *branch_source = short_patch_site ?
+      riscv_emit_unconditional_branch_patch_site_short(&ptr) :
+      riscv_emit_unconditional_branch_patch_site(&ptr);
   else
-    riscv_emit_unconditional_branch_patch_site(&ptr);
+  {
+    if (short_patch_site)
+      riscv_emit_unconditional_branch_patch_site_short(&ptr);
+    else
+      riscv_emit_unconditional_branch_patch_site(&ptr);
+  }
 
   meta->flags |= RISCV_BLOCK_PC_WRITTEN;
   *translation_ptr_ref = ptr;

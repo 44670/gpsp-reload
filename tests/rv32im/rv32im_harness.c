@@ -3505,7 +3505,8 @@ static int build_runtime_fixture_block(const char **reason)
                                          &patch_branch_source,
                                          RUNTIME_PATCH_BRANCH_B_PLUS_0X40,
                                          RUNTIME_PATCH_BRANCH_START_PC,
-                                         RUNTIME_PATCH_BRANCH_CYCLES))
+                                         RUNTIME_PATCH_BRANCH_CYCLES,
+                                         false))
   {
     *reason = "runtime_patch_branch_emit_rejected";
     g_runtime_entry = (u8 *)0;
@@ -3555,7 +3556,7 @@ static int build_runtime_fixture_block(const char **reason)
         &internal_branch_source,
         RUNTIME_INTERNAL_BRANCH_B_PLUS_8,
         RUNTIME_INTERNAL_BRANCH_START_PC,
-        RUNTIME_INTERNAL_BRANCH_CYCLES))
+        RUNTIME_INTERNAL_BRANCH_CYCLES, true))
   {
     *reason = "runtime_internal_branch_emit_rejected";
     clear_runtime_fixture_entries();
@@ -3594,8 +3595,8 @@ static int build_runtime_fixture_block(const char **reason)
   riscv_emit_block_finalize(meta, &translation_ptr,
                             RUNTIME_INTERNAL_BRANCH_START_PC,
                             RUNTIME_INTERNAL_BRANCH_END_PC, false);
-  riscv_patch_unconditional_branch(internal_branch_source,
-                                   internal_branch_target);
+  riscv_patch_unconditional_branch_short(internal_branch_source,
+                                         internal_branch_target);
   internal_branch_code_bytes =
     (u32)(translation_ptr -
           (g_runtime_code + RUNTIME_INTERNAL_BRANCH_BLOCK_OFFSET));

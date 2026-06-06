@@ -94,6 +94,7 @@ typedef struct
 {
   u32 branch_target;
   u8 *branch_source;
+  u8 branch_patch_short;
 } block_exit_type;
 
 // Div (6) and DivArm (7)
@@ -3301,6 +3302,7 @@ block_exit_type block_exits[MAX_EXITS];
         __label__ no_direct_branch;                                           \
         type##_branch_target();                                               \
         block_exits[block_exit_position].branch_target = branch_target;       \
+        block_exits[block_exit_position].branch_patch_short = 0;              \
         block_exit_position++;                                                \
                                                                               \
         /* Give the branch target macro somewhere to bail if it turns out to  \
@@ -3313,6 +3315,7 @@ block_exit_type block_exits[MAX_EXITS];
       if(type##_opcode_swi)                                                   \
       {                                                                       \
         block_exits[block_exit_position].branch_target = 0x00000008;          \
+        block_exits[block_exit_position].branch_patch_short = 0;              \
         block_exit_position++;                                                \
       }                                                                       \
                                                                               \
@@ -3537,6 +3540,12 @@ bool translate_block_arm(u32 pc, bool ram_region)
        block_data[(branch_target - block_start_pc) /
         arm_instruction_width].block_offset;
 
+#if defined(RISCV_ARCH)
+      if(block_exits[i].branch_patch_short)
+        riscv_patch_unconditional_branch_short(block_exits[i].branch_source,
+         translation_target);
+      else
+#endif
       generate_branch_patch_unconditional(block_exits[i].branch_source,
        translation_target);
     }
@@ -3728,6 +3737,12 @@ bool translate_block_thumb(u32 pc, bool ram_region)
        block_data[(branch_target - block_start_pc) /
         thumb_instruction_width].block_offset;
 
+#if defined(RISCV_ARCH)
+      if(block_exits[i].branch_patch_short)
+        riscv_patch_unconditional_branch_short(block_exits[i].branch_source,
+         translation_target);
+      else
+#endif
       generate_branch_patch_unconditional(block_exits[i].branch_source,
        translation_target);
     }

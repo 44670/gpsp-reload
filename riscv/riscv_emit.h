@@ -17,6 +17,7 @@
 #define RISCV_BLOCK_META_BYTES 16
 #define block_prologue_size RISCV_BLOCK_META_BYTES
 #define RISCV_BRANCH_PATCH_BYTES 8
+#define RISCV_BRANCH_PATCH_SHORT_BYTES 4
 
 typedef struct riscv_jit_block_meta
 {
@@ -163,13 +164,15 @@ bool riscv_emit_native_arm_b_patchable(u8 **translation_ptr,
                                        u8 **branch_source,
                                        u32 opcode,
                                        u32 pc,
-                                       u32 cycles);
+                                       u32 cycles,
+                                       bool short_patch_site);
 bool riscv_emit_native_arm_bl_patchable(u8 **translation_ptr,
                                         riscv_jit_block_meta *meta,
                                         u8 **branch_source,
                                         u32 opcode,
                                         u32 pc,
-                                        u32 cycles);
+                                        u32 cycles,
+                                        bool short_patch_site);
 bool riscv_emit_native_arm_bx(u8 **translation_ptr,
                               riscv_jit_block_meta *meta,
                               u32 opcode,
@@ -270,13 +273,15 @@ bool riscv_emit_native_thumb_conditional_branch(u8 **translation_ptr,
                                                 u8 **branch_source,
                                                 u32 opcode,
                                                 u32 pc,
-                                                u32 cycles);
+                                                u32 cycles,
+                                                bool short_patch_site);
 bool riscv_emit_native_thumb_b_patchable(u8 **translation_ptr,
                                          riscv_jit_block_meta *meta,
                                          u8 **branch_source,
                                          u32 opcode,
                                          u32 pc,
-                                         u32 cycles);
+                                         u32 cycles,
+                                         bool short_patch_site);
 bool riscv_emit_native_thumb_bx(u8 **translation_ptr,
                                 riscv_jit_block_meta *meta,
                                 u32 opcode,
@@ -316,6 +321,7 @@ void riscv_note_runtime_fallback(u32 kind, u32 pc, u32 thumb,
                                  u32 lookup_result,
                                  u32 cycles_remaining);
 void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
+void riscv_patch_unconditional_branch_short(u8 *source, const u8 *target);
 void riscv_patch_conditional_branch(u8 *source, const u8 *target);
 
 #define generate_block_extra_vars()                                           \
@@ -367,6 +373,10 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target);
   {                                                                           \
     riscv_patch_unconditional_branch((dest), (offset));                       \
   } while (0)
+
+#define riscv_branch_patch_short()                                            \
+  ((block_exits[block_exit_position].branch_target >= block_start_pc) &&      \
+   (block_exits[block_exit_position].branch_target < block_end_pc))
 
 #define riscv_block_kind_arm false
 #define riscv_block_kind_thumb true
@@ -581,11 +591,15 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target);
 #define arm_b()                                                               \
   do                                                                          \
   {                                                                           \
+    bool riscv_short_patch = riscv_branch_patch_short();                      \
     if (riscv_emit_native_arm_b_patchable(                                    \
           &translation_ptr, riscv_block_meta,                                 \
           &block_exits[block_exit_position].branch_source,                   \
-          riscv_arm_effective_opcode(), pc, cycle_count))                     \
+          riscv_arm_effective_opcode(), pc, cycle_count,                      \
+          riscv_short_patch))                                                 \
     {                                                                         \
+      block_exits[block_exit_position].branch_patch_short =                   \
+        riscv_short_patch;                                                    \
       block_exit_position++;                                                  \
       cycle_count = 0;                                                        \
     }                                                                         \
@@ -598,11 +612,15 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target);
 #define arm_bl()                                                              \
   do                                                                          \
   {                                                                           \
+    bool riscv_short_patch = riscv_branch_patch_short();                      \
     if (riscv_emit_native_arm_bl_patchable(                                   \
           &translation_ptr, riscv_block_meta,                                 \
           &block_exits[block_exit_position].branch_source,                   \
-          riscv_arm_effective_opcode(), pc, cycle_count))                     \
+          riscv_arm_effective_opcode(), pc, cycle_count,                      \
+          riscv_short_patch))                                                 \
     {                                                                         \
+      block_exits[block_exit_position].branch_patch_short =                   \
+        riscv_short_patch;                                                    \
       block_exit_position++;                                                  \
       cycle_count = 0;                                                        \
     }                                                                         \
@@ -814,11 +832,14 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target);
 #define thumb_conditional_branch(...)                                         \
   do                                                                          \
   {                                                                           \
+    bool riscv_short_patch = riscv_branch_patch_short();                      \
     if (riscv_emit_native_thumb_conditional_branch(                           \
           &translation_ptr, riscv_block_meta,                                 \
           &block_exits[block_exit_position].branch_source,                   \
-          opcode, pc, cycle_count))                                           \
+          opcode, pc, cycle_count, riscv_short_patch))                        \
     {                                                                         \
+      block_exits[block_exit_position].branch_patch_short =                   \
+        riscv_short_patch;                                                    \
       block_exit_position++;                                                  \
     }                                                                         \
     else                                                                      \
@@ -830,11 +851,14 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target);
 #define thumb_b()                                                             \
   do                                                                          \
   {                                                                           \
+    bool riscv_short_patch = riscv_branch_patch_short();                      \
     if (riscv_emit_native_thumb_b_patchable(                                  \
           &translation_ptr, riscv_block_meta,                                 \
           &block_exits[block_exit_position].branch_source,                   \
-          opcode, pc, cycle_count))                                           \
+          opcode, pc, cycle_count, riscv_short_patch))                        \
     {                                                                         \
+      block_exits[block_exit_position].branch_patch_short =                   \
+        riscv_short_patch;                                                    \
       block_exit_position++;                                                  \
       cycle_count = 0;                                                        \
     }                                                                         \

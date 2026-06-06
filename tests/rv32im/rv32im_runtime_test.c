@@ -3353,7 +3353,7 @@ static u32 build_internal_branch_block(u8 *code)
                                          &branch_source,
                                          INTERNAL_BRANCH_B_PLUS_8,
                                          INTERNAL_BRANCH_START_PC,
-                                         INTERNAL_BRANCH_CYCLES))
+                                         INTERNAL_BRANCH_CYCLES, true))
   {
     put_raw("result=FAIL command=runtime reason=internal_branch_rejected\n");
     sys_exit(1);
@@ -3386,7 +3386,7 @@ static u32 build_internal_branch_block(u8 *code)
   riscv_emit_block_finalize(meta, &translation_ptr,
                             INTERNAL_BRANCH_START_PC,
                             INTERNAL_BRANCH_END_PC, false);
-  riscv_patch_unconditional_branch(branch_source, branch_target);
+  riscv_patch_unconditional_branch_short(branch_source, branch_target);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -3407,7 +3407,7 @@ static u32 build_external_branch_block(u8 *code, u8 *target_entry)
         &branch_source,
         EXTERNAL_BRANCH_B_PLUS_0X40,
         EXTERNAL_BRANCH_START_PC,
-        EXTERNAL_BRANCH_CYCLES))
+        EXTERNAL_BRANCH_CYCLES, false))
   {
     put_raw("result=FAIL command=runtime reason=external_branch_rejected\n");
     sys_exit(1);
@@ -3443,7 +3443,7 @@ static u32 build_repatch_branch_block(u8 *code)
         &branch_source,
         REPATCH_BRANCH_B_PLUS_0X40,
         REPATCH_BRANCH_START_PC,
-        REPATCH_BRANCH_CYCLES))
+        REPATCH_BRANCH_CYCLES, false))
   {
     put_raw("result=FAIL command=runtime reason=repatch_branch_rejected\n");
     sys_exit(1);
