@@ -86,6 +86,15 @@ bool riscv_emit_native_arm_data_proc_with_pc_ex(u8 **translation_ptr,
                                                 u32 flag_status,
                                                 bool emit_cycles,
                                                 bool *cycles_emitted);
+bool riscv_emit_native_arm_data_proc_with_pc_ex_dead_flags(
+  u8 **translation_ptr,
+  riscv_jit_block_meta *meta,
+  u32 opcode,
+  u32 pc,
+  u32 cycles,
+  u32 flag_status,
+  bool emit_cycles,
+  bool *cycles_emitted);
 bool riscv_emit_native_arm_data_proc_test(u8 **translation_ptr,
                                           riscv_jit_block_meta *meta,
                                           u32 opcode,
@@ -103,6 +112,15 @@ bool riscv_emit_native_arm_data_proc_test_with_pc_ex(u8 **translation_ptr,
                                                      u32 flag_status,
                                                      bool emit_cycles,
                                                      bool *cycles_emitted);
+bool riscv_emit_native_arm_data_proc_test_with_pc_ex_dead_flags(
+  u8 **translation_ptr,
+  riscv_jit_block_meta *meta,
+  u32 opcode,
+  u32 pc,
+  u32 cycles,
+  u32 flag_status,
+  bool emit_cycles,
+  bool *cycles_emitted);
 bool riscv_emit_native_arm_multiply(u8 **translation_ptr,
                                     riscv_jit_block_meta *meta,
                                     u32 opcode,
@@ -211,11 +229,20 @@ bool riscv_emit_native_thumb_alu(u8 **translation_ptr,
                                  riscv_jit_block_meta *meta,
                                  u32 opcode,
                                  u32 flag_status);
+bool riscv_emit_native_thumb_alu_dead_flags(u8 **translation_ptr,
+                                            riscv_jit_block_meta *meta,
+                                            u32 opcode,
+                                            u32 flag_status);
 bool riscv_emit_native_thumb_hi_cmp(u8 **translation_ptr,
                                     riscv_jit_block_meta *meta,
                                     u32 opcode,
                                     u32 pc,
                                     u32 flag_status);
+bool riscv_emit_native_thumb_hi_cmp_dead_flags(u8 **translation_ptr,
+                                               riscv_jit_block_meta *meta,
+                                               u32 opcode,
+                                               u32 pc,
+                                               u32 flag_status);
 bool riscv_emit_native_thumb_access_memory(u8 **translation_ptr,
                                            riscv_jit_block_meta *meta,
                                            u32 opcode,
@@ -390,7 +417,7 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target);
   do                                                                          \
   {                                                                           \
     bool riscv_arm_cycles_emitted = false;                                    \
-    if (riscv_emit_native_arm_data_proc_with_pc_ex(                           \
+    if (riscv_emit_native_arm_data_proc_with_pc_ex_dead_flags(                \
           &translation_ptr, riscv_block_meta, riscv_arm_effective_opcode(),   \
           pc, cycle_count, flag_status, riscv_arm_emit_cycles_here(),         \
           &riscv_arm_cycles_emitted))                                         \
@@ -408,7 +435,7 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target);
   do                                                                          \
   {                                                                           \
     bool riscv_arm_cycles_emitted = false;                                    \
-    if (riscv_emit_native_arm_data_proc_test_with_pc_ex(                      \
+    if (riscv_emit_native_arm_data_proc_test_with_pc_ex_dead_flags(           \
           &translation_ptr, riscv_block_meta, riscv_arm_effective_opcode(),   \
           pc, cycle_count, flag_status, riscv_arm_emit_cycles_here(),         \
           &riscv_arm_cycles_emitted))                                         \
@@ -681,8 +708,8 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target);
 #define thumb_data_proc(...)                                                  \
   do                                                                          \
   {                                                                           \
-    if (!riscv_emit_native_thumb_alu(&translation_ptr, riscv_block_meta,      \
-                                     opcode, flag_status))                    \
+    if (!riscv_emit_native_thumb_alu_dead_flags(                              \
+          &translation_ptr, riscv_block_meta, opcode, flag_status))           \
     {                                                                         \
       riscv_emit_thumb_instruction(false);                                    \
     }                                                                         \
@@ -691,8 +718,8 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target);
 #define thumb_data_proc_test(...)                                             \
   do                                                                          \
   {                                                                           \
-    if (!riscv_emit_native_thumb_alu(&translation_ptr, riscv_block_meta,      \
-                                     opcode, flag_status))                    \
+    if (!riscv_emit_native_thumb_alu_dead_flags(                              \
+          &translation_ptr, riscv_block_meta, opcode, flag_status))           \
     {                                                                         \
       riscv_emit_thumb_instruction(false);                                    \
     }                                                                         \
@@ -701,8 +728,8 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target);
 #define thumb_data_proc_unary(...)                                            \
   do                                                                          \
   {                                                                           \
-    if (!riscv_emit_native_thumb_alu(&translation_ptr, riscv_block_meta,      \
-                                     opcode, flag_status))                    \
+    if (!riscv_emit_native_thumb_alu_dead_flags(                              \
+          &translation_ptr, riscv_block_meta, opcode, flag_status))           \
     {                                                                         \
       riscv_emit_thumb_instruction(false);                                    \
     }                                                                         \
@@ -714,8 +741,8 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target);
 #define thumb_data_proc_test_hi(...)                                          \
   do                                                                          \
   {                                                                           \
-    if (!riscv_emit_native_thumb_hi_cmp(&translation_ptr, riscv_block_meta,   \
-                                        opcode, pc, flag_status))             \
+    if (!riscv_emit_native_thumb_hi_cmp_dead_flags(                           \
+          &translation_ptr, riscv_block_meta, opcode, pc, flag_status))       \
     {                                                                         \
       riscv_emit_thumb_instruction(false);                                    \
     }                                                                         \
