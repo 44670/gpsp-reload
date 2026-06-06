@@ -5578,6 +5578,7 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
     (immediate_offset && offset == 0) ||
     (const_register_offset_valid && const_register_offset == 0);
   bool writeback_overwritten_by_load = load && rd == rn;
+  bool dead_post_index_writeback = writeback_overwritten_by_load && !pre_index;
 
   if (cycles_emitted)
     *cycles_emitted = false;
@@ -5619,18 +5620,20 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
     riscv_emit_arm_reg_load(&ptr, riscv_reg_a0, rn);
   }
 
-  if (immediate_offset && !pc_base)
+  if (immediate_offset && !pc_base && !dead_post_index_writeback)
   {
     riscv_emit_arm_memory_const_offset(&ptr, pre_index, up, offset,
                                        &writeback_reg);
   }
-  else if (const_register_offset_valid && !pc_base)
+  else if (const_register_offset_valid && !pc_base &&
+           !dead_post_index_writeback)
   {
     riscv_emit_arm_memory_const_offset(&ptr, pre_index, up,
                                        const_register_offset,
                                        &writeback_reg);
   }
-  else if (!immediate_offset && !const_register_offset_valid)
+  else if (!immediate_offset && !const_register_offset_valid &&
+           !dead_post_index_writeback)
   {
     u8 *translation_ptr;
 
@@ -5913,6 +5916,7 @@ bool riscv_emit_native_arm_access_memory_ex(u8 **translation_ptr_ref,
     (!register_offset && offset == 0) ||
     (const_register_offset_valid && const_register_offset == 0);
   bool writeback_overwritten_by_load = load && rd == rn;
+  bool dead_post_index_writeback = writeback_overwritten_by_load && !pre_index;
 
   if (cycles_emitted)
     *cycles_emitted = false;
@@ -5956,7 +5960,7 @@ bool riscv_emit_native_arm_access_memory_ex(u8 **translation_ptr_ref,
     riscv_emit_arm_reg_load(&ptr, riscv_reg_a0, rn);
   }
 
-  if (register_offset)
+  if (register_offset && !dead_post_index_writeback)
   {
     if (const_register_offset_valid && !pc_base)
     {
@@ -5991,13 +5995,13 @@ bool riscv_emit_native_arm_access_memory_ex(u8 **translation_ptr_ref,
       ptr = translation_ptr;
     }
   }
-  else if (!pc_base && !pre_index && offset)
+  else if (!pc_base && !pre_index && offset && !dead_post_index_writeback)
   {
     riscv_emit_arm_memory_imm_offset(&ptr, riscv_reg_t2, riscv_reg_a0,
                                      offset, up);
     writeback_reg = riscv_reg_t2;
   }
-  else if (!pc_base && offset)
+  else if (!pc_base && pre_index && offset)
   {
     riscv_emit_arm_memory_imm_offset(&ptr, riscv_reg_a0, riscv_reg_a0,
                                      offset, up);
