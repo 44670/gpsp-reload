@@ -2161,6 +2161,104 @@ static bool riscv_arm_operand2_preserves_carry(u32 opcode)
   return shift_type == 0 && shift == 0;
 }
 
+static void riscv_emit_arm_data_proc_const_reg_shift(u8 **ptr_ref,
+                                                     u32 shift_type,
+                                                     u32 shift,
+                                                     bool update_carry)
+{
+  u8 *translation_ptr = *ptr_ref;
+
+  shift &= 0xffu;
+
+  switch (shift_type)
+  {
+    case 0:
+      if (!shift)
+        break;
+      if (shift < 32u)
+      {
+        if (update_carry)
+        {
+          riscv_emit_srli(riscv_reg_t3, riscv_reg_t1, 32u - shift);
+          riscv_emit_andi(riscv_reg_t3, riscv_reg_t3, 1);
+        }
+        riscv_emit_slli(riscv_reg_t1, riscv_reg_t1, shift);
+      }
+      else
+      {
+        if (update_carry)
+        {
+          if (shift == 32u)
+            riscv_emit_andi(riscv_reg_t3, riscv_reg_t1, 1);
+          else
+            riscv_emit_add(riscv_reg_t3, riscv_reg_zero, riscv_reg_zero);
+        }
+        riscv_emit_add(riscv_reg_t1, riscv_reg_zero, riscv_reg_zero);
+      }
+      break;
+    case 1:
+      if (!shift)
+        break;
+      if (shift < 32u)
+      {
+        if (update_carry)
+        {
+          riscv_emit_srli(riscv_reg_t3, riscv_reg_t1, shift - 1u);
+          riscv_emit_andi(riscv_reg_t3, riscv_reg_t3, 1);
+        }
+        riscv_emit_srli(riscv_reg_t1, riscv_reg_t1, shift);
+      }
+      else
+      {
+        if (update_carry)
+        {
+          if (shift == 32u)
+            riscv_emit_srli(riscv_reg_t3, riscv_reg_t1, 31);
+          else
+            riscv_emit_add(riscv_reg_t3, riscv_reg_zero, riscv_reg_zero);
+        }
+        riscv_emit_add(riscv_reg_t1, riscv_reg_zero, riscv_reg_zero);
+      }
+      break;
+    case 2:
+      if (!shift)
+        break;
+      if (shift < 32u)
+      {
+        if (update_carry)
+        {
+          riscv_emit_srli(riscv_reg_t3, riscv_reg_t1, shift - 1u);
+          riscv_emit_andi(riscv_reg_t3, riscv_reg_t3, 1);
+        }
+        riscv_emit_srai(riscv_reg_t1, riscv_reg_t1, shift);
+      }
+      else
+      {
+        if (update_carry)
+          riscv_emit_srli(riscv_reg_t3, riscv_reg_t1, 31);
+        riscv_emit_srai(riscv_reg_t1, riscv_reg_t1, 31);
+      }
+      break;
+    default:
+      if (!shift)
+        break;
+      shift &= 31u;
+      if (shift)
+      {
+        riscv_emit_srli(update_carry ? riscv_reg_t4 : riscv_reg_t3,
+                        riscv_reg_t1, shift);
+        riscv_emit_slli(riscv_reg_t1, riscv_reg_t1, 32u - shift);
+        riscv_emit_or(riscv_reg_t1, riscv_reg_t1,
+                      update_carry ? riscv_reg_t4 : riscv_reg_t3);
+      }
+      if (update_carry)
+        riscv_emit_srli(riscv_reg_t3, riscv_reg_t1, 31);
+      break;
+  }
+
+  *ptr_ref = translation_ptr;
+}
+
 static bool riscv_emit_arm_data_proc_operand2(u8 **ptr_ref,
                                               riscv_jit_block_meta *meta,
                                               u32 opcode,
@@ -2184,6 +2282,16 @@ static bool riscv_emit_arm_data_proc_operand2(u8 **ptr_ref,
   if ((opcode >> 4) & 1u)
   {
     riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t1, meta, rm, pc + 12u);
+
+    if (rs == REG_PC)
+    {
+      translation_ptr = ptr;
+      riscv_emit_arm_data_proc_const_reg_shift(&translation_ptr, shift_type,
+                                               pc + 8u, false);
+      *ptr_ref = translation_ptr;
+      return true;
+    }
+
     riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t3, meta, rs, pc + 8u);
     translation_ptr = ptr;
     riscv_emit_andi(riscv_reg_t3, riscv_reg_t3, 0xff);
@@ -2398,6 +2506,20 @@ static bool riscv_emit_arm_data_proc_operand2_with_carry(u8 **ptr_ref,
     u8 *carry_done;
 
     riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t1, meta, rm, pc + 12u);
+
+    if (rs == REG_PC)
+    {
+      u32 shift_amount = (pc + 8u) & 0xffu;
+
+      if (!shift_amount)
+        riscv_emit_arm_cpsr_c_load(&ptr, riscv_reg_t3);
+      translation_ptr = ptr;
+      riscv_emit_arm_data_proc_const_reg_shift(&translation_ptr, shift_type,
+                                               shift_amount, true);
+      *ptr_ref = translation_ptr;
+      return true;
+    }
+
     riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t4, meta, rs, pc + 8u);
     riscv_emit_arm_cpsr_c_load(&ptr, riscv_reg_t3);
     translation_ptr = ptr;
