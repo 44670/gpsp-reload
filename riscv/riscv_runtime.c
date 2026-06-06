@@ -1500,6 +1500,49 @@ static void function_cc riscv_execute_spsr_restore(void)
   check_and_raise_interrupts();
 }
 
+static void riscv_emit_arm_cpsr_flags_store(u8 **ptr_ref,
+                                            riscv_reg_number source)
+{
+  u8 *ptr = *ptr_ref;
+  u8 *translation_ptr;
+
+  riscv_emit_arm_reg_load(&ptr, riscv_reg_t1, REG_CPSR);
+  translation_ptr = ptr;
+  riscv_emit_srli(source, source, 28);
+  riscv_emit_slli(source, source, 28);
+  riscv_emit_slli(riscv_reg_t1, riscv_reg_t1, 4);
+  riscv_emit_srli(riscv_reg_t1, riscv_reg_t1, 4);
+  riscv_emit_or(source, source, riscv_reg_t1);
+  ptr = translation_ptr;
+  riscv_emit_arm_reg_store(&ptr, REG_CPSR, source);
+
+  *ptr_ref = ptr;
+}
+
+static void riscv_emit_arm_spsr_flags_store(u8 **ptr_ref,
+                                            riscv_reg_number source)
+{
+  u8 *ptr = *ptr_ref;
+  u8 *translation_ptr;
+
+  riscv_emit_arm_reg_load(&ptr, riscv_reg_t0, CPU_MODE);
+  riscv_emit_li(&ptr, riscv_reg_t1, (u32)(uintptr_t)&spsr[0]);
+  translation_ptr = ptr;
+  riscv_emit_andi(riscv_reg_t0, riscv_reg_t0, 0xf);
+  riscv_emit_slli(riscv_reg_t0, riscv_reg_t0, 2);
+  riscv_emit_add(riscv_reg_t1, riscv_reg_t1, riscv_reg_t0);
+  riscv_emit_lw(riscv_reg_t3, riscv_reg_t1, 0);
+  riscv_emit_srli(source, source, 28);
+  riscv_emit_slli(source, source, 28);
+  riscv_emit_slli(riscv_reg_t3, riscv_reg_t3, 4);
+  riscv_emit_srli(riscv_reg_t3, riscv_reg_t3, 4);
+  riscv_emit_or(source, source, riscv_reg_t3);
+  riscv_emit_sw(source, riscv_reg_t1, 0);
+  ptr = translation_ptr;
+
+  *ptr_ref = ptr;
+}
+
 static u32 riscv_word_bit_count(u32 word)
 {
   u32 count = 0;
@@ -2708,6 +2751,7 @@ bool riscv_emit_native_arm_psr_with_pc(u8 **translation_ptr_ref,
   u32 use_spsr = (opcode >> 22) & 1u;
   u32 rd = (opcode >> 12) & 0xfu;
   u32 rm = opcode & 0xfu;
+  u32 psr_pfield = ((opcode >> 16) & 1u) | ((opcode >> 18) & 2u);
   u8 *ptr = *translation_ptr_ref;
 
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
@@ -2767,10 +2811,22 @@ bool riscv_emit_native_arm_psr_with_pc(u8 **translation_ptr_ref,
   else
     riscv_emit_arm_reg_load(&ptr, riscv_reg_a0, rm);
 
+  if (psr_pfield == 2u)
+  {
+    if (use_spsr)
+      riscv_emit_arm_spsr_flags_store(&ptr, riscv_reg_a0);
+    else
+      riscv_emit_arm_cpsr_flags_store(&ptr, riscv_reg_a0);
+    riscv_emit_adjust_cycles(&ptr, cycles);
+
+    *translation_ptr_ref = ptr;
+    riscv_native_psr_insns++;
+    return true;
+  }
+
   riscv_emit_li(&ptr, riscv_reg_t0, pc + 4u);
   riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
-  riscv_emit_li(&ptr, riscv_reg_a1,
-                ((opcode >> 16) & 1u) | ((opcode >> 18) & 2u));
+  riscv_emit_li(&ptr, riscv_reg_a1, psr_pfield);
   riscv_emit_c_call(&ptr, use_spsr ? (uintptr_t)riscv_store_spsr
                                   : (uintptr_t)riscv_store_cpsr);
   riscv_emit_adjust_cycles(&ptr, cycles);
