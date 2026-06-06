@@ -3774,7 +3774,8 @@ static int build_runtime_fixture_block(const char **reason)
                                            &swi_patch_source,
                                            RUNTIME_SWI_OPCODE_5,
                                            RUNTIME_SWI_START_PC,
-                                           RUNTIME_SWI_CYCLES))
+                                           RUNTIME_SWI_CYCLES,
+                                           true))
   {
     *reason = "runtime_swi_patch_emit_rejected";
     clear_runtime_fixture_entries();
@@ -3790,8 +3791,8 @@ static int build_runtime_fixture_block(const char **reason)
 
   riscv_emit_block_finalize(meta, &translation_ptr, RUNTIME_SWI_START_PC,
                             RUNTIME_SWI_END_PC, false);
-  riscv_patch_unconditional_branch(swi_patch_source,
-                                   g_runtime_swi_target_entry);
+  riscv_patch_unconditional_branch_short(swi_patch_source,
+                                         g_runtime_swi_target_entry);
   swi_patch_code_bytes =
     (u32)(translation_ptr -
           (g_runtime_code + RUNTIME_SWI_PATCH_BLOCK_OFFSET));

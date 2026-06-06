@@ -2967,7 +2967,7 @@ static u32 build_thumb_swi_block(u8 *code, u8 *target_entry)
 
   if (!riscv_emit_native_thumb_swi_patchable(
         &translation_ptr, meta, &branch_source, THUMB_SWI_OPCODE_5,
-        THUMB_SWI_START_PC, THUMB_SWI_CYCLES))
+        THUMB_SWI_START_PC, THUMB_SWI_CYCLES, true))
   {
     put_raw("result=FAIL command=runtime reason=thumb_swi_emit_rejected\n");
     sys_exit(1);
@@ -2980,7 +2980,7 @@ static u32 build_thumb_swi_block(u8 *code, u8 *target_entry)
 
   riscv_emit_block_finalize(meta, &translation_ptr,
                             THUMB_SWI_START_PC, THUMB_SWI_END_PC, true);
-  riscv_patch_unconditional_branch(branch_source, target_entry);
+  riscv_patch_unconditional_branch_short(branch_source, target_entry);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -3696,7 +3696,8 @@ static u32 build_swi_patch_block(u8 *code, u8 *target_entry)
                                            &branch_source,
                                            SWI_OPCODE_5,
                                            SWI_START_PC,
-                                           SWI_CYCLES))
+                                           SWI_CYCLES,
+                                           true))
   {
     put_raw("result=FAIL command=runtime reason=swi_patch_emit_rejected\n");
     sys_exit(1);
@@ -3710,7 +3711,7 @@ static u32 build_swi_patch_block(u8 *code, u8 *target_entry)
 
   riscv_emit_block_finalize(meta, &translation_ptr, SWI_START_PC,
                             SWI_END_PC, false);
-  riscv_patch_unconditional_branch(branch_source, target_entry);
+  riscv_patch_unconditional_branch_short(branch_source, target_entry);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;

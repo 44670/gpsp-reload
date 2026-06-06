@@ -196,7 +196,8 @@ bool riscv_emit_native_arm_swi_patchable(u8 **translation_ptr,
                                          u8 **branch_source,
                                          u32 opcode,
                                          u32 pc,
-                                         u32 cycles);
+                                         u32 cycles,
+                                         bool short_patch_site);
 bool riscv_emit_arm_conditional_block_header(u8 **translation_ptr,
                                              riscv_jit_block_meta *meta,
                                              u32 condition,
@@ -300,7 +301,8 @@ bool riscv_emit_native_thumb_swi_patchable(u8 **translation_ptr,
                                            u8 **branch_source,
                                            u32 opcode,
                                            u32 pc,
-                                           u32 cycles);
+                                           u32 cycles,
+                                           bool short_patch_site);
 bool riscv_emit_native_thumb_load_pc_pool_const(u8 **translation_ptr,
                                                 riscv_jit_block_meta *meta,
                                                 u32 rd,
@@ -678,11 +680,15 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target);
 #define arm_swi()                                                             \
   do                                                                          \
   {                                                                           \
+    bool riscv_short_patch = riscv_branch_patch_short();                      \
     if (riscv_emit_native_arm_swi_patchable(                                  \
           &translation_ptr, riscv_block_meta,                                 \
           &block_exits[block_exit_position].branch_source,                   \
-          riscv_arm_effective_opcode(), pc, cycle_count))                     \
+          riscv_arm_effective_opcode(), pc, cycle_count,                      \
+          riscv_short_patch))                                                 \
     {                                                                         \
+      block_exits[block_exit_position].branch_patch_short =                   \
+        riscv_short_patch;                                                    \
       block_exit_position++;                                                  \
       cycle_count = 0;                                                        \
     }                                                                         \
@@ -955,11 +961,14 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target);
 #define thumb_swi()                                                           \
   do                                                                          \
   {                                                                           \
+    bool riscv_short_patch = riscv_branch_patch_short();                      \
     if (riscv_emit_native_thumb_swi_patchable(                                \
           &translation_ptr, riscv_block_meta,                                 \
           &block_exits[block_exit_position].branch_source,                   \
-          opcode, pc, cycle_count))                                           \
+          opcode, pc, cycle_count, riscv_short_patch))                        \
     {                                                                         \
+      block_exits[block_exit_position].branch_patch_short =                   \
+        riscv_short_patch;                                                    \
       block_exit_position++;                                                  \
       cycle_count = 0;                                                        \
     }                                                                         \
