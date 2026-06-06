@@ -5730,6 +5730,9 @@ bool riscv_emit_native_thumb_block_memory(u8 **translation_ptr_ref,
   u32 low_count;
   u32 count;
   bool writeback_first;
+  bool has_pc;
+  bool has_lr;
+  bool use_s2_cursor;
   s32 end_offset;
   s32 origin_offset;
   u8 *ptr = *translation_ptr_ref;
@@ -5762,6 +5765,8 @@ bool riscv_emit_native_thumb_block_memory(u8 **translation_ptr_ref,
   count = low_count;
   if (reglist & ((1u << REG_LR) | (1u << REG_PC)))
     count++;
+  has_pc = (reglist & (1u << REG_PC)) != 0;
+  has_lr = (reglist & (1u << REG_LR)) != 0;
 
   if (load && rn < 8u && (reglist & (1u << rn)))
     return false;
@@ -5784,12 +5789,19 @@ bool riscv_emit_native_thumb_block_memory(u8 **translation_ptr_ref,
   riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_t0, pc + 2u);
   riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
 
+  use_s2_cursor = has_pc || (origin_offset ? count >= 3u : count >= 5u);
+  if (use_s2_cursor)
+    riscv_emit_arm_block_s2_cursor_init(&ptr, rn, origin_offset);
+
   for (i = 0; i < 8u; i++)
   {
     if (!((reglist >> i) & 1u))
       continue;
 
-    riscv_emit_thumb_block_initial_address(&ptr, rn, origin_offset, offset);
+    if (use_s2_cursor)
+      riscv_emit_arm_block_s2_cursor_load(&ptr);
+    else
+      riscv_emit_thumb_block_initial_address(&ptr, rn, origin_offset, offset);
     if (load)
     {
       riscv_emit_c_call_reg(&ptr, riscv_reg_s4);
@@ -5800,18 +5812,27 @@ bool riscv_emit_native_thumb_block_memory(u8 **translation_ptr_ref,
       riscv_emit_arm_reg_load(&ptr, riscv_reg_a1, i);
       riscv_emit_c_call_reg(&ptr, riscv_reg_s5);
     }
+
     offset += 4u;
+    if (use_s2_cursor && offset < (count * 4u))
+      riscv_emit_arm_block_s2_cursor_advance(&ptr);
   }
 
-  if (reglist & (1u << REG_LR))
+  if (has_lr)
   {
-    riscv_emit_thumb_block_initial_address(&ptr, rn, origin_offset, offset);
+    if (use_s2_cursor)
+      riscv_emit_arm_block_s2_cursor_load(&ptr);
+    else
+      riscv_emit_thumb_block_initial_address(&ptr, rn, origin_offset, offset);
     riscv_emit_arm_reg_load(&ptr, riscv_reg_a1, REG_LR);
     riscv_emit_c_call_reg(&ptr, riscv_reg_s5);
   }
-  else if (reglist & (1u << REG_PC))
+  else if (has_pc)
   {
-    riscv_emit_thumb_block_initial_address(&ptr, rn, origin_offset, offset);
+    if (use_s2_cursor)
+      riscv_emit_arm_block_s2_cursor_load(&ptr);
+    else
+      riscv_emit_thumb_block_initial_address(&ptr, rn, origin_offset, offset);
     riscv_emit_c_call_reg(&ptr, riscv_reg_s4);
     {
       u8 *translation_ptr = ptr;
@@ -5823,6 +5844,9 @@ bool riscv_emit_native_thumb_block_memory(u8 **translation_ptr_ref,
     meta->flags |= RISCV_BLOCK_PC_WRITTEN;
   }
 
+  if (use_s2_cursor && !has_pc)
+    riscv_emit_block_pc_base_restore(&ptr, meta);
+
   if (!writeback_first)
     riscv_emit_thumb_block_writeback(&ptr, rn, end_offset);
 
@@ -5830,7 +5854,7 @@ bool riscv_emit_native_thumb_block_memory(u8 **translation_ptr_ref,
   if (cycles_emitted)
     *cycles_emitted = true;
 
-  if (reglist & (1u << REG_PC))
+  if (has_pc)
     riscv_emit_terminal_helper_call(&ptr, meta);
 
   if (load)
