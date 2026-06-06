@@ -4151,6 +4151,41 @@ bool riscv_emit_native_thumb_bx(u8 **translation_ptr_ref,
   return true;
 }
 
+bool riscv_emit_native_thumb_swi_patchable(u8 **translation_ptr_ref,
+                                           riscv_jit_block_meta *meta,
+                                           u8 **branch_source,
+                                           u32 opcode,
+                                           u32 pc,
+                                           u32 cycles)
+{
+  u32 hi = opcode >> 8;
+  u32 swinum = opcode & 0xffu;
+  u8 *ptr = *translation_ptr_ref;
+
+  if (branch_source)
+    *branch_source = NULL;
+
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
+    return false;
+
+  if (hi != 0xdfu || swinum == 6u || swinum == 7u)
+    return false;
+
+  riscv_emit_li(&ptr, riscv_reg_a0, pc);
+  riscv_emit_c_call(&ptr, (uintptr_t)riscv_execute_swi_thumb);
+  riscv_emit_adjust_cycles(&ptr, cycles);
+
+  if (branch_source)
+    *branch_source = riscv_emit_unconditional_branch_patch_site(&ptr);
+  else
+    riscv_emit_unconditional_branch_patch_site(&ptr);
+  riscv_emit_helper_call(&ptr, meta);
+
+  *translation_ptr_ref = ptr;
+  riscv_native_branch_insns++;
+  return true;
+}
+
 bool riscv_emit_native_thumb_instruction(u8 **translation_ptr_ref,
                                          riscv_jit_block_meta *meta,
                                          u32 opcode,
@@ -4234,6 +4269,10 @@ bool riscv_emit_native_thumb_bl_pair(u8 **translation_ptr_ref,
                                      u32 cycles)
 {
   u8 *ptr = *translation_ptr_ref;
+  s32 high_offset;
+  u32 low_offset;
+  u32 target_pc;
+  u32 link_value;
 
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
     return false;
@@ -4244,10 +4283,59 @@ bool riscv_emit_native_thumb_bl_pair(u8 **translation_ptr_ref,
     return false;
   }
 
-  riscv_emit_li(&ptr, riscv_reg_a0, first_opcode & 0xffffu);
-  riscv_emit_li(&ptr, riscv_reg_a1, second_opcode & 0xffffu);
-  riscv_emit_li(&ptr, riscv_reg_a2, pc);
-  riscv_emit_c_call(&ptr, (uintptr_t)riscv_thumb_execute_bl_pair);
+  high_offset = (s32)((first_opcode & 0x07ffu) << 21) >> 9;
+  low_offset = (second_opcode & 0x07ffu) * 2u;
+  target_pc = pc + 2u + (u32)high_offset + low_offset;
+  link_value = (pc + 2u) | 1u;
+
+  riscv_emit_li(&ptr, riscv_reg_t0, link_value);
+  riscv_emit_arm_reg_store(&ptr, REG_LR, riscv_reg_t0);
+  riscv_emit_li(&ptr, riscv_reg_t0, target_pc);
+  riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
+  riscv_emit_adjust_cycles(&ptr, cycles);
+  meta->flags |= RISCV_BLOCK_PC_WRITTEN;
+  riscv_emit_helper_call(&ptr, meta);
+
+  *translation_ptr_ref = ptr;
+  riscv_native_branch_insns++;
+  return true;
+}
+
+bool riscv_emit_native_thumb_blh(u8 **translation_ptr_ref,
+                                 riscv_jit_block_meta *meta,
+                                 u32 opcode,
+                                 u32 pc,
+                                 u32 cycles)
+{
+  u32 hi = opcode >> 8;
+  u32 low_offset = (opcode & 0x07ffu) * 2u;
+  u32 link_value = (pc + 2u) | 1u;
+  u8 *ptr = *translation_ptr_ref;
+  u8 *translation_ptr;
+
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
+    return false;
+
+  if (hi < 0xf8u)
+    return false;
+
+  riscv_emit_arm_reg_load(&ptr, riscv_reg_t0, REG_LR);
+  if (low_offset && low_offset <= 2047u)
+  {
+    translation_ptr = ptr;
+    riscv_emit_addi(riscv_reg_t0, riscv_reg_t0, (s32)low_offset);
+    ptr = translation_ptr;
+  }
+  else if (low_offset)
+  {
+    riscv_emit_li(&ptr, riscv_reg_t1, low_offset);
+    translation_ptr = ptr;
+    riscv_emit_add(riscv_reg_t0, riscv_reg_t0, riscv_reg_t1);
+    ptr = translation_ptr;
+  }
+  riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
+  riscv_emit_li(&ptr, riscv_reg_t0, link_value);
+  riscv_emit_arm_reg_store(&ptr, REG_LR, riscv_reg_t0);
   riscv_emit_adjust_cycles(&ptr, cycles);
   meta->flags |= RISCV_BLOCK_PC_WRITTEN;
   riscv_emit_helper_call(&ptr, meta);

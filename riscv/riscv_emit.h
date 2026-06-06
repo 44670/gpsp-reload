@@ -215,6 +215,12 @@ bool riscv_emit_native_thumb_bx(u8 **translation_ptr,
                                 u32 opcode,
                                 u32 pc,
                                 u32 cycles);
+bool riscv_emit_native_thumb_swi_patchable(u8 **translation_ptr,
+                                           riscv_jit_block_meta *meta,
+                                           u8 **branch_source,
+                                           u32 opcode,
+                                           u32 pc,
+                                           u32 cycles);
 bool riscv_emit_native_thumb_load_pc_pool_const(u8 **translation_ptr,
                                                 riscv_jit_block_meta *meta,
                                                 u32 rd,
@@ -225,6 +231,11 @@ bool riscv_emit_native_thumb_bl_pair(u8 **translation_ptr,
                                      u32 second_opcode,
                                      u32 pc,
                                      u32 cycles);
+bool riscv_emit_native_thumb_blh(u8 **translation_ptr,
+                                 riscv_jit_block_meta *meta,
+                                 u32 opcode,
+                                 u32 pc,
+                                 u32 cycles);
 bool riscv_emit_cycle_update(u8 **translation_ptr,
                              riscv_jit_block_meta *meta,
                              u32 cycles);
@@ -722,7 +733,18 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
   } while (0)
 
 #define thumb_blh()                                                           \
-  riscv_emit_thumb_instruction(true)
+  do                                                                          \
+  {                                                                           \
+    if (riscv_emit_native_thumb_blh(&translation_ptr, riscv_block_meta,       \
+                                    opcode, pc, cycle_count))                 \
+    {                                                                         \
+      cycle_count = 0;                                                        \
+    }                                                                         \
+    else                                                                      \
+    {                                                                         \
+      riscv_emit_thumb_instruction(true);                                     \
+    }                                                                         \
+  } while (0)
 
 #define thumb_bx()                                                            \
   do                                                                          \
@@ -751,6 +773,20 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
   } while (0)
 
 #define thumb_swi()                                                           \
-  riscv_emit_thumb_instruction(true)
+  do                                                                          \
+  {                                                                           \
+    if (riscv_emit_native_thumb_swi_patchable(                                \
+          &translation_ptr, riscv_block_meta,                                 \
+          &block_exits[block_exit_position].branch_source,                   \
+          opcode, pc, cycle_count))                                           \
+    {                                                                         \
+      block_exit_position++;                                                  \
+      cycle_count = 0;                                                        \
+    }                                                                         \
+    else                                                                      \
+    {                                                                         \
+      riscv_emit_thumb_instruction(true);                                     \
+    }                                                                         \
+  } while (0)
 
 #endif

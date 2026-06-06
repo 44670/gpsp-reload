@@ -274,8 +274,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 | Scheduler exits, update_gba(), frame completion, fallback buckets | native+compare | `run runtime`, `cont runtime`, `sched runtime`, `counters runtime`, and `compare` pin update/refill, PC-change, frame-complete, fallback source breakdown, and snapshot hashes. |
 | Mixed contract chain across semantic boundaries | native+compare | `mixed` runs native data processing, helper-backed load, PC-writing load into a native target, alerting helper-backed store, scheduler refill, and deliberate fallback without resetting state. It pins register, memory, scheduler, trace, instruction-step, memory-event, scheduler-event, fallback-event, shadow-memory, counter, code-byte, and runtime-frame evidence. |
 | Armwrestler ARM Tests 0-4 and Thumbwrestler Tests 0-2 external ROM | interpreter+frontend JIT compare | `make -C tests/rv32im armwrestler` loads `/home/john/ref/armwrestler-gba-fixed/armwrestler-gba-fixed.gba`, patches only each loaded copy for deterministic `TESTNUM`, `VSync`, and `DrawResult` result capture, runs ARM Tests 0-4 and Thumb Tests 0-2 under the host `cpu.cc` interpreter and under `cpu_threaded.c` plus generated RV32IM in `qemu-riscv32`, and requires 79 results, failure mask `0`, native blocks/code bytes/nonzero native counters, ROM trace PCs, `fallbacks=0`, `fallback_events=0`, and `execute_arm_calls=0`. Tests 5-9 are Armwrestler stubs in this ROM. |
-| Armwrestler code-size reporting | regression ratchet | `make -C tests/rv32im armwrestler-report` prints stable `armwrestler_code_size` lines for every ARM/Thumb subtest plus final `arm_total`, `thumb_total`, `arm_max`, and `thumb_max`. Current thresholds are ARM `184272` bytes and Thumb `18456` bytes. |
-| Thumb instruction lowering | native+ongoing | Thumbwrestler Tests 0-2 currently run through frontend JIT with zero fallbacks. Native lowering has covered the Armwrestler Thumb paths and remains an active MIPS-alignment task for broader Thumb coverage. |
+| Armwrestler code-size reporting | regression ratchet | `make -C tests/rv32im armwrestler-report` prints stable `armwrestler_code_size` lines for every ARM/Thumb subtest plus final `arm_total`, `thumb_total`, `arm_max`, and `thumb_max`. Current thresholds are ARM `184272` bytes and Thumb `18200` bytes. |
+| Thumb instruction lowering | native+ongoing | Thumbwrestler Tests 0-2 currently run through frontend JIT with zero fallbacks. Native lowering covers the Armwrestler Thumb paths, including direct BL/BLH LR/PC updates and patchable non-HLE SWI exits, and remains an active MIPS-alignment task for broader Thumb coverage. |
 
 Next milestone selection comes from this table and the code-size report: move
 toward MIPS-class native ARM and Thumb code size while keeping the external ROM
@@ -601,9 +601,10 @@ Remaining first-phase gaps should stay narrow and evidence-driven:
 - The `fallbacks runtime` command makes the current fallback bucket auditable;
   it does not by itself reduce fallback count or claim broader parity.
 - Thumb instruction lowering is active but not complete. Armwrestler-covered
-  Thumb paths run through the frontend JIT with zero fallbacks, while broader
-  MIPS-aligned Thumb memory, block-memory, BL, and live-flag ALU coverage remains
-  a continuing milestone.
+  Thumb paths run through the frontend JIT with zero fallbacks; BL/BLH LR/PC
+  updates and non-HLE SWI exits are now directly emitted instead of calling the
+  generic Thumb executor. Broader MIPS-aligned Thumb memory, block-memory, and
+  live-flag ALU coverage remains a continuing milestone.
 - Conditional ARM opcodes are still expected to enter through the frontend's
   conditional block header rewrite, not by accepting non-AL conditions in each
   low-level emitter API.
