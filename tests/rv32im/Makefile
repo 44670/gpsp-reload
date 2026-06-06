@@ -21,6 +21,14 @@ MIXED_LOG := $(OUT_DIR)/rv32im_harness_mixed.log
 REJECTS_LOG := $(OUT_DIR)/rv32im_harness_rejects.log
 ARMWRESTLER_LOG := $(OUT_DIR)/rv32im_armwrestler.log
 ARMWRESTLER_INTERP_LOG := $(OUT_DIR)/rv32im_armwrestler_interp.log
+ARMWRESTLER_ARM0_CODE_BYTES_MAX ?= 11980
+ARMWRESTLER_ARM1_CODE_BYTES_MAX ?= 8944
+ARMWRESTLER_ARM2_CODE_BYTES_MAX ?= 17100
+ARMWRESTLER_ARM3_CODE_BYTES_MAX ?= 9284
+ARMWRESTLER_ARM4_CODE_BYTES_MAX ?= 18404
+ARMWRESTLER_THUMB0_CODE_BYTES_MAX ?= 11788
+ARMWRESTLER_THUMB1_CODE_BYTES_MAX ?= 5900
+ARMWRESTLER_THUMB2_CODE_BYTES_MAX ?= 4556
 ARMWRESTLER_ARM_CODE_BYTES_MAX ?= 65712
 ARMWRESTLER_THUMB_CODE_BYTES_MAX ?= 22244
 ARMWRESTLER_THUMB_HELPERS_MAX ?= 0
@@ -245,6 +253,44 @@ armwrestler-jit: $(ARMWRESTLER) | $(OUT_DIR)
 	grep -q 'observed_results=79 failure_mask=0x00000000' $(ARMWRESTLER_LOG)
 	grep -q 'fallbacks=0 fallback_events=0 execute_arm_calls=0' $(ARMWRESTLER_LOG)
 	for test in arm0 arm1 arm2 arm3 arm4 thumb0 thumb1 thumb2; do grep -Eq "command=armwrestler-jit-test test=$$test .* code_bytes=[1-9][0-9]*" $(ARMWRESTLER_LOG); done
+	awk -v arm0_max="$(ARMWRESTLER_ARM0_CODE_BYTES_MAX)" \
+		-v arm1_max="$(ARMWRESTLER_ARM1_CODE_BYTES_MAX)" \
+		-v arm2_max="$(ARMWRESTLER_ARM2_CODE_BYTES_MAX)" \
+		-v arm3_max="$(ARMWRESTLER_ARM3_CODE_BYTES_MAX)" \
+		-v arm4_max="$(ARMWRESTLER_ARM4_CODE_BYTES_MAX)" \
+		-v thumb0_max="$(ARMWRESTLER_THUMB0_CODE_BYTES_MAX)" \
+		-v thumb1_max="$(ARMWRESTLER_THUMB1_CODE_BYTES_MAX)" \
+		-v thumb2_max="$(ARMWRESTLER_THUMB2_CODE_BYTES_MAX)" ' \
+		function field(name, i, kv) { \
+			for (i = 1; i <= NF; i++) { \
+				split($$i, kv, "="); \
+				if (kv[1] == name) \
+					return kv[2]; \
+			} \
+			return ""; \
+		} \
+		function max_for(test) { \
+			if (test == "arm0") return arm0_max; \
+			if (test == "arm1") return arm1_max; \
+			if (test == "arm2") return arm2_max; \
+			if (test == "arm3") return arm3_max; \
+			if (test == "arm4") return arm4_max; \
+			if (test == "thumb0") return thumb0_max; \
+			if (test == "thumb1") return thumb1_max; \
+			if (test == "thumb2") return thumb2_max; \
+			return 0; \
+		} \
+		/command=armwrestler-jit-test/ { \
+			test = field("test"); \
+			code = field("code_bytes") + 0; \
+			max = max_for(test) + 0; \
+			if (max <= 0 || code > max) { \
+				printf("armwrestler per-test code size regression: test=%s code_bytes=%u max=%u\n", test, code, max); \
+				exit 1; \
+			} \
+			seen++; \
+		} \
+		END { if (seen != 8) exit 1; }' $(ARMWRESTLER_LOG)
 	grep -Eq 'command=armwrestler test=all .* arm_code_bytes_total=[1-9][0-9]* thumb_code_bytes_total=[1-9][0-9]*' $(ARMWRESTLER_LOG)
 	arm_total=$$(sed -n 's/.* command=armwrestler test=all .* arm_code_bytes_total=\([0-9][0-9]*\) thumb_code_bytes_total=[0-9][0-9]*.*/\1/p' $(ARMWRESTLER_LOG)); \
 	thumb_total=$$(sed -n 's/.* command=armwrestler test=all .* thumb_code_bytes_total=\([0-9][0-9]*\).*/\1/p' $(ARMWRESTLER_LOG)); \
@@ -273,7 +319,15 @@ armwrestler: armwrestler-interp armwrestler-jit
 armwrestler-report: armwrestler
 	@awk -v arm_max="$(ARMWRESTLER_ARM_CODE_BYTES_MAX)" \
 		-v thumb_max="$(ARMWRESTLER_THUMB_CODE_BYTES_MAX)" \
-		-v thumb_helpers_max="$(ARMWRESTLER_THUMB_HELPERS_MAX)" ' \
+		-v thumb_helpers_max="$(ARMWRESTLER_THUMB_HELPERS_MAX)" \
+		-v arm0_max="$(ARMWRESTLER_ARM0_CODE_BYTES_MAX)" \
+		-v arm1_max="$(ARMWRESTLER_ARM1_CODE_BYTES_MAX)" \
+		-v arm2_max="$(ARMWRESTLER_ARM2_CODE_BYTES_MAX)" \
+		-v arm3_max="$(ARMWRESTLER_ARM3_CODE_BYTES_MAX)" \
+		-v arm4_max="$(ARMWRESTLER_ARM4_CODE_BYTES_MAX)" \
+		-v thumb0_max="$(ARMWRESTLER_THUMB0_CODE_BYTES_MAX)" \
+		-v thumb1_max="$(ARMWRESTLER_THUMB1_CODE_BYTES_MAX)" \
+		-v thumb2_max="$(ARMWRESTLER_THUMB2_CODE_BYTES_MAX)" ' \
 		function field(name, i, kv) { \
 			for (i = 1; i <= NF; i++) { \
 				split($$i, kv, "="); \
@@ -282,11 +336,22 @@ armwrestler-report: armwrestler
 			} \
 			return ""; \
 		} \
+		function max_for(test) { \
+			if (test == "arm0") return arm0_max; \
+			if (test == "arm1") return arm1_max; \
+			if (test == "arm2") return arm2_max; \
+			if (test == "arm3") return arm3_max; \
+			if (test == "arm4") return arm4_max; \
+			if (test == "thumb0") return thumb0_max; \
+			if (test == "thumb1") return thumb1_max; \
+			if (test == "thumb2") return thumb2_max; \
+			return ""; \
+		} \
 		/command=armwrestler-jit-test/ { \
 			test = field("test"); \
 			mode = (test ~ /^thumb/) ? "thumb" : "arm"; \
-			printf("armwrestler_code_size test=%s mode=%s code_bytes=%s arm_cumulative=%s thumb_cumulative=%s thumb_helpers=%s\n", \
-				test, mode, field("code_bytes"), field("arm_code_bytes_total"), \
+			printf("armwrestler_code_size test=%s mode=%s code_bytes=%s test_max=%s arm_cumulative=%s thumb_cumulative=%s thumb_helpers=%s\n", \
+				test, mode, field("code_bytes"), max_for(test), field("arm_code_bytes_total"), \
 				field("thumb_code_bytes_total"), field("thumb_helpers")); \
 		} \
 		/command=armwrestler test=all/ { \
