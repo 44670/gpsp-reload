@@ -54,12 +54,13 @@ typedef unsigned int usize;
 #define THUMB_UNSUPPORTED_END_PC (THUMB_UNSUPPORTED_START_PC + 2u)
 #define THUMB_UNSUPPORTED_CYCLES 13u
 #define THUMB_SIMPLE_DATA_START_PC 0x02001040u
-#define THUMB_SIMPLE_DATA_END_PC (THUMB_SIMPLE_DATA_START_PC + 10u)
-#define THUMB_SIMPLE_DATA_CYCLES 5u
+#define THUMB_SIMPLE_DATA_END_PC (THUMB_SIMPLE_DATA_START_PC + 12u)
+#define THUMB_SIMPLE_DATA_CYCLES 6u
 #define THUMB_SIMPLE_DATA_SP_VALUE 0x03001000u
 #define THUMB_SIMPLE_DATA_R1_VALUE 0x0000007fu
 #define THUMB_SIMPLE_DATA_R2_VALUE (THUMB_SIMPLE_DATA_START_PC + 12u)
 #define THUMB_SIMPLE_DATA_R3_VALUE (THUMB_SIMPLE_DATA_SP_VALUE + 8u)
+#define THUMB_SIMPLE_DATA_R4_VALUE 0x89abcdefu
 #define THUMB_SIMPLE_DATA_SP_FINAL (THUMB_SIMPLE_DATA_SP_VALUE - 4u)
 #define THUMB_SIMPLE_DATA_CPSR_VALUE (CPSR_CV_LOW_VALUE | CPSR_T_BIT)
 #define MULTIPLY_START_PC 0x08000080u
@@ -2134,6 +2135,24 @@ static void emit_thumb_simple_data_checked(u8 **translation_ptr,
   }
 }
 
+static void emit_thumb_pc_pool_const_checked(u8 **translation_ptr,
+                                             riscv_jit_block_meta *meta,
+                                             u32 rd,
+                                             u32 value,
+                                             u32 *cycle_count,
+                                             const char *test_name)
+{
+  *cycle_count += 1u;
+  if (!riscv_emit_native_thumb_load_pc_pool_const(translation_ptr, meta,
+                                                  rd, value))
+  {
+    put_raw("result=FAIL command=runtime reason=");
+    put_raw(test_name);
+    put_raw("_emit_rejected\n");
+    sys_exit(1);
+  }
+}
+
 static u32 build_thumb_simple_data_block(u8 *code)
 {
   u8 *translation_ptr = code;
@@ -2159,6 +2178,9 @@ static u32 build_thumb_simple_data_block(u8 *code)
   emit_thumb_simple_data_checked(&translation_ptr, meta, 0xb081u,
                                  THUMB_SIMPLE_DATA_START_PC + 8u,
                                  &cycle_count, "thumb_adjust_sp");
+  emit_thumb_pc_pool_const_checked(&translation_ptr, meta, 4u,
+                                   THUMB_SIMPLE_DATA_R4_VALUE,
+                                   &cycle_count, "thumb_pc_pool_const");
 
   if (!riscv_emit_cycle_update(&translation_ptr, meta, cycle_count))
   {
@@ -4843,6 +4865,9 @@ static void run_thumb_simple_data_case(void)
   if (reg[3] != THUMB_SIMPLE_DATA_R3_VALUE)
     fail_u32("thumb_simple_data", "r3",
              reg[3], THUMB_SIMPLE_DATA_R3_VALUE);
+  if (reg[4] != THUMB_SIMPLE_DATA_R4_VALUE)
+    fail_u32("thumb_simple_data", "r4",
+             reg[4], THUMB_SIMPLE_DATA_R4_VALUE);
   if (reg[REG_SP] != THUMB_SIMPLE_DATA_SP_FINAL)
     fail_u32("thumb_simple_data", "sp",
              reg[REG_SP], THUMB_SIMPLE_DATA_SP_FINAL);

@@ -3320,6 +3320,28 @@ bool riscv_emit_native_thumb_instruction(u8 **translation_ptr_ref,
   return true;
 }
 
+bool riscv_emit_native_thumb_load_pc_pool_const(u8 **translation_ptr_ref,
+                                                riscv_jit_block_meta *meta,
+                                                u32 rd,
+                                                u32 value)
+{
+  u8 *ptr = *translation_ptr_ref;
+  u8 *translation_ptr;
+
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED) || rd >= 8u)
+    return false;
+
+  riscv_emit_li(&ptr, riscv_reg_t5, (u32)(uintptr_t)&reg[0]);
+  riscv_emit_li(&ptr, riscv_reg_t2, value);
+  translation_ptr = ptr;
+  riscv_emit_sw(riscv_reg_t2, riscv_reg_t5, rd * 4u);
+  ptr = translation_ptr;
+
+  *translation_ptr_ref = ptr;
+  riscv_native_load_insns++;
+  return true;
+}
+
 bool riscv_emit_native_thumb_bl_pair(u8 **translation_ptr_ref,
                                      riscv_jit_block_meta *meta,
                                      u32 first_opcode,
