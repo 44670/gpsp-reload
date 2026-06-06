@@ -2807,6 +2807,44 @@ static void riscv_emit_arm_cpsr_store_selected_nzc_const_c_preserve_v(
   *ptr_ref = ptr;
 }
 
+static void riscv_emit_arm_cpsr_store_selected_nzc_const_c_dead_flags(
+  u8 **ptr_ref, u32 flag_mask, riscv_reg_number result_reg, u32 carry)
+{
+  u8 *ptr;
+  u8 *translation_ptr;
+
+  flag_mask &= 0x0eu;
+  if (!flag_mask)
+    return;
+
+  ptr = *ptr_ref;
+  riscv_emit_arm_reg_load(&ptr, riscv_reg_t6, REG_CPSR);
+  translation_ptr = ptr;
+
+  riscv_emit_andi(riscv_reg_t6, riscv_reg_t6, 0xff);
+  if (flag_mask & 0x08u)
+  {
+    riscv_emit_srli(riscv_reg_t5, result_reg, 31);
+    riscv_emit_slli(riscv_reg_t5, riscv_reg_t5, 31);
+    riscv_emit_or(riscv_reg_t6, riscv_reg_t6, riscv_reg_t5);
+  }
+  if (flag_mask & 0x04u)
+  {
+    riscv_emit_sltiu(riscv_reg_t5, result_reg, 1);
+    riscv_emit_slli(riscv_reg_t5, riscv_reg_t5, 30);
+    riscv_emit_or(riscv_reg_t6, riscv_reg_t6, riscv_reg_t5);
+  }
+  if ((flag_mask & 0x02u) && carry)
+  {
+    riscv_emit_lui(riscv_reg_t5, 0x20000u);
+    riscv_emit_or(riscv_reg_t6, riscv_reg_t6, riscv_reg_t5);
+  }
+  ptr = translation_ptr;
+
+  riscv_emit_arm_reg_store(&ptr, REG_CPSR, riscv_reg_t6);
+  *ptr_ref = ptr;
+}
+
 static void riscv_emit_arm_cpsr_store_nz_preserve_cv(
   u8 **ptr_ref, riscv_reg_number result_reg)
 {
@@ -3748,6 +3786,7 @@ static bool riscv_emit_native_arm_data_proc_with_pc_ex2(
   u32 logical_carry = 0;
   riscv_reg_number result_reg = riscv_reg_t2;
   bool writes_pc;
+  bool can_clobber_dead_logical_flags;
   u32 immediate = 0;
 
   if (cycles_emitted)
@@ -3791,6 +3830,8 @@ static bool riscv_emit_native_arm_data_proc_with_pc_ex2(
     generated_flag_mask &= ~0x02u;
   }
   live_flags = generated_flag_mask != 0;
+  can_clobber_dead_logical_flags = clobber_dead_arithmetic_flags &&
+    ((live_flag_mask & ~generated_flag_mask) == 0);
 
   if (imm_op)
   {
@@ -4072,8 +4113,14 @@ static bool riscv_emit_native_arm_data_proc_with_pc_ex2(
   else if (logical_flags && live_flags)
   {
     if (logical_const_c)
-      riscv_emit_arm_cpsr_store_selected_nzc_const_c_preserve_v(
-        &ptr, generated_flag_mask, result_reg, logical_carry);
+    {
+      if (can_clobber_dead_logical_flags)
+        riscv_emit_arm_cpsr_store_selected_nzc_const_c_dead_flags(
+          &ptr, generated_flag_mask, result_reg, logical_carry);
+      else
+        riscv_emit_arm_cpsr_store_selected_nzc_const_c_preserve_v(
+          &ptr, generated_flag_mask, result_reg, logical_carry);
+    }
     else
       riscv_emit_arm_cpsr_store_selected_nzcv(
         &ptr, generated_flag_mask, result_reg);
@@ -4167,6 +4214,7 @@ static bool riscv_emit_native_arm_data_proc_test_with_pc_ex2(
   bool flags_stored = false;
   bool logical_const_c = false;
   u32 logical_carry = 0;
+  bool can_clobber_dead_logical_flags;
 
   if (cycles_emitted)
     *cycles_emitted = false;
@@ -4187,6 +4235,8 @@ static bool riscv_emit_native_arm_data_proc_test_with_pc_ex2(
     generated_flag_mask &= ~0x02u;
   }
   live_flags = generated_flag_mask != 0;
+  can_clobber_dead_logical_flags = clobber_dead_arithmetic_flags &&
+    ((live_flag_mask & ~generated_flag_mask) == 0);
 
   if (!live_flags)
   {
@@ -4319,8 +4369,14 @@ static bool riscv_emit_native_arm_data_proc_test_with_pc_ex2(
     if (logical_test)
     {
       if (logical_const_c)
-        riscv_emit_arm_cpsr_store_selected_nzc_const_c_preserve_v(
-          &ptr, generated_flag_mask, riscv_reg_t2, logical_carry);
+      {
+        if (can_clobber_dead_logical_flags)
+          riscv_emit_arm_cpsr_store_selected_nzc_const_c_dead_flags(
+            &ptr, generated_flag_mask, riscv_reg_t2, logical_carry);
+        else
+          riscv_emit_arm_cpsr_store_selected_nzc_const_c_preserve_v(
+            &ptr, generated_flag_mask, riscv_reg_t2, logical_carry);
+      }
       else
         riscv_emit_arm_cpsr_store_selected_nzcv(
           &ptr, generated_flag_mask, riscv_reg_t2);
