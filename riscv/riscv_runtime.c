@@ -3564,6 +3564,48 @@ bool riscv_emit_native_thumb_conditional_branch(u8 **translation_ptr_ref,
   return true;
 }
 
+bool riscv_emit_native_thumb_b_patchable(u8 **translation_ptr_ref,
+                                         riscv_jit_block_meta *meta,
+                                         u8 **branch_source,
+                                         u32 opcode,
+                                         u32 pc,
+                                         u32 cycles)
+{
+  u32 hi = opcode >> 8;
+  u32 target_pc;
+  u8 *ptr = *translation_ptr_ref;
+
+  if (branch_source)
+    *branch_source = NULL;
+
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
+    return false;
+
+  if (hi < 0xe0u || hi > 0xe7u)
+    return false;
+
+  target_pc = pc + 4u + (u32)((s32)((opcode & 0x07ffu) << 21) >> 20);
+  riscv_emit_li(&ptr, riscv_reg_t0, target_pc);
+  riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
+  riscv_emit_adjust_cycles(&ptr, cycles);
+  {
+    u8 *translation_ptr = ptr;
+
+    riscv_emit_bge(riscv_reg_zero, riscv_reg_t3, 16);
+    ptr = translation_ptr;
+  }
+
+  if (branch_source)
+    *branch_source = riscv_emit_unconditional_branch_patch_site(&ptr);
+  else
+    riscv_emit_unconditional_branch_patch_site(&ptr);
+  riscv_emit_helper_call(&ptr, meta);
+
+  *translation_ptr_ref = ptr;
+  riscv_native_branch_insns++;
+  return true;
+}
+
 bool riscv_emit_native_thumb_instruction(u8 **translation_ptr_ref,
                                          riscv_jit_block_meta *meta,
                                          u32 opcode,
