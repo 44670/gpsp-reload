@@ -3559,6 +3559,43 @@ bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,
                                                true, NULL);
 }
 
+bool riscv_emit_native_arm_load_pc_pool_const(u8 **translation_ptr_ref,
+                                              riscv_jit_block_meta *meta,
+                                              u32 rd,
+                                              u32 value,
+                                              u32 cycles,
+                                              bool emit_cycles,
+                                              bool *cycles_emitted)
+{
+  u8 *ptr = *translation_ptr_ref;
+  u8 *translation_ptr;
+
+  if (cycles_emitted)
+    *cycles_emitted = false;
+
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED) ||
+      rd >= REG_PC)
+  {
+    return false;
+  }
+
+  riscv_emit_li(&ptr, riscv_reg_t2, value);
+  translation_ptr = ptr;
+  riscv_emit_sw(riscv_reg_t2, riscv_reg_s0, rd * 4u);
+  ptr = translation_ptr;
+
+  if (emit_cycles)
+  {
+    riscv_emit_adjust_cycles(&ptr, cycles + 2u);
+    if (cycles_emitted)
+      *cycles_emitted = true;
+  }
+
+  *translation_ptr_ref = ptr;
+  riscv_native_load_insns++;
+  return true;
+}
+
 static void riscv_note_thumb_native_stat(u32 opcode)
 {
   u32 hi = opcode >> 8;

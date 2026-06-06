@@ -231,6 +231,16 @@ typedef struct
   #include "x86/x86_emit.h"
 #endif
 
+#ifndef arm_load_pc_pool_const
+#define arm_load_pc_pool_const(rd, value)                                     \
+  do                                                                          \
+  {                                                                           \
+    (void)(rd);                                                               \
+    (void)(value);                                                            \
+    arm_access_memory(load, up, pre, u32, imm);                               \
+  } while (0)
+#endif
+
 /* Cache invalidation */
 
 #if defined(PSP)
@@ -1375,7 +1385,20 @@ void translate_icache_sync() {
                                                                               \
     case 0x59:                                                                \
       /* LDR rd, [rn + imm] */                                                \
-      arm_access_memory(load, up, pre, u32, imm);                             \
+      {                                                                       \
+        arm_decode_data_trans_imm();                                          \
+        u32 aoff = pc + 8 + offset;                                           \
+        if (rn == REG_PC && rd != REG_PC && !ram_region &&                    \
+            !(aoff & 3) && (((aoff + 4) >> 15) == (pc >> 15)))                \
+        {                                                                     \
+          u32 value = address32(pc_address_block, (aoff & 0x7FFF));           \
+          arm_load_pc_pool_const(rd, value);                                  \
+        }                                                                     \
+        else                                                                  \
+        {                                                                     \
+          arm_access_memory(load, up, pre, u32, imm);                         \
+        }                                                                     \
+      }                                                                       \
       break;                                                                  \
                                                                               \
     case 0x5A:                                                                \

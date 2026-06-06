@@ -183,6 +183,13 @@ bool riscv_emit_native_arm_access_memory_ex(u8 **translation_ptr,
                                             u32 cycles,
                                             bool emit_cycles,
                                             bool *cycles_emitted);
+bool riscv_emit_native_arm_load_pc_pool_const(u8 **translation_ptr,
+                                              riscv_jit_block_meta *meta,
+                                              u32 rd,
+                                              u32 value,
+                                              u32 cycles,
+                                              bool emit_cycles,
+                                              bool *cycles_emitted);
 bool riscv_emit_native_thumb_instruction(u8 **translation_ptr,
                                          riscv_jit_block_meta *meta,
                                          u32 opcode,
@@ -446,6 +453,24 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
     if (riscv_emit_native_arm_access_memory_ex(                               \
           &translation_ptr, riscv_block_meta, riscv_arm_effective_opcode(),   \
           pc, cycle_count, riscv_arm_emit_cycles_here(),                      \
+          &riscv_arm_cycles_emitted))                                         \
+    {                                                                         \
+      if (riscv_arm_cycles_emitted)                                           \
+        cycle_count = 0;                                                      \
+    }                                                                         \
+    else                                                                      \
+    {                                                                         \
+      riscv_emit_current_arm_instruction();                                   \
+    }                                                                         \
+  } while (0)
+
+#define arm_load_pc_pool_const(rd, value)                                     \
+  do                                                                          \
+  {                                                                           \
+    bool riscv_arm_cycles_emitted = false;                                    \
+    if (riscv_emit_native_arm_load_pc_pool_const(                             \
+          &translation_ptr, riscv_block_meta, (rd), (value),                 \
+          cycle_count, riscv_arm_emit_cycles_here(),                         \
           &riscv_arm_cycles_emitted))                                         \
     {                                                                         \
       if (riscv_arm_cycles_emitted)                                           \
