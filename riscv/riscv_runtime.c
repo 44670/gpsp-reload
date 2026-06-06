@@ -5577,6 +5577,7 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
   bool writeback_same_as_base =
     (immediate_offset && offset == 0) ||
     (const_register_offset_valid && const_register_offset == 0);
+  bool writeback_overwritten_by_load = load && rd == rn;
 
   if (cycles_emitted)
     *cycles_emitted = false;
@@ -5657,7 +5658,8 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
   if (!load && rd != REG_PC)
     riscv_emit_arm_reg_load(&ptr, riscv_reg_a1, rd);
 
-  if (writeback_address && !writeback_same_as_base)
+  if (writeback_address && !writeback_same_as_base &&
+      !writeback_overwritten_by_load)
     riscv_emit_arm_reg_store(&ptr, rn, writeback_reg);
 
   if (load)
@@ -5910,6 +5912,7 @@ bool riscv_emit_native_arm_access_memory_ex(u8 **translation_ptr_ref,
   bool writeback_same_as_base =
     (!register_offset && offset == 0) ||
     (const_register_offset_valid && const_register_offset == 0);
+  bool writeback_overwritten_by_load = load && rd == rn;
 
   if (cycles_emitted)
     *cycles_emitted = false;
@@ -6003,7 +6006,8 @@ bool riscv_emit_native_arm_access_memory_ex(u8 **translation_ptr_ref,
   if (!load && rd != REG_PC)
     riscv_emit_arm_reg_load(&ptr, riscv_reg_a1, rd);
 
-  if (writeback_address && !writeback_same_as_base)
+  if (writeback_address && !writeback_same_as_base &&
+      !writeback_overwritten_by_load)
     riscv_emit_arm_reg_store(&ptr, rn, writeback_reg);
 
   if (load)
