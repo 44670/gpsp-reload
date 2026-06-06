@@ -3599,7 +3599,47 @@ bool riscv_emit_native_thumb_b_patchable(u8 **translation_ptr_ref,
     *branch_source = riscv_emit_unconditional_branch_patch_site(&ptr);
   else
     riscv_emit_unconditional_branch_patch_site(&ptr);
-  riscv_emit_helper_call(&ptr, meta);
+
+  meta->flags |= RISCV_BLOCK_PC_WRITTEN;
+  *translation_ptr_ref = ptr;
+  riscv_native_branch_insns++;
+  return true;
+}
+
+bool riscv_emit_native_thumb_bx(u8 **translation_ptr_ref,
+                                riscv_jit_block_meta *meta,
+                                u32 opcode,
+                                u32 pc,
+                                u32 cycles)
+{
+  u32 hi = opcode >> 8;
+  u32 hrs = (opcode >> 3) & 0x0fu;
+  u8 *ptr = *translation_ptr_ref;
+  u8 *translation_ptr;
+
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
+    return false;
+
+  if (hi != 0x47u)
+    return false;
+
+  riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t0, hrs, pc + 4u);
+  translation_ptr = ptr;
+  riscv_emit_andi(riscv_reg_t1, riscv_reg_t0, -2);
+  ptr = translation_ptr;
+  riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t1);
+  riscv_emit_arm_reg_load(&ptr, riscv_reg_t2, REG_CPSR);
+
+  translation_ptr = ptr;
+  riscv_emit_andi(riscv_reg_t2, riscv_reg_t2, -33);
+  riscv_emit_andi(riscv_reg_t3, riscv_reg_t0, 1);
+  riscv_emit_slli(riscv_reg_t3, riscv_reg_t3, 5);
+  riscv_emit_or(riscv_reg_t2, riscv_reg_t2, riscv_reg_t3);
+  ptr = translation_ptr;
+
+  riscv_emit_arm_reg_store(&ptr, REG_CPSR, riscv_reg_t2);
+  riscv_emit_adjust_cycles(&ptr, cycles);
+  meta->flags |= RISCV_BLOCK_PC_WRITTEN;
 
   *translation_ptr_ref = ptr;
   riscv_native_branch_insns++;

@@ -199,6 +199,11 @@ bool riscv_emit_native_thumb_b_patchable(u8 **translation_ptr,
                                          u32 opcode,
                                          u32 pc,
                                          u32 cycles);
+bool riscv_emit_native_thumb_bx(u8 **translation_ptr,
+                                riscv_jit_block_meta *meta,
+                                u32 opcode,
+                                u32 pc,
+                                u32 cycles);
 bool riscv_emit_native_thumb_load_pc_pool_const(u8 **translation_ptr,
                                                 riscv_jit_block_meta *meta,
                                                 u32 rd,
@@ -681,7 +686,18 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
   riscv_emit_thumb_instruction(true)
 
 #define thumb_bx()                                                            \
-  riscv_emit_thumb_instruction(true)
+  do                                                                          \
+  {                                                                           \
+    if (riscv_emit_native_thumb_bx(&translation_ptr, riscv_block_meta,        \
+                                   opcode, pc, cycle_count))                  \
+    {                                                                         \
+      cycle_count = 0;                                                        \
+    }                                                                         \
+    else                                                                      \
+    {                                                                         \
+      riscv_emit_thumb_instruction(true);                                     \
+    }                                                                         \
+  } while (0)
 
 #define thumb_process_cheats()                                                \
   do                                                                          \
