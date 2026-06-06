@@ -103,32 +103,6 @@ static void riscv_emit_li(u8 **ptr, riscv_reg_number rd, u32 value)
   *ptr = translation_ptr;
 }
 
-static void riscv_emit_global_u32_load(u8 **ptr, riscv_reg_number rd,
-                                       const void *addr)
-{
-  u8 *translation_ptr = *ptr;
-
-  *ptr = translation_ptr;
-  riscv_emit_li(ptr, riscv_reg_t6, (u32)(uintptr_t)addr);
-  translation_ptr = *ptr;
-  riscv_emit_lw(rd, riscv_reg_t6, 0);
-
-  *ptr = translation_ptr;
-}
-
-static void riscv_emit_global_u32_store(u8 **ptr, const void *addr,
-                                        riscv_reg_number rs)
-{
-  u8 *translation_ptr = *ptr;
-
-  *ptr = translation_ptr;
-  riscv_emit_li(ptr, riscv_reg_t6, (u32)(uintptr_t)addr);
-  translation_ptr = *ptr;
-  riscv_emit_sw(rs, riscv_reg_t6, 0);
-
-  *ptr = translation_ptr;
-}
-
 static void riscv_emit_arm_reg_load(u8 **ptr, riscv_reg_number rd,
                                     u32 reg_index)
 {
@@ -177,8 +151,9 @@ static void riscv_emit_adjust_cycles(u8 **ptr, u32 cycles)
   if (!cycles)
     return;
 
-  riscv_emit_global_u32_load(ptr, riscv_reg_t3, &riscv_cycles_remaining);
+  riscv_emit_li(ptr, riscv_reg_t6, (u32)(uintptr_t)&riscv_cycles_remaining);
   translation_ptr = *ptr;
+  riscv_emit_lw(riscv_reg_t3, riscv_reg_t6, 0);
   if (cycles <= 2047u)
   {
     riscv_emit_addi(riscv_reg_t3, riscv_reg_t3, -(int)cycles);
@@ -190,8 +165,9 @@ static void riscv_emit_adjust_cycles(u8 **ptr, u32 cycles)
     translation_ptr = *ptr;
     riscv_emit_sub(riscv_reg_t3, riscv_reg_t3, riscv_reg_t4);
   }
+  riscv_emit_sw(riscv_reg_t3, riscv_reg_t6, 0);
+
   *ptr = translation_ptr;
-  riscv_emit_global_u32_store(ptr, &riscv_cycles_remaining, riscv_reg_t3);
 }
 
 static void riscv_emit_c_call(u8 **ptr, uintptr_t function_addr)
