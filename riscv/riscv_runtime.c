@@ -451,6 +451,26 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target)
   ((u32 *)source)[0] = riscv_encode_j_inst(riscv_reg_zero, offset);
 }
 
+static void riscv_patch_local_branch(u8 *source, const u8 *target)
+{
+  u32 instruction;
+  u32 funct3;
+  riscv_reg_number rs1;
+  riscv_reg_number rs2;
+  s32 offset;
+
+  if (!source || !target)
+    return;
+
+  instruction = ((u32 *)source)[0];
+  funct3 = (instruction >> 12) & 0x07u;
+  rs1 = (riscv_reg_number)((instruction >> 15) & 0x1fu);
+  rs2 = (riscv_reg_number)((instruction >> 20) & 0x1fu);
+  offset = (s32)((intptr_t)target - (intptr_t)source);
+
+  ((u32 *)source)[0] = riscv_encode_b_inst(funct3, rs1, rs2, offset);
+}
+
 static void riscv_emit_arm_cpsr_flag_value(u8 **ptr_ref,
                                            riscv_reg_number rd,
                                            u32 shift)
@@ -482,120 +502,26 @@ static void riscv_emit_arm_loaded_cpsr_flag_value(u8 **ptr_ref,
   *ptr_ref = translation_ptr;
 }
 
-static bool riscv_emit_arm_condition_value(u8 **ptr_ref, u32 condition)
+static void riscv_emit_branch_with_source(u8 **ptr_ref,
+                                          u8 **branch_source,
+                                          u32 funct3,
+                                          riscv_reg_number rs1,
+                                          riscv_reg_number rs2,
+                                          s32 offset)
 {
-  u8 *ptr = *ptr_ref;
-  u8 *translation_ptr;
+  u8 *translation_ptr = *ptr_ref;
 
-  switch (condition)
-  {
-    case 0x0:
-      riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 30);
-      break;
-    case 0x1:
-      riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 30);
-      translation_ptr = ptr;
-      riscv_emit_xori(riscv_reg_t0, riscv_reg_t0, 1);
-      ptr = translation_ptr;
-      break;
-    case 0x2:
-      riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 29);
-      break;
-    case 0x3:
-      riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 29);
-      translation_ptr = ptr;
-      riscv_emit_xori(riscv_reg_t0, riscv_reg_t0, 1);
-      ptr = translation_ptr;
-      break;
-    case 0x4:
-      riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 31);
-      break;
-    case 0x5:
-      riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 31);
-      translation_ptr = ptr;
-      riscv_emit_xori(riscv_reg_t0, riscv_reg_t0, 1);
-      ptr = translation_ptr;
-      break;
-    case 0x6:
-      riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 28);
-      break;
-    case 0x7:
-      riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 28);
-      translation_ptr = ptr;
-      riscv_emit_xori(riscv_reg_t0, riscv_reg_t0, 1);
-      ptr = translation_ptr;
-      break;
-    case 0x8:
-      riscv_emit_arm_reg_load(&ptr, riscv_reg_t2, REG_CPSR);
-      translation_ptr = ptr;
-      riscv_emit_arm_loaded_cpsr_flag_value(&translation_ptr,
-                                            riscv_reg_t0, riscv_reg_t2,
-                                            29);
-      riscv_emit_arm_loaded_cpsr_flag_value(&translation_ptr,
-                                            riscv_reg_t1, riscv_reg_t2,
-                                            30);
-      riscv_emit_xori(riscv_reg_t1, riscv_reg_t1, 1);
-      riscv_emit_and(riscv_reg_t0, riscv_reg_t0, riscv_reg_t1);
-      ptr = translation_ptr;
-      break;
-    case 0x9:
-      riscv_emit_arm_reg_load(&ptr, riscv_reg_t2, REG_CPSR);
-      translation_ptr = ptr;
-      riscv_emit_arm_loaded_cpsr_flag_value(&translation_ptr,
-                                            riscv_reg_t0, riscv_reg_t2,
-                                            29);
-      riscv_emit_arm_loaded_cpsr_flag_value(&translation_ptr,
-                                            riscv_reg_t1, riscv_reg_t2,
-                                            30);
-      riscv_emit_xori(riscv_reg_t0, riscv_reg_t0, 1);
-      riscv_emit_or(riscv_reg_t0, riscv_reg_t0, riscv_reg_t1);
-      ptr = translation_ptr;
-      break;
-    case 0xa:
-    case 0xb:
-      riscv_emit_arm_reg_load(&ptr, riscv_reg_t2, REG_CPSR);
-      translation_ptr = ptr;
-      riscv_emit_arm_loaded_cpsr_flag_value(&translation_ptr,
-                                            riscv_reg_t0, riscv_reg_t2,
-                                            31);
-      riscv_emit_arm_loaded_cpsr_flag_value(&translation_ptr,
-                                            riscv_reg_t1, riscv_reg_t2,
-                                            28);
-      riscv_emit_xor(riscv_reg_t0, riscv_reg_t0, riscv_reg_t1);
-      if (condition == 0xa)
-        riscv_emit_xori(riscv_reg_t0, riscv_reg_t0, 1);
-      ptr = translation_ptr;
-      break;
-    case 0xc:
-    case 0xd:
-      riscv_emit_arm_reg_load(&ptr, riscv_reg_t3, REG_CPSR);
-      translation_ptr = ptr;
-      riscv_emit_arm_loaded_cpsr_flag_value(&translation_ptr,
-                                            riscv_reg_t0, riscv_reg_t3,
-                                            31);
-      riscv_emit_arm_loaded_cpsr_flag_value(&translation_ptr,
-                                            riscv_reg_t1, riscv_reg_t3,
-                                            28);
-      riscv_emit_arm_loaded_cpsr_flag_value(&translation_ptr,
-                                            riscv_reg_t2, riscv_reg_t3,
-                                            30);
-      riscv_emit_xor(riscv_reg_t0, riscv_reg_t0, riscv_reg_t1);
-      riscv_emit_xori(riscv_reg_t0, riscv_reg_t0, 1);
-      riscv_emit_xori(riscv_reg_t2, riscv_reg_t2, 1);
-      riscv_emit_and(riscv_reg_t0, riscv_reg_t0, riscv_reg_t2);
-      if (condition == 0xd)
-        riscv_emit_xori(riscv_reg_t0, riscv_reg_t0, 1);
-      ptr = translation_ptr;
-      break;
-    default:
-      return false;
-  }
+  if (branch_source)
+    *branch_source = translation_ptr;
+  riscv_emit_b(funct3, rs1, rs2, offset);
 
-  *ptr_ref = ptr;
-  return true;
+  *ptr_ref = translation_ptr;
 }
 
-static bool riscv_emit_arm_condition_true_branch(u8 **ptr_ref, u32 condition)
+static bool riscv_emit_arm_condition_branch(u8 **ptr_ref,
+                                            u32 condition,
+                                            s32 offset,
+                                            u8 **branch_source)
 {
   u8 *ptr = *ptr_ref;
   u8 *translation_ptr;
@@ -604,51 +530,51 @@ static bool riscv_emit_arm_condition_true_branch(u8 **ptr_ref, u32 condition)
   {
     case 0x0:
       riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 30);
-      translation_ptr = ptr;
-      riscv_emit_bne(riscv_reg_t0, riscv_reg_zero, 8);
-      ptr = translation_ptr;
+      riscv_emit_branch_with_source(&ptr, branch_source, 0x1,
+                                    riscv_reg_t0, riscv_reg_zero,
+                                    offset);
       break;
     case 0x1:
       riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 30);
-      translation_ptr = ptr;
-      riscv_emit_beq(riscv_reg_t0, riscv_reg_zero, 8);
-      ptr = translation_ptr;
+      riscv_emit_branch_with_source(&ptr, branch_source, 0x0,
+                                    riscv_reg_t0, riscv_reg_zero,
+                                    offset);
       break;
     case 0x2:
       riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 29);
-      translation_ptr = ptr;
-      riscv_emit_bne(riscv_reg_t0, riscv_reg_zero, 8);
-      ptr = translation_ptr;
+      riscv_emit_branch_with_source(&ptr, branch_source, 0x1,
+                                    riscv_reg_t0, riscv_reg_zero,
+                                    offset);
       break;
     case 0x3:
       riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 29);
-      translation_ptr = ptr;
-      riscv_emit_beq(riscv_reg_t0, riscv_reg_zero, 8);
-      ptr = translation_ptr;
+      riscv_emit_branch_with_source(&ptr, branch_source, 0x0,
+                                    riscv_reg_t0, riscv_reg_zero,
+                                    offset);
       break;
     case 0x4:
       riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 31);
-      translation_ptr = ptr;
-      riscv_emit_bne(riscv_reg_t0, riscv_reg_zero, 8);
-      ptr = translation_ptr;
+      riscv_emit_branch_with_source(&ptr, branch_source, 0x1,
+                                    riscv_reg_t0, riscv_reg_zero,
+                                    offset);
       break;
     case 0x5:
       riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 31);
-      translation_ptr = ptr;
-      riscv_emit_beq(riscv_reg_t0, riscv_reg_zero, 8);
-      ptr = translation_ptr;
+      riscv_emit_branch_with_source(&ptr, branch_source, 0x0,
+                                    riscv_reg_t0, riscv_reg_zero,
+                                    offset);
       break;
     case 0x6:
       riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 28);
-      translation_ptr = ptr;
-      riscv_emit_bne(riscv_reg_t0, riscv_reg_zero, 8);
-      ptr = translation_ptr;
+      riscv_emit_branch_with_source(&ptr, branch_source, 0x1,
+                                    riscv_reg_t0, riscv_reg_zero,
+                                    offset);
       break;
     case 0x7:
       riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 28);
-      translation_ptr = ptr;
-      riscv_emit_beq(riscv_reg_t0, riscv_reg_zero, 8);
-      ptr = translation_ptr;
+      riscv_emit_branch_with_source(&ptr, branch_source, 0x0,
+                                    riscv_reg_t0, riscv_reg_zero,
+                                    offset);
       break;
     case 0x8:
     case 0x9:
@@ -663,9 +589,13 @@ static bool riscv_emit_arm_condition_true_branch(u8 **ptr_ref, u32 condition)
       riscv_emit_xori(riscv_reg_t0, riscv_reg_t0, 1);
       riscv_emit_or(riscv_reg_t0, riscv_reg_t0, riscv_reg_t1);
       if (condition == 0x8)
-        riscv_emit_beq(riscv_reg_t0, riscv_reg_zero, 8);
+        riscv_emit_branch_with_source(&translation_ptr, branch_source, 0x0,
+                                      riscv_reg_t0, riscv_reg_zero,
+                                      offset);
       else
-        riscv_emit_bne(riscv_reg_t0, riscv_reg_zero, 8);
+        riscv_emit_branch_with_source(&translation_ptr, branch_source, 0x1,
+                                      riscv_reg_t0, riscv_reg_zero,
+                                      offset);
       ptr = translation_ptr;
       break;
     case 0xa:
@@ -679,9 +609,13 @@ static bool riscv_emit_arm_condition_true_branch(u8 **ptr_ref, u32 condition)
                                             riscv_reg_t1, riscv_reg_t2,
                                             28);
       if (condition == 0xa)
-        riscv_emit_beq(riscv_reg_t0, riscv_reg_t1, 8);
+        riscv_emit_branch_with_source(&translation_ptr, branch_source, 0x0,
+                                      riscv_reg_t0, riscv_reg_t1,
+                                      offset);
       else
-        riscv_emit_bne(riscv_reg_t0, riscv_reg_t1, 8);
+        riscv_emit_branch_with_source(&translation_ptr, branch_source, 0x1,
+                                      riscv_reg_t0, riscv_reg_t1,
+                                      offset);
       ptr = translation_ptr;
       break;
     case 0xc:
@@ -700,9 +634,13 @@ static bool riscv_emit_arm_condition_true_branch(u8 **ptr_ref, u32 condition)
       riscv_emit_xor(riscv_reg_t0, riscv_reg_t0, riscv_reg_t1);
       riscv_emit_or(riscv_reg_t0, riscv_reg_t0, riscv_reg_t2);
       if (condition == 0xc)
-        riscv_emit_beq(riscv_reg_t0, riscv_reg_zero, 8);
+        riscv_emit_branch_with_source(&translation_ptr, branch_source, 0x0,
+                                      riscv_reg_t0, riscv_reg_zero,
+                                      offset);
       else
-        riscv_emit_bne(riscv_reg_t0, riscv_reg_zero, 8);
+        riscv_emit_branch_with_source(&translation_ptr, branch_source, 0x1,
+                                      riscv_reg_t0, riscv_reg_zero,
+                                      offset);
       ptr = translation_ptr;
       break;
     default:
@@ -734,7 +672,7 @@ bool riscv_emit_arm_conditional_block_header(u8 **translation_ptr_ref,
     return false;
 
   riscv_emit_adjust_cycles(&ptr, cycles);
-  if (!riscv_emit_arm_condition_true_branch(&ptr, condition))
+  if (!riscv_emit_arm_condition_branch(&ptr, condition, 8, NULL))
     return false;
 
   *branch_source = riscv_emit_conditional_skip_patch_site(&ptr);
@@ -5300,15 +5238,9 @@ bool riscv_emit_native_thumb_conditional_branch(u8 **translation_ptr_ref,
   if (hi < 0xd0u || hi > 0xddu)
     return false;
 
-  if (!riscv_emit_arm_condition_value(&ptr, condition))
+  if (!riscv_emit_arm_condition_branch(&ptr, condition ^ 1u, 0,
+                                       &branch_skip))
     return false;
-
-  branch_skip = ptr;
-  {
-    u8 *translation_ptr = ptr;
-    riscv_emit_beq(riscv_reg_t0, riscv_reg_zero, 0);
-    ptr = translation_ptr;
-  }
 
   target_pc = pc + 4u + (u32)((s32)(s8)(opcode & 0xffu) * 2);
   riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_t1, target_pc);
@@ -5320,9 +5252,7 @@ bool riscv_emit_native_thumb_conditional_branch(u8 **translation_ptr_ref,
   else
     riscv_emit_unconditional_branch_patch_site(&ptr);
 
-  ((u32 *)branch_skip)[0] =
-    riscv_encode_b_inst(0x0, riscv_reg_t0, riscv_reg_zero,
-                        (s32)(ptr - branch_skip));
+  riscv_patch_local_branch(branch_skip, ptr);
 
   *translation_ptr_ref = ptr;
   riscv_native_branch_insns++;
