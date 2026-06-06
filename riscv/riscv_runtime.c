@@ -6519,6 +6519,7 @@ static bool riscv_emit_native_thumb_hi_add_mov(u8 **translation_ptr_ref,
                                                riscv_jit_block_meta *meta,
                                                u32 opcode,
                                                u32 pc,
+                                               u32 cycles,
                                                bool exits)
 {
   u32 hi = opcode >> 8;
@@ -6527,7 +6528,25 @@ static bool riscv_emit_native_thumb_hi_add_mov(u8 **translation_ptr_ref,
   u8 *ptr = *translation_ptr_ref;
   u8 *translation_ptr;
 
-  if (exits || (hi != 0x44u && hi != 0x46u) || hrd == REG_PC)
+  if (exits)
+  {
+    if (hi != 0x46u || hrd != REG_PC)
+      return false;
+
+    riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t0, meta, hrs, pc + 4u);
+    translation_ptr = ptr;
+    riscv_emit_andi(riscv_reg_t0, riscv_reg_t0, -2);
+    ptr = translation_ptr;
+    riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
+    riscv_emit_adjust_cycles(&ptr, cycles);
+    meta->flags |= RISCV_BLOCK_PC_WRITTEN;
+    riscv_emit_terminal_helper_call(&ptr, meta);
+
+    *translation_ptr_ref = ptr;
+    return true;
+  }
+
+  if ((hi != 0x44u && hi != 0x46u) || hrd == REG_PC)
     return false;
 
   if (hrs == REG_PC)
@@ -7221,7 +7240,8 @@ bool riscv_emit_native_thumb_instruction(u8 **translation_ptr_ref,
     return true;
   }
 
-  if (riscv_emit_native_thumb_hi_add_mov(&ptr, meta, opcode, pc, exits))
+  if (riscv_emit_native_thumb_hi_add_mov(&ptr, meta, opcode, pc, cycles,
+                                         exits))
   {
     *translation_ptr_ref = ptr;
     riscv_note_thumb_native_stat(opcode);
