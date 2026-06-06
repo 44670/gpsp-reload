@@ -22,8 +22,8 @@ REJECTS_LOG := $(OUT_DIR)/rv32im_harness_rejects.log
 ARMWRESTLER_LOG := $(OUT_DIR)/rv32im_armwrestler.log
 ARMWRESTLER_INTERP_LOG := $(OUT_DIR)/rv32im_armwrestler_interp.log
 ARMWRESTLER_ARM_CODE_BYTES_MAX ?= 171344
-ARMWRESTLER_THUMB_CODE_BYTES_MAX ?= 24244
-ARMWRESTLER_THUMB_HELPERS_MAX ?= 90
+ARMWRESTLER_THUMB_CODE_BYTES_MAX ?= 24328
+ARMWRESTLER_THUMB_HELPERS_MAX ?= 58
 CODEGEN_BIN := $(OUT_DIR)/rv32im_codegen.bin
 CODEGEN_REF_ELF := $(OUT_DIR)/rv32im_codegen_ref.elf
 CODEGEN_REF_BIN := $(OUT_DIR)/rv32im_codegen_ref.bin
@@ -249,11 +249,11 @@ armwrestler-jit: $(ARMWRESTLER) | $(OUT_DIR)
 	arm_total=$$(sed -n 's/.* command=armwrestler test=all .* arm_code_bytes_total=\([0-9][0-9]*\) thumb_code_bytes_total=[0-9][0-9]*.*/\1/p' $(ARMWRESTLER_LOG)); \
 	thumb_total=$$(sed -n 's/.* command=armwrestler test=all .* thumb_code_bytes_total=\([0-9][0-9]*\).*/\1/p' $(ARMWRESTLER_LOG)); \
 	thumb_helpers=$$(sed -n 's/.* command=armwrestler test=all .* thumb_helpers=\([0-9][0-9]*\).*/\1/p' $(ARMWRESTLER_LOG)); \
-	test -n "$$arm_total"; \
-	test -n "$$thumb_total"; \
-	test -n "$$thumb_helpers"; \
-	test "$$arm_total" -le "$(ARMWRESTLER_ARM_CODE_BYTES_MAX)"; \
-	test "$$thumb_total" -le "$(ARMWRESTLER_THUMB_CODE_BYTES_MAX)"; \
+	test -n "$$arm_total" && \
+	test -n "$$thumb_total" && \
+	test -n "$$thumb_helpers" && \
+	test "$$arm_total" -le "$(ARMWRESTLER_ARM_CODE_BYTES_MAX)" && \
+	test "$$thumb_total" -le "$(ARMWRESTLER_THUMB_CODE_BYTES_MAX)" && \
 	test "$$thumb_helpers" -le "$(ARMWRESTLER_THUMB_HELPERS_MAX)"
 	grep -q 'harness_mode=armwrestler_frontend_jit_only reason=armwrestler_all_jit_only_passed' $(ARMWRESTLER_LOG)
 

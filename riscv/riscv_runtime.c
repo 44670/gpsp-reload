@@ -4285,6 +4285,173 @@ bool riscv_emit_native_thumb_hi_cmp(u8 **translation_ptr_ref,
   return true;
 }
 
+bool riscv_emit_native_thumb_access_memory(u8 **translation_ptr_ref,
+                                           riscv_jit_block_meta *meta,
+                                           u32 opcode,
+                                           u32 pc,
+                                           u32 cycles,
+                                           bool *cycles_emitted)
+{
+  u32 hi = opcode >> 8;
+  u32 rd = opcode & 7u;
+  u32 rb = (opcode >> 3) & 7u;
+  u32 ro = (opcode >> 6) & 7u;
+  u32 imm = opcode & 0xffu;
+  u32 mem_type = 0;
+  u32 offset = 0;
+  bool load = false;
+  bool reg_offset = false;
+  bool pc_relative = false;
+  bool sp_relative = false;
+  u8 *ptr = *translation_ptr_ref;
+  u8 *translation_ptr;
+
+  if (cycles_emitted)
+    *cycles_emitted = false;
+
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
+    return false;
+
+  if (hi >= 0x48u && hi <= 0x4fu)
+  {
+    rd = hi & 7u;
+    load = true;
+    mem_type = 0;
+    offset = (pc & ~2u) + 4u + (imm * 4u);
+    pc_relative = true;
+  }
+  else if (hi >= 0x50u && hi <= 0x5fu)
+  {
+    u32 access_type = (opcode >> 9) & 7u;
+
+    reg_offset = true;
+    switch (access_type)
+    {
+      case 0:
+        load = false;
+        mem_type = 0;
+        break;
+      case 1:
+        load = false;
+        mem_type = 1;
+        break;
+      case 2:
+        load = false;
+        mem_type = 2;
+        break;
+      case 3:
+        load = true;
+        mem_type = 3;
+        break;
+      case 4:
+        load = true;
+        mem_type = 0;
+        break;
+      case 5:
+        load = true;
+        mem_type = 1;
+        break;
+      case 6:
+        load = true;
+        mem_type = 2;
+        break;
+      default:
+        load = true;
+        mem_type = 4;
+        break;
+    }
+  }
+  else if (hi >= 0x60u && hi <= 0x8fu)
+  {
+    u32 imm5 = (opcode >> 6) & 0x1fu;
+
+    load = (hi & 0x08u) != 0;
+    if (hi < 0x70u)
+    {
+      mem_type = 0;
+      offset = imm5 * 4u;
+    }
+    else if (hi < 0x80u)
+    {
+      mem_type = 2;
+      offset = imm5;
+    }
+    else
+    {
+      mem_type = 1;
+      offset = imm5 * 2u;
+    }
+  }
+  else if (hi >= 0x90u && hi <= 0x9fu)
+  {
+    rd = hi & 7u;
+    rb = REG_SP;
+    load = hi >= 0x98u;
+    mem_type = 0;
+    offset = imm * 4u;
+    sp_relative = true;
+  }
+  else
+  {
+    return false;
+  }
+
+  if (!load)
+    return false;
+
+  if (pc_relative)
+  {
+    riscv_emit_li(&ptr, riscv_reg_a0, offset);
+  }
+  else
+  {
+    riscv_emit_arm_reg_load(&ptr, riscv_reg_a0, rb);
+    if (reg_offset)
+    {
+      riscv_emit_arm_reg_load(&ptr, riscv_reg_t0, ro);
+      translation_ptr = ptr;
+      riscv_emit_add(riscv_reg_a0, riscv_reg_a0, riscv_reg_t0);
+      ptr = translation_ptr;
+    }
+    else if (offset || sp_relative)
+    {
+      riscv_emit_arm_memory_imm_offset(&ptr, riscv_reg_a0, riscv_reg_a0,
+                                       offset, true);
+    }
+  }
+
+  riscv_emit_li(&ptr, riscv_reg_t0, pc + 2u);
+  riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
+
+  switch (mem_type)
+  {
+    case 0:
+      riscv_emit_c_call_reg(&ptr, riscv_reg_s4);
+      break;
+    case 1:
+      riscv_emit_c_call_reg(&ptr, riscv_reg_s8);
+      break;
+    case 2:
+      riscv_emit_c_call_reg(&ptr, riscv_reg_s6);
+      break;
+    case 3:
+      riscv_emit_c_call(&ptr, (uintptr_t)read_memory8s);
+      break;
+    default:
+      riscv_emit_c_call(&ptr, (uintptr_t)read_memory16s);
+      break;
+  }
+
+  riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_a0);
+  riscv_emit_adjust_cycles(&ptr, cycles + 2u);
+  if (cycles_emitted)
+    *cycles_emitted = true;
+  riscv_native_load_insns++;
+
+  *translation_ptr_ref = ptr;
+  return true;
+}
+
 bool riscv_emit_native_thumb_conditional_branch(u8 **translation_ptr_ref,
                                                 riscv_jit_block_meta *meta,
                                                 u8 **branch_source,
