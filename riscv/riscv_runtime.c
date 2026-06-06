@@ -41,7 +41,7 @@ enum
   RISCV_HELPER_READ16,
   RISCV_HELPER_STORE16,
   RISCV_HELPER_READ8S,
-  RISCV_HELPER_READ16S,
+  RISCV_HELPER_CYCLES_REMAINING,
   RISCV_HELPER_COUNT
 };
 
@@ -245,9 +245,8 @@ static void riscv_emit_adjust_cycles(u8 **ptr, u32 cycles)
   if (!cycles)
     return;
 
-  riscv_emit_li(ptr, riscv_reg_t6, (u32)(uintptr_t)&riscv_cycles_remaining);
   translation_ptr = *ptr;
-  riscv_emit_lw(riscv_reg_t3, riscv_reg_t6, 0);
+  riscv_emit_lw(riscv_reg_t3, riscv_reg_s11, 0);
   if (cycles <= 2047u)
   {
     riscv_emit_addi(riscv_reg_t3, riscv_reg_t3, -(int)cycles);
@@ -259,7 +258,7 @@ static void riscv_emit_adjust_cycles(u8 **ptr, u32 cycles)
     translation_ptr = *ptr;
     riscv_emit_sub(riscv_reg_t3, riscv_reg_t3, riscv_reg_t4);
   }
-  riscv_emit_sw(riscv_reg_t3, riscv_reg_t6, 0);
+  riscv_emit_sw(riscv_reg_t3, riscv_reg_s11, 0);
 
   *ptr = translation_ptr;
 }
@@ -550,7 +549,8 @@ static void riscv_init_helper_table(void)
   riscv_helper_table[RISCV_HELPER_READ16] = (uintptr_t)read_memory16;
   riscv_helper_table[RISCV_HELPER_STORE16] = (uintptr_t)riscv_store_u16;
   riscv_helper_table[RISCV_HELPER_READ8S] = (uintptr_t)read_memory8s;
-  riscv_helper_table[RISCV_HELPER_READ16S] = (uintptr_t)read_memory16s;
+  riscv_helper_table[RISCV_HELPER_CYCLES_REMAINING] =
+    (uintptr_t)&riscv_cycles_remaining;
 }
 
 static u32 function_cc riscv_swap_u8(u32 address, u32 value, u32 pc)
@@ -3069,6 +3069,7 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
   if (load)
   {
     riscv_reg_number read_helper_reg;
+    uintptr_t read_helper = 0;
 
     switch (mem_type)
     {
@@ -3079,13 +3080,17 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
         read_helper_reg = riscv_reg_s10;
         break;
       default:
-        read_helper_reg = riscv_reg_s11;
+        read_helper_reg = riscv_reg_zero;
+        read_helper = (uintptr_t)read_memory16s;
         break;
     }
 
     riscv_emit_li(&ptr, riscv_reg_t0, pc);
     riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
-    riscv_emit_c_call_reg(&ptr, read_helper_reg);
+    if (read_helper)
+      riscv_emit_c_call(&ptr, read_helper);
+    else
+      riscv_emit_c_call_reg(&ptr, read_helper_reg);
     riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_a0);
     if (rd == REG_PC)
       meta->flags |= RISCV_BLOCK_PC_WRITTEN;
