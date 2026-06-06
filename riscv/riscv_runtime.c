@@ -3082,6 +3082,7 @@ bool riscv_emit_native_arm_data_proc_with_pc_ex(u8 **translation_ptr_ref,
   bool live_flags;
   u8 *ptr = *translation_ptr_ref;
   bool result_emitted = false;
+  bool addsub_zero_flags = false;
   riscv_reg_number result_reg = riscv_reg_t2;
   bool writes_pc;
   u32 immediate = 0;
@@ -3141,6 +3142,13 @@ bool riscv_emit_native_arm_data_proc_with_pc_ex(u8 **translation_ptr_ref,
 
   if (!result_emitted && op != 0xd && op != 0xf)
     riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t0, meta, rn, pc + 8u);
+
+  if (imm_op && immediate == 0 && (op == 0x2 || op == 0x4))
+  {
+    result_emitted = true;
+    result_reg = riscv_reg_t0;
+    addsub_zero_flags = live_flags;
+  }
 
   if (imm_op && !result_emitted)
   {
@@ -3354,7 +3362,10 @@ bool riscv_emit_native_arm_data_proc_with_pc_ex(u8 **translation_ptr_ref,
   riscv_emit_arm_reg_store(&ptr, rd, result_reg);
   if (writes_pc)
     meta->flags |= RISCV_BLOCK_PC_WRITTEN;
-  if (arithmetic_flags && live_flags)
+  if (addsub_zero_flags)
+    riscv_emit_arm_cpsr_store_addsub_zero_test(
+      &ptr, generated_flag_mask, result_reg, op == 0x2);
+  else if (arithmetic_flags && live_flags)
     riscv_emit_arm_cpsr_store_selected_nzcv(&ptr, generated_flag_mask);
   else if (logical_flags && live_flags)
     riscv_emit_arm_cpsr_store_selected_nzcv(&ptr, generated_flag_mask);
