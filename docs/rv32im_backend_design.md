@@ -160,11 +160,12 @@ The frontend expects two patch forms:
 - unconditional patching for recorded direct branch exits
 
 MIPS can patch a 16-bit branch offset or a 32-bit absolute jump instruction in
-place. RV32IM must design patch sites before broad lowering starts. Plain
-RISC-V direct branch immediates and `jal` immediates have limited range, so the
-backend either needs guaranteed close code placement or fixed-size patch sites
-large enough for long-branch veneers/sequences. Do not assume a one-word patch
-is always enough.
+place. RV32IM uses fixed two-instruction patch sites for generated-code branch
+exits: `auipc` plus `jalr`, with the patch range sized by
+`RISCV_BRANCH_PATCH_BYTES`. Plain RISC-V direct branch immediates and `jal`
+immediates have limited range, so the backend must keep this fixed-size
+generated-code patch contract rather than assuming a one-word patch is always
+enough.
 
 ### Helper Calls And Guest State
 
@@ -273,7 +274,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 | Scheduler exits, update_gba(), frame completion, fallback buckets | native+compare | `run runtime`, `cont runtime`, `sched runtime`, `counters runtime`, and `compare` pin update/refill, PC-change, frame-complete, fallback source breakdown, and snapshot hashes. |
 | Mixed contract chain across semantic boundaries | native+compare | `mixed` runs native data processing, helper-backed load, PC-writing load into a native target, alerting helper-backed store, scheduler refill, and deliberate fallback without resetting state. It pins register, memory, scheduler, trace, instruction-step, memory-event, scheduler-event, fallback-event, shadow-memory, counter, code-byte, and runtime-frame evidence. |
 | Armwrestler ARM Tests 0-4 and Thumbwrestler Tests 0-2 external ROM | interpreter+frontend JIT compare | `make -C tests/rv32im armwrestler` loads `/home/john/ref/armwrestler-gba-fixed/armwrestler-gba-fixed.gba`, patches only each loaded copy for deterministic `TESTNUM`, `VSync`, and `DrawResult` result capture, runs ARM Tests 0-4 and Thumb Tests 0-2 under the host `cpu.cc` interpreter and under `cpu_threaded.c` plus generated RV32IM in `qemu-riscv32`, and requires 79 results, failure mask `0`, native blocks/code bytes/nonzero native counters, ROM trace PCs, `fallbacks=0`, `fallback_events=0`, and `execute_arm_calls=0`. Tests 5-9 are Armwrestler stubs in this ROM. |
-| Armwrestler code-size reporting | regression ratchet | `make -C tests/rv32im armwrestler-report` prints stable `armwrestler_code_size` lines for every ARM/Thumb subtest plus final `arm_total`, `thumb_total`, `arm_max`, and `thumb_max`. Current thresholds are ARM `188992` bytes and Thumb `18880` bytes. |
+| Armwrestler code-size reporting | regression ratchet | `make -C tests/rv32im armwrestler-report` prints stable `armwrestler_code_size` lines for every ARM/Thumb subtest plus final `arm_total`, `thumb_total`, `arm_max`, and `thumb_max`. Current thresholds are ARM `184776` bytes and Thumb `18504` bytes. |
 | Thumb instruction lowering | native+ongoing | Thumbwrestler Tests 0-2 currently run through frontend JIT with zero fallbacks. Native lowering has covered the Armwrestler Thumb paths and remains an active MIPS-alignment task for broader Thumb coverage. |
 
 Next milestone selection comes from this table and the code-size report: move

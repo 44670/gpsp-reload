@@ -16,6 +16,7 @@
 
 #define RISCV_BLOCK_META_BYTES 16
 #define block_prologue_size RISCV_BLOCK_META_BYTES
+#define RISCV_BRANCH_PATCH_BYTES 8
 
 typedef struct riscv_jit_block_meta
 {

@@ -6885,7 +6885,8 @@ static u32 patch_repatch_branch_target(u8 *target_entry)
   riscv_patch_unconditional_branch(g_repatch_branch_source, target_entry);
   flush_ret = (u32)syscall3(SYS_RISCV_FLUSH_ICACHE,
                             (long)g_repatch_branch_source,
-                            (long)(g_repatch_branch_source + 12), 0);
+                            (long)(g_repatch_branch_source +
+                                   RISCV_BRANCH_PATCH_BYTES), 0);
   if (flush_ret != 0)
     fail_u32("repatch_branch", "flush_ret", flush_ret, 0);
 
