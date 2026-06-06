@@ -1645,20 +1645,14 @@ static s32 riscv_arm_branch_delta(u32 opcode)
 
 static void riscv_emit_helper_call(u8 **ptr, const riscv_jit_block_meta *meta)
 {
-  u8 *translation_ptr;
-
-  translation_ptr = *ptr;
-  riscv_emit_addi(riscv_reg_sp, riscv_reg_sp, -16);
-  riscv_emit_sw(riscv_reg_ra, riscv_reg_sp, 12);
-  *ptr = translation_ptr;
-
+  /* Terminal exit: run_block returns directly to riscv_enter_jit's loop. */
   riscv_emit_li(ptr, riscv_reg_a0, (u32)(uintptr_t)meta);
-  translation_ptr = *ptr;
-  riscv_emit_jalr(riscv_reg_ra, riscv_reg_s1, 0);
-  riscv_emit_lw(riscv_reg_ra, riscv_reg_sp, 12);
-  riscv_emit_addi(riscv_reg_sp, riscv_reg_sp, 16);
-  riscv_emit_jalr(riscv_reg_zero, riscv_reg_ra, 0);
-  *ptr = translation_ptr;
+  {
+    u8 *translation_ptr = *ptr;
+
+    riscv_emit_jalr(riscv_reg_zero, riscv_reg_s1, 0);
+    *ptr = translation_ptr;
+  }
 }
 
 static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta)
