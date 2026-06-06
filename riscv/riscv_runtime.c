@@ -5773,7 +5773,16 @@ static bool riscv_arm_memory_reg_offset_const(u32 opcode,
   u32 shift = (opcode >> 7) & 0x1fu;
   u32 value = pc + 8u;
 
-  if (((opcode >> 4) & 1u) || rm != REG_PC)
+  if ((opcode >> 4) & 1u)
+    return false;
+
+  if (shift_type == 1u && shift == 0)
+  {
+    *offset_out = 0;
+    return true;
+  }
+
+  if (rm != REG_PC)
     return false;
 
   switch (shift_type)
