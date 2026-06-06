@@ -2987,22 +2987,57 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
 
 #if defined(RISCV_ARCH)
 
-#define arm_data_proc_pc_operand()                                            \
-  (arm_data_proc_opcode() &&                                                  \
-   ((((opcode >> 16) & 0x0F) == REG_PC) ||                                    \
-    ((opcode & 0x0F) == REG_PC) ||                                            \
-    (((opcode & 0x00000010) != 0) && (((opcode >> 8) & 0x0F) == REG_PC))))    \
+enum
+{
+  RISCV_FINALIZER_PC_BASE_LOAD_COUNT = 1,
+  RISCV_ARM_PC_BASE_LOAD_THRESHOLD = 4,
+  RISCV_THUMB_PC_BASE_LOAD_THRESHOLD = 2
+};
 
 #define arm_pc_base_status()                                                  \
   do                                                                          \
   {                                                                           \
-    if(arm_data_proc_pc_operand() ||                                          \
-       ((opcode & 0x0C000000) == 0x04000000) ||                               \
-       ((opcode & 0x0E000000) == 0x08000000) ||                               \
-       ((opcode & 0x0E000090) == 0x00000090))                                 \
+    u32 pc_load_count = 0;                                                    \
+    if(arm_data_proc_opcode())                                                \
     {                                                                         \
-      block_needs_pc_base = true;                                             \
+      if(((opcode >> 16) & 0x0F) == REG_PC)                                   \
+        pc_load_count++;                                                      \
+      if(!(opcode & 0x02000000))                                              \
+      {                                                                       \
+        if((opcode & 0x0F) == REG_PC)                                         \
+          pc_load_count++;                                                    \
+        if((opcode & 0x00000010) && (((opcode >> 8) & 0x0F) == REG_PC))       \
+          pc_load_count++;                                                    \
+      }                                                                       \
     }                                                                         \
+    else if((opcode & 0x0C000000) == 0x04000000)                              \
+    {                                                                         \
+      pc_load_count++;                                                        \
+      if(((opcode >> 16) & 0x0F) == REG_PC)                                   \
+        pc_load_count++;                                                      \
+      if((opcode & 0x02000000) && ((opcode & 0x0F) == REG_PC))                \
+        pc_load_count++;                                                      \
+      if(!((opcode >> 20) & 1) && (((opcode >> 12) & 0x0F) == REG_PC))        \
+        pc_load_count++;                                                      \
+    }                                                                         \
+    else if((opcode & 0x0E000000) == 0x08000000)                              \
+    {                                                                         \
+      pc_load_count++;                                                        \
+      if(!((opcode >> 20) & 1) && (opcode & (1u << REG_PC)))                 \
+        pc_load_count++;                                                      \
+    }                                                                         \
+    else if(((opcode & 0x0E000090) == 0x00000090) &&                          \
+            (((opcode >> 5) & 0x03) != 0))                                    \
+    {                                                                         \
+      pc_load_count++;                                                        \
+      if(((opcode >> 16) & 0x0F) == REG_PC)                                   \
+        pc_load_count++;                                                      \
+      if(!(opcode & 0x00400000) && ((opcode & 0x0F) == REG_PC))               \
+        pc_load_count++;                                                      \
+      if(!((opcode >> 20) & 1) && (((opcode >> 12) & 0x0F) == REG_PC))        \
+        pc_load_count++;                                                      \
+    }                                                                         \
+    block_pc_base_load_count += pc_load_count;                                \
   } while(0)
 
 #else
@@ -3130,14 +3165,32 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
   do                                                                          \
   {                                                                           \
     u8 thumb_hiop = opcode >> 8;                                              \
-    if((thumb_hiop >= 0x44 && thumb_hiop <= 0x47) ||                          \
-       (thumb_hiop >= 0x48 && thumb_hiop <= 0x9F) ||                          \
-       (thumb_hiop >= 0xA0 && thumb_hiop <= 0xA7) ||                          \
-       (thumb_hiop >= 0xB4 && thumb_hiop <= 0xBD) ||                          \
-       (thumb_hiop >= 0xC0 && thumb_hiop <= 0xCF))                            \
+    if(thumb_hiop == 0x44 || thumb_hiop == 0x46)                              \
     {                                                                         \
-      block_needs_pc_base = true;                                             \
+      u32 hrs = (opcode >> 3) & 0x0F;                                         \
+      u32 hrd = ((opcode >> 4) & 0x08) | (opcode & 0x07);                     \
+      if(hrs == REG_PC && hrd != REG_PC)                                      \
+        block_pc_base_load_count++;                                           \
     }                                                                         \
+    else if(thumb_hiop == 0x45)                                               \
+    {                                                                         \
+      u32 hrs = (opcode >> 3) & 0x0F;                                         \
+      u32 hrd = ((opcode >> 4) & 0x08) | (opcode & 0x07);                     \
+      if(hrs == REG_PC)                                                       \
+        block_pc_base_load_count++;                                           \
+      if(hrd == REG_PC)                                                       \
+        block_pc_base_load_count++;                                           \
+    }                                                                         \
+    else if(thumb_hiop == 0x47)                                               \
+    {                                                                         \
+      if(((opcode >> 3) & 0x0F) == REG_PC)                                    \
+        block_pc_base_load_count++;                                           \
+    }                                                                         \
+    else if((thumb_hiop >= 0x48 && thumb_hiop <= 0x9F) ||                     \
+            (thumb_hiop >= 0xA0 && thumb_hiop <= 0xA7) ||                     \
+            (thumb_hiop >= 0xB4 && thumb_hiop <= 0xBD) ||                     \
+            (thumb_hiop >= 0xC0 && thumb_hiop <= 0xCF))                       \
+      block_pc_base_load_count++;                                             \
   } while(0)
 
 #else
@@ -3348,6 +3401,8 @@ bool translate_block_arm(u32 pc, bool ram_region)
   u32 flag_status;
   block_exit_type external_block_exits[MAX_EXITS];
 #if defined(RISCV_ARCH)
+  /* Count the usual finalizer PC write; terminal blocks may overcount here. */
+  u32 block_pc_base_load_count = RISCV_FINALIZER_PC_BASE_LOAD_COUNT;
   bool block_needs_pc_base = false;
 #endif
   generate_block_extra_vars_arm();
@@ -3408,6 +3463,8 @@ bool translate_block_arm(u32 pc, bool ram_region)
   arm_dead_flag_eliminate();
 
 #if defined(RISCV_ARCH)
+  block_needs_pc_base =
+    block_pc_base_load_count >= RISCV_ARM_PC_BASE_LOAD_THRESHOLD;
   generate_block_prologue();
 #endif
 
@@ -3542,6 +3599,8 @@ bool translate_block_thumb(u32 pc, bool ram_region)
   u32 flag_status;
   block_exit_type external_block_exits[MAX_EXITS];
 #if defined(RISCV_ARCH)
+  /* Count the usual finalizer PC write; terminal blocks may overcount here. */
+  u32 block_pc_base_load_count = RISCV_FINALIZER_PC_BASE_LOAD_COUNT;
   bool block_needs_pc_base = false;
 #endif
   generate_block_extra_vars_thumb();
@@ -3601,6 +3660,8 @@ bool translate_block_thumb(u32 pc, bool ram_region)
   thumb_dead_flag_eliminate();
 
 #if defined(RISCV_ARCH)
+  block_needs_pc_base =
+    block_pc_base_load_count >= RISCV_THUMB_PC_BASE_LOAD_THRESHOLD;
   generate_block_prologue();
 #endif
 
