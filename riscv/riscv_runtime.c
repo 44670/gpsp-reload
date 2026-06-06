@@ -436,6 +436,10 @@ static u32 riscv_encode_j_inst(riscv_reg_number rd, s32 offset)
 }
 
 static void riscv_patch_local_branch(u8 *source, const u8 *target);
+static void riscv_emit_terminal_helper_call(u8 **ptr,
+                                            riscv_jit_block_meta *meta);
+static void riscv_emit_store_alert_branch(u8 **ptr_ref,
+                                          riscv_jit_block_meta *meta);
 
 static u8 *riscv_emit_unconditional_branch_patch_site(u8 **ptr_ref)
 {
@@ -506,6 +510,74 @@ static void riscv_patch_local_branch(u8 *source, const u8 *target)
   offset = (s32)((intptr_t)target - (intptr_t)source);
 
   ((u32 *)source)[0] = riscv_encode_b_inst(funct3, rs1, rs2, offset);
+}
+
+static s32 riscv_decode_branch_offset(u32 instruction)
+{
+  u32 offset =
+    (((instruction >> 31) & 0x01u) << 12) |
+    (((instruction >> 25) & 0x3fu) << 5) |
+    (((instruction >> 8) & 0x0fu) << 1) |
+    (((instruction >> 7) & 0x01u) << 11);
+
+  return (s32)(offset << 19) >> 19;
+}
+
+static u32 riscv_helper_call_size(const riscv_jit_block_meta *meta)
+{
+  u32 meta_value = (u32)(uintptr_t)meta;
+  u32 upper;
+  int lower;
+
+  if (meta_value <= 2047u || meta_value >= 0xfffff800u)
+    return 16u;
+
+  upper = (meta_value + 0x800u) >> 12;
+  lower = (int)(meta_value - (upper << 12));
+  return lower ? 20u : 16u;
+}
+
+static void riscv_patch_store_alert_branches(riscv_jit_block_meta *meta,
+                                             u32 branch_chain,
+                                             const u8 *target)
+{
+  while (branch_chain)
+  {
+    u8 *source = ((u8 *)meta) + branch_chain;
+    u32 instruction = ((u32 *)source)[0];
+    s32 next = riscv_decode_branch_offset(instruction);
+
+    riscv_patch_local_branch(source, target);
+    branch_chain = (u32)next;
+  }
+}
+
+static void riscv_emit_store_alert_branch(u8 **ptr_ref,
+                                          riscv_jit_block_meta *meta)
+{
+  u8 *ptr = *ptr_ref;
+  u32 source_offset;
+  u32 previous_offset;
+  u8 *translation_ptr;
+
+  if (!meta)
+    return;
+
+  source_offset = (u32)(ptr - (u8 *)meta);
+  previous_offset = meta->thumb;
+  if (source_offset > 4094u || previous_offset > 4094u)
+  {
+    riscv_emit_terminal_helper_call(&ptr, meta);
+    *ptr_ref = ptr;
+    return;
+  }
+
+  translation_ptr = ptr;
+  riscv_emit_bne(riscv_reg_a0, riscv_reg_zero, (s32)previous_offset);
+  ptr = translation_ptr;
+  meta->thumb = source_offset;
+
+  *ptr_ref = ptr;
 }
 
 static void riscv_emit_branch_with_source(u8 **ptr_ref,
@@ -4215,7 +4287,7 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
     riscv_emit_adjust_cycles(&ptr, cycles + 1u);
     if (cycles_emitted)
       *cycles_emitted = true;
-    riscv_emit_terminal_helper_call(&ptr, meta);
+    riscv_emit_store_alert_branch(&ptr, meta);
     riscv_native_store_insns++;
   }
 
@@ -4453,7 +4525,7 @@ bool riscv_emit_native_arm_access_memory_ex(u8 **translation_ptr_ref,
     riscv_emit_adjust_cycles(&ptr, cycles + 1u);
     if (cycles_emitted)
       *cycles_emitted = true;
-    riscv_emit_terminal_helper_call(&ptr, meta);
+    riscv_emit_store_alert_branch(&ptr, meta);
     riscv_native_store_insns++;
   }
 
@@ -6018,6 +6090,8 @@ void riscv_emit_block_finalize(riscv_jit_block_meta *meta,
                                bool thumb_mode)
 {
   u8 *ptr = *translation_ptr;
+  u32 store_alert_branches = meta->thumb;
+  u8 *helper_tail = NULL;
   bool terminal_at_end =
     (meta->flags & RISCV_BLOCK_TERMINAL_EMITTED) &&
     meta->end_pc == (u32)(ptr - (u8 *)meta);
@@ -6029,6 +6103,7 @@ void riscv_emit_block_finalize(riscv_jit_block_meta *meta,
   if (!(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
   {
     ptr = ((u8 *)meta) + block_prologue_size;
+    helper_tail = ptr;
     riscv_emit_helper_call(&ptr, meta);
   }
   else if (!terminal_at_end)
@@ -6039,7 +6114,19 @@ void riscv_emit_block_finalize(riscv_jit_block_meta *meta,
       riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
     }
 
+    helper_tail = ptr;
     riscv_emit_helper_call(&ptr, meta);
+  }
+  else
+  {
+    helper_tail = ptr - riscv_helper_call_size(meta);
+  }
+
+  if ((meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED) &&
+      store_alert_branches && helper_tail)
+  {
+    riscv_patch_store_alert_branches(meta, store_alert_branches,
+                                     helper_tail);
   }
 
   *translation_ptr = riscv_align_ptr(ptr);
