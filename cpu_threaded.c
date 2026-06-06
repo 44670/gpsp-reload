@@ -1869,6 +1869,19 @@ void translate_icache_sync() {
 #define arm_data_proc_arithmetic_opcode(_op)                                  \
   (((_op) >= 0x02 && (_op) <= 0x07) || (_op) == 0x0A || (_op) == 0x0B)       \
 
+#define arm_psr_read_cpsr_opcode()                                            \
+  (((opcode & 0x0FBF0FFF) == 0x010F0000) &&                                  \
+   (((opcode >> 22) & 1) == 0))                                               \
+
+#define arm_psr_store_cpsr_flags_opcode()                                     \
+  (((((opcode >> 20) & 0xFF) == 0x12) &&                                      \
+    ((opcode & 0x00000FF0) == 0) &&                                           \
+    (((opcode >> 12) & 0x0F) == 0x0F) &&                                      \
+    ((((opcode >> 16) & 1) | ((opcode >> 18) & 2)) & 2)) ||                  \
+   ((((opcode >> 20) & 0xFF) == 0x32) &&                                      \
+    (((opcode >> 12) & 0x0F) == 0x0F) &&                                      \
+    ((((opcode >> 16) & 1) | ((opcode >> 18) & 2)) & 2)))                    \
+
 #define arm_data_proc_requires_c()                                            \
   if(arm_data_proc_opcode())                                                  \
   {                                                                           \
@@ -1919,6 +1932,10 @@ void translate_icache_sync() {
   arm_data_proc_requires_c();                                                 \
   if(arm_exit_point)                                                          \
     arm_flag_requires_all();                                                  \
+  if(arm_psr_read_cpsr_opcode())                                              \
+    arm_flag_requires_all();                                                  \
+  if(arm_psr_store_cpsr_flags_opcode())                                       \
+    arm_flag_modifies_all();                                                  \
                                                                               \
   if((opcode >> 20) & 1)                                                      \
   {                                                                           \
