@@ -3268,6 +3268,45 @@ static void riscv_emit_arm_block_transfer_address(u8 **ptr_ref,
   *ptr_ref = ptr;
 }
 
+static void riscv_emit_arm_block_cursor_init(u8 **ptr_ref,
+                                             u32 rn,
+                                             s32 origin_offset)
+{
+  u8 *ptr = *ptr_ref;
+  u8 *translation_ptr;
+
+  riscv_emit_arm_block_transfer_address(&ptr, rn, origin_offset, 0);
+  translation_ptr = ptr;
+  riscv_emit_sw(riscv_reg_a0, riscv_reg_sp, 0);
+  ptr = translation_ptr;
+
+  *ptr_ref = ptr;
+}
+
+static void riscv_emit_arm_block_cursor_load(u8 **ptr_ref)
+{
+  u8 *ptr = *ptr_ref;
+  u8 *translation_ptr = ptr;
+
+  riscv_emit_lw(riscv_reg_a0, riscv_reg_sp, 0);
+  ptr = translation_ptr;
+
+  *ptr_ref = ptr;
+}
+
+static void riscv_emit_arm_block_cursor_advance(u8 **ptr_ref)
+{
+  u8 *ptr = *ptr_ref;
+  u8 *translation_ptr = ptr;
+
+  riscv_emit_lw(riscv_reg_t0, riscv_reg_sp, 0);
+  riscv_emit_addi(riscv_reg_t0, riscv_reg_t0, 4);
+  riscv_emit_sw(riscv_reg_t0, riscv_reg_sp, 0);
+  ptr = translation_ptr;
+
+  *ptr_ref = ptr;
+}
+
 bool riscv_emit_native_arm_block_memory(u8 **translation_ptr_ref,
                                         riscv_jit_block_meta *meta,
                                         u32 opcode,
@@ -3286,6 +3325,7 @@ bool riscv_emit_native_arm_block_memory(u8 **translation_ptr_ref,
   s32 end_offset = up ? (s32)(count * 4u) : -(s32)(count * 4u);
   bool base_in_list;
   bool base_first;
+  bool load_base_in_list;
   bool writeback_first;
   bool address_from_writeback;
   s32 origin_offset;
@@ -3302,7 +3342,7 @@ bool riscv_emit_native_arm_block_memory(u8 **translation_ptr_ref,
     return false;
   }
 
-  if (sbit || rn == REG_PC || (load && (reglist & (1u << rn))))
+  if (sbit || rn == REG_PC)
   {
     riscv_emit_li(&ptr, riscv_reg_a0, opcode);
     riscv_emit_li(&ptr, riscv_reg_a1, pc);
@@ -3322,15 +3362,18 @@ bool riscv_emit_native_arm_block_memory(u8 **translation_ptr_ref,
   }
 
   base_in_list = ((reglist >> rn) & 1u) != 0;
+  load_base_in_list = load && base_in_list;
   base_first = (((1u << rn) - 1u) & reglist) == 0;
   writeback_first = load || !(base_in_list && base_first);
-  address_from_writeback = writeback && writeback_first;
+  address_from_writeback = writeback && writeback_first && !load_base_in_list;
   origin_offset =
     riscv_arm_block_origin_offset(pre_index, up, count,
                                   address_from_writeback);
 
   if (address_from_writeback)
     riscv_emit_arm_block_writeback(&ptr, rn, end_offset);
+  if (load_base_in_list)
+    riscv_emit_arm_block_cursor_init(&ptr, rn, origin_offset);
 
   riscv_emit_li(&ptr, riscv_reg_t0, pc + 4u);
   riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
@@ -3340,11 +3383,17 @@ bool riscv_emit_native_arm_block_memory(u8 **translation_ptr_ref,
     if (!((reglist >> i) & 1u))
       continue;
 
-    riscv_emit_arm_block_transfer_address(&ptr, rn, origin_offset, offset);
+    if (load_base_in_list)
+      riscv_emit_arm_block_cursor_load(&ptr);
+    else
+      riscv_emit_arm_block_transfer_address(&ptr, rn, origin_offset, offset);
+
     if (load)
     {
       riscv_emit_c_call_reg(&ptr, riscv_reg_s4);
       riscv_emit_arm_reg_store(&ptr, i, riscv_reg_a0);
+      if (load_base_in_list && (offset + 4u) < (count * 4u))
+        riscv_emit_arm_block_cursor_advance(&ptr);
     }
     else
     {
@@ -3358,7 +3407,7 @@ bool riscv_emit_native_arm_block_memory(u8 **translation_ptr_ref,
     offset += 4u;
   }
 
-  if (writeback && !writeback_first)
+  if (writeback && !writeback_first && !load_base_in_list)
     riscv_emit_arm_block_writeback(&ptr, rn, end_offset);
 
   riscv_emit_adjust_cycles(&ptr, cycles + count);
