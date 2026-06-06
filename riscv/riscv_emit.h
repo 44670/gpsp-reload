@@ -125,10 +125,20 @@ bool riscv_emit_native_arm_multiply(u8 **translation_ptr,
                                     riscv_jit_block_meta *meta,
                                     u32 opcode,
                                     u32 cycles);
+bool riscv_emit_native_arm_multiply_dead_flags(u8 **translation_ptr,
+                                               riscv_jit_block_meta *meta,
+                                               u32 opcode,
+                                               u32 cycles,
+                                               u32 flag_status);
 bool riscv_emit_native_arm_multiply_long(u8 **translation_ptr,
                                          riscv_jit_block_meta *meta,
                                          u32 opcode,
                                          u32 cycles);
+bool riscv_emit_native_arm_multiply_long_dead_flags(u8 **translation_ptr,
+                                                    riscv_jit_block_meta *meta,
+                                                    u32 opcode,
+                                                    u32 cycles,
+                                                    u32 flag_status);
 bool riscv_emit_native_arm_psr(u8 **translation_ptr,
                                riscv_jit_block_meta *meta,
                                u32 opcode,
@@ -456,11 +466,9 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target);
   do                                                                          \
   {                                                                           \
     u32 riscv_multiply_extra_cycles = ((opcode >> 21) & 1u) ? 3u : 2u;       \
-    if (riscv_emit_native_arm_multiply(&translation_ptr,                     \
-                                       riscv_block_meta,                     \
-                                       riscv_arm_effective_opcode(),         \
-                                       cycle_count +                         \
-                                         riscv_multiply_extra_cycles))        \
+    if (riscv_emit_native_arm_multiply_dead_flags(                            \
+          &translation_ptr, riscv_block_meta, riscv_arm_effective_opcode(),   \
+          cycle_count + riscv_multiply_extra_cycles, flag_status))            \
     {                                                                         \
       cycle_count = (u32)(0u - riscv_multiply_extra_cycles);                 \
     }                                                                         \
@@ -475,11 +483,9 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target);
   {                                                                           \
     u32 riscv_multiply_long_extra_cycles =                                   \
       (((opcode >> 22) & 1u) && !((opcode >> 21) & 1u)) ? 2u : 3u;           \
-    if (riscv_emit_native_arm_multiply_long(&translation_ptr,                \
-                                            riscv_block_meta,                \
-                                            riscv_arm_effective_opcode(),    \
-                                            cycle_count +                    \
-                                              riscv_multiply_long_extra_cycles)) \
+    if (riscv_emit_native_arm_multiply_long_dead_flags(                       \
+          &translation_ptr, riscv_block_meta, riscv_arm_effective_opcode(),   \
+          cycle_count + riscv_multiply_long_extra_cycles, flag_status))       \
     {                                                                         \
       cycle_count = (u32)(0u - riscv_multiply_long_extra_cycles);            \
     }                                                                         \
