@@ -3565,6 +3565,88 @@ bool riscv_emit_native_thumb_shift(u8 **translation_ptr_ref,
   return true;
 }
 
+bool riscv_emit_native_thumb_alu(u8 **translation_ptr_ref,
+                                 riscv_jit_block_meta *meta,
+                                 u32 opcode,
+                                 u32 flag_status)
+{
+  u32 hi = opcode >> 8;
+  u32 alu_op = (opcode >> 6) & 3u;
+  u32 rd = opcode & 7u;
+  u32 rs = (opcode >> 3) & 7u;
+  bool need_nz = (flag_status & 0x0cu) != 0;
+  bool load_rd = true;
+  u8 *ptr = *translation_ptr_ref;
+  u8 *translation_ptr;
+
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
+    return false;
+
+  if (need_nz)
+    return false;
+
+  if (hi == 0x40u)
+  {
+    if (alu_op > 1u)
+      return false;
+  }
+  else if (hi == 0x42u)
+  {
+    if (alu_op != 0u)
+      return false;
+    *translation_ptr_ref = ptr;
+    riscv_native_data_proc_insns++;
+    return true;
+  }
+  else if (hi == 0x43u)
+  {
+    load_rd = alu_op != 3u;
+  }
+  else
+  {
+    return false;
+  }
+
+  riscv_emit_arm_reg_load(&ptr, riscv_reg_t1, rs);
+  if (load_rd)
+    riscv_emit_arm_reg_load(&ptr, riscv_reg_t0, rd);
+
+  translation_ptr = ptr;
+  if (hi == 0x40u)
+  {
+    if (alu_op == 0u)
+      riscv_emit_and(riscv_reg_t2, riscv_reg_t0, riscv_reg_t1);
+    else
+      riscv_emit_xor(riscv_reg_t2, riscv_reg_t0, riscv_reg_t1);
+  }
+  else
+  {
+    switch (alu_op)
+    {
+      case 0:
+        riscv_emit_or(riscv_reg_t2, riscv_reg_t0, riscv_reg_t1);
+        break;
+      case 1:
+        riscv_emit_mul(riscv_reg_t2, riscv_reg_t0, riscv_reg_t1);
+        break;
+      case 2:
+        riscv_emit_xori(riscv_reg_t1, riscv_reg_t1, -1);
+        riscv_emit_and(riscv_reg_t2, riscv_reg_t0, riscv_reg_t1);
+        break;
+      default:
+        riscv_emit_xori(riscv_reg_t2, riscv_reg_t1, -1);
+        break;
+    }
+  }
+  ptr = translation_ptr;
+
+  riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_t2);
+
+  *translation_ptr_ref = ptr;
+  riscv_native_data_proc_insns++;
+  return true;
+}
+
 static bool riscv_emit_native_thumb_simple_data(u8 **translation_ptr_ref,
                                                 u32 opcode,
                                                 u32 pc,
