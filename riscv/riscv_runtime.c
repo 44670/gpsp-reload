@@ -34,6 +34,19 @@ static void function_cc riscv_thumb_execute_bl_pair(u32 first_opcode,
 
 enum
 {
+  RISCV_HELPER_READ32 = 0,
+  RISCV_HELPER_STORE32,
+  RISCV_HELPER_READ8,
+  RISCV_HELPER_STORE8,
+  RISCV_HELPER_READ16,
+  RISCV_HELPER_STORE16,
+  RISCV_HELPER_READ8S,
+  RISCV_HELPER_READ16S,
+  RISCV_HELPER_COUNT
+};
+
+enum
+{
   RISCV_INITIAL_ROM_WATERMARK = 16,
   RISCV_BLOCK_NATIVE_SUPPORTED = 1u,
   RISCV_BLOCK_PC_WRITTEN = 2u
@@ -45,7 +58,7 @@ enum
 #if defined(__riscv) && defined(__riscv_xlen) && (__riscv_xlen == 32)
 u8 *riscv_enter_jit(u8 *entry_data, void *reg_base, void *run_block,
                     void *thumb_execute, void *thumb_bl_pair,
-                    void *read32, void *store32);
+                    const void *helper_table);
 
 __asm__(
   ".text\n"
@@ -53,20 +66,32 @@ __asm__(
   ".globl riscv_enter_jit\n"
   ".type riscv_enter_jit, @function\n"
   "riscv_enter_jit:\n"
-  "  addi sp, sp, -48\n"
-  "  sw ra, 44(sp)\n"
-  "  sw s0, 40(sp)\n"
-  "  sw s1, 36(sp)\n"
-  "  sw s2, 32(sp)\n"
-  "  sw s3, 28(sp)\n"
-  "  sw s4, 24(sp)\n"
-  "  sw s5, 20(sp)\n"
+  "  addi sp, sp, -64\n"
+  "  sw ra, 60(sp)\n"
+  "  sw s0, 56(sp)\n"
+  "  sw s1, 52(sp)\n"
+  "  sw s2, 48(sp)\n"
+  "  sw s3, 44(sp)\n"
+  "  sw s4, 40(sp)\n"
+  "  sw s5, 36(sp)\n"
+  "  sw s6, 32(sp)\n"
+  "  sw s7, 28(sp)\n"
+  "  sw s8, 24(sp)\n"
+  "  sw s9, 20(sp)\n"
+  "  sw s10, 16(sp)\n"
+  "  sw s11, 12(sp)\n"
   "  mv s0, a1\n"
   "  mv s1, a2\n"
   "  mv s2, a3\n"
   "  mv s3, a4\n"
-  "  mv s4, a5\n"
-  "  mv s5, a6\n"
+  "  lw s4, 0(a5)\n"
+  "  lw s5, 4(a5)\n"
+  "  lw s6, 8(a5)\n"
+  "  lw s7, 12(a5)\n"
+  "  lw s8, 16(a5)\n"
+  "  lw s9, 20(a5)\n"
+  "  lw s10, 24(a5)\n"
+  "  lw s11, 28(a5)\n"
   "1:\n"
   "  beqz a0, 2f\n"
   "  addi t0, zero, -1\n"
@@ -74,27 +99,32 @@ __asm__(
   "  jalr ra, a0, 0\n"
   "  j 1b\n"
   "2:\n"
-  "  lw s5, 20(sp)\n"
-  "  lw s4, 24(sp)\n"
-  "  lw s3, 28(sp)\n"
-  "  lw s2, 32(sp)\n"
-  "  lw s1, 36(sp)\n"
-  "  lw s0, 40(sp)\n"
-  "  lw ra, 44(sp)\n"
-  "  addi sp, sp, 48\n"
+  "  lw s11, 12(sp)\n"
+  "  lw s10, 16(sp)\n"
+  "  lw s9, 20(sp)\n"
+  "  lw s8, 24(sp)\n"
+  "  lw s7, 28(sp)\n"
+  "  lw s6, 32(sp)\n"
+  "  lw s5, 36(sp)\n"
+  "  lw s4, 40(sp)\n"
+  "  lw s3, 44(sp)\n"
+  "  lw s2, 48(sp)\n"
+  "  lw s1, 52(sp)\n"
+  "  lw s0, 56(sp)\n"
+  "  lw ra, 60(sp)\n"
+  "  addi sp, sp, 64\n"
   "  ret\n"
   ".size riscv_enter_jit, .-riscv_enter_jit\n");
 #else
 static u8 *riscv_enter_jit(u8 *entry_data, void *reg_base, void *run_block,
                            void *thumb_execute, void *thumb_bl_pair,
-                           void *read32, void *store32)
+                           const void *helper_table)
 {
   (void)reg_base;
   (void)run_block;
   (void)thumb_execute;
   (void)thumb_bl_pair;
-  (void)read32;
-  (void)store32;
+  (void)helper_table;
 
   do
   {
@@ -492,6 +522,20 @@ static u32 function_cc riscv_store_u32(u32 address, u32 value)
   cpu_alert_type alert = write_memory32(address, value);
   riscv_cpu_alert |= alert;
   return alert;
+}
+
+static uintptr_t riscv_helper_table[RISCV_HELPER_COUNT];
+
+static void riscv_init_helper_table(void)
+{
+  riscv_helper_table[RISCV_HELPER_READ32] = (uintptr_t)read_memory32;
+  riscv_helper_table[RISCV_HELPER_STORE32] = (uintptr_t)riscv_store_u32;
+  riscv_helper_table[RISCV_HELPER_READ8] = (uintptr_t)read_memory8;
+  riscv_helper_table[RISCV_HELPER_STORE8] = (uintptr_t)riscv_store_u8;
+  riscv_helper_table[RISCV_HELPER_READ16] = (uintptr_t)read_memory16;
+  riscv_helper_table[RISCV_HELPER_STORE16] = (uintptr_t)riscv_store_u16;
+  riscv_helper_table[RISCV_HELPER_READ8S] = (uintptr_t)read_memory8s;
+  riscv_helper_table[RISCV_HELPER_READ16S] = (uintptr_t)read_memory16s;
 }
 
 static u32 function_cc riscv_swap_u8(u32 address, u32 value, u32 pc)
@@ -3009,24 +3053,24 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
 
   if (load)
   {
-    uintptr_t read_helper;
+    riscv_reg_number read_helper_reg;
 
     switch (mem_type)
     {
       case 1:
-        read_helper = (uintptr_t)read_memory16;
+        read_helper_reg = riscv_reg_s8;
         break;
       case 2:
-        read_helper = (uintptr_t)read_memory8s;
+        read_helper_reg = riscv_reg_s10;
         break;
       default:
-        read_helper = (uintptr_t)read_memory16s;
+        read_helper_reg = riscv_reg_s11;
         break;
     }
 
     riscv_emit_li(&ptr, riscv_reg_t0, pc);
     riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
-    riscv_emit_c_call(&ptr, read_helper);
+    riscv_emit_c_call_reg(&ptr, read_helper_reg);
     riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_a0);
     if (rd == REG_PC)
       meta->flags |= RISCV_BLOCK_PC_WRITTEN;
@@ -3042,7 +3086,7 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
   {
     riscv_emit_li(&ptr, riscv_reg_t0, pc + 4u);
     riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
-    riscv_emit_c_call(&ptr, (uintptr_t)riscv_store_u16);
+    riscv_emit_c_call_reg(&ptr, riscv_reg_s9);
     riscv_emit_adjust_cycles(&ptr, cycles + 1u);
     if (cycles_emitted)
       *cycles_emitted = true;
@@ -3255,7 +3299,7 @@ bool riscv_emit_native_arm_access_memory_ex(u8 **translation_ptr_ref,
     riscv_emit_li(&ptr, riscv_reg_t0, pc);
     riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
     if (byte)
-      riscv_emit_c_call(&ptr, (uintptr_t)read_memory8);
+      riscv_emit_c_call_reg(&ptr, riscv_reg_s6);
     else
       riscv_emit_c_call_reg(&ptr, riscv_reg_s4);
     riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_a0);
@@ -3274,7 +3318,7 @@ bool riscv_emit_native_arm_access_memory_ex(u8 **translation_ptr_ref,
     riscv_emit_li(&ptr, riscv_reg_t0, pc + 4u);
     riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
     if (byte)
-      riscv_emit_c_call(&ptr, (uintptr_t)riscv_store_u8);
+      riscv_emit_c_call_reg(&ptr, riscv_reg_s7);
     else
       riscv_emit_c_call_reg(&ptr, riscv_reg_s5);
     riscv_emit_adjust_cycles(&ptr, cycles + 1u);
@@ -3658,12 +3702,12 @@ u32 execute_arm_translate_internal(u32 cycles, void *regptr)
     return 0;
   }
 
+  riscv_init_helper_table();
   (void)riscv_enter_jit(entry_data, regptr,
                         (void *)(uintptr_t)riscv_jit_run_block,
                         (void *)(uintptr_t)riscv_thumb_execute,
                         (void *)(uintptr_t)riscv_thumb_execute_bl_pair,
-                        (void *)(uintptr_t)read_memory32,
-                        (void *)(uintptr_t)riscv_store_u32);
+                        riscv_helper_table);
 
   return 0;
 }
