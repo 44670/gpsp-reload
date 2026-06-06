@@ -80,6 +80,10 @@ enum
   RISCV_BLOCK_NO_FALLTHROUGH = 16u
 };
 
+#define RISCV_BLOCK_CHAIN_UNIT_BYTES 4u
+#define RISCV_BLOCK_CHAIN_MAX_BYTES \
+  ((1u << 10) * RISCV_BLOCK_CHAIN_UNIT_BYTES - 4u)
+
 #define RISCV_INVALID_BLOCK_ENTRY ((u8 *)(uintptr_t)~(uintptr_t)0)
 
 /* Blocks may tail-jump into each other, so one outer JIT frame owns saved regs. */
@@ -238,6 +242,44 @@ static u8 *riscv_align_ptr(u8 *ptr)
   uintptr_t value = (uintptr_t)ptr;
   value = (value + 3u) & ~(uintptr_t)3u;
   return (u8 *)value;
+}
+
+static u32 riscv_block_meta_thumb(const riscv_jit_block_meta *meta)
+{
+  return meta->end_delta_thumb & 1u;
+}
+
+static u32 riscv_block_meta_end_pc(const riscv_jit_block_meta *meta)
+{
+  return meta->start_pc + (meta->end_delta_thumb & ~1u);
+}
+
+static u32 riscv_block_meta_chain_offset(const riscv_jit_block_meta *meta)
+{
+  return (u32)meta->chain_units * RISCV_BLOCK_CHAIN_UNIT_BYTES;
+}
+
+static void riscv_block_meta_set_chain_offset(riscv_jit_block_meta *meta,
+                                              u32 offset)
+{
+  meta->chain_units = (u16)(offset / RISCV_BLOCK_CHAIN_UNIT_BYTES);
+}
+
+static void riscv_block_meta_set_terminal_offset(riscv_jit_block_meta *meta,
+                                                 u32 offset)
+{
+  meta->end_delta_thumb = (u16)((offset <= 0x1fffeu) ? (offset >> 1) : 0);
+}
+
+static void riscv_block_meta_set_final_range(riscv_jit_block_meta *meta,
+                                             u32 block_start_pc,
+                                             u32 block_end_pc,
+                                             bool thumb_mode)
+{
+  u32 delta = block_end_pc - block_start_pc;
+
+  meta->start_pc = block_start_pc;
+  meta->end_delta_thumb = (u16)((delta & ~1u) | (thumb_mode ? 1u : 0u));
 }
 
 static void riscv_emit_li(u8 **ptr, riscv_reg_number rd, u32 value)
@@ -634,8 +676,10 @@ static void riscv_emit_store_alert_branch(u8 **ptr_ref,
     return;
 
   source_offset = (u32)(ptr - (u8 *)meta);
-  previous_offset = meta->thumb;
-  if (source_offset > 4094u || previous_offset > 4094u)
+  previous_offset = riscv_block_meta_chain_offset(meta);
+  if ((source_offset & (RISCV_BLOCK_CHAIN_UNIT_BYTES - 1u)) ||
+      source_offset > RISCV_BLOCK_CHAIN_MAX_BYTES ||
+      previous_offset > RISCV_BLOCK_CHAIN_MAX_BYTES)
   {
     riscv_emit_terminal_helper_call(&ptr, meta);
     *ptr_ref = ptr;
@@ -645,7 +689,7 @@ static void riscv_emit_store_alert_branch(u8 **ptr_ref,
   translation_ptr = ptr;
   riscv_emit_bne(riscv_reg_a0, riscv_reg_zero, (s32)previous_offset);
   ptr = translation_ptr;
-  meta->thumb = (u16)source_offset;
+  riscv_block_meta_set_chain_offset(meta, source_offset);
 
   *ptr_ref = ptr;
 }
@@ -2174,8 +2218,8 @@ static void riscv_emit_terminal_helper_call(u8 **ptr,
 {
   riscv_emit_helper_call(ptr, meta);
   meta->flags |= RISCV_BLOCK_TERMINAL_EMITTED;
-  /* Finalize overwrites end_pc; until then it tracks this tail's end. */
-  meta->end_pc = (u32)(*ptr - (u8 *)meta);
+  /* Finalize overwrites this with the guest end-PC delta. */
+  riscv_block_meta_set_terminal_offset(meta, (u32)(*ptr - (u8 *)meta));
 }
 
 static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta)
@@ -2193,7 +2237,7 @@ static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta)
     if (meta)
     {
       pc = meta->start_pc;
-      thumb = meta->thumb;
+      thumb = riscv_block_meta_thumb(meta);
     }
     else
     {
@@ -2210,8 +2254,9 @@ static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta)
     return NULL;
   }
 
-  riscv_note_runtime_block_execute(meta->start_pc, meta->end_pc,
-                                   meta->thumb);
+  riscv_note_runtime_block_execute(meta->start_pc,
+                                   riscv_block_meta_end_pc(meta),
+                                   riscv_block_meta_thumb(meta));
 
   if (riscv_cpu_alert != CPU_ALERT_NONE)
     alert = riscv_handle_cpu_alert();
@@ -2242,9 +2287,10 @@ void riscv_emit_block_prologue(u8 **translation_ptr_ref,
 
   *meta = (riscv_jit_block_meta *)(void *)ptr;
   (*meta)->start_pc = 0;
-  (*meta)->end_pc = 0;
-  (*meta)->thumb = 0;
+  (*meta)->end_delta_thumb = 0;
+  (*meta)->chain_units = 0;
   (*meta)->flags = (u16)RISCV_BLOCK_NATIVE_SUPPORTED;
+  (*meta)->reserved = 0;
 
   *translation_ptr_ref = ptr + block_prologue_size;
 }
@@ -7743,15 +7789,14 @@ void riscv_emit_block_finalize(riscv_jit_block_meta *meta,
                                bool thumb_mode)
 {
   u8 *ptr = *translation_ptr;
-  u32 store_alert_branches = meta->thumb;
+  u32 store_alert_branches = riscv_block_meta_chain_offset(meta);
   u8 *helper_tail = NULL;
   bool terminal_at_end =
     (meta->flags & RISCV_BLOCK_TERMINAL_EMITTED) &&
-    meta->end_pc == (u32)(ptr - (u8 *)meta);
+    ((u32)meta->end_delta_thumb << 1) == (u32)(ptr - (u8 *)meta);
 
-  meta->start_pc = block_start_pc;
-  meta->end_pc = block_end_pc;
-  meta->thumb = (u16)(thumb_mode ? 1u : 0u);
+  riscv_block_meta_set_final_range(meta, block_start_pc, block_end_pc,
+                                   thumb_mode);
 
   if (!(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
   {

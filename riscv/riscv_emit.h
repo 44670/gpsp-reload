@@ -14,7 +14,7 @@
 #include <stdbool.h>
 #include "riscv/riscv_codegen.h"
 
-#define RISCV_BLOCK_META_BYTES 12
+#define RISCV_BLOCK_META_BYTES 8
 #define block_prologue_size RISCV_BLOCK_META_BYTES
 #define RISCV_BRANCH_PATCH_BYTES 8
 #define RISCV_BRANCH_PATCH_SHORT_BYTES 4
@@ -23,9 +23,10 @@
 typedef struct riscv_jit_block_meta
 {
   u32 start_pc;
-  u32 end_pc;
-  u16 thumb;
-  u16 flags;
+  u16 end_delta_thumb;
+  u16 chain_units : 10;
+  u16 flags : 5;
+  u16 reserved : 1;
 } riscv_jit_block_meta;
 
 typedef char riscv_block_meta_size_check[
