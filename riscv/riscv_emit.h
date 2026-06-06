@@ -187,6 +187,10 @@ bool riscv_emit_native_thumb_instruction(u8 **translation_ptr,
                                          u32 cycles,
                                          bool exits,
                                          bool *cycles_emitted);
+bool riscv_emit_native_thumb_shift(u8 **translation_ptr,
+                                   riscv_jit_block_meta *meta,
+                                   u32 opcode,
+                                   u32 flag_status);
 bool riscv_emit_native_thumb_conditional_branch(u8 **translation_ptr,
                                                 riscv_jit_block_meta *meta,
                                                 u8 **branch_source,
@@ -590,7 +594,14 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
   } while (0)
 
 #define thumb_shift(...)                                                      \
-  riscv_emit_thumb_instruction(false)
+  do                                                                          \
+  {                                                                           \
+    if (!riscv_emit_native_thumb_shift(&translation_ptr, riscv_block_meta,    \
+                                       opcode, flag_status))                  \
+    {                                                                         \
+      riscv_emit_thumb_instruction(false);                                    \
+    }                                                                         \
+  } while (0)
 
 #define thumb_data_proc(...)                                                  \
   riscv_emit_thumb_instruction(false)
