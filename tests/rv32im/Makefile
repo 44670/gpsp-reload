@@ -348,17 +348,61 @@ armwrestler-report: armwrestler
 			if (test == "thumb2") return thumb2_max; \
 			return ""; \
 		} \
+		function density_x100(bytes, native) { \
+			return native ? int(((bytes * 100) + (native / 2)) / native) : 0; \
+		} \
 		/command=armwrestler-jit-test/ { \
 			test = field("test"); \
 			mode = (test ~ /^thumb/) ? "thumb" : "arm"; \
-			printf("armwrestler_code_size test=%s mode=%s code_bytes=%s test_max=%s arm_cumulative=%s thumb_cumulative=%s thumb_helpers=%s\n", \
-				test, mode, field("code_bytes"), max_for(test), field("arm_code_bytes_total"), \
-				field("thumb_code_bytes_total"), field("thumb_helpers")); \
+			code = field("code_bytes") + 0; \
+			data_proc = field("native_data_proc") + 0; \
+			branch = field("native_branch") + 0; \
+			load = field("native_load") + 0; \
+			store = field("native_store") + 0; \
+			psr = field("native_psr") + 0; \
+			data_proc_delta = data_proc - prev_data_proc; \
+			branch_delta = branch - prev_branch; \
+			load_delta = load - prev_load; \
+			store_delta = store - prev_store; \
+			psr_delta = psr - prev_psr; \
+			native_delta = data_proc_delta + branch_delta + load_delta + store_delta + psr_delta; \
+			if (mode == "thumb") { \
+				thumb_native += native_delta; \
+				thumb_data_proc += data_proc_delta; \
+				thumb_branch += branch_delta; \
+				thumb_load += load_delta; \
+				thumb_store += store_delta; \
+				thumb_psr += psr_delta; \
+			} else { \
+				arm_native += native_delta; \
+				arm_data_proc += data_proc_delta; \
+				arm_branch += branch_delta; \
+				arm_load += load_delta; \
+				arm_store += store_delta; \
+				arm_psr += psr_delta; \
+			} \
+			printf("armwrestler_code_size test=%s mode=%s code_bytes=%s test_max=%s native_insns=%u bytes_per_native_x100=%u data_proc=%u branch=%u load=%u store=%u psr=%u arm_cumulative=%s thumb_cumulative=%s thumb_helpers=%s\n", \
+				test, mode, field("code_bytes"), max_for(test), \
+				native_delta, density_x100(code, native_delta), data_proc_delta, \
+				branch_delta, load_delta, store_delta, psr_delta, \
+				field("arm_code_bytes_total"), field("thumb_code_bytes_total"), \
+				field("thumb_helpers")); \
+			prev_data_proc = data_proc; \
+			prev_branch = branch; \
+			prev_load = load; \
+			prev_store = store; \
+			prev_psr = psr; \
 		} \
 		/command=armwrestler test=all/ { \
-			printf("armwrestler_code_size arm_total=%s thumb_total=%s arm_max=%s thumb_max=%s thumb_helpers=%s thumb_helpers_max=%s\n", \
+			arm_total = field("arm_code_bytes_total") + 0; \
+			thumb_total = field("thumb_code_bytes_total") + 0; \
+			printf("armwrestler_code_size arm_total=%s thumb_total=%s arm_max=%s thumb_max=%s thumb_helpers=%s thumb_helpers_max=%s arm_native_insns=%u thumb_native_insns=%u arm_bytes_per_native_x100=%u thumb_bytes_per_native_x100=%u arm_data_proc=%u arm_branch=%u arm_load=%u arm_store=%u arm_psr=%u thumb_data_proc=%u thumb_branch=%u thumb_load=%u thumb_store=%u thumb_psr=%u\n", \
 				field("arm_code_bytes_total"), field("thumb_code_bytes_total"), \
-				arm_max, thumb_max, field("thumb_helpers"), thumb_helpers_max); \
+				arm_max, thumb_max, field("thumb_helpers"), thumb_helpers_max, \
+				arm_native, thumb_native, density_x100(arm_total, arm_native), \
+				density_x100(thumb_total, thumb_native), arm_data_proc, arm_branch, \
+				arm_load, arm_store, arm_psr, thumb_data_proc, thumb_branch, \
+				thumb_load, thumb_store, thumb_psr); \
 		}' $(ARMWRESTLER_LOG)
 
 abi: $(ABI_TEST)
