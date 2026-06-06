@@ -148,6 +148,7 @@ static u32 riscv_native_branch_insns;
 static u32 riscv_native_load_insns;
 static u32 riscv_native_store_insns;
 static u32 riscv_native_psr_insns;
+static u32 riscv_thumb_helper_insns;
 static cpu_alert_type riscv_cpu_alert;
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -3835,6 +3836,152 @@ bool riscv_emit_native_thumb_shift(u8 **translation_ptr_ref,
   return true;
 }
 
+static bool riscv_emit_native_thumb_alu_flags(u8 **translation_ptr_ref,
+                                              riscv_jit_block_meta *meta,
+                                              u32 opcode,
+                                              u32 flag_status)
+{
+  u32 hi = opcode >> 8;
+  u32 alu_op = (opcode >> 6) & 3u;
+  u32 rd = opcode & 7u;
+  u32 rs = (opcode >> 3) & 7u;
+  u32 rn = (opcode >> 6) & 7u;
+  u32 imm = opcode & 0xffu;
+  u32 arm_op = 0;
+  u32 arm_rn = 0;
+  u32 arm_rd = rd;
+  u32 arm_operand2 = 0;
+  bool immediate = false;
+  bool test_op = false;
+  u32 arm_opcode;
+
+  if (hi >= 0x18u && hi <= 0x1fu)
+  {
+    bool subtract = (hi & 0x02u) != 0;
+
+    arm_op = subtract ? 0x2u : 0x4u;
+    arm_rn = rs;
+    if (hi & 0x04u)
+    {
+      immediate = true;
+      arm_operand2 = rn;
+    }
+    else
+    {
+      arm_operand2 = rn;
+    }
+  }
+  else if (hi >= 0x20u && hi <= 0x27u)
+  {
+    arm_op = 0xdu;
+    arm_rd = hi & 7u;
+    immediate = true;
+    arm_operand2 = imm;
+  }
+  else if (hi >= 0x28u && hi <= 0x2fu)
+  {
+    arm_op = 0xau;
+    arm_rn = hi & 7u;
+    immediate = true;
+    arm_operand2 = imm;
+    test_op = true;
+  }
+  else if (hi >= 0x30u && hi <= 0x3fu)
+  {
+    arm_op = (hi & 0x08u) ? 0x2u : 0x4u;
+    arm_rn = hi & 7u;
+    arm_rd = arm_rn;
+    immediate = true;
+    arm_operand2 = imm;
+  }
+  else if (hi == 0x40u)
+  {
+    if (alu_op > 1u)
+      return false;
+    arm_op = alu_op;
+    arm_rn = rd;
+    arm_operand2 = rs;
+  }
+  else if (hi == 0x41u)
+  {
+    if (alu_op != 1u && alu_op != 2u)
+      return false;
+    arm_op = alu_op == 1u ? 0x5u : 0x6u;
+    arm_rn = rd;
+    arm_operand2 = rs;
+  }
+  else if (hi == 0x42u)
+  {
+    switch (alu_op)
+    {
+      case 0:
+        arm_op = 0x8u;
+        arm_rn = rd;
+        arm_operand2 = rs;
+        test_op = true;
+        break;
+      case 1:
+        arm_op = 0x3u;
+        arm_rn = rs;
+        arm_rd = rd;
+        immediate = true;
+        arm_operand2 = 0;
+        break;
+      case 2:
+        arm_op = 0xau;
+        arm_rn = rd;
+        arm_operand2 = rs;
+        test_op = true;
+        break;
+      default:
+        arm_op = 0xbu;
+        arm_rn = rd;
+        arm_operand2 = rs;
+        test_op = true;
+        break;
+    }
+  }
+  else if (hi == 0x43u)
+  {
+    switch (alu_op)
+    {
+      case 0:
+        arm_op = 0xcu;
+        arm_rn = rd;
+        arm_operand2 = rs;
+        break;
+      case 2:
+        arm_op = 0xeu;
+        arm_rn = rd;
+        arm_operand2 = rs;
+        break;
+      case 3:
+        arm_op = 0xfu;
+        arm_operand2 = rs;
+        break;
+      default:
+        return false;
+    }
+  }
+  else
+  {
+    return false;
+  }
+
+  arm_opcode = (0xeu << 28) | (immediate ? (1u << 25) : 0u) |
+               (arm_op << 21) | (1u << 20) | (arm_rn << 16) |
+               (arm_rd << 12) | arm_operand2;
+
+  if (test_op)
+  {
+    return riscv_emit_native_arm_data_proc_test_with_pc_ex(
+      translation_ptr_ref, meta, arm_opcode, 0, 0, flag_status, false, NULL);
+  }
+
+  return riscv_emit_native_arm_data_proc_with_pc_ex(
+    translation_ptr_ref, meta, arm_opcode, 0, 0, flag_status, false, NULL);
+}
+
 bool riscv_emit_native_thumb_alu(u8 **translation_ptr_ref,
                                  riscv_jit_block_meta *meta,
                                  u32 opcode,
@@ -3855,7 +4002,8 @@ bool riscv_emit_native_thumb_alu(u8 **translation_ptr_ref,
     return false;
 
   if (need_flags)
-    return false;
+    return riscv_emit_native_thumb_alu_flags(translation_ptr_ref, meta,
+                                            opcode, flag_status);
 
   if ((hi >= 0x28u && hi <= 0x2fu) ||
       (hi == 0x42u && alu_op != 1u))
@@ -4356,6 +4504,7 @@ bool riscv_emit_native_thumb_instruction(u8 **translation_ptr_ref,
   }
 
   *translation_ptr_ref = ptr;
+  riscv_thumb_helper_insns++;
   riscv_note_thumb_native_stat(opcode);
   return true;
 }
@@ -4512,6 +4661,7 @@ void init_emitter(bool must_swap)
   riscv_native_load_insns = 0;
   riscv_native_store_insns = 0;
   riscv_native_psr_insns = 0;
+  riscv_thumb_helper_insns = 0;
   riscv_cpu_alert = CPU_ALERT_NONE;
   rom_cache_watermark = RISCV_INITIAL_ROM_WATERMARK;
   init_bios_hooks();
@@ -4533,6 +4683,7 @@ void riscv_get_runtime_stats(riscv_runtime_stats *stats)
   stats->native_load_insns = riscv_native_load_insns;
   stats->native_store_insns = riscv_native_store_insns;
   stats->native_psr_insns = riscv_native_psr_insns;
+  stats->thumb_helper_insns = riscv_thumb_helper_insns;
 }
 
 u32 execute_arm_translate(u32 cycles)

@@ -671,6 +671,8 @@ static void print_summary(const char *result, const char *suite, u32 test_id,
   put_u32_dec(stats.native_store_insns);
   put_raw(" native_psr=");
   put_u32_dec(stats.native_psr_insns);
+  put_raw(" thumb_helpers=");
+  put_u32_dec(stats.thumb_helper_insns);
   put_raw(" trace_count=");
   put_u32_dec(g_trace_count);
   put_raw(" trace_first=");
@@ -736,6 +738,8 @@ static void print_aggregate_summary(const char *result, const char *reason)
   put_u32_dec(stats.native_store_insns);
   put_raw(" native_psr=");
   put_u32_dec(stats.native_psr_insns);
+  put_raw(" thumb_helpers=");
+  put_u32_dec(stats.thumb_helper_insns);
   put_raw(" trace_count=");
   put_u32_dec(g_trace_count);
   put_raw(" trace_first=");

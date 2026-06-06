@@ -39,6 +39,7 @@ typedef struct riscv_runtime_stats
   u32 native_load_insns;
   u32 native_store_insns;
   u32 native_psr_insns;
+  u32 thumb_helper_insns;
 } riscv_runtime_stats;
 
 typedef enum riscv_runtime_fallback_kind

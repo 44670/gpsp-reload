@@ -22,7 +22,8 @@ REJECTS_LOG := $(OUT_DIR)/rv32im_harness_rejects.log
 ARMWRESTLER_LOG := $(OUT_DIR)/rv32im_armwrestler.log
 ARMWRESTLER_INTERP_LOG := $(OUT_DIR)/rv32im_armwrestler_interp.log
 ARMWRESTLER_ARM_CODE_BYTES_MAX ?= 171344
-ARMWRESTLER_THUMB_CODE_BYTES_MAX ?= 18168
+ARMWRESTLER_THUMB_CODE_BYTES_MAX ?= 24244
+ARMWRESTLER_THUMB_HELPERS_MAX ?= 90
 CODEGEN_BIN := $(OUT_DIR)/rv32im_codegen.bin
 CODEGEN_REF_ELF := $(OUT_DIR)/rv32im_codegen_ref.elf
 CODEGEN_REF_BIN := $(OUT_DIR)/rv32im_codegen_ref.bin
@@ -247,10 +248,13 @@ armwrestler-jit: $(ARMWRESTLER) | $(OUT_DIR)
 	grep -Eq 'command=armwrestler test=all .* arm_code_bytes_total=[1-9][0-9]* thumb_code_bytes_total=[1-9][0-9]*' $(ARMWRESTLER_LOG)
 	arm_total=$$(sed -n 's/.* command=armwrestler test=all .* arm_code_bytes_total=\([0-9][0-9]*\) thumb_code_bytes_total=[0-9][0-9]*.*/\1/p' $(ARMWRESTLER_LOG)); \
 	thumb_total=$$(sed -n 's/.* command=armwrestler test=all .* thumb_code_bytes_total=\([0-9][0-9]*\).*/\1/p' $(ARMWRESTLER_LOG)); \
+	thumb_helpers=$$(sed -n 's/.* command=armwrestler test=all .* thumb_helpers=\([0-9][0-9]*\).*/\1/p' $(ARMWRESTLER_LOG)); \
 	test -n "$$arm_total"; \
 	test -n "$$thumb_total"; \
+	test -n "$$thumb_helpers"; \
 	test "$$arm_total" -le "$(ARMWRESTLER_ARM_CODE_BYTES_MAX)"; \
-	test "$$thumb_total" -le "$(ARMWRESTLER_THUMB_CODE_BYTES_MAX)"
+	test "$$thumb_total" -le "$(ARMWRESTLER_THUMB_CODE_BYTES_MAX)"; \
+	test "$$thumb_helpers" -le "$(ARMWRESTLER_THUMB_HELPERS_MAX)"
 	grep -q 'harness_mode=armwrestler_frontend_jit_only reason=armwrestler_all_jit_only_passed' $(ARMWRESTLER_LOG)
 
 armwrestler-interp: $(ARMWRESTLER_INTERP) | $(OUT_DIR)
@@ -268,7 +272,8 @@ armwrestler: armwrestler-interp armwrestler-jit
 
 armwrestler-report: armwrestler
 	@awk -v arm_max="$(ARMWRESTLER_ARM_CODE_BYTES_MAX)" \
-		-v thumb_max="$(ARMWRESTLER_THUMB_CODE_BYTES_MAX)" ' \
+		-v thumb_max="$(ARMWRESTLER_THUMB_CODE_BYTES_MAX)" \
+		-v thumb_helpers_max="$(ARMWRESTLER_THUMB_HELPERS_MAX)" ' \
 		function field(name, i, kv) { \
 			for (i = 1; i <= NF; i++) { \
 				split($$i, kv, "="); \
@@ -280,14 +285,14 @@ armwrestler-report: armwrestler
 		/command=armwrestler-jit-test/ { \
 			test = field("test"); \
 			mode = (test ~ /^thumb/) ? "thumb" : "arm"; \
-			printf("armwrestler_code_size test=%s mode=%s code_bytes=%s arm_cumulative=%s thumb_cumulative=%s\n", \
+			printf("armwrestler_code_size test=%s mode=%s code_bytes=%s arm_cumulative=%s thumb_cumulative=%s thumb_helpers=%s\n", \
 				test, mode, field("code_bytes"), field("arm_code_bytes_total"), \
-				field("thumb_code_bytes_total")); \
+				field("thumb_code_bytes_total"), field("thumb_helpers")); \
 		} \
 		/command=armwrestler test=all/ { \
-			printf("armwrestler_code_size arm_total=%s thumb_total=%s arm_max=%s thumb_max=%s\n", \
+			printf("armwrestler_code_size arm_total=%s thumb_total=%s arm_max=%s thumb_max=%s thumb_helpers=%s thumb_helpers_max=%s\n", \
 				field("arm_code_bytes_total"), field("thumb_code_bytes_total"), \
-				arm_max, thumb_max); \
+				arm_max, thumb_max, field("thumb_helpers"), thumb_helpers_max); \
 		}' $(ARMWRESTLER_LOG)
 
 abi: $(ABI_TEST)
