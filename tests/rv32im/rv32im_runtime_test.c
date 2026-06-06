@@ -90,6 +90,18 @@ typedef unsigned int usize;
 #define THUMB_MEMORY_LOAD_BASE_ADDR 0x02002000u
 #define THUMB_MEMORY_LOAD_WORD_ADDR (THUMB_MEMORY_LOAD_BASE_ADDR + 4u)
 #define THUMB_MEMORY_LOAD_SIGNED_ADDR (THUMB_MEMORY_LOAD_BASE_ADDR + 0x25u)
+#define THUMB_MEMORY_STORE_START_PC 0x020010b0u
+#define THUMB_MEMORY_STORE_END_PC (THUMB_MEMORY_STORE_START_PC + 6u)
+#define THUMB_MEMORY_STORE_TOTAL_CYCLES 6u
+#define THUMB_MEMORY_STORE_STR_R1_R0_4 0x6041u
+#define THUMB_MEMORY_STORE_STRB_R2_R0_R3 0x54c2u
+#define THUMB_MEMORY_STORE_STRH_R4_R0_6 0x80c4u
+#define THUMB_MEMORY_STORE_WORD_ADDR (THUMB_MEMORY_LOAD_BASE_ADDR + 4u)
+#define THUMB_MEMORY_STORE_BYTE_ADDR (THUMB_MEMORY_LOAD_BASE_ADDR + 0x25u)
+#define THUMB_MEMORY_STORE_HALF_ADDR (THUMB_MEMORY_LOAD_BASE_ADDR + 6u)
+#define THUMB_MEMORY_STORE_R1_VALUE 0x12345678u
+#define THUMB_MEMORY_STORE_R2_VALUE 0x000000abu
+#define THUMB_MEMORY_STORE_R4_VALUE 0x0000cdefu
 #define THUMB_REG_SHIFT_START_PC 0x020010c0u
 #define THUMB_REG_SHIFT_END_PC (THUMB_REG_SHIFT_START_PC + 14u)
 #define THUMB_REG_SHIFT_TOTAL_CYCLES 9u
@@ -1469,6 +1481,7 @@ typedef unsigned int usize;
 #define THUMB_FLAG_ALU_BLOCK_OFFSET 80896u
 #define THUMB_MEMORY_LOAD_BLOCK_OFFSET 81408u
 #define THUMB_REG_SHIFT_BLOCK_OFFSET 81920u
+#define THUMB_MEMORY_STORE_BLOCK_OFFSET 90624u
 #define THUMB_BLOCK_STORE_BLOCK_OFFSET 83968u
 #define THUMB_BLOCK_LOAD_BLOCK_OFFSET 86016u
 #define THUMB_BLOCK_PUSH_BLOCK_OFFSET 88064u
@@ -1498,6 +1511,7 @@ static u8 *g_thumb_simple_data_entry;
 static u8 *g_thumb_hi_cmp_entry;
 static u8 *g_thumb_flag_alu_entry;
 static u8 *g_thumb_memory_load_entry;
+static u8 *g_thumb_memory_store_entry;
 static u8 *g_thumb_reg_shift_entry;
 static u8 *g_thumb_block_store_entry;
 static u8 *g_thumb_block_load_entry;
@@ -2382,11 +2396,11 @@ static u32 build_thumb_flag_alu_block(u8 *code)
   return code_bytes;
 }
 
-static void emit_thumb_memory_load_checked(u8 **translation_ptr,
-                                           riscv_jit_block_meta *meta,
-                                           u32 opcode,
-                                           u32 pc,
-                                           const char *test_name)
+static void emit_thumb_memory_access_checked(u8 **translation_ptr,
+                                             riscv_jit_block_meta *meta,
+                                             u32 opcode,
+                                             u32 pc,
+                                             const char *test_name)
 {
   bool cycles_emitted = false;
 
@@ -2417,18 +2431,48 @@ static u32 build_thumb_memory_load_block(u8 *code)
   riscv_emit_block_prologue(&translation_ptr, &meta);
   g_thumb_memory_load_entry = ((u8 *)meta) + block_prologue_size;
 
-  emit_thumb_memory_load_checked(&translation_ptr, meta,
-                                 THUMB_MEMORY_LOAD_LDR_R1_R0_4,
-                                 THUMB_MEMORY_LOAD_START_PC,
-                                 "thumb_memory_ldr_imm");
-  emit_thumb_memory_load_checked(&translation_ptr, meta,
-                                 THUMB_MEMORY_LOAD_LDRSB_R2_R0_R3,
-                                 THUMB_MEMORY_LOAD_START_PC + 2u,
-                                 "thumb_memory_ldrsb_reg");
+  emit_thumb_memory_access_checked(&translation_ptr, meta,
+                                   THUMB_MEMORY_LOAD_LDR_R1_R0_4,
+                                   THUMB_MEMORY_LOAD_START_PC,
+                                   "thumb_memory_ldr_imm");
+  emit_thumb_memory_access_checked(&translation_ptr, meta,
+                                   THUMB_MEMORY_LOAD_LDRSB_R2_R0_R3,
+                                   THUMB_MEMORY_LOAD_START_PC + 2u,
+                                   "thumb_memory_ldrsb_reg");
 
   riscv_emit_block_finalize(meta, &translation_ptr,
                             THUMB_MEMORY_LOAD_START_PC,
                             THUMB_MEMORY_LOAD_END_PC, true);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_thumb_memory_store_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_thumb_memory_store_entry = ((u8 *)meta) + block_prologue_size;
+
+  emit_thumb_memory_access_checked(&translation_ptr, meta,
+                                   THUMB_MEMORY_STORE_STR_R1_R0_4,
+                                   THUMB_MEMORY_STORE_START_PC,
+                                   "thumb_memory_str_imm");
+  emit_thumb_memory_access_checked(&translation_ptr, meta,
+                                   THUMB_MEMORY_STORE_STRB_R2_R0_R3,
+                                   THUMB_MEMORY_STORE_START_PC + 2u,
+                                   "thumb_memory_strb_reg");
+  emit_thumb_memory_access_checked(&translation_ptr, meta,
+                                   THUMB_MEMORY_STORE_STRH_R4_R0_6,
+                                   THUMB_MEMORY_STORE_START_PC + 4u,
+                                   "thumb_memory_strh_imm");
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            THUMB_MEMORY_STORE_START_PC,
+                            THUMB_MEMORY_STORE_END_PC, true);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -5434,6 +5478,79 @@ static void run_thumb_memory_load_case(void)
   expect_runtime_fallback_delta("thumb_memory_load_stats",
                                 &stats_before, 1, 0, 0, 0, 0);
   expect_stickybits_cleared("thumb_memory_load");
+}
+
+static void run_thumb_memory_store_case(void)
+{
+  riscv_runtime_stats stats_before;
+
+  reset_runtime_observations(THUMB_MEMORY_STORE_START_PC);
+  reg[REG_CPSR] = CPSR_T_BIT | CPSR_LOW_VALUE;
+  reg[0] = THUMB_MEMORY_LOAD_BASE_ADDR;
+  reg[1] = THUMB_MEMORY_STORE_R1_VALUE;
+  reg[2] = THUMB_MEMORY_STORE_R2_VALUE;
+  reg[3] = 0x25u;
+  reg[4] = THUMB_MEMORY_STORE_R4_VALUE;
+  g_thumb_lookup_entry = g_thumb_memory_store_entry;
+  g_thumb_lookup_entry_pc = THUMB_MEMORY_STORE_START_PC;
+  riscv_get_runtime_stats(&stats_before);
+
+  execute_arm_translate_internal(THUMB_MEMORY_STORE_TOTAL_CYCLES, &reg[0]);
+
+  if (reg[REG_PC] != THUMB_MEMORY_STORE_END_PC)
+    fail_u32("thumb_memory_store", "pc",
+             reg[REG_PC], THUMB_MEMORY_STORE_END_PC);
+  if (g_write32_calls != 1)
+    fail_u32("thumb_memory_store", "write32_calls", g_write32_calls, 1);
+  if (g_write32_addr != THUMB_MEMORY_STORE_WORD_ADDR)
+    fail_u32("thumb_memory_store", "write32_addr",
+             g_write32_addr, THUMB_MEMORY_STORE_WORD_ADDR);
+  if (g_write32_value != THUMB_MEMORY_STORE_R1_VALUE)
+    fail_u32("thumb_memory_store", "write32_value",
+             g_write32_value, THUMB_MEMORY_STORE_R1_VALUE);
+  if (g_write32_pc != THUMB_MEMORY_STORE_START_PC + 2u)
+    fail_u32("thumb_memory_store", "write32_pc",
+             g_write32_pc, THUMB_MEMORY_STORE_START_PC + 2u);
+  if (g_write8_calls != 1)
+    fail_u32("thumb_memory_store", "write8_calls", g_write8_calls, 1);
+  if (g_write8_addr != THUMB_MEMORY_STORE_BYTE_ADDR)
+    fail_u32("thumb_memory_store", "write8_addr",
+             g_write8_addr, THUMB_MEMORY_STORE_BYTE_ADDR);
+  if (g_write8_value != THUMB_MEMORY_STORE_R2_VALUE)
+    fail_u32("thumb_memory_store", "write8_value",
+             g_write8_value, THUMB_MEMORY_STORE_R2_VALUE);
+  if (g_write8_pc != THUMB_MEMORY_STORE_START_PC + 4u)
+    fail_u32("thumb_memory_store", "write8_pc",
+             g_write8_pc, THUMB_MEMORY_STORE_START_PC + 4u);
+  if (g_write16_calls != 1)
+    fail_u32("thumb_memory_store", "write16_calls", g_write16_calls, 1);
+  if (g_write16_addr != THUMB_MEMORY_STORE_HALF_ADDR)
+    fail_u32("thumb_memory_store", "write16_addr",
+             g_write16_addr, THUMB_MEMORY_STORE_HALF_ADDR);
+  if (g_write16_value != THUMB_MEMORY_STORE_R4_VALUE)
+    fail_u32("thumb_memory_store", "write16_value",
+             g_write16_value, THUMB_MEMORY_STORE_R4_VALUE);
+  if (g_write16_pc != THUMB_MEMORY_STORE_END_PC)
+    fail_u32("thumb_memory_store", "write16_pc",
+             g_write16_pc, THUMB_MEMORY_STORE_END_PC);
+  if (g_lookup_calls != 0)
+    fail_u32("thumb_memory_store", "arm_lookup_calls", g_lookup_calls, 0);
+  if (g_thumb_lookup_calls != 1)
+    fail_u32("thumb_memory_store", "thumb_lookup_calls",
+             g_thumb_lookup_calls, 1);
+  if (g_thumb_lookup_pc != THUMB_MEMORY_STORE_START_PC)
+    fail_u32("thumb_memory_store", "thumb_lookup_pc",
+             g_thumb_lookup_pc, THUMB_MEMORY_STORE_START_PC);
+  if (g_update_calls != 1)
+    fail_u32("thumb_memory_store", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("thumb_memory_store", "update_cycles",
+             (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("thumb_memory_store", "execute_calls", g_execute_calls, 0);
+  expect_runtime_fallback_delta("thumb_memory_store_stats",
+                                &stats_before, 1, 0, 0, 0, 0);
+  expect_stickybits_cleared("thumb_memory_store");
 }
 
 static void run_thumb_reg_shift_case(void)
@@ -11914,6 +12031,7 @@ void _start(void)
   u32 thumb_hi_cmp_code_bytes;
   u32 thumb_flag_alu_code_bytes;
   u32 thumb_memory_load_code_bytes;
+  u32 thumb_memory_store_code_bytes;
   u32 thumb_reg_shift_code_bytes;
   u32 thumb_block_store_code_bytes;
   u32 thumb_block_load_code_bytes;
@@ -12083,6 +12201,8 @@ void _start(void)
     build_thumb_flag_alu_block(code + THUMB_FLAG_ALU_BLOCK_OFFSET);
   thumb_memory_load_code_bytes =
     build_thumb_memory_load_block(code + THUMB_MEMORY_LOAD_BLOCK_OFFSET);
+  thumb_memory_store_code_bytes =
+    build_thumb_memory_store_block(code + THUMB_MEMORY_STORE_BLOCK_OFFSET);
   thumb_reg_shift_code_bytes =
     build_thumb_reg_shift_block(code + THUMB_REG_SHIFT_BLOCK_OFFSET);
   thumb_block_store_code_bytes =
@@ -12720,6 +12840,7 @@ void _start(void)
   run_thumb_hi_cmp_case();
   run_thumb_flag_alu_case();
   run_thumb_memory_load_case();
+  run_thumb_memory_store_case();
   run_thumb_reg_shift_case();
   run_thumb_block_store_case();
   run_thumb_block_load_case();
@@ -13005,6 +13126,8 @@ void _start(void)
   put_u32_dec(thumb_flag_alu_code_bytes);
   put_raw(" thumb_memory_load_code_bytes=");
   put_u32_dec(thumb_memory_load_code_bytes);
+  put_raw(" thumb_memory_store_code_bytes=");
+  put_u32_dec(thumb_memory_store_code_bytes);
   put_raw(" thumb_reg_shift_code_bytes=");
   put_u32_dec(thumb_reg_shift_code_bytes);
   put_raw(" thumb_block_store_code_bytes=");

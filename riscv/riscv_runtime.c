@@ -4756,9 +4756,6 @@ bool riscv_emit_native_thumb_access_memory(u8 **translation_ptr_ref,
     return false;
   }
 
-  if (!load)
-    return false;
-
   if (pc_relative)
   {
     riscv_emit_li(&ptr, riscv_reg_a0, offset);
@@ -4783,30 +4780,55 @@ bool riscv_emit_native_thumb_access_memory(u8 **translation_ptr_ref,
   riscv_emit_li(&ptr, riscv_reg_t0, pc + 2u);
   riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
 
-  switch (mem_type)
+  if (load)
   {
-    case 0:
-      riscv_emit_c_call_reg(&ptr, riscv_reg_s4);
-      break;
-    case 1:
-      riscv_emit_c_call_reg(&ptr, riscv_reg_s8);
-      break;
-    case 2:
-      riscv_emit_c_call_reg(&ptr, riscv_reg_s6);
-      break;
-    case 3:
-      riscv_emit_c_call(&ptr, (uintptr_t)read_memory8s);
-      break;
-    default:
-      riscv_emit_c_call(&ptr, (uintptr_t)read_memory16s);
-      break;
-  }
+    switch (mem_type)
+    {
+      case 0:
+        riscv_emit_c_call_reg(&ptr, riscv_reg_s4);
+        break;
+      case 1:
+        riscv_emit_c_call_reg(&ptr, riscv_reg_s8);
+        break;
+      case 2:
+        riscv_emit_c_call_reg(&ptr, riscv_reg_s6);
+        break;
+      case 3:
+        riscv_emit_c_call(&ptr, (uintptr_t)read_memory8s);
+        break;
+      default:
+        riscv_emit_c_call(&ptr, (uintptr_t)read_memory16s);
+        break;
+    }
 
-  riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_a0);
-  riscv_emit_adjust_cycles(&ptr, cycles + 2u);
+    riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_a0);
+    riscv_emit_adjust_cycles(&ptr, cycles + 2u);
+    riscv_native_load_insns++;
+  }
+  else
+  {
+    riscv_emit_arm_reg_load(&ptr, riscv_reg_a1, rd);
+
+    switch (mem_type)
+    {
+      case 0:
+        riscv_emit_c_call_reg(&ptr, riscv_reg_s5);
+        break;
+      case 1:
+        riscv_emit_c_call_reg(&ptr, riscv_reg_s9);
+        break;
+      case 2:
+        riscv_emit_c_call_reg(&ptr, riscv_reg_s7);
+        break;
+      default:
+        return false;
+    }
+
+    riscv_emit_adjust_cycles(&ptr, cycles + 1u);
+    riscv_native_store_insns++;
+  }
   if (cycles_emitted)
     *cycles_emitted = true;
-  riscv_native_load_insns++;
 
   *translation_ptr_ref = ptr;
   return true;
