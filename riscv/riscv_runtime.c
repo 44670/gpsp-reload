@@ -580,6 +580,21 @@ static void riscv_emit_store_alert_branch(u8 **ptr_ref,
   *ptr_ref = ptr;
 }
 
+static void riscv_emit_cpu_alert_branch(u8 **ptr_ref,
+                                        riscv_jit_block_meta *meta)
+{
+  u8 *ptr = *ptr_ref;
+  u8 *translation_ptr;
+
+  riscv_emit_li(&ptr, riscv_reg_a0, (u32)(uintptr_t)&riscv_cpu_alert);
+  translation_ptr = ptr;
+  riscv_emit_lw(riscv_reg_a0, riscv_reg_a0, 0);
+  ptr = translation_ptr;
+
+  riscv_emit_store_alert_branch(&ptr, meta);
+  *ptr_ref = ptr;
+}
+
 static void riscv_emit_branch_with_source(u8 **ptr_ref,
                                           u8 **branch_source,
                                           u32 funct3,
@@ -4135,7 +4150,7 @@ bool riscv_emit_native_arm_block_memory(u8 **translation_ptr_ref,
   }
   else if (!load)
   {
-    riscv_emit_terminal_helper_call(&ptr, meta);
+    riscv_emit_cpu_alert_branch(&ptr, meta);
   }
 
   *translation_ptr_ref = ptr;
