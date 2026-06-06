@@ -275,7 +275,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 | Mixed contract chain across semantic boundaries | native+compare | `mixed` runs native data processing, helper-backed load, PC-writing load into a native target, alerting helper-backed store, scheduler refill, and deliberate fallback without resetting state. It pins register, memory, scheduler, trace, instruction-step, memory-event, scheduler-event, fallback-event, shadow-memory, counter, code-byte, and runtime-frame evidence. |
 | Armwrestler ARM Tests 0-4 and Thumbwrestler Tests 0-2 external ROM | interpreter+frontend JIT compare | `make -C tests/rv32im armwrestler` loads `/home/john/ref/armwrestler-gba-fixed/armwrestler-gba-fixed.gba`, patches only each loaded copy for deterministic `TESTNUM`, `VSync`, and `DrawResult` result capture, runs ARM Tests 0-4 and Thumb Tests 0-2 under the host `cpu.cc` interpreter and under `cpu_threaded.c` plus generated RV32IM in `qemu-riscv32`, and requires 79 results, failure mask `0`, native blocks/code bytes/nonzero native counters, ROM trace PCs, `fallbacks=0`, `fallback_events=0`, and `execute_arm_calls=0`. Tests 5-9 are Armwrestler stubs in this ROM. |
 | Armwrestler code-size reporting | regression ratchet | `make -C tests/rv32im armwrestler-report` prints stable `armwrestler_code_size` lines for every ARM/Thumb subtest plus final `arm_total`, `thumb_total`, `arm_max`, and `thumb_max`. Current thresholds are ARM `64120` bytes and Thumb `21732` bytes. |
-| Thumb instruction lowering | native+ongoing | Thumbwrestler Tests 0-2 currently run through frontend JIT with zero fallbacks. Native lowering covers the Armwrestler Thumb paths, including high-register `ADD`/`MOV` with non-PC destinations, direct BL/BLH LR/PC updates, BL-pair target derivation from the live link value when it fits RV32IM `addi`, and patchable non-HLE SWI exits. Broader Thumb coverage remains an active MIPS-alignment task. |
+| Thumb instruction lowering | native+ongoing | Thumbwrestler Tests 0-2 currently run through frontend JIT with zero fallbacks. Native lowering covers the Armwrestler Thumb paths, including high-register `ADD`/`MOV` with non-PC destinations, conditional branch taken/skipped cycle handling, direct `B`/`BX`, direct BL/BLH LR/PC updates, BL-pair target derivation from the live link value when it fits RV32IM `addi`, and patchable non-HLE SWI exits. Broader Thumb coverage remains an active MIPS-alignment task. |
 
 Next milestone selection comes from this table and the code-size report: move
 toward MIPS-class native ARM and Thumb code size while keeping the external ROM
@@ -602,10 +602,11 @@ Remaining first-phase gaps should stay narrow and evidence-driven:
   it does not by itself reduce fallback count or claim broader parity.
 - Thumb instruction lowering is active but not complete. Armwrestler-covered
   Thumb paths run through the frontend JIT with zero fallbacks; high-register
-  `ADD`/`MOV` non-PC destinations, BL/BLH LR/PC updates, nearby BL-pair target
-  derivation, and non-HLE SWI exits are now directly emitted instead of calling
-  the generic Thumb executor. Broader MIPS-aligned Thumb memory, block-memory,
-  and live-flag ALU coverage remains a continuing milestone.
+  `ADD`/`MOV` non-PC destinations, conditional branch taken/skipped paths,
+  direct `B`/`BX`, BL/BLH LR/PC updates, nearby BL-pair target derivation, and
+  non-HLE SWI exits are now directly emitted instead of calling the generic
+  Thumb executor. Broader MIPS-aligned Thumb memory, block-memory, and
+  live-flag ALU coverage remains a continuing milestone.
 - Conditional ARM opcodes are still expected to enter through the frontend's
   conditional block header rewrite, not by accepting non-AL conditions in each
   low-level emitter API.

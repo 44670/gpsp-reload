@@ -7246,11 +7246,11 @@ bool riscv_emit_native_thumb_conditional_branch(u8 **translation_ptr_ref,
   if (hi < 0xd0u || hi > 0xddu)
     return false;
 
+  riscv_emit_adjust_cycles(&ptr, cycles);
+
   if (!riscv_emit_arm_condition_branch(&ptr, condition ^ 1u, 0,
                                        &branch_skip))
     return false;
-
-  riscv_emit_adjust_cycles(&ptr, cycles);
 
   /* Taken path is patched to the target; fallthrough exits via finalizer. */
   if (branch_source)

@@ -186,6 +186,47 @@ typedef unsigned int usize;
 #define THUMB_BLOCK_POP_PC_R6_VALUE 0x2468ace0u
 #define THUMB_BLOCK_POP_PC_TARGET 0x02004001u
 #define THUMB_BLOCK_POP_PC_VALUE (THUMB_BLOCK_POP_PC_TARGET & ~1u)
+#define THUMB_BRANCH_TARGET_START_PC 0x02001240u
+#define THUMB_BRANCH_TARGET_END_PC (THUMB_BRANCH_TARGET_START_PC + 2u)
+#define THUMB_BRANCH_TARGET_CYCLES 1u
+#define THUMB_BRANCH_TARGET_MOV_R0 0x205au
+#define THUMB_BRANCH_TARGET_R0_VALUE 0x5au
+#define THUMB_COND_BRANCH_START_PC 0x02001200u
+#define THUMB_COND_BRANCH_END_PC (THUMB_COND_BRANCH_START_PC + 2u)
+#define THUMB_COND_BRANCH_CYCLES 1u
+#define THUMB_COND_BRANCH_BEQ 0xd000u
+#define THUMB_B_START_PC 0x02001220u
+#define THUMB_B_END_PC (THUMB_B_START_PC + 2u)
+#define THUMB_B_CYCLES 1u
+#define THUMB_B_OPCODE \
+  (0xe000u | ((THUMB_BRANCH_TARGET_START_PC - THUMB_B_START_PC - 4u) >> 1))
+#define THUMB_BX_START_PC 0x02001260u
+#define THUMB_BX_END_PC (THUMB_BX_START_PC + 2u)
+#define THUMB_BX_CYCLES 1u
+#define THUMB_BX_R1 0x4708u
+#define THUMB_BX_TARGET_RAW 0x02001301u
+#define THUMB_BX_TARGET_PC (THUMB_BX_TARGET_RAW & ~1u)
+#define THUMB_SWI_START_PC 0x02001280u
+#define THUMB_SWI_END_PC (THUMB_SWI_START_PC + 2u)
+#define THUMB_SWI_CYCLES 1u
+#define THUMB_SWI_OPCODE_5 0xdf05u
+#define THUMB_SWI_LINK_PC (THUMB_SWI_START_PC + 2u)
+#define THUMB_SWI_INITIAL_CPSR (SWI_INITIAL_CPSR | CPSR_T_BIT)
+#define THUMB_BL_PAIR_START_PC 0x020012a0u
+#define THUMB_BL_PAIR_SECOND_PC (THUMB_BL_PAIR_START_PC + 2u)
+#define THUMB_BL_PAIR_END_PC (THUMB_BL_PAIR_START_PC + 4u)
+#define THUMB_BL_PAIR_CYCLES 2u
+#define THUMB_BL_PAIR_FIRST 0xf000u
+#define THUMB_BL_PAIR_SECOND 0xf810u
+#define THUMB_BL_PAIR_LINK ((THUMB_BL_PAIR_SECOND_PC + 2u) | 1u)
+#define THUMB_BL_PAIR_TARGET (THUMB_BL_PAIR_SECOND_PC + 2u + 0x20u)
+#define THUMB_BLH_START_PC 0x020012c0u
+#define THUMB_BLH_END_PC (THUMB_BLH_START_PC + 2u)
+#define THUMB_BLH_CYCLES 1u
+#define THUMB_BLH_OPCODE 0xf802u
+#define THUMB_BLH_LR_INITIAL 0x02001340u
+#define THUMB_BLH_TARGET (THUMB_BLH_LR_INITIAL + 4u)
+#define THUMB_BLH_LINK ((THUMB_BLH_START_PC + 2u) | 1u)
 #define MULTIPLY_START_PC 0x08000080u
 #define MULTIPLY_END_PC (MULTIPLY_START_PC + 8u)
 #define MULTIPLY_MUL_CYCLES 5u
@@ -1520,6 +1561,13 @@ typedef unsigned int usize;
 #define THUMB_BLOCK_LOAD_BLOCK_OFFSET 86016u
 #define THUMB_BLOCK_PUSH_BLOCK_OFFSET 88064u
 #define THUMB_BLOCK_POP_PC_BLOCK_OFFSET 90112u
+#define THUMB_COND_BRANCH_BLOCK_OFFSET 93184u
+#define THUMB_B_BLOCK_OFFSET 93696u
+#define THUMB_BX_BLOCK_OFFSET 94208u
+#define THUMB_SWI_BLOCK_OFFSET 94720u
+#define THUMB_BL_PAIR_BLOCK_OFFSET 95232u
+#define THUMB_BLH_BLOCK_OFFSET 95744u
+#define THUMB_CONTROL_TARGET_BLOCK_OFFSET 96256u
 #define EXPECTED_INITIAL_ROM_WATERMARK 16u
 
 u32 reg[REG_MAX];
@@ -1554,6 +1602,13 @@ static u8 *g_thumb_block_store_entry;
 static u8 *g_thumb_block_load_entry;
 static u8 *g_thumb_block_push_entry;
 static u8 *g_thumb_block_pop_pc_entry;
+static u8 *g_thumb_branch_target_entry;
+static u8 *g_thumb_cond_branch_entry;
+static u8 *g_thumb_b_entry;
+static u8 *g_thumb_bx_entry;
+static u8 *g_thumb_swi_entry;
+static u8 *g_thumb_bl_pair_entry;
+static u8 *g_thumb_blh_entry;
 static u8 *g_multiply_entry;
 static u8 *g_multiply_flag_muls_entry;
 static u8 *g_multiply_flag_mlas_entry;
@@ -2766,6 +2821,217 @@ static u32 build_thumb_block_memory_single(u8 *code,
                                   test_name);
 
   riscv_emit_block_finalize(meta, &translation_ptr, start_pc, end_pc, true);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_thumb_branch_target_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  bool cycles_emitted = true;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_thumb_branch_target_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_thumb_instruction(
+        &translation_ptr, meta, THUMB_BRANCH_TARGET_MOV_R0,
+        THUMB_BRANCH_TARGET_START_PC, THUMB_BRANCH_TARGET_CYCLES, false,
+        &cycles_emitted))
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=thumb_branch_target_emit_rejected\n");
+    sys_exit(1);
+  }
+  if (cycles_emitted)
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=thumb_branch_target_used_helper\n");
+    sys_exit(1);
+  }
+  if (!riscv_emit_cycle_update(&translation_ptr, meta,
+                               THUMB_BRANCH_TARGET_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=thumb_branch_target_cycle_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            THUMB_BRANCH_TARGET_START_PC,
+                            THUMB_BRANCH_TARGET_END_PC, true);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_thumb_cond_branch_block(u8 *code, u8 *target_entry)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u8 *branch_source;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_thumb_cond_branch_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_thumb_conditional_branch(
+        &translation_ptr, meta, &branch_source, THUMB_COND_BRANCH_BEQ,
+        THUMB_COND_BRANCH_START_PC, THUMB_COND_BRANCH_CYCLES, true))
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=thumb_cond_branch_emit_rejected\n");
+    sys_exit(1);
+  }
+  if (!branch_source)
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=thumb_cond_branch_no_patch\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            THUMB_COND_BRANCH_START_PC,
+                            THUMB_COND_BRANCH_END_PC, true);
+  riscv_patch_unconditional_branch_short(branch_source, target_entry);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_thumb_b_block(u8 *code, u8 *target_entry)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u8 *branch_source;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_thumb_b_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_thumb_b_patchable(
+        &translation_ptr, meta, &branch_source, THUMB_B_OPCODE,
+        THUMB_B_START_PC, THUMB_B_CYCLES, true))
+  {
+    put_raw("result=FAIL command=runtime reason=thumb_b_emit_rejected\n");
+    sys_exit(1);
+  }
+  if (!branch_source)
+  {
+    put_raw("result=FAIL command=runtime reason=thumb_b_no_patch\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            THUMB_B_START_PC, THUMB_B_END_PC, true);
+  riscv_patch_unconditional_branch_short(branch_source, target_entry);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_thumb_bx_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_thumb_bx_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_thumb_bx(&translation_ptr, meta, THUMB_BX_R1,
+                                  THUMB_BX_START_PC, THUMB_BX_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=thumb_bx_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            THUMB_BX_START_PC, THUMB_BX_END_PC, true);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_thumb_swi_block(u8 *code, u8 *target_entry)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u8 *branch_source;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_thumb_swi_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_thumb_swi_patchable(
+        &translation_ptr, meta, &branch_source, THUMB_SWI_OPCODE_5,
+        THUMB_SWI_START_PC, THUMB_SWI_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=thumb_swi_emit_rejected\n");
+    sys_exit(1);
+  }
+  if (!branch_source)
+  {
+    put_raw("result=FAIL command=runtime reason=thumb_swi_no_patch\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            THUMB_SWI_START_PC, THUMB_SWI_END_PC, true);
+  riscv_patch_unconditional_branch(branch_source, target_entry);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_thumb_bl_pair_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_thumb_bl_pair_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_thumb_bl_pair(
+        &translation_ptr, meta, THUMB_BL_PAIR_FIRST, THUMB_BL_PAIR_SECOND,
+        THUMB_BL_PAIR_SECOND_PC, THUMB_BL_PAIR_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=thumb_bl_pair_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            THUMB_BL_PAIR_START_PC,
+                            THUMB_BL_PAIR_END_PC, true);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_thumb_blh_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_thumb_blh_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_thumb_blh(&translation_ptr, meta,
+                                   THUMB_BLH_OPCODE,
+                                   THUMB_BLH_START_PC,
+                                   THUMB_BLH_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=thumb_blh_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            THUMB_BLH_START_PC, THUMB_BLH_END_PC, true);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -6127,6 +6393,196 @@ static void run_thumb_block_pop_pc_case(void)
   expect_runtime_fallback_delta("thumb_block_pop_pc_stats",
                                 &stats_before, 1, 0, 0, 0, 0);
   expect_stickybits_cleared("thumb_block_pop_pc");
+}
+
+static void expect_thumb_control_common(const char *test_name,
+                                        const riscv_runtime_stats *before,
+                                        u32 expected_pc,
+                                        u32 expected_cpsr)
+{
+  if (reg[REG_PC] != expected_pc)
+    fail_u32(test_name, "pc", reg[REG_PC], expected_pc);
+  if (reg[REG_CPSR] != expected_cpsr)
+    fail_u32(test_name, "cpsr", reg[REG_CPSR], expected_cpsr);
+  if (g_lookup_calls != 0)
+    fail_u32(test_name, "arm_lookup_calls", g_lookup_calls, 0);
+  if (g_thumb_lookup_calls != 1)
+    fail_u32(test_name, "thumb_lookup_calls", g_thumb_lookup_calls, 1);
+  if (g_update_calls != 1)
+    fail_u32(test_name, "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32(test_name, "update_cycles", (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32(test_name, "execute_calls", g_execute_calls, 0);
+  expect_runtime_fallback_delta(test_name, before, 1, 0, 0, 0, 0);
+  expect_stickybits_cleared(test_name);
+}
+
+static void run_thumb_cond_branch_taken_case(void)
+{
+  riscv_runtime_stats stats_before;
+
+  reset_runtime_observations(THUMB_COND_BRANCH_START_PC);
+  reg[REG_CPSR] = CPSR_T_BIT | CPSR_Z_BIT | CPSR_LOW_VALUE;
+  g_thumb_lookup_entry = g_thumb_cond_branch_entry;
+  g_thumb_lookup_entry_pc = THUMB_COND_BRANCH_START_PC;
+  riscv_get_runtime_stats(&stats_before);
+
+  execute_arm_translate_internal(THUMB_COND_BRANCH_CYCLES +
+                                 THUMB_BRANCH_TARGET_CYCLES, &reg[0]);
+
+  if (reg[0] != THUMB_BRANCH_TARGET_R0_VALUE)
+    fail_u32("thumb_cond_branch_taken", "r0",
+             reg[0], THUMB_BRANCH_TARGET_R0_VALUE);
+  expect_thumb_control_common("thumb_cond_branch_taken_stats",
+                              &stats_before,
+                              THUMB_BRANCH_TARGET_END_PC,
+                              CPSR_T_BIT | CPSR_LOW_VALUE);
+}
+
+static void run_thumb_cond_branch_skipped_case(void)
+{
+  riscv_runtime_stats stats_before;
+
+  reset_runtime_observations(THUMB_COND_BRANCH_START_PC);
+  reg[REG_CPSR] = CPSR_T_BIT | CPSR_LOW_VALUE;
+  g_thumb_lookup_entry = g_thumb_cond_branch_entry;
+  g_thumb_lookup_entry_pc = THUMB_COND_BRANCH_START_PC;
+  riscv_get_runtime_stats(&stats_before);
+
+  execute_arm_translate_internal(THUMB_COND_BRANCH_CYCLES, &reg[0]);
+
+  if (reg[0] != 0)
+    fail_u32("thumb_cond_branch_skipped", "r0", reg[0], 0);
+  expect_thumb_control_common("thumb_cond_branch_skipped_stats",
+                              &stats_before,
+                              THUMB_COND_BRANCH_END_PC,
+                              CPSR_T_BIT | CPSR_LOW_VALUE);
+}
+
+static void run_thumb_b_case(void)
+{
+  riscv_runtime_stats stats_before;
+
+  reset_runtime_observations(THUMB_B_START_PC);
+  reg[REG_CPSR] = CPSR_T_BIT | CPSR_LOW_VALUE;
+  g_thumb_lookup_entry = g_thumb_b_entry;
+  g_thumb_lookup_entry_pc = THUMB_B_START_PC;
+  riscv_get_runtime_stats(&stats_before);
+
+  execute_arm_translate_internal(THUMB_B_CYCLES +
+                                 THUMB_BRANCH_TARGET_CYCLES, &reg[0]);
+
+  expect_thumb_control_common("thumb_b_stats", &stats_before,
+                              THUMB_BRANCH_TARGET_END_PC,
+                              CPSR_T_BIT | CPSR_LOW_VALUE);
+  if (reg[0] != THUMB_BRANCH_TARGET_R0_VALUE)
+    fail_u32("thumb_b", "r0", reg[0], THUMB_BRANCH_TARGET_R0_VALUE);
+}
+
+static void run_thumb_bx_case(void)
+{
+  riscv_runtime_stats stats_before;
+
+  reset_runtime_observations(THUMB_BX_START_PC);
+  reg[REG_CPSR] = CPSR_T_BIT | CPSR_LOW_VALUE;
+  reg[1] = THUMB_BX_TARGET_RAW;
+  g_thumb_lookup_entry = g_thumb_bx_entry;
+  g_thumb_lookup_entry_pc = THUMB_BX_START_PC;
+  riscv_get_runtime_stats(&stats_before);
+
+  execute_arm_translate_internal(THUMB_BX_CYCLES, &reg[0]);
+
+  if (reg[1] != THUMB_BX_TARGET_RAW)
+    fail_u32("thumb_bx", "r1", reg[1], THUMB_BX_TARGET_RAW);
+  expect_thumb_control_common("thumb_bx_stats", &stats_before,
+                              THUMB_BX_TARGET_PC,
+                              CPSR_T_BIT | CPSR_LOW_VALUE);
+}
+
+static void set_thumb_swi_mode_inputs(void)
+{
+  reg[REG_CPSR] = THUMB_SWI_INITIAL_CPSR;
+  reg[CPU_MODE] = 0x1fu;
+  reg[REG_LR] = 0x12345678u;
+  reg_mode[MODE_SUPERVISOR & 0xfu][6] = 0xa5a5a5a5u;
+  spsr[MODE_SUPERVISOR & 0xfu] = 0x11111111u;
+}
+
+static void run_thumb_swi_case(void)
+{
+  riscv_runtime_stats stats_before;
+
+  reset_runtime_observations(THUMB_SWI_START_PC);
+  set_thumb_swi_mode_inputs();
+  g_thumb_lookup_entry = g_thumb_swi_entry;
+  g_thumb_lookup_entry_pc = THUMB_SWI_START_PC;
+  reg[1] = CHAIN_R1_VALUE;
+  reg[2] = CHAIN_R2_VALUE;
+  riscv_get_runtime_stats(&stats_before);
+
+  execute_arm_translate_internal(THUMB_SWI_CYCLES + SWI_TARGET_CYCLES,
+                                 &reg[0]);
+
+  if (reg[REG_PC] != SWI_TARGET_END_PC)
+    fail_u32("thumb_swi", "pc", reg[REG_PC], SWI_TARGET_END_PC);
+  if (reg[3] != CHAIN_R3_VALUE)
+    fail_u32("thumb_swi", "r3", reg[3], CHAIN_R3_VALUE);
+  if (reg[REG_LR] != THUMB_SWI_LINK_PC)
+    fail_u32("thumb_swi", "lr", reg[REG_LR], THUMB_SWI_LINK_PC);
+  if (reg[REG_CPSR] != SWI_CPSR_VALUE)
+    fail_u32("thumb_swi", "cpsr", reg[REG_CPSR], SWI_CPSR_VALUE);
+  if (reg[CPU_MODE] != MODE_SUPERVISOR)
+    fail_u32("thumb_swi", "mode", reg[CPU_MODE], MODE_SUPERVISOR);
+  if (reg[REG_BUS_VALUE] != SWI_BUS_VALUE)
+    fail_u32("thumb_swi", "bus", reg[REG_BUS_VALUE], SWI_BUS_VALUE);
+  if (reg_mode[MODE_SUPERVISOR & 0xfu][6] != THUMB_SWI_LINK_PC)
+    fail_u32("thumb_swi", "supervisor_lr",
+             reg_mode[MODE_SUPERVISOR & 0xfu][6], THUMB_SWI_LINK_PC);
+  if (spsr[MODE_SUPERVISOR & 0xfu] != THUMB_SWI_INITIAL_CPSR)
+    fail_u32("thumb_swi", "supervisor_spsr",
+             spsr[MODE_SUPERVISOR & 0xfu], THUMB_SWI_INITIAL_CPSR);
+  expect_thumb_control_common("thumb_swi_stats", &stats_before,
+                              SWI_TARGET_END_PC, SWI_CPSR_VALUE);
+}
+
+static void run_thumb_bl_pair_case(void)
+{
+  riscv_runtime_stats stats_before;
+
+  reset_runtime_observations(THUMB_BL_PAIR_START_PC);
+  reg[REG_CPSR] = CPSR_T_BIT | CPSR_LOW_VALUE;
+  g_thumb_lookup_entry = g_thumb_bl_pair_entry;
+  g_thumb_lookup_entry_pc = THUMB_BL_PAIR_START_PC;
+  riscv_get_runtime_stats(&stats_before);
+
+  execute_arm_translate_internal(THUMB_BL_PAIR_CYCLES, &reg[0]);
+
+  if (reg[REG_LR] != THUMB_BL_PAIR_LINK)
+    fail_u32("thumb_bl_pair", "lr", reg[REG_LR], THUMB_BL_PAIR_LINK);
+  expect_thumb_control_common("thumb_bl_pair_stats", &stats_before,
+                              THUMB_BL_PAIR_TARGET,
+                              CPSR_T_BIT | CPSR_LOW_VALUE);
+}
+
+static void run_thumb_blh_case(void)
+{
+  riscv_runtime_stats stats_before;
+
+  reset_runtime_observations(THUMB_BLH_START_PC);
+  reg[REG_CPSR] = CPSR_T_BIT | CPSR_LOW_VALUE;
+  reg[REG_LR] = THUMB_BLH_LR_INITIAL;
+  g_thumb_lookup_entry = g_thumb_blh_entry;
+  g_thumb_lookup_entry_pc = THUMB_BLH_START_PC;
+  riscv_get_runtime_stats(&stats_before);
+
+  execute_arm_translate_internal(THUMB_BLH_CYCLES, &reg[0]);
+
+  if (reg[REG_LR] != THUMB_BLH_LINK)
+    fail_u32("thumb_blh", "lr", reg[REG_LR], THUMB_BLH_LINK);
+  expect_thumb_control_common("thumb_blh_stats", &stats_before,
+                              THUMB_BLH_TARGET,
+                              CPSR_T_BIT | CPSR_LOW_VALUE);
 }
 
 static void run_initial_lookup_fallback_case(const char *test_name,
@@ -12392,6 +12848,13 @@ void _start(void)
   u32 thumb_block_load_code_bytes;
   u32 thumb_block_push_code_bytes;
   u32 thumb_block_pop_pc_code_bytes;
+  u32 thumb_branch_target_code_bytes;
+  u32 thumb_cond_branch_code_bytes;
+  u32 thumb_b_code_bytes;
+  u32 thumb_bx_code_bytes;
+  u32 thumb_swi_code_bytes;
+  u32 thumb_bl_pair_code_bytes;
+  u32 thumb_blh_code_bytes;
   u32 multiply_code_bytes;
   u32 multiply_flag_muls_code_bytes;
   u32 multiply_flag_mlas_code_bytes;
@@ -12595,6 +13058,18 @@ void _start(void)
                                     THUMB_BLOCK_POP_PC_END_PC,
                                     &g_thumb_block_pop_pc_entry,
                                     "thumb_block_pop_pc");
+  thumb_branch_target_code_bytes =
+    build_thumb_branch_target_block(code + THUMB_CONTROL_TARGET_BLOCK_OFFSET);
+  thumb_cond_branch_code_bytes =
+    build_thumb_cond_branch_block(code + THUMB_COND_BRANCH_BLOCK_OFFSET,
+                                  g_thumb_branch_target_entry);
+  thumb_b_code_bytes =
+    build_thumb_b_block(code + THUMB_B_BLOCK_OFFSET,
+                        g_thumb_branch_target_entry);
+  thumb_bx_code_bytes = build_thumb_bx_block(code + THUMB_BX_BLOCK_OFFSET);
+  thumb_bl_pair_code_bytes =
+    build_thumb_bl_pair_block(code + THUMB_BL_PAIR_BLOCK_OFFSET);
+  thumb_blh_code_bytes = build_thumb_blh_block(code + THUMB_BLH_BLOCK_OFFSET);
   multiply_code_bytes = build_multiply_block(code + MULTIPLY_BLOCK_OFFSET);
   multiply_flag_muls_code_bytes =
     build_multiply_flag_block(code + MULTIPLY_FLAG_MULS_BLOCK_OFFSET,
@@ -12776,6 +13251,9 @@ void _start(void)
                                  SWI_TARGET_CYCLES,
                                  &g_swi_target_entry,
                                  "swi_target_emit_rejected");
+  thumb_swi_code_bytes =
+    build_thumb_swi_block(code + THUMB_SWI_BLOCK_OFFSET,
+                          g_swi_target_entry);
   swi_patch_code_bytes =
     build_swi_patch_block(code + SWI_PATCH_BLOCK_OFFSET,
                           g_swi_target_entry);
@@ -13218,6 +13696,13 @@ void _start(void)
   run_thumb_block_load_case();
   run_thumb_block_push_case();
   run_thumb_block_pop_pc_case();
+  run_thumb_cond_branch_taken_case();
+  run_thumb_cond_branch_skipped_case();
+  run_thumb_b_case();
+  run_thumb_bx_case();
+  run_thumb_swi_case();
+  run_thumb_bl_pair_case();
+  run_thumb_blh_case();
   run_initial_lookup_miss_fallback_case();
   run_initial_lookup_invalid_fallback_case();
   run_initial_thumb_lookup_miss_fallback_case();
@@ -13517,6 +14002,20 @@ void _start(void)
   put_u32_dec(thumb_block_push_code_bytes);
   put_raw(" thumb_block_pop_pc_code_bytes=");
   put_u32_dec(thumb_block_pop_pc_code_bytes);
+  put_raw(" thumb_branch_target_code_bytes=");
+  put_u32_dec(thumb_branch_target_code_bytes);
+  put_raw(" thumb_cond_branch_code_bytes=");
+  put_u32_dec(thumb_cond_branch_code_bytes);
+  put_raw(" thumb_b_code_bytes=");
+  put_u32_dec(thumb_b_code_bytes);
+  put_raw(" thumb_bx_code_bytes=");
+  put_u32_dec(thumb_bx_code_bytes);
+  put_raw(" thumb_swi_code_bytes=");
+  put_u32_dec(thumb_swi_code_bytes);
+  put_raw(" thumb_bl_pair_code_bytes=");
+  put_u32_dec(thumb_bl_pair_code_bytes);
+  put_raw(" thumb_blh_code_bytes=");
+  put_u32_dec(thumb_blh_code_bytes);
   put_raw(" multiply_code_bytes=");
   put_u32_dec(multiply_code_bytes);
   put_raw(" multiply_flag_muls_code_bytes=");

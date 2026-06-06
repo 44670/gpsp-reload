@@ -45,6 +45,13 @@ BEGIN {
 	track("thumb_block_load_code_bytes", 120, "thumb_direct");
 	track("thumb_block_push_code_bytes", 132, "thumb_direct");
 	track("thumb_block_pop_pc_code_bytes", 112, "thumb_direct");
+	track("thumb_branch_target_code_bytes", 76, "thumb_direct");
+	track("thumb_cond_branch_code_bytes", 68, "thumb_direct");
+	track("thumb_b_code_bytes", 60, "thumb_direct");
+	track("thumb_bx_code_bytes", 72, "thumb_direct");
+	track("thumb_swi_code_bytes", 64, "thumb_direct");
+	track("thumb_bl_pair_code_bytes", 60, "thumb_direct");
+	track("thumb_blh_code_bytes", 64, "thumb_direct");
 
 	track("multiply_code_bytes", 96, "arm_multiply");
 	track("multiply_flag_muls_code_bytes", 104, "arm_multiply");
