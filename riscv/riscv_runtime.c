@@ -404,23 +404,14 @@ static u32 riscv_encode_j_inst(riscv_reg_number rd, s32 offset)
          riscv_opcode_jal;
 }
 
+static void riscv_patch_local_branch(u8 *source, const u8 *target);
+
 static u8 *riscv_emit_unconditional_branch_patch_site(u8 **ptr_ref)
 {
   u8 *translation_ptr = *ptr_ref;
   u8 *source = translation_ptr;
 
   riscv_emit_nop();
-  riscv_emit_nop();
-
-  *ptr_ref = translation_ptr;
-  return source;
-}
-
-static u8 *riscv_emit_conditional_skip_patch_site(u8 **ptr_ref)
-{
-  u8 *translation_ptr = *ptr_ref;
-  u8 *source = translation_ptr;
-
   riscv_emit_nop();
 
   *ptr_ref = translation_ptr;
@@ -449,10 +440,18 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target)
 
 void riscv_patch_conditional_branch(u8 *source, const u8 *target)
 {
+  u32 instruction;
   s32 offset;
 
   if (!source || !target)
     return;
+
+  instruction = ((u32 *)source)[0];
+  if ((instruction & 0x7fu) == riscv_opcode_branch)
+  {
+    riscv_patch_local_branch(source, target);
+    return;
+  }
 
   offset = (s32)((intptr_t)target - (intptr_t)source);
   ((u32 *)source)[0] = riscv_encode_j_inst(riscv_reg_zero, offset);
@@ -630,10 +629,9 @@ bool riscv_emit_arm_conditional_block_header(u8 **translation_ptr_ref,
     return false;
 
   riscv_emit_adjust_cycles(&ptr, cycles);
-  if (!riscv_emit_arm_condition_branch(&ptr, condition, 8, NULL))
+  if (!riscv_emit_arm_condition_branch(&ptr, condition ^ 1u, 0,
+                                       branch_source))
     return false;
-
-  *branch_source = riscv_emit_conditional_skip_patch_site(&ptr);
 
   *translation_ptr_ref = ptr;
   return true;
