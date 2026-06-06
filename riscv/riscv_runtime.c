@@ -317,6 +317,21 @@ static u32 riscv_encode_u(riscv_opcode opcode,
          opcode;
 }
 
+static u32 riscv_encode_b_inst(u32 funct3,
+                               riscv_reg_number rs1,
+                               riscv_reg_number rs2,
+                               s32 offset)
+{
+  return ((((u32)offset >> 12) & 0x01) << 31) |
+         ((((u32)offset >> 5) & 0x3f) << 25) |
+         (((u32)rs2 & 0x1f) << 20) |
+         (((u32)rs1 & 0x1f) << 15) |
+         ((funct3 & 0x07) << 12) |
+         ((((u32)offset >> 1) & 0x0f) << 8) |
+         ((((u32)offset >> 11) & 0x01) << 7) |
+         riscv_opcode_branch;
+}
+
 static u8 *riscv_emit_unconditional_branch_patch_site(u8 **ptr_ref)
 {
   u8 *translation_ptr = *ptr_ref;
@@ -3496,6 +3511,57 @@ static bool riscv_emit_native_thumb_hi_add_mov(u8 **translation_ptr_ref,
   ptr = translation_ptr;
 
   *translation_ptr_ref = ptr;
+  return true;
+}
+
+bool riscv_emit_native_thumb_conditional_branch(u8 **translation_ptr_ref,
+                                                riscv_jit_block_meta *meta,
+                                                u8 **branch_source,
+                                                u32 opcode,
+                                                u32 pc,
+                                                u32 cycles)
+{
+  u32 hi = opcode >> 8;
+  u32 condition = hi & 0x0fu;
+  u32 target_pc;
+  u8 *ptr = *translation_ptr_ref;
+  u8 *branch_skip;
+
+  if (branch_source)
+    *branch_source = NULL;
+
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
+    return false;
+
+  if (hi < 0xd0u || hi > 0xddu)
+    return false;
+
+  if (!riscv_emit_arm_condition_value(&ptr, condition))
+    return false;
+
+  branch_skip = ptr;
+  {
+    u8 *translation_ptr = ptr;
+    riscv_emit_beq(riscv_reg_t0, riscv_reg_zero, 0);
+    ptr = translation_ptr;
+  }
+
+  target_pc = pc + 4u + (u32)((s32)(s8)(opcode & 0xffu) * 2);
+  riscv_emit_li(&ptr, riscv_reg_t1, target_pc);
+  riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t1);
+  riscv_emit_adjust_cycles(&ptr, cycles);
+
+  if (branch_source)
+    *branch_source = riscv_emit_unconditional_branch_patch_site(&ptr);
+  else
+    riscv_emit_unconditional_branch_patch_site(&ptr);
+
+  ((u32 *)branch_skip)[0] =
+    riscv_encode_b_inst(0x0, riscv_reg_t0, riscv_reg_zero,
+                        (s32)(ptr - branch_skip));
+
+  *translation_ptr_ref = ptr;
+  riscv_native_branch_insns++;
   return true;
 }
 

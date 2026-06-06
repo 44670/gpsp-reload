@@ -187,6 +187,12 @@ bool riscv_emit_native_thumb_instruction(u8 **translation_ptr,
                                          u32 cycles,
                                          bool exits,
                                          bool *cycles_emitted);
+bool riscv_emit_native_thumb_conditional_branch(u8 **translation_ptr,
+                                                riscv_jit_block_meta *meta,
+                                                u8 **branch_source,
+                                                u32 opcode,
+                                                u32 pc,
+                                                u32 cycles);
 bool riscv_emit_native_thumb_load_pc_pool_const(u8 **translation_ptr,
                                                 riscv_jit_block_meta *meta,
                                                 u32 rd,
@@ -619,7 +625,20 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
   riscv_emit_thumb_instruction(((opcode & 0xff00u) == 0xbd00u))
 
 #define thumb_conditional_branch(...)                                         \
-  riscv_emit_thumb_instruction(true)
+  do                                                                          \
+  {                                                                           \
+    if (riscv_emit_native_thumb_conditional_branch(                           \
+          &translation_ptr, riscv_block_meta,                                 \
+          &block_exits[block_exit_position].branch_source,                   \
+          opcode, pc, cycle_count))                                           \
+    {                                                                         \
+      block_exit_position++;                                                  \
+    }                                                                         \
+    else                                                                      \
+    {                                                                         \
+      riscv_emit_thumb_instruction(true);                                     \
+    }                                                                         \
+  } while (0)
 
 #define thumb_b()                                                             \
   riscv_emit_thumb_instruction(true)
