@@ -2990,7 +2990,7 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
 
 enum
 {
-  RISCV_FINALIZER_PC_BASE_LOAD_COUNT = 1,
+  RISCV_PC_BASE_INITIAL_LOAD_COUNT = 0,
   RISCV_ARM_PC_BASE_LOAD_THRESHOLD = 3,
   RISCV_THUMB_PC_BASE_LOAD_THRESHOLD = 2
 };
@@ -3404,8 +3404,12 @@ bool translate_block_arm(u32 pc, bool ram_region)
   u32 flag_status;
   block_exit_type external_block_exits[MAX_EXITS];
 #if defined(RISCV_ARCH)
-  /* Count the usual finalizer PC write; terminal blocks may overcount here. */
-  u32 block_pc_base_load_count = RISCV_FINALIZER_PC_BASE_LOAD_COUNT;
+  /*
+   * Count scanned instruction PC materializations only. The finalizer PC
+   * write is often elided by terminal or PC-written blocks, and pre-counting
+   * it over-invests in a PC-base register for those blocks.
+   */
+  u32 block_pc_base_load_count = RISCV_PC_BASE_INITIAL_LOAD_COUNT;
   bool block_needs_pc_base = false;
 #endif
   generate_block_extra_vars_arm();
@@ -3635,8 +3639,12 @@ bool translate_block_thumb(u32 pc, bool ram_region)
   u32 flag_status;
   block_exit_type external_block_exits[MAX_EXITS];
 #if defined(RISCV_ARCH)
-  /* Count the usual finalizer PC write; terminal blocks may overcount here. */
-  u32 block_pc_base_load_count = RISCV_FINALIZER_PC_BASE_LOAD_COUNT;
+  /*
+   * Count scanned instruction PC materializations only. The finalizer PC
+   * write is often elided by terminal or PC-written blocks, and pre-counting
+   * it over-invests in a PC-base register for those blocks.
+   */
+  u32 block_pc_base_load_count = RISCV_PC_BASE_INITIAL_LOAD_COUNT;
   bool block_needs_pc_base = false;
 #endif
   generate_block_extra_vars_thumb();
