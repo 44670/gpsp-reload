@@ -2512,6 +2512,138 @@ static bool riscv_emit_arm_data_proc_immediate_result(u8 **ptr_ref,
   return true;
 }
 
+static void riscv_emit_arm_immediate_shifter_carry(u8 **ptr_ref,
+                                                   u32 opcode,
+                                                   u32 immediate,
+                                                   u32 flag_mask)
+{
+  u8 *ptr = *ptr_ref;
+  u8 *translation_ptr;
+
+  if (!(flag_mask & 0x02u))
+    return;
+
+  if ((opcode >> 8) & 0xfu)
+  {
+    translation_ptr = ptr;
+    riscv_emit_addi(riscv_reg_t3, riscv_reg_zero,
+                    (immediate >> 31) & 1u);
+    ptr = translation_ptr;
+  }
+  else
+  {
+    riscv_emit_arm_cpsr_c_load(&ptr, riscv_reg_t3);
+  }
+
+  *ptr_ref = ptr;
+}
+
+static bool riscv_emit_arm_data_proc_logical_immediate_result(u8 **ptr_ref,
+                                                              u32 op,
+                                                              u32 opcode,
+                                                              u32 immediate,
+                                                              u32 flag_mask)
+{
+  if (!riscv_emit_arm_data_proc_immediate_result(ptr_ref, op, immediate))
+    return false;
+
+  riscv_emit_arm_immediate_shifter_carry(ptr_ref, opcode, immediate,
+                                         flag_mask);
+  return true;
+}
+
+static bool riscv_emit_arm_data_proc_arithmetic_immediate_flags(
+  u8 **ptr_ref, u32 op, u32 immediate, u32 flag_mask)
+{
+  bool need_c = (flag_mask & 0x02u) != 0;
+  bool need_v = (flag_mask & 0x01u) != 0;
+  u8 *ptr = *ptr_ref;
+  u8 *translation_ptr;
+  u32 neg_immediate;
+  u32 next_immediate;
+
+  if (!riscv_i12_fits(immediate))
+    return false;
+
+  translation_ptr = ptr;
+  switch (op)
+  {
+    case 0x2:
+      neg_immediate = 0u - immediate;
+      if (!riscv_i12_fits(neg_immediate))
+        return false;
+      riscv_emit_addi(riscv_reg_t2, riscv_reg_t0, (s32)neg_immediate);
+      if (need_c)
+      {
+        riscv_emit_sltiu(riscv_reg_t3, riscv_reg_t0, (s32)immediate);
+        riscv_emit_xori(riscv_reg_t3, riscv_reg_t3, 1);
+      }
+      if (need_v)
+      {
+        riscv_emit_xori(riscv_reg_t4, riscv_reg_t0, (s32)immediate);
+        riscv_emit_xor(riscv_reg_t6, riscv_reg_t0, riscv_reg_t2);
+      }
+      break;
+
+    case 0x3:
+      if (need_c)
+      {
+        if (immediate == 0xffffffffu)
+        {
+          next_immediate = 0;
+        }
+        else
+        {
+          next_immediate = immediate + 1u;
+          if (!riscv_i12_fits(next_immediate))
+            return false;
+        }
+      }
+      riscv_emit_sub(riscv_reg_t2, riscv_reg_zero, riscv_reg_t0);
+      if (immediate)
+        riscv_emit_addi(riscv_reg_t2, riscv_reg_t2, (s32)immediate);
+      if (need_c)
+      {
+        if (immediate == 0xffffffffu)
+          riscv_emit_addi(riscv_reg_t3, riscv_reg_zero, 1);
+        else
+          riscv_emit_sltiu(riscv_reg_t3, riscv_reg_t0,
+                           (s32)next_immediate);
+      }
+      if (need_v)
+      {
+        riscv_emit_xori(riscv_reg_t4, riscv_reg_t0, (s32)immediate);
+        riscv_emit_xori(riscv_reg_t6, riscv_reg_t2, (s32)immediate);
+      }
+      break;
+
+    case 0x4:
+      riscv_emit_addi(riscv_reg_t2, riscv_reg_t0, (s32)immediate);
+      if (need_c)
+        riscv_emit_sltu(riscv_reg_t3, riscv_reg_t2, riscv_reg_t0);
+      if (need_v)
+      {
+        riscv_emit_xori(riscv_reg_t4, riscv_reg_t0, (s32)immediate);
+        riscv_emit_xori(riscv_reg_t4, riscv_reg_t4, -1);
+        riscv_emit_xor(riscv_reg_t6, riscv_reg_t0, riscv_reg_t2);
+      }
+      break;
+
+    default:
+      return false;
+  }
+
+  if (need_v)
+  {
+    riscv_emit_and(riscv_reg_t4, riscv_reg_t4, riscv_reg_t6);
+    riscv_emit_srli(riscv_reg_t4, riscv_reg_t4, 31);
+  }
+
+  ptr = translation_ptr;
+  *ptr_ref = ptr;
+  return true;
+}
+
 static bool riscv_emit_arm_data_test_immediate_result(u8 **ptr_ref,
                                                       u32 op,
                                                       u32 immediate)
@@ -2557,6 +2689,36 @@ static bool riscv_emit_arm_data_test_immediate_result(u8 **ptr_ref,
 
   *ptr_ref = ptr;
   return true;
+}
+
+static bool riscv_emit_arm_data_test_logical_immediate_result(u8 **ptr_ref,
+                                                              u32 op,
+                                                              u32 opcode,
+                                                              u32 immediate,
+                                                              u32 flag_mask)
+{
+  if (!riscv_emit_arm_data_test_immediate_result(ptr_ref, op, immediate))
+    return false;
+
+  riscv_emit_arm_immediate_shifter_carry(ptr_ref, opcode, immediate,
+                                         flag_mask);
+  return true;
+}
+
+static bool riscv_emit_arm_data_test_arithmetic_immediate_flags(
+  u8 **ptr_ref, u32 op, u32 immediate, u32 flag_mask)
+{
+  switch (op)
+  {
+    case 0xa:
+      return riscv_emit_arm_data_proc_arithmetic_immediate_flags(
+        ptr_ref, 0x2, immediate, flag_mask);
+    case 0xb:
+      return riscv_emit_arm_data_proc_arithmetic_immediate_flags(
+        ptr_ref, 0x4, immediate, flag_mask);
+    default:
+      return false;
+  }
 }
 
 bool riscv_emit_native_arm_data_proc_with_pc_ex(u8 **translation_ptr_ref,
@@ -2611,11 +2773,27 @@ bool riscv_emit_native_arm_data_proc_with_pc_ex(u8 **translation_ptr_ref,
   if (op != 0xd && op != 0xf)
     riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t0, meta, rn, pc + 8u);
 
-  if (imm_op && !(generated_flag_mask & 0x03u))
+  if (imm_op)
   {
-    result_emitted =
-      riscv_emit_arm_data_proc_immediate_result(&ptr, op,
-                                                riscv_arm_expand_imm(opcode));
+    u32 immediate = riscv_arm_expand_imm(opcode);
+
+    if (logical_flags)
+    {
+      result_emitted =
+        riscv_emit_arm_data_proc_logical_immediate_result(
+          &ptr, op, opcode, immediate, generated_flag_mask);
+    }
+    else if (arithmetic_flags && (generated_flag_mask & 0x03u))
+    {
+      result_emitted =
+        riscv_emit_arm_data_proc_arithmetic_immediate_flags(
+          &ptr, op, immediate, generated_flag_mask);
+    }
+    else if (!(generated_flag_mask & 0x03u))
+    {
+      result_emitted =
+        riscv_emit_arm_data_proc_immediate_result(&ptr, op, immediate);
+    }
   }
 
   if (!result_emitted && logical_flags && (generated_flag_mask & 0x02u))
@@ -2888,11 +3066,27 @@ bool riscv_emit_native_arm_data_proc_test_with_pc_ex(u8 **translation_ptr_ref,
 
   riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t0, meta, rn, pc + 8u);
 
-  if (imm_op && !(generated_flag_mask & 0x03u))
+  if (imm_op)
   {
-    result_emitted =
-      riscv_emit_arm_data_test_immediate_result(&ptr, op,
-                                                riscv_arm_expand_imm(opcode));
+    u32 immediate = riscv_arm_expand_imm(opcode);
+
+    if (logical_test)
+    {
+      result_emitted =
+        riscv_emit_arm_data_test_logical_immediate_result(
+          &ptr, op, opcode, immediate, generated_flag_mask);
+    }
+    else if (generated_flag_mask & 0x03u)
+    {
+      result_emitted =
+        riscv_emit_arm_data_test_arithmetic_immediate_flags(
+          &ptr, op, immediate, generated_flag_mask);
+    }
+    else
+    {
+      result_emitted =
+        riscv_emit_arm_data_test_immediate_result(&ptr, op, immediate);
+    }
   }
 
   if (!result_emitted && logical_test && (generated_flag_mask & 0x02u))
