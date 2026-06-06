@@ -87,9 +87,9 @@ BEGIN {
 	track("signed_half_reg_load_pc_code_bytes", 76, "arm_half_signed_memory");
 	track("signed_byte_load_pc_code_bytes", 72, "arm_half_signed_memory");
 	track("signed_half_load_pc_code_bytes", 72, "arm_half_signed_memory");
-	track("pc_base_half_load_code_bytes", 160, "arm_half_signed_memory");
-	track("pc_base_half_store_code_bytes", 88, "arm_half_signed_memory");
-	track("pc_base_half_neg_store_code_bytes", 88, "arm_half_signed_memory");
+	track("pc_base_half_load_code_bytes", 148, "arm_half_signed_memory");
+	track("pc_base_half_store_code_bytes", 84, "arm_half_signed_memory");
+	track("pc_base_half_neg_store_code_bytes", 84, "arm_half_signed_memory");
 	track("half_load_code_bytes", 152, "arm_half_signed_memory");
 	track("half_store_code_bytes", 84, "arm_half_signed_memory");
 	track("half_reg_load_code_bytes", 164, "arm_half_signed_memory");
