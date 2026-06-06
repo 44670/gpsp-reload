@@ -15,7 +15,7 @@ typedef unsigned int usize;
 #define PROT_EXEC 4
 #define MAP_PRIVATE 2
 #define MAP_ANONYMOUS 32
-#define EXEC_MAP_BYTES 79872u
+#define EXEC_MAP_BYTES 80384u
 
 #define BLOCK_START_PC 0x08000000u
 #define BLOCK_END_PC 0x08000004u
@@ -53,6 +53,15 @@ typedef unsigned int usize;
 #define THUMB_UNSUPPORTED_START_PC 0x02001020u
 #define THUMB_UNSUPPORTED_END_PC (THUMB_UNSUPPORTED_START_PC + 2u)
 #define THUMB_UNSUPPORTED_CYCLES 13u
+#define THUMB_SIMPLE_DATA_START_PC 0x02001040u
+#define THUMB_SIMPLE_DATA_END_PC (THUMB_SIMPLE_DATA_START_PC + 10u)
+#define THUMB_SIMPLE_DATA_CYCLES 5u
+#define THUMB_SIMPLE_DATA_SP_VALUE 0x03001000u
+#define THUMB_SIMPLE_DATA_R1_VALUE 0x0000007fu
+#define THUMB_SIMPLE_DATA_R2_VALUE (THUMB_SIMPLE_DATA_START_PC + 12u)
+#define THUMB_SIMPLE_DATA_R3_VALUE (THUMB_SIMPLE_DATA_SP_VALUE + 8u)
+#define THUMB_SIMPLE_DATA_SP_FINAL (THUMB_SIMPLE_DATA_SP_VALUE - 4u)
+#define THUMB_SIMPLE_DATA_CPSR_VALUE (CPSR_CV_LOW_VALUE | CPSR_T_BIT)
 #define MULTIPLY_START_PC 0x08000080u
 #define MULTIPLY_END_PC (MULTIPLY_START_PC + 8u)
 #define MULTIPLY_MUL_CYCLES 5u
@@ -1363,6 +1372,7 @@ typedef unsigned int usize;
 #define HALF_REG_LOAD_PC_BLOCK_OFFSET 78336u
 #define SIGNED_BYTE_REG_LOAD_PC_BLOCK_OFFSET 78848u
 #define SIGNED_HALF_REG_LOAD_PC_BLOCK_OFFSET 79360u
+#define THUMB_SIMPLE_DATA_BLOCK_OFFSET 79872u
 #define EXPECTED_INITIAL_ROM_WATERMARK 16u
 
 u32 reg[REG_MAX];
@@ -1384,6 +1394,7 @@ static u8 *g_cycle_update_entry;
 static u8 *g_unsupported_entry;
 static u8 *g_partial_unsupported_entry;
 static u8 *g_thumb_unsupported_entry;
+static u8 *g_thumb_simple_data_entry;
 static u8 *g_multiply_entry;
 static u8 *g_multiply_flag_muls_entry;
 static u8 *g_multiply_flag_mlas_entry;
@@ -2090,6 +2101,75 @@ static u32 build_thumb_unsupported_block(u8 *code)
   riscv_emit_block_finalize(meta, &translation_ptr,
                             THUMB_UNSUPPORTED_START_PC,
                             THUMB_UNSUPPORTED_END_PC, true);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static void emit_thumb_simple_data_checked(u8 **translation_ptr,
+                                           riscv_jit_block_meta *meta,
+                                           u32 opcode,
+                                           u32 pc,
+                                           u32 *cycle_count,
+                                           const char *test_name)
+{
+  bool cycles_emitted = true;
+
+  *cycle_count += 1u;
+  if (!riscv_emit_native_thumb_instruction(translation_ptr, meta, opcode,
+                                           pc, *cycle_count, false,
+                                           &cycles_emitted))
+  {
+    put_raw("result=FAIL command=runtime reason=");
+    put_raw(test_name);
+    put_raw("_emit_rejected\n");
+    sys_exit(1);
+  }
+  if (cycles_emitted)
+  {
+    put_raw("result=FAIL command=runtime reason=");
+    put_raw(test_name);
+    put_raw("_cycles_emitted\n");
+    sys_exit(1);
+  }
+}
+
+static u32 build_thumb_simple_data_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 cycle_count = 0;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_thumb_simple_data_entry = ((u8 *)meta) + block_prologue_size;
+
+  emit_thumb_simple_data_checked(&translation_ptr, meta, 0x2000u,
+                                 THUMB_SIMPLE_DATA_START_PC,
+                                 &cycle_count, "thumb_mov_zero");
+  emit_thumb_simple_data_checked(&translation_ptr, meta, 0x217fu,
+                                 THUMB_SIMPLE_DATA_START_PC + 2u,
+                                 &cycle_count, "thumb_mov_nonzero");
+  emit_thumb_simple_data_checked(&translation_ptr, meta, 0xa201u,
+                                 THUMB_SIMPLE_DATA_START_PC + 4u,
+                                 &cycle_count, "thumb_add_pc");
+  emit_thumb_simple_data_checked(&translation_ptr, meta, 0xab02u,
+                                 THUMB_SIMPLE_DATA_START_PC + 6u,
+                                 &cycle_count, "thumb_add_sp");
+  emit_thumb_simple_data_checked(&translation_ptr, meta, 0xb081u,
+                                 THUMB_SIMPLE_DATA_START_PC + 8u,
+                                 &cycle_count, "thumb_adjust_sp");
+
+  if (!riscv_emit_cycle_update(&translation_ptr, meta, cycle_count))
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=thumb_simple_data_cycle_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            THUMB_SIMPLE_DATA_START_PC,
+                            THUMB_SIMPLE_DATA_END_PC, true);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -4737,6 +4817,60 @@ static void run_thumb_unsupported_block_fallback_case(void)
   expect_runtime_fallback_delta("thumb_unsupported_fallback_stats",
                                 &stats_before, 1, 1, 0, 0, 1);
   expect_stickybits_cleared("thumb_unsupported_fallback");
+}
+
+static void run_thumb_simple_data_case(void)
+{
+  riscv_runtime_stats stats_before;
+
+  reset_runtime_observations(THUMB_SIMPLE_DATA_START_PC);
+  reg[REG_CPSR] = THUMB_SIMPLE_DATA_CPSR_VALUE;
+  reg[REG_SP] = THUMB_SIMPLE_DATA_SP_VALUE;
+  g_thumb_lookup_entry = g_thumb_simple_data_entry;
+  g_thumb_lookup_entry_pc = THUMB_SIMPLE_DATA_START_PC;
+  riscv_get_runtime_stats(&stats_before);
+
+  execute_arm_translate_internal(THUMB_SIMPLE_DATA_CYCLES, &reg[0]);
+
+  if (reg[0] != 0)
+    fail_u32("thumb_simple_data", "r0", reg[0], 0);
+  if (reg[1] != THUMB_SIMPLE_DATA_R1_VALUE)
+    fail_u32("thumb_simple_data", "r1",
+             reg[1], THUMB_SIMPLE_DATA_R1_VALUE);
+  if (reg[2] != THUMB_SIMPLE_DATA_R2_VALUE)
+    fail_u32("thumb_simple_data", "r2",
+             reg[2], THUMB_SIMPLE_DATA_R2_VALUE);
+  if (reg[3] != THUMB_SIMPLE_DATA_R3_VALUE)
+    fail_u32("thumb_simple_data", "r3",
+             reg[3], THUMB_SIMPLE_DATA_R3_VALUE);
+  if (reg[REG_SP] != THUMB_SIMPLE_DATA_SP_FINAL)
+    fail_u32("thumb_simple_data", "sp",
+             reg[REG_SP], THUMB_SIMPLE_DATA_SP_FINAL);
+  if (reg[REG_PC] != THUMB_SIMPLE_DATA_END_PC)
+    fail_u32("thumb_simple_data", "pc",
+             reg[REG_PC], THUMB_SIMPLE_DATA_END_PC);
+  if (reg[REG_CPSR] != THUMB_SIMPLE_DATA_CPSR_VALUE)
+    fail_u32("thumb_simple_data", "cpsr",
+             reg[REG_CPSR], THUMB_SIMPLE_DATA_CPSR_VALUE);
+  if (g_lookup_calls != 0)
+    fail_u32("thumb_simple_data", "arm_lookup_calls",
+             g_lookup_calls, 0);
+  if (g_thumb_lookup_calls != 1)
+    fail_u32("thumb_simple_data", "thumb_lookup_calls",
+             g_thumb_lookup_calls, 1);
+  if (g_thumb_lookup_pc != THUMB_SIMPLE_DATA_START_PC)
+    fail_u32("thumb_simple_data", "thumb_lookup_pc",
+             g_thumb_lookup_pc, THUMB_SIMPLE_DATA_START_PC);
+  if (g_update_calls != 1)
+    fail_u32("thumb_simple_data", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("thumb_simple_data", "update_cycles",
+             (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("thumb_simple_data", "execute_calls", g_execute_calls, 0);
+  expect_runtime_fallback_delta("thumb_simple_data_stats",
+                                &stats_before, 1, 0, 0, 0, 0);
+  expect_stickybits_cleared("thumb_simple_data");
 }
 
 static void run_initial_lookup_fallback_case(const char *test_name,
@@ -10924,6 +11058,7 @@ void _start(void)
   u32 unsupported_code_bytes;
   u32 partial_unsupported_code_bytes;
   u32 thumb_unsupported_code_bytes;
+  u32 thumb_simple_data_code_bytes;
   u32 multiply_code_bytes;
   u32 multiply_flag_muls_code_bytes;
   u32 multiply_flag_mlas_code_bytes;
@@ -11079,6 +11214,8 @@ void _start(void)
     build_partial_unsupported_block(code + PARTIAL_UNSUPPORTED_BLOCK_OFFSET);
   thumb_unsupported_code_bytes =
     build_thumb_unsupported_block(code + THUMB_UNSUPPORTED_BLOCK_OFFSET);
+  thumb_simple_data_code_bytes =
+    build_thumb_simple_data_block(code + THUMB_SIMPLE_DATA_BLOCK_OFFSET);
   multiply_code_bytes = build_multiply_block(code + MULTIPLY_BLOCK_OFFSET);
   multiply_flag_muls_code_bytes =
     build_multiply_flag_block(code + MULTIPLY_FLAG_MULS_BLOCK_OFFSET,
@@ -11676,6 +11813,7 @@ void _start(void)
   run_unsupported_block_fallback_case();
   run_partial_unsupported_finalize_case();
   run_thumb_unsupported_block_fallback_case();
+  run_thumb_simple_data_case();
   run_initial_lookup_miss_fallback_case();
   run_initial_lookup_invalid_fallback_case();
   run_initial_thumb_lookup_miss_fallback_case();
@@ -11943,6 +12081,8 @@ void _start(void)
   put_u32_dec(partial_unsupported_code_bytes);
   put_raw(" thumb_unsupported_code_bytes=");
   put_u32_dec(thumb_unsupported_code_bytes);
+  put_raw(" thumb_simple_data_code_bytes=");
+  put_u32_dec(thumb_simple_data_code_bytes);
   put_raw(" multiply_code_bytes=");
   put_u32_dec(multiply_code_bytes);
   put_raw(" multiply_flag_muls_code_bytes=");

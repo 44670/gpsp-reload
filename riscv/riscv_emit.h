@@ -164,7 +164,8 @@ bool riscv_emit_native_thumb_instruction(u8 **translation_ptr,
                                          u32 opcode,
                                          u32 pc,
                                          u32 cycles,
-                                         bool exits);
+                                         bool exits,
+                                         bool *cycles_emitted);
 bool riscv_emit_native_thumb_bl_pair(u8 **translation_ptr,
                                      riscv_jit_block_meta *meta,
                                      u32 first_opcode,
@@ -523,11 +524,14 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
 #define riscv_emit_thumb_instruction(exits_value)                             \
   do                                                                          \
   {                                                                           \
+    bool riscv_thumb_cycles_emitted = false;                                  \
     if (riscv_emit_native_thumb_instruction(&translation_ptr,                  \
                                             riscv_block_meta, opcode, pc,      \
-                                            cycle_count, (exits_value)))       \
+                                            cycle_count, (exits_value),        \
+                                            &riscv_thumb_cycles_emitted))      \
     {                                                                         \
-      cycle_count = riscv_thumb_mul_frontend_extra(opcode);                   \
+      if (riscv_thumb_cycles_emitted)                                         \
+        cycle_count = riscv_thumb_mul_frontend_extra(opcode);                 \
     }                                                                         \
     else                                                                      \
     {                                                                         \
