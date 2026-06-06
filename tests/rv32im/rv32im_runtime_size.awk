@@ -97,7 +97,7 @@ BEGIN {
 	track("bx_code_bytes", 76, "arm_control_flow");
 
 	track("psr_code_bytes", 96, "arm_psr");
-	track("msr_cpsr_flags_code_bytes", 80, "arm_psr");
+	track("msr_cpsr_flags_code_bytes", 72, "arm_psr");
 	track("msr_cpsr_control_code_bytes", 68, "arm_psr");
 	track("msr_spsr_code_bytes", 68, "arm_psr");
 

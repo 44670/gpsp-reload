@@ -151,6 +151,12 @@ bool riscv_emit_native_arm_psr_with_pc(u8 **translation_ptr,
                                        u32 opcode,
                                        u32 pc,
                                        u32 cycles);
+bool riscv_emit_native_arm_psr_with_pc_ex(u8 **translation_ptr,
+                                          riscv_jit_block_meta *meta,
+                                          u32 opcode,
+                                          u32 pc,
+                                          u32 cycles,
+                                          u32 flag_status);
 bool riscv_emit_native_arm_b(u8 **translation_ptr,
                              riscv_jit_block_meta *meta,
                              u32 opcode,
@@ -526,10 +532,10 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target);
 #define arm_psr(...)                                                          \
   do                                                                          \
   {                                                                           \
-    if (riscv_emit_native_arm_psr_with_pc(&translation_ptr,                   \
-                                          riscv_block_meta,                  \
-                                          riscv_arm_effective_opcode(),       \
-                                          pc, cycle_count))                   \
+    if (riscv_emit_native_arm_psr_with_pc_ex(&translation_ptr,                \
+                                             riscv_block_meta,               \
+                                             riscv_arm_effective_opcode(),    \
+                                             pc, cycle_count, flag_status))   \
     {                                                                         \
       cycle_count = 0;                                                        \
     }                                                                         \
