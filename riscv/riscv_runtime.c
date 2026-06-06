@@ -7451,6 +7451,7 @@ bool riscv_emit_native_thumb_bl_pair(u8 **translation_ptr_ref,
   u32 low_offset;
   u32 target_pc;
   u32 link_value;
+  s32 target_delta;
 
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
     return false;
@@ -7465,10 +7466,21 @@ bool riscv_emit_native_thumb_bl_pair(u8 **translation_ptr_ref,
   low_offset = (second_opcode & 0x07ffu) * 2u;
   target_pc = pc + 2u + (u32)high_offset + low_offset;
   link_value = (pc + 2u) | 1u;
+  target_delta = (s32)(target_pc - link_value);
 
   riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_t0, link_value);
   riscv_emit_arm_reg_store(&ptr, REG_LR, riscv_reg_t0);
-  riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_t0, target_pc);
+  if (riscv_i12_fits((u32)target_delta))
+  {
+    u8 *translation_ptr = ptr;
+
+    riscv_emit_addi(riscv_reg_t0, riscv_reg_t0, target_delta);
+    ptr = translation_ptr;
+  }
+  else
+  {
+    riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_t0, target_pc);
+  }
   riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
   riscv_emit_adjust_cycles(&ptr, cycles);
   meta->flags |= RISCV_BLOCK_PC_WRITTEN;
