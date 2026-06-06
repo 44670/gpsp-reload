@@ -104,6 +104,8 @@ static u32 g_fallback_last_pc;
 static u32 g_fallback_hash = 2166136261u;
 static u32 g_total_observed_results;
 static u32 g_total_failure_mask;
+static u32 g_arm_code_bytes_total;
+static u32 g_thumb_code_bytes_total;
 
 static long syscall1(long n, long arg0)
 {
@@ -649,6 +651,10 @@ static void print_summary(const char *result, const char *suite, u32 test_id,
   put_u32_dec(stats.blocks_executed);
   put_raw(" code_bytes=");
   put_u32_dec(code_bytes);
+  put_raw(" arm_code_bytes_total=");
+  put_u32_dec(g_arm_code_bytes_total);
+  put_raw(" thumb_code_bytes_total=");
+  put_u32_dec(g_thumb_code_bytes_total);
   put_raw(" fallbacks=");
   put_u32_dec(stats.interpreter_fallbacks);
   put_raw(" fallback_events=");
@@ -710,6 +716,10 @@ static void print_aggregate_summary(const char *result, const char *reason)
   put_u32_dec(stats.blocks_executed);
   put_raw(" code_bytes=");
   put_u32_dec(code_bytes);
+  put_raw(" arm_code_bytes_total=");
+  put_u32_dec(g_arm_code_bytes_total);
+  put_raw(" thumb_code_bytes_total=");
+  put_u32_dec(g_thumb_code_bytes_total);
   put_raw(" fallbacks=");
   put_u32_dec(stats.interpreter_fallbacks);
   put_raw(" fallback_events=");
@@ -781,6 +791,7 @@ static int run_armwrestler_test(u32 test_id, u32 expected_results)
 
   riscv_get_runtime_stats(&after);
   after_code_bytes = (u32)(rom_translation_ptr - rom_translation_cache);
+  g_arm_code_bytes_total += after_code_bytes;
   g_total_observed_results += result_word(0);
   g_total_failure_mask |= result_word(4);
 
@@ -853,6 +864,7 @@ static int run_thumbwrestler_test(u32 test_id, u32 expected_results)
 
   riscv_get_runtime_stats(&after);
   after_code_bytes = (u32)(rom_translation_ptr - rom_translation_cache);
+  g_thumb_code_bytes_total += after_code_bytes;
   g_total_observed_results += result_word(0);
   g_total_failure_mask |= result_word(4);
 

@@ -21,6 +21,8 @@ MIXED_LOG := $(OUT_DIR)/rv32im_harness_mixed.log
 REJECTS_LOG := $(OUT_DIR)/rv32im_harness_rejects.log
 ARMWRESTLER_LOG := $(OUT_DIR)/rv32im_armwrestler.log
 ARMWRESTLER_INTERP_LOG := $(OUT_DIR)/rv32im_armwrestler_interp.log
+ARMWRESTLER_ARM_CODE_BYTES_MAX ?= 470672
+ARMWRESTLER_THUMB_CODE_BYTES_MAX ?= 125764
 CODEGEN_BIN := $(OUT_DIR)/rv32im_codegen.bin
 CODEGEN_REF_ELF := $(OUT_DIR)/rv32im_codegen_ref.elf
 CODEGEN_REF_BIN := $(OUT_DIR)/rv32im_codegen_ref.bin
@@ -241,6 +243,14 @@ armwrestler-jit: $(ARMWRESTLER) | $(OUT_DIR)
 	grep -q 'result=PASS command=armwrestler test=all' $(ARMWRESTLER_LOG)
 	grep -q 'observed_results=79 failure_mask=0x00000000' $(ARMWRESTLER_LOG)
 	grep -q 'fallbacks=0 fallback_events=0 execute_arm_calls=0' $(ARMWRESTLER_LOG)
+	for test in arm0 arm1 arm2 arm3 arm4 thumb0 thumb1 thumb2; do grep -Eq "command=armwrestler-jit-test test=$$test .* code_bytes=[1-9][0-9]*" $(ARMWRESTLER_LOG); done
+	grep -Eq 'command=armwrestler test=all .* arm_code_bytes_total=[1-9][0-9]* thumb_code_bytes_total=[1-9][0-9]*' $(ARMWRESTLER_LOG)
+	arm_total=$$(sed -n 's/.* command=armwrestler test=all .* arm_code_bytes_total=\([0-9][0-9]*\) thumb_code_bytes_total=[0-9][0-9]*.*/\1/p' $(ARMWRESTLER_LOG)); \
+	thumb_total=$$(sed -n 's/.* command=armwrestler test=all .* thumb_code_bytes_total=\([0-9][0-9]*\).*/\1/p' $(ARMWRESTLER_LOG)); \
+	test -n "$$arm_total"; \
+	test -n "$$thumb_total"; \
+	test "$$arm_total" -le "$(ARMWRESTLER_ARM_CODE_BYTES_MAX)"; \
+	test "$$thumb_total" -le "$(ARMWRESTLER_THUMB_CODE_BYTES_MAX)"
 	grep -q 'harness_mode=armwrestler_frontend_jit_only reason=armwrestler_all_jit_only_passed' $(ARMWRESTLER_LOG)
 
 armwrestler-interp: $(ARMWRESTLER_INTERP) | $(OUT_DIR)
@@ -254,6 +264,7 @@ armwrestler: armwrestler-interp armwrestler-jit
 	grep -q 'observed_results=79 failure_mask=0x00000000' $(ARMWRESTLER_LOG)
 	grep -q 'native_blocks=[1-9][0-9]*' $(ARMWRESTLER_LOG)
 	grep -q 'code_bytes=[1-9][0-9]*' $(ARMWRESTLER_LOG)
+	grep -Eq 'command=armwrestler test=all .* arm_code_bytes_total=[1-9][0-9]* thumb_code_bytes_total=[1-9][0-9]*' $(ARMWRESTLER_LOG)
 
 abi: $(ABI_TEST)
 	$(QEMU_RISCV32) ./$(ABI_TEST)
