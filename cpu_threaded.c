@@ -2992,7 +2992,7 @@ enum
 {
   RISCV_PC_BASE_INITIAL_LOAD_COUNT = 0,
   RISCV_ARM_PC_BASE_LOAD_THRESHOLD = 3,
-  RISCV_THUMB_PC_BASE_LOAD_THRESHOLD = 2
+  RISCV_THUMB_PC_BASE_LOAD_THRESHOLD = 4
 };
 
 #define arm_pc_base_status()                                                  \
