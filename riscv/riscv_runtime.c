@@ -595,6 +595,124 @@ static bool riscv_emit_arm_condition_value(u8 **ptr_ref, u32 condition)
   return true;
 }
 
+static bool riscv_emit_arm_condition_true_branch(u8 **ptr_ref, u32 condition)
+{
+  u8 *ptr = *ptr_ref;
+  u8 *translation_ptr;
+
+  switch (condition)
+  {
+    case 0x0:
+      riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 30);
+      translation_ptr = ptr;
+      riscv_emit_bne(riscv_reg_t0, riscv_reg_zero, 8);
+      ptr = translation_ptr;
+      break;
+    case 0x1:
+      riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 30);
+      translation_ptr = ptr;
+      riscv_emit_beq(riscv_reg_t0, riscv_reg_zero, 8);
+      ptr = translation_ptr;
+      break;
+    case 0x2:
+      riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 29);
+      translation_ptr = ptr;
+      riscv_emit_bne(riscv_reg_t0, riscv_reg_zero, 8);
+      ptr = translation_ptr;
+      break;
+    case 0x3:
+      riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 29);
+      translation_ptr = ptr;
+      riscv_emit_beq(riscv_reg_t0, riscv_reg_zero, 8);
+      ptr = translation_ptr;
+      break;
+    case 0x4:
+      riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 31);
+      translation_ptr = ptr;
+      riscv_emit_bne(riscv_reg_t0, riscv_reg_zero, 8);
+      ptr = translation_ptr;
+      break;
+    case 0x5:
+      riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 31);
+      translation_ptr = ptr;
+      riscv_emit_beq(riscv_reg_t0, riscv_reg_zero, 8);
+      ptr = translation_ptr;
+      break;
+    case 0x6:
+      riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 28);
+      translation_ptr = ptr;
+      riscv_emit_bne(riscv_reg_t0, riscv_reg_zero, 8);
+      ptr = translation_ptr;
+      break;
+    case 0x7:
+      riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 28);
+      translation_ptr = ptr;
+      riscv_emit_beq(riscv_reg_t0, riscv_reg_zero, 8);
+      ptr = translation_ptr;
+      break;
+    case 0x8:
+    case 0x9:
+      riscv_emit_arm_reg_load(&ptr, riscv_reg_t2, REG_CPSR);
+      translation_ptr = ptr;
+      riscv_emit_arm_loaded_cpsr_flag_value(&translation_ptr,
+                                            riscv_reg_t0, riscv_reg_t2,
+                                            29);
+      riscv_emit_arm_loaded_cpsr_flag_value(&translation_ptr,
+                                            riscv_reg_t1, riscv_reg_t2,
+                                            30);
+      riscv_emit_xori(riscv_reg_t0, riscv_reg_t0, 1);
+      riscv_emit_or(riscv_reg_t0, riscv_reg_t0, riscv_reg_t1);
+      if (condition == 0x8)
+        riscv_emit_beq(riscv_reg_t0, riscv_reg_zero, 8);
+      else
+        riscv_emit_bne(riscv_reg_t0, riscv_reg_zero, 8);
+      ptr = translation_ptr;
+      break;
+    case 0xa:
+    case 0xb:
+      riscv_emit_arm_reg_load(&ptr, riscv_reg_t2, REG_CPSR);
+      translation_ptr = ptr;
+      riscv_emit_arm_loaded_cpsr_flag_value(&translation_ptr,
+                                            riscv_reg_t0, riscv_reg_t2,
+                                            31);
+      riscv_emit_arm_loaded_cpsr_flag_value(&translation_ptr,
+                                            riscv_reg_t1, riscv_reg_t2,
+                                            28);
+      if (condition == 0xa)
+        riscv_emit_beq(riscv_reg_t0, riscv_reg_t1, 8);
+      else
+        riscv_emit_bne(riscv_reg_t0, riscv_reg_t1, 8);
+      ptr = translation_ptr;
+      break;
+    case 0xc:
+    case 0xd:
+      riscv_emit_arm_reg_load(&ptr, riscv_reg_t3, REG_CPSR);
+      translation_ptr = ptr;
+      riscv_emit_arm_loaded_cpsr_flag_value(&translation_ptr,
+                                            riscv_reg_t0, riscv_reg_t3,
+                                            31);
+      riscv_emit_arm_loaded_cpsr_flag_value(&translation_ptr,
+                                            riscv_reg_t1, riscv_reg_t3,
+                                            28);
+      riscv_emit_arm_loaded_cpsr_flag_value(&translation_ptr,
+                                            riscv_reg_t2, riscv_reg_t3,
+                                            30);
+      riscv_emit_xor(riscv_reg_t0, riscv_reg_t0, riscv_reg_t1);
+      riscv_emit_or(riscv_reg_t0, riscv_reg_t0, riscv_reg_t2);
+      if (condition == 0xc)
+        riscv_emit_beq(riscv_reg_t0, riscv_reg_zero, 8);
+      else
+        riscv_emit_bne(riscv_reg_t0, riscv_reg_zero, 8);
+      ptr = translation_ptr;
+      break;
+    default:
+      return false;
+  }
+
+  *ptr_ref = ptr;
+  return true;
+}
+
 bool riscv_emit_arm_conditional_block_header(u8 **translation_ptr_ref,
                                              riscv_jit_block_meta *meta,
                                              u32 condition,
@@ -602,7 +720,6 @@ bool riscv_emit_arm_conditional_block_header(u8 **translation_ptr_ref,
                                              u8 **branch_source)
 {
   u8 *ptr = *translation_ptr_ref;
-  u8 *translation_ptr;
 
   if (branch_source)
     *branch_source = NULL;
@@ -613,13 +730,12 @@ bool riscv_emit_arm_conditional_block_header(u8 **translation_ptr_ref,
   if (!branch_source)
     return false;
 
-  if (!riscv_emit_arm_condition_value(&ptr, condition))
+  if (condition > 0x0du)
     return false;
 
   riscv_emit_adjust_cycles(&ptr, cycles);
-  translation_ptr = ptr;
-  riscv_emit_bne(riscv_reg_t0, riscv_reg_zero, 8);
-  ptr = translation_ptr;
+  if (!riscv_emit_arm_condition_true_branch(&ptr, condition))
+    return false;
 
   *branch_source = riscv_emit_conditional_skip_patch_site(&ptr);
 
