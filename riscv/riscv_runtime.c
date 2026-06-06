@@ -2862,7 +2862,9 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
                                                riscv_jit_block_meta *meta,
                                                u32 opcode,
                                                u32 pc,
-                                               u32 cycles)
+                                               u32 cycles,
+                                               bool emit_cycles,
+                                               bool *cycles_emitted)
 {
   u32 condition = opcode >> 28;
   u32 pre_index = (opcode >> 24) & 1u;
@@ -2879,6 +2881,9 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
   bool writeback_address = writeback || !pre_index;
   bool pc_base = rn == REG_PC;
   riscv_reg_number writeback_reg = riscv_reg_a0;
+
+  if (cycles_emitted)
+    *cycles_emitted = false;
 
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
     return false;
@@ -2973,7 +2978,12 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
     riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_a0);
     if (rd == REG_PC)
       meta->flags |= RISCV_BLOCK_PC_WRITTEN;
-    riscv_emit_adjust_cycles(&ptr, cycles + 2u);
+    if (emit_cycles || rd == REG_PC)
+    {
+      riscv_emit_adjust_cycles(&ptr, cycles + 2u);
+      if (cycles_emitted)
+        *cycles_emitted = true;
+    }
     riscv_native_load_insns++;
   }
   else
@@ -2982,6 +2992,8 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
     riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
     riscv_emit_c_call(&ptr, (uintptr_t)riscv_store_u16);
     riscv_emit_adjust_cycles(&ptr, cycles + 1u);
+    if (cycles_emitted)
+      *cycles_emitted = true;
     riscv_emit_helper_call(&ptr, meta);
     riscv_native_store_insns++;
   }
@@ -3089,11 +3101,13 @@ static bool riscv_emit_arm_memory_reg_offset(u8 **ptr_ref, u32 opcode, u32 pc)
   return true;
 }
 
-bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,
-                                         riscv_jit_block_meta *meta,
-                                         u32 opcode,
-                                         u32 pc,
-                                         u32 cycles)
+bool riscv_emit_native_arm_access_memory_ex(u8 **translation_ptr_ref,
+                                            riscv_jit_block_meta *meta,
+                                            u32 opcode,
+                                            u32 pc,
+                                            u32 cycles,
+                                            bool emit_cycles,
+                                            bool *cycles_emitted)
 {
   u32 condition = opcode >> 28;
   u32 register_offset = (opcode >> 25) & 1u;
@@ -3110,10 +3124,14 @@ bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,
   bool pc_base = rn == REG_PC;
   riscv_reg_number writeback_reg = riscv_reg_a0;
 
+  if (cycles_emitted)
+    *cycles_emitted = false;
+
   if ((opcode & 0x0c000000u) != 0x04000000u)
   {
     return riscv_emit_native_arm_extra_memory(translation_ptr_ref, meta,
-                                             opcode, pc, cycles);
+                                             opcode, pc, cycles,
+                                             emit_cycles, cycles_emitted);
   }
 
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
@@ -3189,7 +3207,12 @@ bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,
     riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_a0);
     if (rd == REG_PC)
       meta->flags |= RISCV_BLOCK_PC_WRITTEN;
-    riscv_emit_adjust_cycles(&ptr, cycles + 2u);
+    if (emit_cycles || rd == REG_PC)
+    {
+      riscv_emit_adjust_cycles(&ptr, cycles + 2u);
+      if (cycles_emitted)
+        *cycles_emitted = true;
+    }
     riscv_native_load_insns++;
   }
   else
@@ -3199,12 +3222,25 @@ bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,
     riscv_emit_c_call(&ptr, byte ? (uintptr_t)riscv_store_u8
                                 : (uintptr_t)riscv_store_u32);
     riscv_emit_adjust_cycles(&ptr, cycles + 1u);
+    if (cycles_emitted)
+      *cycles_emitted = true;
     riscv_emit_helper_call(&ptr, meta);
     riscv_native_store_insns++;
   }
 
   *translation_ptr_ref = ptr;
   return true;
+}
+
+bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,
+                                         riscv_jit_block_meta *meta,
+                                         u32 opcode,
+                                         u32 pc,
+                                         u32 cycles)
+{
+  return riscv_emit_native_arm_access_memory_ex(translation_ptr_ref, meta,
+                                               opcode, pc, cycles,
+                                               true, NULL);
 }
 
 static void riscv_note_thumb_native_stat(u32 opcode)
