@@ -2365,7 +2365,7 @@ bool riscv_emit_native_arm_data_proc_with_pc_ex(u8 **translation_ptr_ref,
   if (op != 0xd && op != 0xf)
     riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t0, rn, pc + 8u);
 
-  if (logical_flags && live_flags)
+  if (logical_flags && (generated_flag_mask & 0x02u))
   {
     if (!riscv_emit_arm_data_proc_operand2_with_carry(&ptr, opcode, pc))
       return false;
@@ -2443,63 +2443,102 @@ bool riscv_emit_native_arm_data_proc_with_pc_ex(u8 **translation_ptr_ref,
   if (arithmetic_flags && live_flags)
   {
     u8 *translation_ptr = ptr;
+    bool need_c = (generated_flag_mask & 0x02u) != 0;
+    bool need_v = (generated_flag_mask & 0x01u) != 0;
 
     if (op == 0x2)
     {
-      riscv_emit_sltu(riscv_reg_t3, riscv_reg_t0, riscv_reg_t1);
-      riscv_emit_xori(riscv_reg_t3, riscv_reg_t3, 1);
-      riscv_emit_xor(riscv_reg_t4, riscv_reg_t0, riscv_reg_t1);
-      riscv_emit_xor(riscv_reg_t6, riscv_reg_t0, riscv_reg_t2);
+      if (need_c)
+      {
+        riscv_emit_sltu(riscv_reg_t3, riscv_reg_t0, riscv_reg_t1);
+        riscv_emit_xori(riscv_reg_t3, riscv_reg_t3, 1);
+      }
+      if (need_v)
+      {
+        riscv_emit_xor(riscv_reg_t4, riscv_reg_t0, riscv_reg_t1);
+        riscv_emit_xor(riscv_reg_t6, riscv_reg_t0, riscv_reg_t2);
+      }
     }
     else if (op == 0x3)
     {
-      riscv_emit_sltu(riscv_reg_t3, riscv_reg_t1, riscv_reg_t0);
-      riscv_emit_xori(riscv_reg_t3, riscv_reg_t3, 1);
-      riscv_emit_xor(riscv_reg_t4, riscv_reg_t1, riscv_reg_t0);
-      riscv_emit_xor(riscv_reg_t6, riscv_reg_t1, riscv_reg_t2);
+      if (need_c)
+      {
+        riscv_emit_sltu(riscv_reg_t3, riscv_reg_t1, riscv_reg_t0);
+        riscv_emit_xori(riscv_reg_t3, riscv_reg_t3, 1);
+      }
+      if (need_v)
+      {
+        riscv_emit_xor(riscv_reg_t4, riscv_reg_t1, riscv_reg_t0);
+        riscv_emit_xor(riscv_reg_t6, riscv_reg_t1, riscv_reg_t2);
+      }
     }
     else if (op == 0x4)
     {
-      riscv_emit_sltu(riscv_reg_t3, riscv_reg_t2, riscv_reg_t0);
-      riscv_emit_xor(riscv_reg_t4, riscv_reg_t0, riscv_reg_t1);
-      riscv_emit_xori(riscv_reg_t4, riscv_reg_t4, -1);
-      riscv_emit_xor(riscv_reg_t6, riscv_reg_t0, riscv_reg_t2);
+      if (need_c)
+        riscv_emit_sltu(riscv_reg_t3, riscv_reg_t2, riscv_reg_t0);
+      if (need_v)
+      {
+        riscv_emit_xor(riscv_reg_t4, riscv_reg_t0, riscv_reg_t1);
+        riscv_emit_xori(riscv_reg_t4, riscv_reg_t4, -1);
+        riscv_emit_xor(riscv_reg_t6, riscv_reg_t0, riscv_reg_t2);
+      }
     }
     else if (op == 0x5)
     {
-      riscv_emit_add(riscv_reg_t5, riscv_reg_t0, riscv_reg_t1);
-      riscv_emit_sltu(riscv_reg_t4, riscv_reg_t5, riscv_reg_t0);
-      riscv_emit_sltu(riscv_reg_t6, riscv_reg_t2, riscv_reg_t5);
-      riscv_emit_or(riscv_reg_t3, riscv_reg_t4, riscv_reg_t6);
-      riscv_emit_xor(riscv_reg_t4, riscv_reg_t0, riscv_reg_t1);
-      riscv_emit_xori(riscv_reg_t4, riscv_reg_t4, -1);
-      riscv_emit_xor(riscv_reg_t6, riscv_reg_t0, riscv_reg_t2);
+      if (need_c)
+      {
+        riscv_emit_add(riscv_reg_t5, riscv_reg_t0, riscv_reg_t1);
+        riscv_emit_sltu(riscv_reg_t4, riscv_reg_t5, riscv_reg_t0);
+        riscv_emit_sltu(riscv_reg_t6, riscv_reg_t2, riscv_reg_t5);
+        riscv_emit_or(riscv_reg_t3, riscv_reg_t4, riscv_reg_t6);
+      }
+      if (need_v)
+      {
+        riscv_emit_xor(riscv_reg_t4, riscv_reg_t0, riscv_reg_t1);
+        riscv_emit_xori(riscv_reg_t4, riscv_reg_t4, -1);
+        riscv_emit_xor(riscv_reg_t6, riscv_reg_t0, riscv_reg_t2);
+      }
     }
     else if (op == 0x6)
     {
-      riscv_emit_sltu(riscv_reg_t4, riscv_reg_t0, riscv_reg_t1);
-      riscv_emit_xori(riscv_reg_t4, riscv_reg_t4, 1);
-      riscv_emit_sltu(riscv_reg_t5, riscv_reg_t1, riscv_reg_t0);
-      riscv_emit_xor(riscv_reg_t6, riscv_reg_t4, riscv_reg_t5);
-      riscv_emit_and(riscv_reg_t6, riscv_reg_t6, riscv_reg_t3);
-      riscv_emit_xor(riscv_reg_t3, riscv_reg_t5, riscv_reg_t6);
-      riscv_emit_xor(riscv_reg_t4, riscv_reg_t0, riscv_reg_t1);
-      riscv_emit_xor(riscv_reg_t6, riscv_reg_t0, riscv_reg_t2);
+      if (need_c)
+      {
+        riscv_emit_sltu(riscv_reg_t4, riscv_reg_t0, riscv_reg_t1);
+        riscv_emit_xori(riscv_reg_t4, riscv_reg_t4, 1);
+        riscv_emit_sltu(riscv_reg_t5, riscv_reg_t1, riscv_reg_t0);
+        riscv_emit_xor(riscv_reg_t6, riscv_reg_t4, riscv_reg_t5);
+        riscv_emit_and(riscv_reg_t6, riscv_reg_t6, riscv_reg_t3);
+        riscv_emit_xor(riscv_reg_t3, riscv_reg_t5, riscv_reg_t6);
+      }
+      if (need_v)
+      {
+        riscv_emit_xor(riscv_reg_t4, riscv_reg_t0, riscv_reg_t1);
+        riscv_emit_xor(riscv_reg_t6, riscv_reg_t0, riscv_reg_t2);
+      }
     }
     else
     {
-      riscv_emit_sltu(riscv_reg_t4, riscv_reg_t1, riscv_reg_t0);
-      riscv_emit_xori(riscv_reg_t4, riscv_reg_t4, 1);
-      riscv_emit_sltu(riscv_reg_t5, riscv_reg_t0, riscv_reg_t1);
-      riscv_emit_xor(riscv_reg_t6, riscv_reg_t4, riscv_reg_t5);
-      riscv_emit_and(riscv_reg_t6, riscv_reg_t6, riscv_reg_t3);
-      riscv_emit_xor(riscv_reg_t3, riscv_reg_t5, riscv_reg_t6);
-      riscv_emit_xor(riscv_reg_t4, riscv_reg_t1, riscv_reg_t0);
-      riscv_emit_xor(riscv_reg_t6, riscv_reg_t1, riscv_reg_t2);
+      if (need_c)
+      {
+        riscv_emit_sltu(riscv_reg_t4, riscv_reg_t1, riscv_reg_t0);
+        riscv_emit_xori(riscv_reg_t4, riscv_reg_t4, 1);
+        riscv_emit_sltu(riscv_reg_t5, riscv_reg_t0, riscv_reg_t1);
+        riscv_emit_xor(riscv_reg_t6, riscv_reg_t4, riscv_reg_t5);
+        riscv_emit_and(riscv_reg_t6, riscv_reg_t6, riscv_reg_t3);
+        riscv_emit_xor(riscv_reg_t3, riscv_reg_t5, riscv_reg_t6);
+      }
+      if (need_v)
+      {
+        riscv_emit_xor(riscv_reg_t4, riscv_reg_t1, riscv_reg_t0);
+        riscv_emit_xor(riscv_reg_t6, riscv_reg_t1, riscv_reg_t2);
+      }
     }
 
-    riscv_emit_and(riscv_reg_t4, riscv_reg_t4, riscv_reg_t6);
-    riscv_emit_srli(riscv_reg_t4, riscv_reg_t4, 31);
+    if (need_v)
+    {
+      riscv_emit_and(riscv_reg_t4, riscv_reg_t4, riscv_reg_t6);
+      riscv_emit_srli(riscv_reg_t4, riscv_reg_t4, 31);
+    }
     ptr = translation_ptr;
   }
 
@@ -2592,7 +2631,7 @@ bool riscv_emit_native_arm_data_proc_test_with_pc_ex(u8 **translation_ptr_ref,
 
   riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t0, rn, pc + 8u);
 
-  if (logical_test && live_flags)
+  if (logical_test && (generated_flag_mask & 0x02u))
   {
     if (!riscv_emit_arm_data_proc_operand2_with_carry(&ptr, opcode, pc))
       return false;
@@ -2615,21 +2654,33 @@ bool riscv_emit_native_arm_data_proc_test_with_pc_ex(u8 **translation_ptr_ref,
     }
     else if (op == 0xa)
     {
+      bool need_c = (generated_flag_mask & 0x02u) != 0;
+      bool need_v = (generated_flag_mask & 0x01u) != 0;
+
       riscv_emit_sub(riscv_reg_t2, riscv_reg_t0, riscv_reg_t1);
-      if (generated_flag_mask & 0x03u)
+      if (need_c)
       {
         riscv_emit_sltu(riscv_reg_t3, riscv_reg_t0, riscv_reg_t1);
         riscv_emit_xori(riscv_reg_t3, riscv_reg_t3, 1);
+      }
+      if (need_v)
+      {
         riscv_emit_xor(riscv_reg_t4, riscv_reg_t0, riscv_reg_t1);
         riscv_emit_xor(riscv_reg_t6, riscv_reg_t0, riscv_reg_t2);
       }
     }
     else
     {
+      bool need_c = (generated_flag_mask & 0x02u) != 0;
+      bool need_v = (generated_flag_mask & 0x01u) != 0;
+
       riscv_emit_add(riscv_reg_t2, riscv_reg_t0, riscv_reg_t1);
-      if (generated_flag_mask & 0x03u)
+      if (need_c)
       {
         riscv_emit_sltu(riscv_reg_t3, riscv_reg_t2, riscv_reg_t0);
+      }
+      if (need_v)
+      {
         riscv_emit_xor(riscv_reg_t4, riscv_reg_t0, riscv_reg_t1);
         riscv_emit_xori(riscv_reg_t4, riscv_reg_t4, -1);
         riscv_emit_xor(riscv_reg_t6, riscv_reg_t0, riscv_reg_t2);

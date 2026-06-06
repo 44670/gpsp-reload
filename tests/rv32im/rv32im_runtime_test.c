@@ -308,14 +308,18 @@ typedef unsigned int usize;
 #define TEQ_SIMPLE_CPSR_VALUE (0x40000000u | CPSR_CV_LOW_VALUE)
 #define TST_SHIFT_CPSR_VALUE CPSR_CV_LOW_VALUE
 #define FLAG_SUBS_START_PC 0x08000800u
+#define FLAG_SUBS_NZ_START_PC 0x08000810u
 #define FLAG_ADDS_START_PC 0x08000820u
 #define FLAG_RSBS_START_PC 0x08000840u
 #define FLAG_SUBS_END_PC (FLAG_SUBS_START_PC + 4u)
+#define FLAG_SUBS_NZ_END_PC (FLAG_SUBS_NZ_START_PC + 4u)
 #define FLAG_ADDS_END_PC (FLAG_ADDS_START_PC + 4u)
 #define FLAG_RSBS_END_PC (FLAG_RSBS_START_PC + 4u)
 #define FLAG_SUBS_CYCLES 4u
+#define FLAG_SUBS_NZ_CYCLES 4u
 #define FLAG_ADDS_CYCLES 5u
 #define FLAG_RSBS_CYCLES 6u
+#define FLAG_NZ_MASK 0x0cu
 #define SUBS_R6_R0_0X20 0xe2506020u
 #define ADDS_R7_R1_0X1 0xe2917001u
 #define RSBS_R8_R2_0X0 0xe2728000u
@@ -327,6 +331,7 @@ typedef unsigned int usize;
 #define FLAG_ADDS_R7_VALUE 0x80000000u
 #define FLAG_RSBS_R8_VALUE 0x00000000u
 #define FLAG_SUBS_CPSR_VALUE (0x80000000u | CPSR_LOW_VALUE)
+#define FLAG_SUBS_NZ_CPSR_VALUE (0x80000000u | CPSR_CV_LOW_VALUE)
 #define FLAG_ADDS_CPSR_VALUE (0x90000000u | CPSR_LOW_VALUE)
 #define FLAG_RSBS_CPSR_VALUE (0x60000000u | CPSR_LOW_VALUE)
 #define CARRY_FLAG_ADCS_START_PC 0x08000860u
@@ -1354,6 +1359,7 @@ typedef unsigned int usize;
 #define TST_SIMPLE_BLOCK_OFFSET 16384u
 #define TEQ_SIMPLE_BLOCK_OFFSET 16896u
 #define FLAG_SUBS_BLOCK_OFFSET 17408u
+#define FLAG_SUBS_NZ_BLOCK_OFFSET 92160u
 #define FLAG_ADDS_BLOCK_OFFSET 17920u
 #define FLAG_RSBS_BLOCK_OFFSET 18432u
 #define CARRY_FLAG_ADCS_BLOCK_OFFSET 18944u
@@ -1514,6 +1520,7 @@ static u8 *g_tst_shift_entry;
 static u8 *g_cmn_overflow_entry;
 static u8 *g_teq_simple_entry;
 static u8 *g_flag_subs_entry;
+static u8 *g_flag_subs_nz_entry;
 static u8 *g_flag_adds_entry;
 static u8 *g_flag_rsbs_entry;
 static u8 *g_carry_flag_adcs_entry;
@@ -2788,6 +2795,42 @@ static u32 build_flag_data_block(u8 *code, u32 opcode, u32 start_pc,
     put_raw("result=FAIL command=runtime reason=");
     put_raw(reject_reason);
     put_raw("\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr, start_pc, end_pc, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_flag_data_mask_block(u8 *code, u32 opcode, u32 start_pc,
+                                      u32 end_pc, u32 cycles, u32 flag_mask,
+                                      u8 **entry, const char *reject_reason)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+  bool cycles_emitted = false;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  *entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_data_proc_with_pc_ex(
+        &translation_ptr, meta, opcode, start_pc, cycles, flag_mask,
+        true, &cycles_emitted))
+  {
+    put_raw("result=FAIL command=runtime reason=");
+    put_raw(reject_reason);
+    put_raw("\n");
+    sys_exit(1);
+  }
+
+  if (!cycles_emitted)
+  {
+    put_raw("result=FAIL command=runtime reason=");
+    put_raw(reject_reason);
+    put_raw("_cycles_not_emitted\n");
     sys_exit(1);
   }
 
@@ -11893,6 +11936,7 @@ void _start(void)
   u32 cmn_overflow_code_bytes;
   u32 teq_simple_code_bytes;
   u32 flag_subs_code_bytes;
+  u32 flag_subs_nz_code_bytes;
   u32 flag_adds_code_bytes;
   u32 flag_rsbs_code_bytes;
   u32 carry_flag_adcs_code_bytes;
@@ -12164,6 +12208,12 @@ void _start(void)
                           SUBS_R6_R0_0X20, FLAG_SUBS_START_PC,
                           FLAG_SUBS_END_PC, FLAG_SUBS_CYCLES,
                           &g_flag_subs_entry, "subs_emit_rejected");
+  flag_subs_nz_code_bytes =
+    build_flag_data_mask_block(code + FLAG_SUBS_NZ_BLOCK_OFFSET,
+                               SUBS_R6_R0_0X20, FLAG_SUBS_NZ_START_PC,
+                               FLAG_SUBS_NZ_END_PC, FLAG_SUBS_NZ_CYCLES,
+                               FLAG_NZ_MASK, &g_flag_subs_nz_entry,
+                               "subs_nz_emit_rejected");
   flag_adds_code_bytes =
     build_flag_data_block(code + FLAG_ADDS_BLOCK_OFFSET,
                           ADDS_R7_R1_0X1, FLAG_ADDS_START_PC,
@@ -12747,6 +12797,11 @@ void _start(void)
                      FLAG_SUBS_CYCLES, 0, FLAG_SUBS_R0_VALUE,
                      6, FLAG_SUBS_R6_VALUE, CPSR_LOW_VALUE,
                      FLAG_SUBS_CPSR_VALUE, 0);
+  run_flag_data_case("flag_subs_nz_boundary", g_flag_subs_nz_entry,
+                     FLAG_SUBS_NZ_START_PC, FLAG_SUBS_NZ_END_PC,
+                     FLAG_SUBS_NZ_CYCLES, 0, FLAG_SUBS_R0_VALUE,
+                     6, FLAG_SUBS_R6_VALUE, CPSR_CV_LOW_VALUE,
+                     FLAG_SUBS_NZ_CPSR_VALUE, 0);
   run_flag_data_case("flag_adds_remaining", g_flag_adds_entry,
                      FLAG_ADDS_START_PC, FLAG_ADDS_END_PC,
                      FLAG_ADDS_CYCLES, 1, FLAG_ADDS_R1_VALUE,
@@ -12994,6 +13049,8 @@ void _start(void)
   put_u32_dec(teq_simple_code_bytes);
   put_raw(" flag_subs_code_bytes=");
   put_u32_dec(flag_subs_code_bytes);
+  put_raw(" flag_subs_nz_code_bytes=");
+  put_u32_dec(flag_subs_nz_code_bytes);
   put_raw(" flag_adds_code_bytes=");
   put_u32_dec(flag_adds_code_bytes);
   put_raw(" flag_rsbs_code_bytes=");
