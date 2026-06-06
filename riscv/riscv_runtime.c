@@ -2427,10 +2427,10 @@ static void riscv_emit_arm_cpsr_store_nzc_preserve_v(
   u8 *translation_ptr;
 
   riscv_emit_arm_reg_load(&ptr, riscv_reg_t6, REG_CPSR);
-  riscv_emit_li(&ptr, riscv_reg_t5, 0x100000ffu);
   translation_ptr = ptr;
 
-  riscv_emit_and(riscv_reg_t4, riscv_reg_t6, riscv_reg_t5);
+  riscv_emit_slli(riscv_reg_t4, riscv_reg_t6, 3);
+  riscv_emit_srli(riscv_reg_t4, riscv_reg_t4, 3);
   riscv_emit_srli(riscv_reg_t5, result_reg, 31);
   riscv_emit_slli(riscv_reg_t5, riscv_reg_t5, 31);
   riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
@@ -2483,9 +2483,9 @@ static void riscv_emit_arm_cpsr_store_zero_selected_nzcv(u8 **ptr_ref,
   riscv_emit_arm_reg_load(&ptr, riscv_reg_t6, REG_CPSR);
   if (flag_mask == 0x0eu)
   {
-    riscv_emit_li(&ptr, riscv_reg_t5, RISCV_CPSR_V | 0xffu);
     translation_ptr = ptr;
-    riscv_emit_and(riscv_reg_t6, riscv_reg_t6, riscv_reg_t5);
+    riscv_emit_slli(riscv_reg_t6, riscv_reg_t6, 3);
+    riscv_emit_srli(riscv_reg_t6, riscv_reg_t6, 3);
   }
   else if (flag_mask == 0x0cu)
   {
@@ -2626,9 +2626,9 @@ static void riscv_emit_arm_cpsr_store_addsub_zero_test(
   }
   else if (flag_mask == 0x0eu)
   {
-    riscv_emit_li(&ptr, riscv_reg_t5, 0x100000ffu);
     translation_ptr = ptr;
-    riscv_emit_and(riscv_reg_t6, riscv_reg_t6, riscv_reg_t5);
+    riscv_emit_slli(riscv_reg_t6, riscv_reg_t6, 3);
+    riscv_emit_srli(riscv_reg_t6, riscv_reg_t6, 3);
   }
   else if (flag_mask == 0x0cu)
   {
@@ -4959,10 +4959,10 @@ static void riscv_emit_thumb_cpsr_store_nzc_preserve_v(u8 **ptr_ref)
   u8 *translation_ptr;
 
   riscv_emit_arm_reg_load(&ptr, riscv_reg_t4, REG_CPSR);
-  riscv_emit_li(&ptr, riscv_reg_t5, RISCV_CPSR_V | 0xffu);
   translation_ptr = ptr;
 
-  riscv_emit_and(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
+  riscv_emit_slli(riscv_reg_t4, riscv_reg_t4, 3);
+  riscv_emit_srli(riscv_reg_t4, riscv_reg_t4, 3);
   riscv_emit_srli(riscv_reg_t5, riscv_reg_t2, 31);
   riscv_emit_slli(riscv_reg_t5, riscv_reg_t5, 31);
   riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
