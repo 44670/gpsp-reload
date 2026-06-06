@@ -3574,7 +3574,9 @@ bool riscv_emit_native_thumb_alu(u8 **translation_ptr_ref,
   u32 alu_op = (opcode >> 6) & 3u;
   u32 rd = opcode & 7u;
   u32 rs = (opcode >> 3) & 7u;
-  bool need_nz = (flag_status & 0x0cu) != 0;
+  u32 rn = (opcode >> 6) & 7u;
+  u32 imm = opcode & 0xffu;
+  bool need_flags = (flag_status & 0x0fu) != 0;
   bool load_rd = true;
   u8 *ptr = *translation_ptr_ref;
   u8 *translation_ptr;
@@ -3582,42 +3584,99 @@ bool riscv_emit_native_thumb_alu(u8 **translation_ptr_ref,
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
     return false;
 
-  if (need_nz)
+  if (need_flags)
     return false;
 
-  if (hi == 0x40u)
+  if ((hi >= 0x28u && hi <= 0x2fu) ||
+      (hi == 0x42u && alu_op != 1u))
   {
-    if (alu_op > 1u)
-      return false;
-  }
-  else if (hi == 0x42u)
-  {
-    if (alu_op != 0u)
-      return false;
     *translation_ptr_ref = ptr;
     riscv_native_data_proc_insns++;
     return true;
   }
+
+  if (hi >= 0x18u && hi <= 0x1fu)
+  {
+    load_rd = false;
+  }
+  else if (hi >= 0x20u && hi <= 0x27u)
+  {
+    rd = hi & 7u;
+    load_rd = false;
+  }
+  else if (hi >= 0x30u && hi <= 0x3fu)
+  {
+    rd = hi & 7u;
+  }
+  else if (hi == 0x40u)
+  {
+    if (alu_op > 1u)
+      return false;
+  }
   else if (hi == 0x43u)
   {
     load_rd = alu_op != 3u;
+  }
+  else if (hi == 0x42u)
+  {
+    load_rd = false;
   }
   else
   {
     return false;
   }
 
-  riscv_emit_arm_reg_load(&ptr, riscv_reg_t1, rs);
+  if ((hi >= 0x18u && hi <= 0x1fu) || hi == 0x42u)
+    riscv_emit_arm_reg_load(&ptr, riscv_reg_t1, rs);
+  else if (hi < 0x20u || hi >= 0x40u)
+    riscv_emit_arm_reg_load(&ptr, riscv_reg_t1, rs);
+
   if (load_rd)
     riscv_emit_arm_reg_load(&ptr, riscv_reg_t0, rd);
 
   translation_ptr = ptr;
-  if (hi == 0x40u)
+  if (hi >= 0x18u && hi <= 0x1fu)
+  {
+    bool subtract = (hi & 0x02u) != 0;
+
+    if (hi & 0x04u)
+    {
+      if (subtract)
+        riscv_emit_addi(riscv_reg_t2, riscv_reg_t1, -(s32)rn);
+      else
+        riscv_emit_addi(riscv_reg_t2, riscv_reg_t1, rn);
+    }
+    else
+    {
+      riscv_emit_arm_reg_load(&ptr, riscv_reg_t0, rn);
+      translation_ptr = ptr;
+      if (subtract)
+        riscv_emit_sub(riscv_reg_t2, riscv_reg_t1, riscv_reg_t0);
+      else
+        riscv_emit_add(riscv_reg_t2, riscv_reg_t1, riscv_reg_t0);
+    }
+  }
+  else if (hi >= 0x20u && hi <= 0x27u)
+  {
+    riscv_emit_addi(riscv_reg_t2, riscv_reg_zero, imm);
+  }
+  else if (hi >= 0x30u && hi <= 0x3fu)
+  {
+    if (hi & 0x08u)
+      riscv_emit_addi(riscv_reg_t2, riscv_reg_t0, -(s32)imm);
+    else
+      riscv_emit_addi(riscv_reg_t2, riscv_reg_t0, imm);
+  }
+  else if (hi == 0x40u)
   {
     if (alu_op == 0u)
       riscv_emit_and(riscv_reg_t2, riscv_reg_t0, riscv_reg_t1);
     else
       riscv_emit_xor(riscv_reg_t2, riscv_reg_t0, riscv_reg_t1);
+  }
+  else if (hi == 0x42u)
+  {
+    riscv_emit_sub(riscv_reg_t2, riscv_reg_zero, riscv_reg_t1);
   }
   else
   {
