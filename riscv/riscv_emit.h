@@ -159,6 +159,18 @@ bool riscv_emit_native_arm_access_memory(u8 **translation_ptr,
                                          u32 opcode,
                                          u32 pc,
                                          u32 cycles);
+bool riscv_emit_native_thumb_instruction(u8 **translation_ptr,
+                                         riscv_jit_block_meta *meta,
+                                         u32 opcode,
+                                         u32 pc,
+                                         u32 cycles,
+                                         bool exits);
+bool riscv_emit_native_thumb_bl_pair(u8 **translation_ptr,
+                                     riscv_jit_block_meta *meta,
+                                     u32 first_opcode,
+                                     u32 second_opcode,
+                                     u32 pc,
+                                     u32 cycles);
 bool riscv_emit_cycle_update(u8 **translation_ptr,
                              riscv_jit_block_meta *meta,
                              u32 cycles);
@@ -485,10 +497,18 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
   } while (0)
 
 #define riscv_emit_thumb_hle_div(divarm_value)                                \
-  do                                                                          \
-  {                                                                           \
-    (void)(divarm_value);                                                     \
-    riscv_emit_current_thumb_instruction();                                   \
+  do                                                                            \
+  {                                                                             \
+    if (riscv_emit_native_arm_hle_div(&translation_ptr,                         \
+                                      riscv_block_meta,                         \
+                                      (divarm_value), cycle_count))             \
+    {                                                                           \
+      cycle_count = 0;                                                          \
+    }                                                                           \
+    else                                                                        \
+    {                                                                           \
+      riscv_emit_current_thumb_instruction();                                   \
+    }                                                                           \
   } while (0)
 
 #define arm_hle_div(cpu_mode)                                                 \
@@ -497,59 +517,88 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
 #define arm_hle_div_arm(cpu_mode)                                             \
   riscv_emit_##cpu_mode##_hle_div(true)
 
+#define riscv_thumb_mul_frontend_extra(opcode_value)                          \
+  ((((opcode_value) & 0xffc0u) == 0x4340u) ? (u32)(0u - 2u) : 0u)
+
+#define riscv_emit_thumb_instruction(exits_value)                             \
+  do                                                                          \
+  {                                                                           \
+    if (riscv_emit_native_thumb_instruction(&translation_ptr,                  \
+                                            riscv_block_meta, opcode, pc,      \
+                                            cycle_count, (exits_value)))       \
+    {                                                                         \
+      cycle_count = riscv_thumb_mul_frontend_extra(opcode);                   \
+    }                                                                         \
+    else                                                                      \
+    {                                                                         \
+      riscv_emit_current_thumb_instruction();                                 \
+    }                                                                         \
+  } while (0)
+
 #define thumb_shift(...)                                                      \
-  riscv_emit_current_thumb_instruction()
+  riscv_emit_thumb_instruction(false)
 
 #define thumb_data_proc(...)                                                  \
-  riscv_emit_current_thumb_instruction()
+  riscv_emit_thumb_instruction(false)
 
 #define thumb_data_proc_test(...)                                             \
-  riscv_emit_current_thumb_instruction()
+  riscv_emit_thumb_instruction(false)
 
 #define thumb_data_proc_unary(...)                                            \
-  riscv_emit_current_thumb_instruction()
+  riscv_emit_thumb_instruction(false)
 
 #define thumb_data_proc_hi(...)                                               \
-  riscv_emit_current_thumb_instruction()
+  riscv_emit_thumb_instruction(((opcode & 0x0087u) == 0x0087u))
 
 #define thumb_data_proc_test_hi(...)                                          \
-  riscv_emit_current_thumb_instruction()
+  riscv_emit_thumb_instruction(false)
 
 #define thumb_data_proc_mov_hi()                                              \
-  riscv_emit_current_thumb_instruction()
+  riscv_emit_thumb_instruction(((opcode & 0x0087u) == 0x0087u))
 
 #define thumb_load_pc_pool_const(...)                                         \
-  riscv_emit_current_thumb_instruction()
+  riscv_emit_thumb_instruction(false)
 
 #define thumb_load_pc(...)                                                    \
-  riscv_emit_current_thumb_instruction()
+  riscv_emit_thumb_instruction(false)
 
 #define thumb_access_memory(...)                                              \
-  riscv_emit_current_thumb_instruction()
+  riscv_emit_thumb_instruction(false)
 
 #define thumb_load_sp(...)                                                    \
-  riscv_emit_current_thumb_instruction()
+  riscv_emit_thumb_instruction(false)
 
 #define thumb_adjust_sp(...)                                                  \
-  riscv_emit_current_thumb_instruction()
+  riscv_emit_thumb_instruction(false)
 
 #define thumb_block_memory(...)                                               \
-  riscv_emit_current_thumb_instruction()
+  riscv_emit_thumb_instruction(((opcode & 0xff00u) == 0xbd00u))
 
 #define thumb_conditional_branch(...)                                         \
-  riscv_emit_current_thumb_instruction()
+  riscv_emit_thumb_instruction(true)
 
 #define thumb_b()                                                             \
-  riscv_emit_current_thumb_instruction()
+  riscv_emit_thumb_instruction(true)
 
 #define thumb_bl()                                                            \
-  riscv_emit_current_thumb_instruction()
+  do                                                                          \
+  {                                                                           \
+    if (riscv_emit_native_thumb_bl_pair(&translation_ptr, riscv_block_meta,    \
+                                        last_opcode, opcode, pc, cycle_count)) \
+    {                                                                         \
+      cycle_count = 0;                                                        \
+    }                                                                         \
+    else                                                                      \
+    {                                                                         \
+      riscv_emit_current_thumb_instruction();                                 \
+    }                                                                         \
+  } while (0)
 
 #define thumb_blh()                                                           \
-  riscv_emit_current_thumb_instruction()
+  riscv_emit_thumb_instruction(true)
 
 #define thumb_bx()                                                            \
-  riscv_emit_current_thumb_instruction()
+  riscv_emit_thumb_instruction(true)
 
 #define thumb_process_cheats()                                                \
   do                                                                          \
@@ -564,6 +613,6 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
   } while (0)
 
 #define thumb_swi()                                                           \
-  riscv_emit_current_thumb_instruction()
+  riscv_emit_thumb_instruction(true)
 
 #endif

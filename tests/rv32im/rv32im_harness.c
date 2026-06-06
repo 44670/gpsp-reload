@@ -3363,6 +3363,7 @@ static int build_runtime_fixture_block(const char **reason)
   translation_ptr = g_runtime_code + RUNTIME_THUMB_UNSUPPORTED_BLOCK_OFFSET;
   riscv_emit_block_prologue(&translation_ptr, &meta);
   g_runtime_thumb_unsupported_entry = ((u8 *)meta) + block_prologue_size;
+  riscv_mark_block_unsupported(meta);
   riscv_emit_block_finalize(meta, &translation_ptr,
                             RUNTIME_THUMB_UNSUPPORTED_START_PC,
                             RUNTIME_THUMB_UNSUPPORTED_END_PC, true);

@@ -558,6 +558,794 @@ static void function_cc riscv_execute_swi_arm(u32 pc)
   set_cpu_mode(MODE_SUPERVISOR);
 }
 
+static void function_cc riscv_execute_swi_thumb(u32 pc)
+{
+  reg[REG_BUS_VALUE] = 0xe3a02004u;
+  REG_MODE(MODE_SUPERVISOR)[6] = pc + 2u;
+  REG_SPSR(MODE_SUPERVISOR) = reg[REG_CPSR];
+  reg[REG_PC] = 0x00000008u;
+  reg[REG_CPSR] = (reg[REG_CPSR] & ~0x3fu) | MODE_SUPERVISOR | 0x80u;
+  set_cpu_mode(MODE_SUPERVISOR);
+}
+
+static u32 riscv_word_bit_count(u32 word);
+
+enum
+{
+  RISCV_CPSR_N = 0x80000000u,
+  RISCV_CPSR_Z = 0x40000000u,
+  RISCV_CPSR_C = 0x20000000u,
+  RISCV_CPSR_V = 0x10000000u,
+  RISCV_CPSR_T = 0x00000020u,
+  RISCV_CPSR_NZCV = 0xf0000000u
+};
+
+static u32 riscv_thumb_ror(u32 value, u32 shift)
+{
+  shift &= 31u;
+  if (!shift)
+    return value;
+  return (value >> shift) | (value << (32u - shift));
+}
+
+static u32 riscv_thumb_c_flag(void)
+{
+  return (reg[REG_CPSR] >> 29) & 1u;
+}
+
+static u32 riscv_thumb_flag_bit(u32 bit)
+{
+  return (reg[REG_CPSR] & bit) ? 1u : 0u;
+}
+
+static void riscv_thumb_store_nzcv(u32 n, u32 z, u32 c, u32 v)
+{
+  reg[REG_CPSR] = (reg[REG_CPSR] & ~RISCV_CPSR_NZCV) |
+                  (n ? RISCV_CPSR_N : 0u) |
+                  (z ? RISCV_CPSR_Z : 0u) |
+                  (c ? RISCV_CPSR_C : 0u) |
+                  (v ? RISCV_CPSR_V : 0u);
+}
+
+static void riscv_thumb_store_nz_preserve_cv(u32 value)
+{
+  u32 cpsr = reg[REG_CPSR] & ~(RISCV_CPSR_N | RISCV_CPSR_Z);
+
+  if (value & 0x80000000u)
+    cpsr |= RISCV_CPSR_N;
+  if (value == 0)
+    cpsr |= RISCV_CPSR_Z;
+
+  reg[REG_CPSR] = cpsr;
+}
+
+static void riscv_thumb_store_nzc_preserve_v(u32 value, u32 carry)
+{
+  u32 v = riscv_thumb_flag_bit(RISCV_CPSR_V);
+  riscv_thumb_store_nzcv((value >> 31) & 1u, value == 0, carry, v);
+}
+
+static void riscv_thumb_store_add_flags(u32 value, u32 src_a, u32 src_b,
+                                        u32 carry)
+{
+  u32 overflow = (~(src_a ^ src_b) & (src_a ^ value)) >> 31;
+  riscv_thumb_store_nzcv((value >> 31) & 1u, value == 0, carry, overflow);
+}
+
+static void riscv_thumb_store_sub_flags(u32 value, u32 src_a, u32 src_b,
+                                        u32 carry_in)
+{
+  u32 carry = carry_in ? (src_b <= src_a) : (src_b < src_a);
+  u32 overflow = ((src_a ^ src_b) & (~src_b ^ value)) >> 31;
+  riscv_thumb_store_nzcv((value >> 31) & 1u, value == 0, carry, overflow);
+}
+
+static u32 riscv_thumb_reg_value(u32 reg_index, u32 pc_value)
+{
+  return (reg_index == REG_PC) ? pc_value : reg[reg_index];
+}
+
+static void riscv_thumb_add(u32 rd, u32 src_a, u32 src_b, u32 carry_in)
+{
+  u32 value = src_a + src_b;
+  u32 carry = value < src_b;
+
+  value += carry_in;
+  carry |= value < carry_in;
+  riscv_thumb_store_add_flags(value, src_a, src_b, carry);
+  reg[rd] = value;
+}
+
+static void riscv_thumb_sub(u32 rd, u32 src_a, u32 src_b, u32 carry_in)
+{
+  u32 value = src_a + ~src_b + carry_in;
+
+  riscv_thumb_store_sub_flags(value, src_a, src_b, carry_in);
+  reg[rd] = value;
+}
+
+static void riscv_thumb_test_add(u32 src_a, u32 src_b)
+{
+  u32 value = src_a + src_b;
+  u32 carry = value < src_b;
+
+  riscv_thumb_store_add_flags(value, src_a, src_b, carry);
+}
+
+static void riscv_thumb_test_sub(u32 src_a, u32 src_b)
+{
+  u32 value = src_a - src_b;
+
+  riscv_thumb_store_sub_flags(value, src_a, src_b, 1u);
+}
+
+static void riscv_thumb_shift_lsl_imm(u32 rd, u32 rs, u32 imm)
+{
+  u32 value = reg[rs];
+  u32 carry = riscv_thumb_c_flag();
+
+  if (imm)
+  {
+    carry = (value >> (32u - imm)) & 1u;
+    value <<= imm;
+  }
+
+  riscv_thumb_store_nzc_preserve_v(value, carry);
+  reg[rd] = value;
+}
+
+static void riscv_thumb_shift_lsr_imm(u32 rd, u32 rs, u32 imm)
+{
+  u32 value;
+  u32 carry;
+
+  if (!imm)
+  {
+    value = 0;
+    carry = reg[rs] >> 31;
+  }
+  else
+  {
+    value = reg[rs];
+    carry = (value >> (imm - 1u)) & 1u;
+    value >>= imm;
+  }
+
+  riscv_thumb_store_nzc_preserve_v(value, carry);
+  reg[rd] = value;
+}
+
+static void riscv_thumb_shift_asr_imm(u32 rd, u32 rs, u32 imm)
+{
+  u32 value;
+  u32 carry;
+
+  if (!imm)
+  {
+    value = (u32)((s32)reg[rs] >> 31);
+    carry = value & 1u;
+  }
+  else
+  {
+    value = reg[rs];
+    carry = (value >> (imm - 1u)) & 1u;
+    value = (u32)((s32)value >> imm);
+  }
+
+  riscv_thumb_store_nzc_preserve_v(value, carry);
+  reg[rd] = value;
+}
+
+static void riscv_thumb_shift_lsl_reg(u32 rd, u32 rs)
+{
+  u32 shift = reg[rs];
+  u32 value = reg[rd];
+  u32 carry = riscv_thumb_c_flag();
+
+  if (shift)
+  {
+    if (shift > 31u)
+    {
+      carry = (shift == 32u) ? (value & 1u) : 0u;
+      value = 0;
+    }
+    else
+    {
+      carry = (value >> (32u - shift)) & 1u;
+      value <<= shift;
+    }
+  }
+
+  riscv_thumb_store_nzc_preserve_v(value, carry);
+  reg[rd] = value;
+}
+
+static void riscv_thumb_shift_lsr_reg(u32 rd, u32 rs)
+{
+  u32 shift = reg[rs];
+  u32 value = reg[rd];
+  u32 carry = riscv_thumb_c_flag();
+
+  if (shift)
+  {
+    if (shift > 31u)
+    {
+      carry = (shift == 32u) ? (value >> 31) : 0u;
+      value = 0;
+    }
+    else
+    {
+      carry = (value >> (shift - 1u)) & 1u;
+      value >>= shift;
+    }
+  }
+
+  riscv_thumb_store_nzc_preserve_v(value, carry);
+  reg[rd] = value;
+}
+
+static void riscv_thumb_shift_asr_reg(u32 rd, u32 rs)
+{
+  u32 shift = reg[rs];
+  u32 value = reg[rd];
+  u32 carry = riscv_thumb_c_flag();
+
+  if (shift)
+  {
+    if (shift > 31u)
+    {
+      value = (u32)((s32)value >> 31);
+      carry = value & 1u;
+    }
+    else
+    {
+      carry = (value >> (shift - 1u)) & 1u;
+      value = (u32)((s32)value >> shift);
+    }
+  }
+
+  riscv_thumb_store_nzc_preserve_v(value, carry);
+  reg[rd] = value;
+}
+
+static void riscv_thumb_shift_ror_reg(u32 rd, u32 rs)
+{
+  u32 shift = reg[rs];
+  u32 value = reg[rd];
+  u32 carry = riscv_thumb_c_flag();
+
+  if (shift)
+  {
+    carry = (value >> ((shift - 1u) & 31u)) & 1u;
+    value = riscv_thumb_ror(value, shift);
+  }
+
+  riscv_thumb_store_nzc_preserve_v(value, carry);
+  reg[rd] = value;
+}
+
+static void riscv_thumb_block_memory(u32 opcode, u32 pc)
+{
+  u32 hi = opcode >> 8;
+  bool load = (hi == 0xbcu || hi == 0xbdu || (hi >= 0xc8u && hi <= 0xcfu));
+  bool predec = (hi == 0xb4u || hi == 0xb5u);
+  u32 rn = (hi >= 0xc0u && hi <= 0xcfu) ? (hi & 7u) : REG_SP;
+  u32 reglist = opcode & 0xffu;
+  u32 count;
+  u32 base;
+  s32 addr_off;
+  u32 endaddr;
+  u32 address;
+  bool wrbck_base;
+  bool base_first;
+  bool writeback_first;
+  u32 i;
+
+  if (hi == 0xb5u)
+    reglist |= 1u << REG_LR;
+  else if (hi == 0xbdu)
+    reglist |= 1u << REG_PC;
+
+  count = riscv_word_bit_count(reglist & 0xffu);
+  if (reglist & ((1u << REG_LR) | (1u << REG_PC)))
+    count++;
+
+  base = reg[rn];
+  addr_off = predec ? -4 : 4;
+  endaddr = base + (u32)(addr_off * (s32)count);
+  address = predec ? endaddr : base;
+  address &= ~3u;
+
+  wrbck_base = ((1u << rn) & reglist) != 0;
+  base_first = (((1u << rn) - 1u) & reglist) == 0;
+  writeback_first = load || !(wrbck_base && base_first);
+
+  if (writeback_first)
+    reg[rn] = endaddr;
+
+  reg[REG_PC] = pc + 2u;
+
+  if (load)
+  {
+    for (i = 0; i < 8; i++)
+    {
+      if ((reglist >> i) & 1u)
+      {
+        reg[i] = read_memory32(address);
+        address += 4u;
+      }
+    }
+
+    if (reglist & (1u << REG_PC))
+    {
+      reg[REG_PC] = read_memory32(address) & ~1u;
+    }
+  }
+  else
+  {
+    for (i = 0; i < 8; i++)
+    {
+      if ((reglist >> i) & 1u)
+      {
+        riscv_cpu_alert |= write_memory32(address, reg[i]);
+        address += 4u;
+      }
+    }
+
+    if (reglist & (1u << REG_LR))
+      riscv_cpu_alert |= write_memory32(address, reg[REG_LR]);
+  }
+
+  if (!writeback_first)
+    reg[rn] = endaddr;
+}
+
+static u32 riscv_thumb_block_memory_extra_cycles(u32 opcode)
+{
+  u32 hi = opcode >> 8;
+  u32 reglist = opcode & 0xffu;
+  u32 count = riscv_word_bit_count(reglist);
+
+  if (hi == 0xb5u || hi == 0xbdu)
+    count++;
+
+  return count;
+}
+
+static bool riscv_thumb_condition_passed(u32 condition)
+{
+  u32 n = riscv_thumb_flag_bit(RISCV_CPSR_N);
+  u32 z = riscv_thumb_flag_bit(RISCV_CPSR_Z);
+  u32 c = riscv_thumb_flag_bit(RISCV_CPSR_C);
+  u32 v = riscv_thumb_flag_bit(RISCV_CPSR_V);
+
+  switch (condition & 0xfu)
+  {
+    case 0x0: return z != 0;
+    case 0x1: return z == 0;
+    case 0x2: return c != 0;
+    case 0x3: return c == 0;
+    case 0x4: return n != 0;
+    case 0x5: return n == 0;
+    case 0x6: return v != 0;
+    case 0x7: return v == 0;
+    case 0x8: return c && !z;
+    case 0x9: return !c || z;
+    case 0xa: return n == v;
+    case 0xb: return n != v;
+    case 0xc: return !z && (n == v);
+    case 0xd: return z || (n != v);
+    default: return false;
+  }
+}
+
+static u32 riscv_thumb_memory_load(u32 address, u32 type)
+{
+  switch (type)
+  {
+    case 0: return read_memory32(address);
+    case 1: return read_memory16(address);
+    case 2: return read_memory8(address);
+    case 3: return read_memory8s(address);
+    default: return read_memory16s(address);
+  }
+}
+
+static void riscv_thumb_memory_store(u32 address, u32 value, u32 type)
+{
+  if (type == 0)
+    riscv_cpu_alert |= write_memory32(address, value);
+  else if (type == 1)
+    riscv_cpu_alert |= write_memory16(address, (u16)value);
+  else
+    riscv_cpu_alert |= write_memory8(address, (u8)value);
+}
+
+static void function_cc riscv_thumb_execute_bl_pair(u32 first_opcode,
+                                                    u32 second_opcode,
+                                                    u32 pc,
+                                                    u32 cycles)
+{
+  s32 high_offset = (s32)((first_opcode & 0x07ffu) << 21) >> 9;
+  u32 low_offset = (second_opcode & 0x07ffu) * 2u;
+
+  reg[REG_LR] = (pc + 2u) | 1u;
+  reg[REG_PC] = pc + 2u + (u32)high_offset + low_offset;
+  riscv_cycles_remaining -= (s32)cycles;
+}
+
+static void function_cc riscv_thumb_execute(u32 opcode, u32 pc, u32 cycles)
+{
+  u32 hi = opcode >> 8;
+  u32 rd = opcode & 7u;
+  u32 rs = (opcode >> 3) & 7u;
+  u32 rn = (opcode >> 6) & 7u;
+  u32 imm = opcode & 0xffu;
+  u32 extra_cycles = 0;
+  u32 value;
+  u32 address;
+
+  reg[REG_PC] = pc + 2u;
+
+  switch (hi)
+  {
+    case 0x00 ... 0x07:
+      riscv_thumb_shift_lsl_imm(rd, rs, (opcode >> 6) & 0x1fu);
+      break;
+
+    case 0x08 ... 0x0f:
+      riscv_thumb_shift_lsr_imm(rd, rs, (opcode >> 6) & 0x1fu);
+      break;
+
+    case 0x10 ... 0x17:
+      riscv_thumb_shift_asr_imm(rd, rs, (opcode >> 6) & 0x1fu);
+      break;
+
+    case 0x18 ... 0x19:
+      riscv_thumb_add(rd, reg[rs], reg[rn], 0);
+      break;
+
+    case 0x1a ... 0x1b:
+      riscv_thumb_sub(rd, reg[rs], reg[rn], 1);
+      break;
+
+    case 0x1c ... 0x1d:
+      riscv_thumb_add(rd, reg[rs], rn, 0);
+      break;
+
+    case 0x1e ... 0x1f:
+      riscv_thumb_sub(rd, reg[rs], rn, 1);
+      break;
+
+    case 0x20 ... 0x27:
+      rd = hi & 7u;
+      reg[rd] = imm;
+      riscv_thumb_store_nz_preserve_cv(imm);
+      break;
+
+    case 0x28 ... 0x2f:
+      rd = hi & 7u;
+      riscv_thumb_test_sub(reg[rd], imm);
+      break;
+
+    case 0x30 ... 0x37:
+      rd = hi & 7u;
+      riscv_thumb_add(rd, reg[rd], imm, 0);
+      break;
+
+    case 0x38 ... 0x3f:
+      rd = hi & 7u;
+      riscv_thumb_sub(rd, reg[rd], imm, 1);
+      break;
+
+    case 0x40:
+      switch ((opcode >> 6) & 3u)
+      {
+        case 0:
+          value = reg[rd] & reg[rs];
+          reg[rd] = value;
+          riscv_thumb_store_nz_preserve_cv(value);
+          break;
+        case 1:
+          value = reg[rd] ^ reg[rs];
+          reg[rd] = value;
+          riscv_thumb_store_nz_preserve_cv(value);
+          break;
+        case 2:
+          riscv_thumb_shift_lsl_reg(rd, rs);
+          break;
+        default:
+          riscv_thumb_shift_lsr_reg(rd, rs);
+          break;
+      }
+      break;
+
+    case 0x41:
+      switch ((opcode >> 6) & 3u)
+      {
+        case 0:
+          riscv_thumb_shift_asr_reg(rd, rs);
+          break;
+        case 1:
+          riscv_thumb_add(rd, reg[rd], reg[rs], riscv_thumb_c_flag());
+          break;
+        case 2:
+          riscv_thumb_sub(rd, reg[rd], reg[rs], riscv_thumb_c_flag());
+          break;
+        default:
+          riscv_thumb_shift_ror_reg(rd, rs);
+          break;
+      }
+      break;
+
+    case 0x42:
+      switch ((opcode >> 6) & 3u)
+      {
+        case 0:
+          riscv_thumb_store_nz_preserve_cv(reg[rd] & reg[rs]);
+          break;
+        case 1:
+          riscv_thumb_sub(rd, 0, reg[rs], 1);
+          break;
+        case 2:
+          riscv_thumb_test_sub(reg[rd], reg[rs]);
+          break;
+        default:
+          riscv_thumb_test_add(reg[rd], reg[rs]);
+          break;
+      }
+      break;
+
+    case 0x43:
+      switch ((opcode >> 6) & 3u)
+      {
+        case 0:
+          value = reg[rd] | reg[rs];
+          reg[rd] = value;
+          riscv_thumb_store_nz_preserve_cv(value);
+          break;
+        case 1:
+          value = reg[rd] * reg[rs];
+          reg[rd] = value;
+          riscv_thumb_store_nz_preserve_cv(value);
+          extra_cycles += 2u;
+          break;
+        case 2:
+          value = reg[rd] & ~reg[rs];
+          reg[rd] = value;
+          riscv_thumb_store_nz_preserve_cv(value);
+          break;
+        default:
+          value = ~reg[rs];
+          reg[rd] = value;
+          riscv_thumb_store_nz_preserve_cv(value);
+          break;
+      }
+      break;
+
+    case 0x44:
+    case 0x45:
+    case 0x46:
+    case 0x47:
+    {
+      u32 hrs = (opcode >> 3) & 0x0fu;
+      u32 hrd = ((opcode >> 4) & 0x08u) | (opcode & 0x07u);
+      u32 src = riscv_thumb_reg_value(hrs, pc + 4u);
+      u32 dst = riscv_thumb_reg_value(hrd, pc + 4u);
+
+      if (hi == 0x44u)
+      {
+        value = dst + src;
+        if (hrd == REG_PC)
+          reg[REG_PC] = value & ~1u;
+        else
+          reg[hrd] = value;
+      }
+      else if (hi == 0x45u)
+      {
+        riscv_thumb_test_sub(dst, src);
+      }
+      else if (hi == 0x46u)
+      {
+        if (hrd == REG_PC)
+          reg[REG_PC] = src & ~1u;
+        else
+          reg[hrd] = src;
+      }
+      else
+      {
+        if (src & 1u)
+        {
+          reg[REG_PC] = src - 1u;
+        }
+        else
+        {
+          reg[REG_PC] = src;
+          reg[REG_CPSR] &= ~RISCV_CPSR_T;
+        }
+      }
+      break;
+    }
+
+    case 0x48 ... 0x4f:
+      rd = hi & 7u;
+      address = (pc & ~2u) + 4u + ((opcode & 0xffu) * 4u);
+      reg[rd] = read_memory32(address);
+      extra_cycles += 2u;
+      break;
+
+    case 0x50 ... 0x5f:
+    {
+      u32 ro = (opcode >> 6) & 7u;
+      u32 rb = (opcode >> 3) & 7u;
+      u32 mem_type;
+      bool load;
+
+      rd = opcode & 7u;
+      address = reg[rb] + reg[ro];
+
+      switch ((opcode >> 9) & 7u)
+      {
+        case 0:
+          load = false;
+          mem_type = 0;
+          break;
+        case 1:
+          load = false;
+          mem_type = 1;
+          break;
+        case 2:
+          load = false;
+          mem_type = 2;
+          break;
+        case 3:
+          load = true;
+          mem_type = 3;
+          break;
+        case 4:
+          load = true;
+          mem_type = 0;
+          break;
+        case 5:
+          load = true;
+          mem_type = 1;
+          break;
+        case 6:
+          load = true;
+          mem_type = 2;
+          break;
+        default:
+          load = true;
+          mem_type = 4;
+          break;
+      }
+
+      if (load)
+      {
+        reg[rd] = riscv_thumb_memory_load(address, mem_type);
+        extra_cycles += 2u;
+      }
+      else
+      {
+        riscv_thumb_memory_store(address, reg[rd], mem_type);
+        extra_cycles += 1u;
+      }
+      break;
+    }
+
+    case 0x60 ... 0x67:
+    case 0x68 ... 0x6f:
+    case 0x70 ... 0x77:
+    case 0x78 ... 0x7f:
+    case 0x80 ... 0x87:
+    case 0x88 ... 0x8f:
+    {
+      u32 rb = (opcode >> 3) & 7u;
+      u32 mem_imm = (opcode >> 6) & 0x1fu;
+      bool load = (hi & 0x08u) != 0;
+      u32 mem_type;
+
+      rd = opcode & 7u;
+
+      if (hi < 0x70u)
+      {
+        address = reg[rb] + mem_imm * 4u;
+        mem_type = 0;
+      }
+      else if (hi < 0x80u)
+      {
+        address = reg[rb] + mem_imm;
+        mem_type = 2;
+      }
+      else
+      {
+        address = reg[rb] + mem_imm * 2u;
+        mem_type = 1;
+      }
+
+      if (load)
+      {
+        reg[rd] = riscv_thumb_memory_load(address, mem_type);
+        extra_cycles += 2u;
+      }
+      else
+      {
+        riscv_thumb_memory_store(address, reg[rd], mem_type);
+        extra_cycles += 1u;
+      }
+      break;
+    }
+
+    case 0x90 ... 0x97:
+      rd = hi & 7u;
+      riscv_thumb_memory_store(reg[REG_SP] + (imm * 4u), reg[rd], 0);
+      extra_cycles += 1u;
+      break;
+
+    case 0x98 ... 0x9f:
+      rd = hi & 7u;
+      reg[rd] = read_memory32(reg[REG_SP] + (imm * 4u));
+      extra_cycles += 2u;
+      break;
+
+    case 0xa0 ... 0xa7:
+      rd = hi & 7u;
+      reg[rd] = (pc & ~2u) + 4u + (imm * 4u);
+      break;
+
+    case 0xa8 ... 0xaf:
+      rd = hi & 7u;
+      reg[rd] = reg[REG_SP] + (imm * 4u);
+      break;
+
+    case 0xb0 ... 0xb3:
+      imm = opcode & 0x7fu;
+      if (opcode & 0x80u)
+        reg[REG_SP] -= imm * 4u;
+      else
+        reg[REG_SP] += imm * 4u;
+      break;
+
+    case 0xb4:
+    case 0xb5:
+    case 0xbc:
+    case 0xbd:
+      riscv_thumb_block_memory(opcode, pc);
+      extra_cycles += riscv_thumb_block_memory_extra_cycles(opcode);
+      break;
+
+    case 0xc0 ... 0xcf:
+      riscv_thumb_block_memory(opcode, pc);
+      extra_cycles += riscv_thumb_block_memory_extra_cycles(opcode);
+      break;
+
+    case 0xd0 ... 0xdd:
+      if (riscv_thumb_condition_passed(hi & 0x0fu))
+        reg[REG_PC] = pc + 4u + (u32)((s32)(s8)(opcode & 0xffu) * 2);
+      break;
+
+    case 0xdf:
+      riscv_execute_swi_thumb(pc);
+      break;
+
+    case 0xe0 ... 0xe7:
+      reg[REG_PC] = pc + 4u +
+        (u32)((s32)((opcode & 0x07ffu) << 21) >> 20);
+      break;
+
+    case 0xf8 ... 0xff:
+      value = (pc + 2u) | 1u;
+      reg[REG_PC] = reg[REG_LR] + ((opcode & 0x07ffu) * 2u);
+      reg[REG_LR] = value;
+      break;
+
+    default:
+      break;
+  }
+
+  riscv_cycles_remaining -= (s32)(cycles + extra_cycles);
+}
+
 static const u32 riscv_psr_cpsr_masks[4][2] =
 {
   { 0x00000000u, 0x00000000u },
@@ -2375,6 +3163,94 @@ bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,
   return true;
 }
 
+static void riscv_note_thumb_native_stat(u32 opcode)
+{
+  u32 hi = opcode >> 8;
+
+  if ((hi >= 0x48u && hi <= 0x9fu) ||
+      hi == 0xbcu || hi == 0xbdu ||
+      (hi >= 0xc8u && hi <= 0xcfu))
+  {
+    riscv_native_load_insns++;
+  }
+  else if ((hi >= 0x50u && hi <= 0x97u) ||
+           hi == 0xb4u || hi == 0xb5u ||
+           (hi >= 0xc0u && hi <= 0xc7u))
+  {
+    riscv_native_store_insns++;
+  }
+  else if ((hi >= 0xd0u && hi <= 0xdfu) ||
+           (hi >= 0xe0u && hi <= 0xe7u) ||
+           (hi >= 0xf8u && hi <= 0xffu) ||
+           hi == 0x47u)
+  {
+    riscv_native_branch_insns++;
+  }
+  else
+  {
+    riscv_native_data_proc_insns++;
+  }
+}
+
+bool riscv_emit_native_thumb_instruction(u8 **translation_ptr_ref,
+                                         riscv_jit_block_meta *meta,
+                                         u32 opcode,
+                                         u32 pc,
+                                         u32 cycles,
+                                         bool exits)
+{
+  u8 *ptr = *translation_ptr_ref;
+
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
+    return false;
+
+  riscv_emit_li(&ptr, riscv_reg_a0, opcode & 0xffffu);
+  riscv_emit_li(&ptr, riscv_reg_a1, pc);
+  riscv_emit_li(&ptr, riscv_reg_a2, cycles);
+  riscv_emit_c_call(&ptr, (uintptr_t)riscv_thumb_execute);
+
+  if (exits)
+  {
+    meta->flags |= RISCV_BLOCK_PC_WRITTEN;
+    riscv_emit_helper_call(&ptr, meta);
+  }
+
+  *translation_ptr_ref = ptr;
+  riscv_note_thumb_native_stat(opcode);
+  return true;
+}
+
+bool riscv_emit_native_thumb_bl_pair(u8 **translation_ptr_ref,
+                                     riscv_jit_block_meta *meta,
+                                     u32 first_opcode,
+                                     u32 second_opcode,
+                                     u32 pc,
+                                     u32 cycles)
+{
+  u8 *ptr = *translation_ptr_ref;
+
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
+    return false;
+
+  if (first_opcode < 0xf000u || first_opcode >= 0xf800u ||
+      second_opcode < 0xf800u)
+  {
+    return false;
+  }
+
+  riscv_emit_li(&ptr, riscv_reg_a0, first_opcode & 0xffffu);
+  riscv_emit_li(&ptr, riscv_reg_a1, second_opcode & 0xffffu);
+  riscv_emit_li(&ptr, riscv_reg_a2, pc);
+  riscv_emit_li(&ptr, riscv_reg_a3, cycles);
+  riscv_emit_c_call(&ptr, (uintptr_t)riscv_thumb_execute_bl_pair);
+  meta->flags |= RISCV_BLOCK_PC_WRITTEN;
+  riscv_emit_helper_call(&ptr, meta);
+
+  *translation_ptr_ref = ptr;
+  riscv_native_branch_insns++;
+  return true;
+}
+
 void riscv_emit_block_finalize(riscv_jit_block_meta *meta,
                                u8 **translation_ptr,
                                u32 block_start_pc,
@@ -2386,8 +3262,6 @@ void riscv_emit_block_finalize(riscv_jit_block_meta *meta,
   meta->start_pc = block_start_pc;
   meta->end_pc = block_end_pc;
   meta->thumb = thumb_mode ? 1u : 0u;
-  if (thumb_mode)
-    riscv_mark_block_unsupported(meta);
 
   if (!(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
   {

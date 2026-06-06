@@ -2086,6 +2086,7 @@ static u32 build_thumb_unsupported_block(u8 *code)
 
   riscv_emit_block_prologue(&translation_ptr, &meta);
   g_thumb_unsupported_entry = ((u8 *)meta) + block_prologue_size;
+  riscv_mark_block_unsupported(meta);
   riscv_emit_block_finalize(meta, &translation_ptr,
                             THUMB_UNSUPPORTED_START_PC,
                             THUMB_UNSUPPORTED_END_PC, true);
