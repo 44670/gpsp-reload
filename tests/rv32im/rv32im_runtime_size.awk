@@ -39,7 +39,7 @@ BEGIN {
 	track("thumb_flag_alu_code_bytes", 132, "thumb_direct");
 	track("thumb_memory_load_code_bytes", 112, "thumb_direct");
 	track("thumb_memory_store_code_bytes", 140, "thumb_direct");
-	track("thumb_reg_shift_code_bytes", 724, "thumb_direct");
+	track("thumb_reg_shift_code_bytes", 708, "thumb_direct");
 	track("thumb_block_store_code_bytes", 108, "thumb_direct");
 	track("thumb_block_load_code_bytes", 120, "thumb_direct");
 	track("thumb_block_push_code_bytes", 132, "thumb_direct");
