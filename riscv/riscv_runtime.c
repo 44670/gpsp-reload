@@ -34,6 +34,47 @@ enum
 
 #define RISCV_INVALID_BLOCK_ENTRY ((u8 *)(uintptr_t)~(uintptr_t)0)
 
+/* Blocks may tail-jump into each other, so one outer JIT frame owns s0. */
+#if defined(__riscv) && defined(__riscv_xlen) && (__riscv_xlen == 32)
+u8 *riscv_enter_jit(u8 *entry_data, void *reg_base);
+
+__asm__(
+  ".text\n"
+  ".align 2\n"
+  ".globl riscv_enter_jit\n"
+  ".type riscv_enter_jit, @function\n"
+  "riscv_enter_jit:\n"
+  "  addi sp, sp, -16\n"
+  "  sw ra, 12(sp)\n"
+  "  sw s0, 8(sp)\n"
+  "  mv s0, a1\n"
+  "1:\n"
+  "  beqz a0, 2f\n"
+  "  addi t0, zero, -1\n"
+  "  beq a0, t0, 2f\n"
+  "  jalr ra, a0, 0\n"
+  "  j 1b\n"
+  "2:\n"
+  "  lw s0, 8(sp)\n"
+  "  lw ra, 12(sp)\n"
+  "  addi sp, sp, 16\n"
+  "  ret\n"
+  ".size riscv_enter_jit, .-riscv_enter_jit\n");
+#else
+static u8 *riscv_enter_jit(u8 *entry_data, void *reg_base)
+{
+  (void)reg_base;
+
+  do
+  {
+    riscv_jit_block_fn entry = (riscv_jit_block_fn)entry_data;
+    entry_data = entry();
+  } while (entry_data && entry_data != RISCV_INVALID_BLOCK_ENTRY);
+
+  return entry_data;
+}
+#endif
+
 static s32 riscv_cycles_remaining;
 static u32 riscv_blocks_emitted;
 static u32 riscv_blocks_executed;
@@ -108,10 +149,7 @@ static void riscv_emit_arm_reg_load(u8 **ptr, riscv_reg_number rd,
 {
   u8 *translation_ptr = *ptr;
 
-  *ptr = translation_ptr;
-  riscv_emit_li(ptr, riscv_reg_t5, (u32)(uintptr_t)&reg[0]);
-  translation_ptr = *ptr;
-  riscv_emit_lw(rd, riscv_reg_t5, reg_index * 4u);
+  riscv_emit_lw(rd, riscv_reg_s0, reg_index * 4u);
 
   *ptr = translation_ptr;
 }
@@ -121,10 +159,7 @@ static void riscv_emit_arm_reg_store(u8 **ptr, u32 reg_index,
 {
   u8 *translation_ptr = *ptr;
 
-  *ptr = translation_ptr;
-  riscv_emit_li(ptr, riscv_reg_t5, (u32)(uintptr_t)&reg[0]);
-  translation_ptr = *ptr;
-  riscv_emit_sw(rs, riscv_reg_t5, reg_index * 4u);
+  riscv_emit_sw(rs, riscv_reg_s0, reg_index * 4u);
 
   *ptr = translation_ptr;
 }
@@ -1583,10 +1618,10 @@ static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta)
   return riscv_lookup_or_fallback();
 }
 
-void riscv_emit_block_prologue(u8 **translation_ptr,
+void riscv_emit_block_prologue(u8 **translation_ptr_ref,
                                riscv_jit_block_meta **meta)
 {
-  u8 *ptr = riscv_align_ptr(*translation_ptr);
+  u8 *ptr = riscv_align_ptr(*translation_ptr_ref);
 
   *meta = (riscv_jit_block_meta *)(void *)ptr;
   (*meta)->start_pc = 0;
@@ -1594,7 +1629,7 @@ void riscv_emit_block_prologue(u8 **translation_ptr,
   (*meta)->thumb = 0;
   (*meta)->flags = RISCV_BLOCK_NATIVE_SUPPORTED;
 
-  *translation_ptr = ptr + block_prologue_size;
+  *translation_ptr_ref = ptr + block_prologue_size;
 }
 
 void riscv_mark_block_unsupported(riscv_jit_block_meta *meta)
@@ -3253,7 +3288,7 @@ static void riscv_emit_thumb_cpsr_store_mov_imm_nz(u8 **ptr_ref,
 {
   u8 *translation_ptr = *ptr_ref;
 
-  riscv_emit_lw(riscv_reg_t4, riscv_reg_t5, REG_CPSR * 4u);
+  riscv_emit_lw(riscv_reg_t4, riscv_reg_s0, REG_CPSR * 4u);
   riscv_emit_slli(riscv_reg_t4, riscv_reg_t4, 2);
   riscv_emit_srli(riscv_reg_t4, riscv_reg_t4, 2);
   if (zero_result)
@@ -3261,7 +3296,7 @@ static void riscv_emit_thumb_cpsr_store_mov_imm_nz(u8 **ptr_ref,
     riscv_emit_lui(riscv_reg_t6, 0x40000u);
     riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t6);
   }
-  riscv_emit_sw(riscv_reg_t4, riscv_reg_t5, REG_CPSR * 4u);
+  riscv_emit_sw(riscv_reg_t4, riscv_reg_s0, REG_CPSR * 4u);
 
   *ptr_ref = translation_ptr;
 }
@@ -3285,13 +3320,11 @@ static bool riscv_emit_native_thumb_simple_data(u8 **translation_ptr_ref,
         (hi >= 0xb0u && hi <= 0xb3u)))
     return false;
 
-  riscv_emit_li(&ptr, riscv_reg_t5, (u32)(uintptr_t)&reg[0]);
-
   if (hi >= 0x20u && hi <= 0x27u)
   {
     riscv_emit_li(&ptr, riscv_reg_t2, imm);
     translation_ptr = ptr;
-    riscv_emit_sw(riscv_reg_t2, riscv_reg_t5, rd * 4u);
+    riscv_emit_sw(riscv_reg_t2, riscv_reg_s0, rd * 4u);
     ptr = translation_ptr;
     riscv_emit_thumb_cpsr_store_mov_imm_nz(&ptr, imm == 0);
   }
@@ -3304,12 +3337,12 @@ static bool riscv_emit_native_thumb_simple_data(u8 **translation_ptr_ref,
     else
     {
       translation_ptr = ptr;
-      riscv_emit_lw(riscv_reg_t0, riscv_reg_t5, REG_SP * 4u);
+      riscv_emit_lw(riscv_reg_t0, riscv_reg_s0, REG_SP * 4u);
       riscv_emit_addi(riscv_reg_t2, riscv_reg_t0, (s32)(imm * 4u));
       ptr = translation_ptr;
     }
     translation_ptr = ptr;
-    riscv_emit_sw(riscv_reg_t2, riscv_reg_t5, rd * 4u);
+    riscv_emit_sw(riscv_reg_t2, riscv_reg_s0, rd * 4u);
     ptr = translation_ptr;
   }
   else if (hi >= 0xb0u && hi <= 0xb3u)
@@ -3320,9 +3353,9 @@ static bool riscv_emit_native_thumb_simple_data(u8 **translation_ptr_ref,
       offset = -offset;
 
     translation_ptr = ptr;
-    riscv_emit_lw(riscv_reg_t0, riscv_reg_t5, REG_SP * 4u);
+    riscv_emit_lw(riscv_reg_t0, riscv_reg_s0, REG_SP * 4u);
     riscv_emit_addi(riscv_reg_t0, riscv_reg_t0, offset);
-    riscv_emit_sw(riscv_reg_t0, riscv_reg_t5, REG_SP * 4u);
+    riscv_emit_sw(riscv_reg_t0, riscv_reg_s0, REG_SP * 4u);
     ptr = translation_ptr;
   }
   else
@@ -3387,10 +3420,9 @@ bool riscv_emit_native_thumb_load_pc_pool_const(u8 **translation_ptr_ref,
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED) || rd >= 8u)
     return false;
 
-  riscv_emit_li(&ptr, riscv_reg_t5, (u32)(uintptr_t)&reg[0]);
   riscv_emit_li(&ptr, riscv_reg_t2, value);
   translation_ptr = ptr;
-  riscv_emit_sw(riscv_reg_t2, riscv_reg_t5, rd * 4u);
+  riscv_emit_sw(riscv_reg_t2, riscv_reg_s0, rd * 4u);
   ptr = translation_ptr;
 
   *translation_ptr_ref = ptr;
@@ -3506,12 +3538,9 @@ u32 execute_arm_translate(u32 cycles)
 
 u32 execute_arm_translate_internal(u32 cycles, void *regptr)
 {
-  riscv_jit_block_fn entry;
   u8 *entry_data;
   u32 pc;
   u32 thumb;
-
-  (void)regptr;
 
   riscv_cycles_remaining = (s32)cycles;
   riscv_cpu_alert = CPU_ALERT_NONE;
@@ -3535,11 +3564,7 @@ u32 execute_arm_translate_internal(u32 cycles, void *regptr)
     return 0;
   }
 
-  do
-  {
-    entry = (riscv_jit_block_fn)entry_data;
-    entry_data = entry();
-  } while (entry_data && entry_data != RISCV_INVALID_BLOCK_ENTRY);
+  (void)riscv_enter_jit(entry_data, regptr);
 
   return 0;
 }
