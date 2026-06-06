@@ -3426,6 +3426,25 @@ bool translate_block_arm(u32 pc, bool ram_region)
      TRANSLATION_CACHE_LIMIT_THRESHOLD;
   }
 
+#if defined(RISCV_ARCH)
+  if (!ram_region &&
+      ROM_TRANSLATION_CACHE_SIZE > RISCV_BRANCH_PATCH_SHORT_CACHE_BYTES)
+  {
+    u8 *riscv_short_branch_limit =
+      rom_translation_cache + RISCV_BRANCH_PATCH_SHORT_CACHE_BYTES;
+    if (translation_cache_limit > riscv_short_branch_limit)
+      translation_cache_limit = riscv_short_branch_limit;
+  }
+  if (ram_region &&
+      RAM_TRANSLATION_CACHE_SIZE > RISCV_BRANCH_PATCH_SHORT_CACHE_BYTES)
+  {
+    u8 *riscv_short_branch_limit =
+      ram_translation_cache + RISCV_BRANCH_PATCH_SHORT_CACHE_BYTES;
+    if (translation_cache_limit > riscv_short_branch_limit)
+      translation_cache_limit = riscv_short_branch_limit;
+  }
+#endif
+
   if(translation_ptr > translation_cache_limit) {
     if (ram_region)
       flush_translation_cache_ram();
@@ -3556,6 +3575,8 @@ bool translate_block_arm(u32 pc, bool ram_region)
        branch_target;
       external_block_exits[external_block_exit_position].branch_source =
        block_exits[i].branch_source;
+      external_block_exits[external_block_exit_position].branch_patch_short =
+       block_exits[i].branch_patch_short;
       external_block_exit_position++;
     }
   }
@@ -3578,6 +3599,12 @@ bool translate_block_arm(u32 pc, bool ram_region)
       translation_target = block_lookup_translate_arm(branch_target);
     if (!translation_target)
       return false;
+#if defined(RISCV_ARCH)
+    if(external_block_exits[i].branch_patch_short)
+      riscv_patch_unconditional_branch_short(
+       external_block_exits[i].branch_source, translation_target);
+    else
+#endif
     generate_branch_patch_unconditional(
       external_block_exits[i].branch_source, translation_target);
   }
@@ -3628,6 +3655,25 @@ bool translate_block_thumb(u32 pc, bool ram_region)
     translation_cache_limit = &rom_translation_cache[
        ROM_TRANSLATION_CACHE_SIZE - TRANSLATION_CACHE_LIMIT_THRESHOLD];
   }
+
+#if defined(RISCV_ARCH)
+  if (!ram_region &&
+      ROM_TRANSLATION_CACHE_SIZE > RISCV_BRANCH_PATCH_SHORT_CACHE_BYTES)
+  {
+    u8 *riscv_short_branch_limit =
+      rom_translation_cache + RISCV_BRANCH_PATCH_SHORT_CACHE_BYTES;
+    if (translation_cache_limit > riscv_short_branch_limit)
+      translation_cache_limit = riscv_short_branch_limit;
+  }
+  if (ram_region &&
+      RAM_TRANSLATION_CACHE_SIZE > RISCV_BRANCH_PATCH_SHORT_CACHE_BYTES)
+  {
+    u8 *riscv_short_branch_limit =
+      ram_translation_cache + RISCV_BRANCH_PATCH_SHORT_CACHE_BYTES;
+    if (translation_cache_limit > riscv_short_branch_limit)
+      translation_cache_limit = riscv_short_branch_limit;
+  }
+#endif
 
   if(translation_ptr > translation_cache_limit) {
     if (ram_region)
@@ -3753,6 +3799,8 @@ bool translate_block_thumb(u32 pc, bool ram_region)
        branch_target;
       external_block_exits[external_block_exit_position].branch_source =
        block_exits[i].branch_source;
+      external_block_exits[external_block_exit_position].branch_patch_short =
+       block_exits[i].branch_patch_short;
       external_block_exit_position++;
     }
   }
@@ -3775,6 +3823,12 @@ bool translate_block_thumb(u32 pc, bool ram_region)
       translation_target = block_lookup_translate_thumb(branch_target);
     if (!translation_target)
       return false;
+#if defined(RISCV_ARCH)
+    if(external_block_exits[i].branch_patch_short)
+      riscv_patch_unconditional_branch_short(
+       external_block_exits[i].branch_source, translation_target);
+    else
+#endif
     generate_branch_patch_unconditional(
       external_block_exits[i].branch_source, translation_target);
   }

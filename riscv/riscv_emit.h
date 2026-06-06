@@ -18,6 +18,7 @@
 #define block_prologue_size RISCV_BLOCK_META_BYTES
 #define RISCV_BRANCH_PATCH_BYTES 8
 #define RISCV_BRANCH_PATCH_SHORT_BYTES 4
+#define RISCV_BRANCH_PATCH_SHORT_CACHE_BYTES (1024 * 1024 - 4096)
 
 typedef struct riscv_jit_block_meta
 {
@@ -375,9 +376,25 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target);
     riscv_patch_unconditional_branch((dest), (offset));                       \
   } while (0)
 
-#define riscv_branch_patch_short()                                            \
+#define riscv_branch_patch_internal()                                         \
   ((block_exits[block_exit_position].branch_target >= block_start_pc) &&      \
    (block_exits[block_exit_position].branch_target < block_end_pc))
+
+#define riscv_branch_target_uses_ram()                                        \
+  ((((block_exits[block_exit_position].branch_target) >> 24) == 0x02u) ||    \
+   (((block_exits[block_exit_position].branch_target) >> 24) == 0x03u))
+
+#define riscv_branch_target_uses_rom()                                        \
+  ((((block_exits[block_exit_position].branch_target) >> 24) == 0x00u) ||    \
+   ((((block_exits[block_exit_position].branch_target) >> 24) >= 0x08u) &&   \
+    (((block_exits[block_exit_position].branch_target) >> 24) <= 0x0du)))
+
+#define riscv_branch_patch_same_cache()                                       \
+  (ram_region ? riscv_branch_target_uses_ram() :                              \
+                riscv_branch_target_uses_rom())
+
+#define riscv_branch_patch_short()                                            \
+  (riscv_branch_patch_internal() || riscv_branch_patch_same_cache())
 
 #define riscv_block_kind_arm false
 #define riscv_block_kind_thumb true
@@ -592,6 +609,7 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target);
 #define arm_b()                                                               \
   do                                                                          \
   {                                                                           \
+    bool riscv_internal_patch = riscv_branch_patch_internal();                \
     bool riscv_short_patch = riscv_branch_patch_short();                      \
     if (riscv_emit_native_arm_b_patchable(                                    \
           &translation_ptr, riscv_block_meta,                                 \
@@ -601,7 +619,7 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target);
     {                                                                         \
       block_exits[block_exit_position].branch_patch_short =                   \
         riscv_short_patch;                                                    \
-      if (!riscv_short_patch && pc + 4u == block_end_pc)                     \
+      if (!riscv_internal_patch && pc + 4u == block_end_pc)                  \
         riscv_mark_block_no_fallthrough(riscv_block_meta);                   \
       block_exit_position++;                                                  \
       cycle_count = 0;                                                        \
@@ -615,6 +633,7 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target);
 #define arm_bl()                                                              \
   do                                                                          \
   {                                                                           \
+    bool riscv_internal_patch = riscv_branch_patch_internal();                \
     bool riscv_short_patch = riscv_branch_patch_short();                      \
     if (riscv_emit_native_arm_bl_patchable(                                   \
           &translation_ptr, riscv_block_meta,                                 \
@@ -624,7 +643,7 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target);
     {                                                                         \
       block_exits[block_exit_position].branch_patch_short =                   \
         riscv_short_patch;                                                    \
-      if (!riscv_short_patch && pc + 4u == block_end_pc)                     \
+      if (!riscv_internal_patch && pc + 4u == block_end_pc)                  \
         riscv_mark_block_no_fallthrough(riscv_block_meta);                   \
       block_exit_position++;                                                  \
       cycle_count = 0;                                                        \
