@@ -217,6 +217,12 @@ bool riscv_emit_native_thumb_access_memory(u8 **translation_ptr,
                                            u32 pc,
                                            u32 cycles,
                                            bool *cycles_emitted);
+bool riscv_emit_native_thumb_block_memory(u8 **translation_ptr,
+                                          riscv_jit_block_meta *meta,
+                                          u32 opcode,
+                                          u32 pc,
+                                          u32 cycles,
+                                          bool *cycles_emitted);
 bool riscv_emit_native_thumb_conditional_branch(u8 **translation_ptr,
                                                 riscv_jit_block_meta *meta,
                                                 u8 **branch_source,
@@ -743,7 +749,21 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target);
   riscv_emit_thumb_instruction(false)
 
 #define thumb_block_memory(...)                                               \
-  riscv_emit_thumb_instruction(((opcode & 0xff00u) == 0xbd00u))
+  do                                                                          \
+  {                                                                           \
+    bool riscv_thumb_cycles_emitted = false;                                  \
+    if (riscv_emit_native_thumb_block_memory(                                 \
+          &translation_ptr, riscv_block_meta, opcode, pc, cycle_count,        \
+          &riscv_thumb_cycles_emitted))                                       \
+    {                                                                         \
+      if (riscv_thumb_cycles_emitted)                                         \
+        cycle_count = 0;                                                      \
+    }                                                                         \
+    else                                                                      \
+    {                                                                         \
+      riscv_emit_thumb_instruction(((opcode & 0xff00u) == 0xbd00u));         \
+    }                                                                         \
+  } while (0)
 
 #define thumb_conditional_branch(...)                                         \
   do                                                                          \
