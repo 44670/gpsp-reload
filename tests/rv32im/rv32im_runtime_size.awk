@@ -37,7 +37,7 @@ BEGIN {
 	track("thumb_flag_alu_code_bytes", 136, "thumb_direct");
 	track("thumb_memory_load_code_bytes", 120, "thumb_direct");
 	track("thumb_memory_store_code_bytes", 148, "thumb_direct");
-	track("thumb_reg_shift_code_bytes", 784, "thumb_direct");
+	track("thumb_reg_shift_code_bytes", 780, "thumb_direct");
 	track("thumb_block_store_code_bytes", 112, "thumb_direct");
 	track("thumb_block_load_code_bytes", 124, "thumb_direct");
 	track("thumb_block_push_code_bytes", 132, "thumb_direct");
@@ -69,10 +69,10 @@ BEGIN {
 	track("carry_flag_rscs_code_bytes", 172, "arm_flags_shift");
 	track("logical_flag_code_bytes", 456, "arm_flags_shift");
 	track("data_ext_code_bytes", 244, "arm_flags_shift");
-	track("reg_shift_data_code_bytes", 216, "arm_flags_shift");
+	track("reg_shift_data_code_bytes", 212, "arm_flags_shift");
 	track("reg_shift_flag_lsl_code_bytes", 184, "arm_flags_shift");
 	track("reg_shift_flag_lsr_code_bytes", 184, "arm_flags_shift");
-	track("reg_shift_flag_asr_code_bytes", 200, "arm_flags_shift");
+	track("reg_shift_flag_asr_code_bytes", 196, "arm_flags_shift");
 	track("reg_shift_flag_ror0_code_bytes", 168, "arm_flags_shift");
 	track("reg_shift_test_code_bytes", 180, "arm_flags_shift");
 
