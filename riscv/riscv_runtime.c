@@ -56,7 +56,6 @@ enum
 
 enum
 {
-  RISCV_STACK_HELPER_READ8S = 4,
   RISCV_STACK_HELPER_READ16S = 8,
   RISCV_STACK_HELPER_EXECUTE_SPSR_RESTORE = 12,
   RISCV_STACK_HELPER_STORE_SPSR = 16,
@@ -68,6 +67,7 @@ enum
   RISCV_STACK_HELPER_SWAP_U32 = 40,
   RISCV_STACK_HELPER_ARM_BLOCK_MEMORY = 44,
   RISCV_STACK_HELPER_THUMB_EXECUTE = 48,
+  RISCV_STACK_JIT_LOOP_RETURN = 52,
   RISCV_INITIAL_ROM_WATERMARK = 16,
   RISCV_BLOCK_NATIVE_SUPPORTED = 1u,
   RISCV_BLOCK_PC_WRITTEN = 2u,
@@ -114,8 +114,7 @@ __asm__(
   "  lw s7, 12(a5)\n"
   "  lw s8, 16(a5)\n"
   "  lw s9, 20(a5)\n"
-  "  lw t0, 24(a5)\n"
-  "  sw t0, 4(sp)\n"
+  "  lw s3, 24(a5)\n"
   "  lw t0, 28(a5)\n"
   "  sw t0, 8(sp)\n"
   "  lw t0, 32(a5)\n"
@@ -142,8 +141,9 @@ __asm__(
   "  addi t0, zero, -1\n"
   "  beq a0, t0, 2f\n"
   "  lw s11, 0(s10)\n"
-  "  auipc s3, 0\n"
-  "  addi s3, s3, 12\n"
+  "  auipc t0, 0\n"
+  "  addi t0, t0, 16\n"
+  "  sw t0, 52(sp)\n"
   "  jalr ra, a0, 0\n"
   "  j 1b\n"
   "2:\n"
@@ -2028,7 +2028,7 @@ static void riscv_emit_helper_call(u8 **ptr, const riscv_jit_block_meta *meta)
     u8 *translation_ptr = *ptr;
 
     riscv_emit_sw(riscv_reg_s11, riscv_reg_s10, 0);
-    riscv_emit_add(riscv_reg_ra, riscv_reg_s3, riscv_reg_zero);
+    riscv_emit_lw(riscv_reg_ra, riscv_reg_sp, RISCV_STACK_JIT_LOOP_RETURN);
     riscv_emit_jalr(riscv_reg_zero, riscv_reg_s1, 0);
     *ptr = translation_ptr;
   }
@@ -5038,7 +5038,7 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
         read_helper_reg = riscv_reg_s8;
         break;
       case 2:
-        read_helper_stack_offset = RISCV_STACK_HELPER_READ8S;
+        read_helper_reg = riscv_reg_s3;
         break;
       default:
         read_helper_stack_offset = RISCV_STACK_HELPER_READ16S;
@@ -6476,7 +6476,7 @@ bool riscv_emit_native_thumb_access_memory(u8 **translation_ptr_ref,
         riscv_emit_c_call_reg(&ptr, riscv_reg_s6);
         break;
       case 3:
-        riscv_emit_c_call_stack(&ptr, RISCV_STACK_HELPER_READ8S);
+        riscv_emit_c_call_reg(&ptr, riscv_reg_s3);
         break;
       default:
         riscv_emit_c_call_stack(&ptr, RISCV_STACK_HELPER_READ16S);

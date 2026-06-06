@@ -35,7 +35,7 @@ BEGIN {
 	track("thumb_simple_data_code_bytes", 152, "thumb_direct");
 	track("thumb_hi_cmp_code_bytes", 140, "thumb_direct");
 	track("thumb_flag_alu_code_bytes", 136, "thumb_direct");
-	track("thumb_memory_load_code_bytes", 120, "thumb_direct");
+	track("thumb_memory_load_code_bytes", 116, "thumb_direct");
 	track("thumb_memory_store_code_bytes", 148, "thumb_direct");
 	track("thumb_reg_shift_code_bytes", 736, "thumb_direct");
 	track("thumb_block_store_code_bytes", 112, "thumb_direct");
@@ -83,17 +83,17 @@ BEGIN {
 
 	track("half_load_pc_code_bytes", 68, "arm_half_signed_memory");
 	track("half_reg_load_pc_code_bytes", 72, "arm_half_signed_memory");
-	track("signed_byte_reg_load_pc_code_bytes", 76, "arm_half_signed_memory");
+	track("signed_byte_reg_load_pc_code_bytes", 72, "arm_half_signed_memory");
 	track("signed_half_reg_load_pc_code_bytes", 76, "arm_half_signed_memory");
-	track("signed_byte_load_pc_code_bytes", 72, "arm_half_signed_memory");
+	track("signed_byte_load_pc_code_bytes", 68, "arm_half_signed_memory");
 	track("signed_half_load_pc_code_bytes", 72, "arm_half_signed_memory");
-	track("pc_base_half_load_code_bytes", 148, "arm_half_signed_memory");
+	track("pc_base_half_load_code_bytes", 144, "arm_half_signed_memory");
 	track("pc_base_half_store_code_bytes", 84, "arm_half_signed_memory");
 	track("pc_base_half_neg_store_code_bytes", 84, "arm_half_signed_memory");
-	track("half_load_code_bytes", 152, "arm_half_signed_memory");
+	track("half_load_code_bytes", 148, "arm_half_signed_memory");
 	track("half_store_code_bytes", 84, "arm_half_signed_memory");
-	track("half_reg_load_code_bytes", 164, "arm_half_signed_memory");
-	track("half_reg_pc_load_code_bytes", 176, "arm_half_signed_memory");
+	track("half_reg_load_code_bytes", 160, "arm_half_signed_memory");
+	track("half_reg_pc_load_code_bytes", 172, "arm_half_signed_memory");
 	track("half_reg_pc_store_code_bytes", 88, "arm_half_signed_memory");
 	track("half_reg_store_code_bytes", 88, "arm_half_signed_memory");
 	track("half_writeback_store_code_bytes", 88, "arm_half_signed_memory");
