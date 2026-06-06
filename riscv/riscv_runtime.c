@@ -40,12 +40,34 @@ enum
   RISCV_HELPER_READ16,
   RISCV_HELPER_STORE16,
   RISCV_HELPER_READ8S,
+  RISCV_HELPER_READ16S,
+  RISCV_HELPER_EXECUTE_SPSR_RESTORE,
+  RISCV_HELPER_STORE_SPSR,
+  RISCV_HELPER_STORE_CPSR,
+  RISCV_HELPER_EXECUTE_SWI_ARM,
+  RISCV_HELPER_EXECUTE_SWI_THUMB,
+  RISCV_HELPER_HLE_DIV,
+  RISCV_HELPER_SWAP_U8,
+  RISCV_HELPER_SWAP_U32,
+  RISCV_HELPER_ARM_BLOCK_MEMORY,
   RISCV_HELPER_CYCLES_REMAINING,
   RISCV_HELPER_COUNT
 };
 
 enum
 {
+  RISCV_STACK_HELPER_READ8S = 4,
+  RISCV_STACK_HELPER_READ16S = 8,
+  RISCV_STACK_HELPER_EXECUTE_SPSR_RESTORE = 12,
+  RISCV_STACK_HELPER_STORE_SPSR = 16,
+  RISCV_STACK_HELPER_STORE_CPSR = 20,
+  RISCV_STACK_HELPER_EXECUTE_SWI_ARM = 24,
+  RISCV_STACK_HELPER_EXECUTE_SWI_THUMB = 28,
+  RISCV_STACK_HELPER_HLE_DIV = 32,
+  RISCV_STACK_HELPER_SWAP_U8 = 36,
+  RISCV_STACK_HELPER_SWAP_U32 = 40,
+  RISCV_STACK_HELPER_ARM_BLOCK_MEMORY = 44,
+  RISCV_STACK_HELPER_THUMB_EXECUTE = 48,
   RISCV_INITIAL_ROM_WATERMARK = 16,
   RISCV_BLOCK_NATIVE_SUPPORTED = 1u,
   RISCV_BLOCK_PC_WRITTEN = 2u,
@@ -66,30 +88,53 @@ __asm__(
   ".globl riscv_enter_jit\n"
   ".type riscv_enter_jit, @function\n"
   "riscv_enter_jit:\n"
-  "  addi sp, sp, -64\n"
-  "  sw ra, 60(sp)\n"
-  "  sw s0, 56(sp)\n"
-  "  sw s1, 52(sp)\n"
-  "  sw s2, 48(sp)\n"
-  "  sw s3, 44(sp)\n"
-  "  sw s4, 40(sp)\n"
-  "  sw s5, 36(sp)\n"
-  "  sw s6, 32(sp)\n"
-  "  sw s7, 28(sp)\n"
-  "  sw s8, 24(sp)\n"
-  "  sw s9, 20(sp)\n"
-  "  sw s10, 16(sp)\n"
-  "  sw s11, 12(sp)\n"
+  "  addi sp, sp, -112\n"
+  "  sw ra, 108(sp)\n"
+  "  sw s0, 104(sp)\n"
+  "  sw s1, 100(sp)\n"
+  "  sw s2, 96(sp)\n"
+  "  sw s3, 92(sp)\n"
+  "  sw s4, 88(sp)\n"
+  "  sw s5, 84(sp)\n"
+  "  sw s6, 80(sp)\n"
+  "  sw s7, 76(sp)\n"
+  "  sw s8, 72(sp)\n"
+  "  sw s9, 68(sp)\n"
+  "  sw s10, 64(sp)\n"
+  "  sw s11, 60(sp)\n"
   "  mv s0, a1\n"
   "  mv s1, a2\n"
   "  mv s2, a3\n"
+  "  sw a3, 48(sp)\n"
   "  lw s4, 0(a5)\n"
   "  lw s5, 4(a5)\n"
   "  lw s6, 8(a5)\n"
   "  lw s7, 12(a5)\n"
   "  lw s8, 16(a5)\n"
   "  lw s9, 20(a5)\n"
-  "  lw s10, 28(a5)\n"
+  "  lw t0, 24(a5)\n"
+  "  sw t0, 4(sp)\n"
+  "  lw t0, 28(a5)\n"
+  "  sw t0, 8(sp)\n"
+  "  lw t0, 32(a5)\n"
+  "  sw t0, 12(sp)\n"
+  "  lw t0, 36(a5)\n"
+  "  sw t0, 16(sp)\n"
+  "  lw t0, 40(a5)\n"
+  "  sw t0, 20(sp)\n"
+  "  lw t0, 44(a5)\n"
+  "  sw t0, 24(sp)\n"
+  "  lw t0, 48(a5)\n"
+  "  sw t0, 28(sp)\n"
+  "  lw t0, 52(a5)\n"
+  "  sw t0, 32(sp)\n"
+  "  lw t0, 56(a5)\n"
+  "  sw t0, 36(sp)\n"
+  "  lw t0, 60(a5)\n"
+  "  sw t0, 40(sp)\n"
+  "  lw t0, 64(a5)\n"
+  "  sw t0, 44(sp)\n"
+  "  lw s10, 68(a5)\n"
   "1:\n"
   "  beqz a0, 2f\n"
   "  addi t0, zero, -1\n"
@@ -100,20 +145,20 @@ __asm__(
   "  jalr ra, a0, 0\n"
   "  j 1b\n"
   "2:\n"
-  "  lw s11, 12(sp)\n"
-  "  lw s10, 16(sp)\n"
-  "  lw s9, 20(sp)\n"
-  "  lw s8, 24(sp)\n"
-  "  lw s7, 28(sp)\n"
-  "  lw s6, 32(sp)\n"
-  "  lw s5, 36(sp)\n"
-  "  lw s4, 40(sp)\n"
-  "  lw s3, 44(sp)\n"
-  "  lw s2, 48(sp)\n"
-  "  lw s1, 52(sp)\n"
-  "  lw s0, 56(sp)\n"
-  "  lw ra, 60(sp)\n"
-  "  addi sp, sp, 64\n"
+  "  lw s11, 60(sp)\n"
+  "  lw s10, 64(sp)\n"
+  "  lw s9, 68(sp)\n"
+  "  lw s8, 72(sp)\n"
+  "  lw s7, 76(sp)\n"
+  "  lw s6, 80(sp)\n"
+  "  lw s5, 84(sp)\n"
+  "  lw s4, 88(sp)\n"
+  "  lw s3, 92(sp)\n"
+  "  lw s2, 96(sp)\n"
+  "  lw s1, 100(sp)\n"
+  "  lw s0, 104(sp)\n"
+  "  lw ra, 108(sp)\n"
+  "  addi sp, sp, 112\n"
   "  ret\n"
   ".size riscv_enter_jit, .-riscv_enter_jit\n");
 #else
@@ -286,23 +331,21 @@ static void riscv_emit_adjust_cycles(u8 **ptr, u32 cycles)
   *ptr = translation_ptr;
 }
 
-static void riscv_emit_c_call(u8 **ptr, uintptr_t function_addr)
-{
-  u8 *translation_ptr;
-
-  translation_ptr = *ptr;
-  riscv_emit_li(ptr, riscv_reg_t0, (u32)function_addr);
-  translation_ptr = *ptr;
-  riscv_emit_jalr(riscv_reg_ra, riscv_reg_t0, 0);
-
-  *ptr = translation_ptr;
-}
-
 static void riscv_emit_c_call_reg(u8 **ptr, riscv_reg_number function_reg)
 {
   u8 *translation_ptr = *ptr;
 
   riscv_emit_jalr(riscv_reg_ra, function_reg, 0);
+
+  *ptr = translation_ptr;
+}
+
+static void riscv_emit_c_call_stack(u8 **ptr, u32 stack_offset)
+{
+  u8 *translation_ptr = *ptr;
+
+  riscv_emit_lw(riscv_reg_t0, riscv_reg_sp, stack_offset);
+  riscv_emit_jalr(riscv_reg_ra, riscv_reg_t0, 0);
 
   *ptr = translation_ptr;
 }
@@ -616,6 +659,16 @@ static u32 function_cc riscv_store_u32(u32 address, u32 value)
   return alert;
 }
 
+static void function_cc riscv_execute_swi_arm(u32 pc);
+static void function_cc riscv_execute_swi_thumb(u32 pc);
+static void function_cc riscv_execute_spsr_restore(void);
+static void function_cc riscv_store_spsr(u32 source, u32 psr_pfield);
+static void function_cc riscv_store_cpsr(u32 source, u32 psr_pfield);
+static void function_cc riscv_hle_div(u32 divarm);
+static u32 function_cc riscv_swap_u8(u32 address, u32 value, u32 pc);
+static u32 function_cc riscv_swap_u32(u32 address, u32 value, u32 pc);
+static void function_cc riscv_arm_block_memory(u32 opcode, u32 pc);
+
 static uintptr_t riscv_helper_table[RISCV_HELPER_COUNT];
 
 static void riscv_init_helper_table(void)
@@ -627,6 +680,22 @@ static void riscv_init_helper_table(void)
   riscv_helper_table[RISCV_HELPER_READ16] = (uintptr_t)read_memory16;
   riscv_helper_table[RISCV_HELPER_STORE16] = (uintptr_t)riscv_store_u16;
   riscv_helper_table[RISCV_HELPER_READ8S] = (uintptr_t)read_memory8s;
+  riscv_helper_table[RISCV_HELPER_READ16S] = (uintptr_t)read_memory16s;
+  riscv_helper_table[RISCV_HELPER_EXECUTE_SPSR_RESTORE] =
+    (uintptr_t)riscv_execute_spsr_restore;
+  riscv_helper_table[RISCV_HELPER_STORE_SPSR] =
+    (uintptr_t)riscv_store_spsr;
+  riscv_helper_table[RISCV_HELPER_STORE_CPSR] =
+    (uintptr_t)riscv_store_cpsr;
+  riscv_helper_table[RISCV_HELPER_EXECUTE_SWI_ARM] =
+    (uintptr_t)riscv_execute_swi_arm;
+  riscv_helper_table[RISCV_HELPER_EXECUTE_SWI_THUMB] =
+    (uintptr_t)riscv_execute_swi_thumb;
+  riscv_helper_table[RISCV_HELPER_HLE_DIV] = (uintptr_t)riscv_hle_div;
+  riscv_helper_table[RISCV_HELPER_SWAP_U8] = (uintptr_t)riscv_swap_u8;
+  riscv_helper_table[RISCV_HELPER_SWAP_U32] = (uintptr_t)riscv_swap_u32;
+  riscv_helper_table[RISCV_HELPER_ARM_BLOCK_MEMORY] =
+    (uintptr_t)riscv_arm_block_memory;
   riscv_helper_table[RISCV_HELPER_CYCLES_REMAINING] =
     (uintptr_t)&riscv_cycles_remaining;
 }
@@ -2591,7 +2660,7 @@ bool riscv_emit_native_arm_data_proc_with_pc_ex(u8 **translation_ptr_ref,
   else if (logical_flags && live_flags)
     riscv_emit_arm_cpsr_store_selected_nzcv(&ptr, generated_flag_mask);
   if (writes_pc && set_flags)
-    riscv_emit_c_call(&ptr, (uintptr_t)riscv_execute_spsr_restore);
+    riscv_emit_c_call_stack(&ptr, RISCV_STACK_HELPER_EXECUTE_SPSR_RESTORE);
   if (emit_cycles || writes_pc)
   {
     riscv_emit_adjust_cycles(&ptr, cycles);
@@ -2966,8 +3035,8 @@ bool riscv_emit_native_arm_psr_with_pc(u8 **translation_ptr_ref,
   riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_t0, pc + 4u);
   riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
   riscv_emit_li(&ptr, riscv_reg_a1, psr_pfield);
-  riscv_emit_c_call(&ptr, use_spsr ? (uintptr_t)riscv_store_spsr
-                                  : (uintptr_t)riscv_store_cpsr);
+  riscv_emit_c_call_stack(&ptr, use_spsr ? RISCV_STACK_HELPER_STORE_SPSR
+                                         : RISCV_STACK_HELPER_STORE_CPSR);
   riscv_emit_adjust_cycles(&ptr, cycles);
   riscv_emit_helper_call(&ptr, meta);
 
@@ -3151,7 +3220,7 @@ static bool riscv_emit_native_arm_swi_common(u8 **translation_ptr_ref,
   }
 
   riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_a0, pc + 4u);
-  riscv_emit_c_call(&ptr, (uintptr_t)riscv_execute_swi_arm);
+  riscv_emit_c_call_stack(&ptr, RISCV_STACK_HELPER_EXECUTE_SWI_ARM);
   riscv_emit_adjust_cycles(&ptr, cycles);
 
   if (patchable)
@@ -3205,7 +3274,7 @@ bool riscv_emit_native_arm_hle_div(u8 **translation_ptr_ref,
     return false;
 
   riscv_emit_li(&ptr, riscv_reg_a0, divarm ? 1u : 0u);
-  riscv_emit_c_call(&ptr, (uintptr_t)riscv_hle_div);
+  riscv_emit_c_call_stack(&ptr, RISCV_STACK_HELPER_HLE_DIV);
   riscv_emit_adjust_cycles(&ptr, cycles);
 
   *translation_ptr_ref = ptr;
@@ -3240,8 +3309,8 @@ bool riscv_emit_native_arm_swap(u8 **translation_ptr_ref,
   riscv_emit_arm_reg_load(&ptr, riscv_reg_a0, rn);
   riscv_emit_arm_reg_load(&ptr, riscv_reg_a1, rm);
   riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_a2, pc);
-  riscv_emit_c_call(&ptr, byte ? (uintptr_t)riscv_swap_u8
-                              : (uintptr_t)riscv_swap_u32);
+  riscv_emit_c_call_stack(&ptr, byte ? RISCV_STACK_HELPER_SWAP_U8
+                                     : RISCV_STACK_HELPER_SWAP_U32);
   riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_a0);
   riscv_emit_adjust_cycles(&ptr, cycles + 3u);
   riscv_emit_helper_call(&ptr, meta);
@@ -3386,7 +3455,7 @@ bool riscv_emit_native_arm_block_memory(u8 **translation_ptr_ref,
   {
     riscv_emit_li(&ptr, riscv_reg_a0, opcode);
     riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_a1, pc);
-    riscv_emit_c_call(&ptr, (uintptr_t)riscv_arm_block_memory);
+    riscv_emit_c_call_stack(&ptr, RISCV_STACK_HELPER_ARM_BLOCK_MEMORY);
     riscv_emit_adjust_cycles(&ptr, cycles + count);
     riscv_emit_helper_call(&ptr, meta);
 
@@ -3569,8 +3638,8 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
 
   if (load)
   {
-    riscv_reg_number read_helper_reg;
-    uintptr_t read_helper = 0;
+    riscv_reg_number read_helper_reg = riscv_reg_zero;
+    u32 read_helper_stack_offset = 0;
 
     switch (mem_type)
     {
@@ -3578,18 +3647,17 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
         read_helper_reg = riscv_reg_s8;
         break;
       case 2:
-        read_helper = (uintptr_t)read_memory8s;
+        read_helper_stack_offset = RISCV_STACK_HELPER_READ8S;
         break;
       default:
-        read_helper_reg = riscv_reg_zero;
-        read_helper = (uintptr_t)read_memory16s;
+        read_helper_stack_offset = RISCV_STACK_HELPER_READ16S;
         break;
     }
 
     riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_t0, pc);
     riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
-    if (read_helper)
-      riscv_emit_c_call(&ptr, read_helper);
+    if (read_helper_stack_offset)
+      riscv_emit_c_call_stack(&ptr, read_helper_stack_offset);
     else
       riscv_emit_c_call_reg(&ptr, read_helper_reg);
     riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_a0);
@@ -4889,10 +4957,10 @@ bool riscv_emit_native_thumb_access_memory(u8 **translation_ptr_ref,
         riscv_emit_c_call_reg(&ptr, riscv_reg_s6);
         break;
       case 3:
-        riscv_emit_c_call(&ptr, (uintptr_t)read_memory8s);
+        riscv_emit_c_call_stack(&ptr, RISCV_STACK_HELPER_READ8S);
         break;
       default:
-        riscv_emit_c_call(&ptr, (uintptr_t)read_memory16s);
+        riscv_emit_c_call_stack(&ptr, RISCV_STACK_HELPER_READ16S);
         break;
     }
 
@@ -5249,7 +5317,7 @@ bool riscv_emit_native_thumb_swi_patchable(u8 **translation_ptr_ref,
     return false;
 
   riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_a0, pc);
-  riscv_emit_c_call(&ptr, (uintptr_t)riscv_execute_swi_thumb);
+  riscv_emit_c_call_stack(&ptr, RISCV_STACK_HELPER_EXECUTE_SWI_THUMB);
   riscv_emit_adjust_cycles(&ptr, cycles);
 
   if (branch_source)
@@ -5296,7 +5364,7 @@ bool riscv_emit_native_thumb_instruction(u8 **translation_ptr_ref,
 
   riscv_emit_li(&ptr, riscv_reg_a0, opcode & 0xffffu);
   riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_a1, pc);
-  riscv_emit_c_call(&ptr, (uintptr_t)riscv_thumb_execute);
+  riscv_emit_c_call_stack(&ptr, RISCV_STACK_HELPER_THUMB_EXECUTE);
   riscv_emit_adjust_cycles(&ptr, cycles);
   {
     u8 *translation_ptr = ptr;
