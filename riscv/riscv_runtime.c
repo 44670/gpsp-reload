@@ -4261,7 +4261,6 @@ static bool riscv_emit_native_arm_direct_branch(u8 **translation_ptr_ref,
 {
   u32 condition = opcode >> 28;
   u8 *ptr = *translation_ptr_ref;
-  u32 target_pc;
 
   if (branch_source)
     *branch_source = NULL;
@@ -4278,18 +4277,22 @@ static bool riscv_emit_native_arm_direct_branch(u8 **translation_ptr_ref,
     riscv_emit_arm_reg_store(&ptr, REG_LR, riscv_reg_t0);
   }
 
-  target_pc = pc + (u32)riscv_arm_branch_delta(opcode);
-  riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_t0, target_pc);
-  riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
+  if (!patchable)
+  {
+    u32 target_pc = pc + (u32)riscv_arm_branch_delta(opcode);
+
+    riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_t0, target_pc);
+    riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
+  }
   riscv_emit_adjust_cycles(&ptr, cycles);
 
   if (patchable)
   {
+    /* The frontend patches direct branches before publishing the block. */
     if (branch_source)
       *branch_source = riscv_emit_unconditional_branch_patch_site(&ptr);
     else
       riscv_emit_unconditional_branch_patch_site(&ptr);
-    riscv_emit_terminal_helper_call(&ptr, meta);
   }
   else
   {
@@ -4751,7 +4754,7 @@ bool riscv_emit_native_arm_block_memory(u8 **translation_ptr_ref,
   store_pc = !load && ((reglist & (1u << REG_PC)) != 0);
   use_s2_cursor = !store_pc &&
     (load_base_in_list || load_pc ||
-     (origin_offset ? count >= 3u : count >= 5u));
+     (origin_offset ? count >= 2u : count >= 5u));
 
   riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_t0, pc + 4u);
   riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
@@ -6470,7 +6473,7 @@ bool riscv_emit_native_thumb_block_memory(u8 **translation_ptr_ref,
   riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_t0, pc + 2u);
   riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
 
-  use_s2_cursor = has_pc || (origin_offset ? count >= 3u : count >= 5u);
+  use_s2_cursor = has_pc || (origin_offset ? count >= 2u : count >= 5u);
   if (writeback_first && use_s2_cursor)
     riscv_emit_arm_block_s2_writeback_cursor_init(
       &ptr, rn, end_offset, origin_offset);
@@ -6564,9 +6567,10 @@ bool riscv_emit_native_thumb_conditional_branch(u8 **translation_ptr_ref,
 {
   u32 hi = opcode >> 8;
   u32 condition = hi & 0x0fu;
-  u32 target_pc;
   u8 *ptr = *translation_ptr_ref;
   u8 *branch_skip;
+
+  (void)pc;
 
   if (branch_source)
     *branch_source = NULL;
@@ -6581,11 +6585,9 @@ bool riscv_emit_native_thumb_conditional_branch(u8 **translation_ptr_ref,
                                        &branch_skip))
     return false;
 
-  target_pc = pc + 4u + (u32)((s32)(s8)(opcode & 0xffu) * 2);
-  riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_t1, target_pc);
-  riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t1);
   riscv_emit_adjust_cycles(&ptr, cycles);
 
+  /* Taken path is patched to the target; fallthrough exits via finalizer. */
   if (branch_source)
     *branch_source = riscv_emit_unconditional_branch_patch_site(&ptr);
   else
