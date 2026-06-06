@@ -4038,6 +4038,53 @@ static void riscv_emit_arm_block_cursor_advance(u8 **ptr_ref)
   *ptr_ref = ptr;
 }
 
+static void riscv_emit_arm_block_s2_cursor_init(u8 **ptr_ref,
+                                                u32 rn,
+                                                s32 origin_offset)
+{
+  u8 *ptr = *ptr_ref;
+  u8 *translation_ptr;
+
+  riscv_emit_arm_reg_load(&ptr, riscv_reg_s2, rn);
+
+  translation_ptr = ptr;
+  if (origin_offset)
+    riscv_emit_addi(riscv_reg_s2, riscv_reg_s2, origin_offset);
+  riscv_emit_andi(riscv_reg_s2, riscv_reg_s2, -4);
+  ptr = translation_ptr;
+
+  *ptr_ref = ptr;
+}
+
+static void riscv_emit_arm_block_s2_cursor_load(u8 **ptr_ref)
+{
+  u8 *ptr = *ptr_ref;
+  u8 *translation_ptr = ptr;
+
+  riscv_emit_addi(riscv_reg_a0, riscv_reg_s2, 0);
+  ptr = translation_ptr;
+
+  *ptr_ref = ptr;
+}
+
+static void riscv_emit_arm_block_s2_cursor_advance(u8 **ptr_ref)
+{
+  u8 *ptr = *ptr_ref;
+  u8 *translation_ptr = ptr;
+
+  riscv_emit_addi(riscv_reg_s2, riscv_reg_s2, 4);
+  ptr = translation_ptr;
+
+  *ptr_ref = ptr;
+}
+
+static void riscv_emit_block_pc_base_restore(u8 **ptr_ref,
+                                             const riscv_jit_block_meta *meta)
+{
+  if (meta && (meta->flags & RISCV_BLOCK_PC_BASE_EMITTED))
+    riscv_emit_li(ptr_ref, riscv_reg_s2, meta->start_pc);
+}
+
 bool riscv_emit_native_arm_block_memory(u8 **translation_ptr_ref,
                                         riscv_jit_block_meta *meta,
                                         u32 opcode,
@@ -4059,6 +4106,9 @@ bool riscv_emit_native_arm_block_memory(u8 **translation_ptr_ref,
   bool load_base_in_list;
   bool writeback_first;
   bool address_from_writeback;
+  bool load_pc;
+  bool store_pc;
+  bool use_s2_cursor;
   s32 origin_offset;
   u8 *ptr = *translation_ptr_ref;
   u32 offset = 0;
@@ -4100,10 +4150,17 @@ bool riscv_emit_native_arm_block_memory(u8 **translation_ptr_ref,
   origin_offset =
     riscv_arm_block_origin_offset(pre_index, up, count,
                                   address_from_writeback);
+  load_pc = load && ((reglist & (1u << REG_PC)) != 0);
+  store_pc = !load && ((reglist & (1u << REG_PC)) != 0);
+  use_s2_cursor = !store_pc &&
+    (load_base_in_list || load_pc ||
+     (origin_offset ? count >= 3u : count >= 5u));
 
   if (address_from_writeback)
     riscv_emit_arm_block_writeback(&ptr, rn, end_offset);
-  if (load_base_in_list)
+  if (use_s2_cursor)
+    riscv_emit_arm_block_s2_cursor_init(&ptr, rn, origin_offset);
+  else if (load_base_in_list)
     riscv_emit_arm_block_cursor_init(&ptr, rn, origin_offset);
 
   riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_t0, pc + 4u);
@@ -4114,7 +4171,9 @@ bool riscv_emit_native_arm_block_memory(u8 **translation_ptr_ref,
     if (!((reglist >> i) & 1u))
       continue;
 
-    if (load_base_in_list)
+    if (use_s2_cursor)
+      riscv_emit_arm_block_s2_cursor_load(&ptr);
+    else if (load_base_in_list)
       riscv_emit_arm_block_cursor_load(&ptr);
     else
       riscv_emit_arm_block_transfer_address(&ptr, rn, origin_offset, offset);
@@ -4123,7 +4182,9 @@ bool riscv_emit_native_arm_block_memory(u8 **translation_ptr_ref,
     {
       riscv_emit_c_call_reg(&ptr, riscv_reg_s4);
       riscv_emit_arm_reg_store(&ptr, i, riscv_reg_a0);
-      if (load_base_in_list && (offset + 4u) < (count * 4u))
+      if (use_s2_cursor && (offset + 4u) < (count * 4u))
+        riscv_emit_arm_block_s2_cursor_advance(&ptr);
+      else if (load_base_in_list && (offset + 4u) < (count * 4u))
         riscv_emit_arm_block_cursor_advance(&ptr);
     }
     else
@@ -4133,10 +4194,15 @@ bool riscv_emit_native_arm_block_memory(u8 **translation_ptr_ref,
       else
         riscv_emit_arm_reg_load(&ptr, riscv_reg_a1, i);
       riscv_emit_c_call_reg(&ptr, riscv_reg_s5);
+      if (use_s2_cursor && (offset + 4u) < (count * 4u))
+        riscv_emit_arm_block_s2_cursor_advance(&ptr);
     }
 
     offset += 4u;
   }
+
+  if (use_s2_cursor && !load_pc)
+    riscv_emit_block_pc_base_restore(&ptr, meta);
 
   if (writeback && !writeback_first && !load_base_in_list)
     riscv_emit_arm_block_writeback(&ptr, rn, end_offset);
