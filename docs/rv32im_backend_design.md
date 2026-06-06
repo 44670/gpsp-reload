@@ -273,7 +273,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 | Scheduler exits, update_gba(), frame completion, fallback buckets | native+compare | `run runtime`, `cont runtime`, `sched runtime`, `counters runtime`, and `compare` pin update/refill, PC-change, frame-complete, fallback source breakdown, and snapshot hashes. |
 | Mixed contract chain across semantic boundaries | native+compare | `mixed` runs native data processing, helper-backed load, PC-writing load into a native target, alerting helper-backed store, scheduler refill, and deliberate fallback without resetting state. It pins register, memory, scheduler, trace, instruction-step, memory-event, scheduler-event, fallback-event, shadow-memory, counter, code-byte, and runtime-frame evidence. |
 | Armwrestler ARM Tests 0-4 and Thumbwrestler Tests 0-2 external ROM | interpreter+frontend JIT compare | `make -C tests/rv32im armwrestler` loads `/home/john/ref/armwrestler-gba-fixed/armwrestler-gba-fixed.gba`, patches only each loaded copy for deterministic `TESTNUM`, `VSync`, and `DrawResult` result capture, runs ARM Tests 0-4 and Thumb Tests 0-2 under the host `cpu.cc` interpreter and under `cpu_threaded.c` plus generated RV32IM in `qemu-riscv32`, and requires 79 results, failure mask `0`, native blocks/code bytes/nonzero native counters, ROM trace PCs, `fallbacks=0`, `fallback_events=0`, and `execute_arm_calls=0`. Tests 5-9 are Armwrestler stubs in this ROM. |
-| Armwrestler code-size reporting | regression ratchet | `make -C tests/rv32im armwrestler-report` prints stable `armwrestler_code_size` lines for every ARM/Thumb subtest plus final `arm_total`, `thumb_total`, `arm_max`, and `thumb_max`. Current thresholds are ARM `189064` bytes and Thumb `18880` bytes. |
+| Armwrestler code-size reporting | regression ratchet | `make -C tests/rv32im armwrestler-report` prints stable `armwrestler_code_size` lines for every ARM/Thumb subtest plus final `arm_total`, `thumb_total`, `arm_max`, and `thumb_max`. Current thresholds are ARM `188992` bytes and Thumb `18880` bytes. |
 | Thumb instruction lowering | native+ongoing | Thumbwrestler Tests 0-2 currently run through frontend JIT with zero fallbacks. Native lowering has covered the Armwrestler Thumb paths and remains an active MIPS-alignment task for broader Thumb coverage. |
 
 Next milestone selection comes from this table and the code-size report: move
@@ -558,6 +558,8 @@ consumers; the current RV32IM emitter relies on `MRS CPSR` and CPSR flag-field
 `MSR` being modeled before using selective CPSR flag stores. Flags-only
 `MSR CPSR_f` / `MSR SPSR_f` forms are direct-lowered because they do not change
 CPU mode or IRQ state; control-field stores still use the helper/exit path.
+Regular ARM multiply flag forms now update only N/Z and preserve C/V directly,
+matching the ARM contract without the older full NZCV rebuild.
 Current high-value Thumb work is to keep expanding MIPS-aligned direct lowering
 beyond the Armwrestler-covered paths. Compressed RISC-V emission, guest register
 caching, performance tuning, and ESP32-specific work remain later phases.

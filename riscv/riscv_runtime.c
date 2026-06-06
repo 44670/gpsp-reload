@@ -1764,7 +1764,6 @@ void riscv_mark_block_unsupported(riscv_jit_block_meta *meta)
 }
 
 static void riscv_emit_arm_cpsr_c_load(u8 **ptr_ref, riscv_reg_number rd);
-static void riscv_emit_arm_cpsr_v_load(u8 **ptr_ref, riscv_reg_number rd);
 
 static bool riscv_emit_arm_data_proc_operand2(u8 **ptr_ref, u32 opcode,
                                               u32 pc)
@@ -1877,19 +1876,6 @@ static void riscv_emit_arm_cpsr_c_load(u8 **ptr_ref, riscv_reg_number rd)
   riscv_emit_arm_reg_load(&ptr, rd, REG_CPSR);
   translation_ptr = ptr;
   riscv_emit_srli(rd, rd, 29);
-  riscv_emit_andi(rd, rd, 1);
-
-  *ptr_ref = translation_ptr;
-}
-
-static void riscv_emit_arm_cpsr_v_load(u8 **ptr_ref, riscv_reg_number rd)
-{
-  u8 *ptr = *ptr_ref;
-  u8 *translation_ptr;
-
-  riscv_emit_arm_reg_load(&ptr, rd, REG_CPSR);
-  translation_ptr = ptr;
-  riscv_emit_srli(rd, rd, 28);
   riscv_emit_andi(rd, rd, 1);
 
   *ptr_ref = translation_ptr;
@@ -2669,11 +2655,7 @@ bool riscv_emit_native_arm_multiply(u8 **translation_ptr_ref,
 
   riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_t2);
   if (set_flags)
-  {
-    riscv_emit_arm_cpsr_c_load(&ptr, riscv_reg_t3);
-    riscv_emit_arm_cpsr_v_load(&ptr, riscv_reg_t4);
-    riscv_emit_arm_cpsr_store_nzcv(&ptr);
-  }
+    riscv_emit_arm_cpsr_store_nz_preserve_cv(&ptr);
   riscv_emit_adjust_cycles(&ptr, cycles);
 
   *translation_ptr_ref = ptr;
