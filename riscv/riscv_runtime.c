@@ -25,6 +25,13 @@ typedef u8 *(*riscv_jit_block_fn)(void);
 
 extern u32 rom_cache_watermark;
 
+static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta);
+static void function_cc riscv_thumb_execute(u32 opcode, u32 pc, u32 cycles);
+static void function_cc riscv_thumb_execute_bl_pair(u32 first_opcode,
+                                                    u32 second_opcode,
+                                                    u32 pc,
+                                                    u32 cycles);
+
 enum
 {
   RISCV_INITIAL_ROM_WATERMARK = 16,
@@ -36,7 +43,8 @@ enum
 
 /* Blocks may tail-jump into each other, so one outer JIT frame owns s0. */
 #if defined(__riscv) && defined(__riscv_xlen) && (__riscv_xlen == 32)
-u8 *riscv_enter_jit(u8 *entry_data, void *reg_base);
+u8 *riscv_enter_jit(u8 *entry_data, void *reg_base, void *run_block,
+                    void *thumb_execute, void *thumb_bl_pair);
 
 __asm__(
   ".text\n"
@@ -44,10 +52,16 @@ __asm__(
   ".globl riscv_enter_jit\n"
   ".type riscv_enter_jit, @function\n"
   "riscv_enter_jit:\n"
-  "  addi sp, sp, -16\n"
-  "  sw ra, 12(sp)\n"
-  "  sw s0, 8(sp)\n"
+  "  addi sp, sp, -32\n"
+  "  sw ra, 28(sp)\n"
+  "  sw s0, 24(sp)\n"
+  "  sw s1, 20(sp)\n"
+  "  sw s2, 16(sp)\n"
+  "  sw s3, 12(sp)\n"
   "  mv s0, a1\n"
+  "  mv s1, a2\n"
+  "  mv s2, a3\n"
+  "  mv s3, a4\n"
   "1:\n"
   "  beqz a0, 2f\n"
   "  addi t0, zero, -1\n"
@@ -55,15 +69,22 @@ __asm__(
   "  jalr ra, a0, 0\n"
   "  j 1b\n"
   "2:\n"
-  "  lw s0, 8(sp)\n"
-  "  lw ra, 12(sp)\n"
-  "  addi sp, sp, 16\n"
+  "  lw s3, 12(sp)\n"
+  "  lw s2, 16(sp)\n"
+  "  lw s1, 20(sp)\n"
+  "  lw s0, 24(sp)\n"
+  "  lw ra, 28(sp)\n"
+  "  addi sp, sp, 32\n"
   "  ret\n"
   ".size riscv_enter_jit, .-riscv_enter_jit\n");
 #else
-static u8 *riscv_enter_jit(u8 *entry_data, void *reg_base)
+static u8 *riscv_enter_jit(u8 *entry_data, void *reg_base, void *run_block,
+                           void *thumb_execute, void *thumb_bl_pair)
 {
   (void)reg_base;
+  (void)run_block;
+  (void)thumb_execute;
+  (void)thumb_bl_pair;
 
   do
   {
@@ -88,8 +109,6 @@ static u32 riscv_native_load_insns;
 static u32 riscv_native_store_insns;
 static u32 riscv_native_psr_insns;
 static cpu_alert_type riscv_cpu_alert;
-
-static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta);
 
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((weak))
@@ -217,6 +236,19 @@ static void riscv_emit_c_call(u8 **ptr, uintptr_t function_addr)
   riscv_emit_li(ptr, riscv_reg_t0, (u32)function_addr);
   translation_ptr = *ptr;
   riscv_emit_jalr(riscv_reg_ra, riscv_reg_t0, 0);
+  riscv_emit_lw(riscv_reg_ra, riscv_reg_sp, 12);
+  riscv_emit_addi(riscv_reg_sp, riscv_reg_sp, 16);
+
+  *ptr = translation_ptr;
+}
+
+static void riscv_emit_c_call_reg(u8 **ptr, riscv_reg_number function_reg)
+{
+  u8 *translation_ptr = *ptr;
+
+  riscv_emit_addi(riscv_reg_sp, riscv_reg_sp, -16);
+  riscv_emit_sw(riscv_reg_ra, riscv_reg_sp, 12);
+  riscv_emit_jalr(riscv_reg_ra, function_reg, 0);
   riscv_emit_lw(riscv_reg_ra, riscv_reg_sp, 12);
   riscv_emit_addi(riscv_reg_sp, riscv_reg_sp, 16);
 
@@ -1552,9 +1584,8 @@ static void riscv_emit_helper_call(u8 **ptr, const riscv_jit_block_meta *meta)
   *ptr = translation_ptr;
 
   riscv_emit_li(ptr, riscv_reg_a0, (u32)(uintptr_t)meta);
-  riscv_emit_li(ptr, riscv_reg_t0, (u32)(uintptr_t)riscv_jit_run_block);
   translation_ptr = *ptr;
-  riscv_emit_jalr(riscv_reg_ra, riscv_reg_t0, 0);
+  riscv_emit_jalr(riscv_reg_ra, riscv_reg_s1, 0);
   riscv_emit_lw(riscv_reg_ra, riscv_reg_sp, 12);
   riscv_emit_addi(riscv_reg_sp, riscv_reg_sp, 16);
   riscv_emit_jalr(riscv_reg_zero, riscv_reg_ra, 0);
@@ -3368,6 +3399,48 @@ static bool riscv_emit_native_thumb_simple_data(u8 **translation_ptr_ref,
   return true;
 }
 
+static bool riscv_emit_native_thumb_hi_add_mov(u8 **translation_ptr_ref,
+                                               u32 opcode,
+                                               u32 pc,
+                                               bool exits)
+{
+  u32 hi = opcode >> 8;
+  u32 hrs = (opcode >> 3) & 0x0fu;
+  u32 hrd = ((opcode >> 4) & 0x08u) | (opcode & 0x07u);
+  u8 *ptr = *translation_ptr_ref;
+  u8 *translation_ptr;
+
+  if (exits || (hi != 0x44u && hi != 0x46u) || hrd == REG_PC)
+    return false;
+
+  if (hrs == REG_PC)
+  {
+    riscv_emit_li(&ptr, riscv_reg_t1, pc + 4u);
+  }
+  else
+  {
+    translation_ptr = ptr;
+    riscv_emit_lw(riscv_reg_t1, riscv_reg_s0, hrs * 4u);
+    ptr = translation_ptr;
+  }
+
+  translation_ptr = ptr;
+  if (hi == 0x44u)
+  {
+    riscv_emit_lw(riscv_reg_t0, riscv_reg_s0, hrd * 4u);
+    riscv_emit_add(riscv_reg_t2, riscv_reg_t0, riscv_reg_t1);
+    riscv_emit_sw(riscv_reg_t2, riscv_reg_s0, hrd * 4u);
+  }
+  else
+  {
+    riscv_emit_sw(riscv_reg_t1, riscv_reg_s0, hrd * 4u);
+  }
+  ptr = translation_ptr;
+
+  *translation_ptr_ref = ptr;
+  return true;
+}
+
 bool riscv_emit_native_thumb_instruction(u8 **translation_ptr_ref,
                                          riscv_jit_block_meta *meta,
                                          u32 opcode,
@@ -3391,10 +3464,17 @@ bool riscv_emit_native_thumb_instruction(u8 **translation_ptr_ref,
     return true;
   }
 
+  if (riscv_emit_native_thumb_hi_add_mov(&ptr, opcode, pc, exits))
+  {
+    *translation_ptr_ref = ptr;
+    riscv_note_thumb_native_stat(opcode);
+    return true;
+  }
+
   riscv_emit_li(&ptr, riscv_reg_a0, opcode & 0xffffu);
   riscv_emit_li(&ptr, riscv_reg_a1, pc);
   riscv_emit_li(&ptr, riscv_reg_a2, cycles);
-  riscv_emit_c_call(&ptr, (uintptr_t)riscv_thumb_execute);
+  riscv_emit_c_call_reg(&ptr, riscv_reg_s2);
   if (cycles_emitted)
     *cycles_emitted = true;
 
@@ -3452,7 +3532,7 @@ bool riscv_emit_native_thumb_bl_pair(u8 **translation_ptr_ref,
   riscv_emit_li(&ptr, riscv_reg_a1, second_opcode & 0xffffu);
   riscv_emit_li(&ptr, riscv_reg_a2, pc);
   riscv_emit_li(&ptr, riscv_reg_a3, cycles);
-  riscv_emit_c_call(&ptr, (uintptr_t)riscv_thumb_execute_bl_pair);
+  riscv_emit_c_call_reg(&ptr, riscv_reg_s3);
   meta->flags |= RISCV_BLOCK_PC_WRITTEN;
   riscv_emit_helper_call(&ptr, meta);
 
@@ -3564,7 +3644,10 @@ u32 execute_arm_translate_internal(u32 cycles, void *regptr)
     return 0;
   }
 
-  (void)riscv_enter_jit(entry_data, regptr);
+  (void)riscv_enter_jit(entry_data, regptr,
+                        (void *)(uintptr_t)riscv_jit_run_block,
+                        (void *)(uintptr_t)riscv_thumb_execute,
+                        (void *)(uintptr_t)riscv_thumb_execute_bl_pair);
 
   return 0;
 }
