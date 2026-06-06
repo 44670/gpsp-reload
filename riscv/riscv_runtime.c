@@ -645,7 +645,7 @@ static void riscv_emit_store_alert_branch(u8 **ptr_ref,
   translation_ptr = ptr;
   riscv_emit_bne(riscv_reg_a0, riscv_reg_zero, (s32)previous_offset);
   ptr = translation_ptr;
-  meta->thumb = source_offset;
+  meta->thumb = (u16)source_offset;
 
   *ptr_ref = ptr;
 }
@@ -2244,7 +2244,7 @@ void riscv_emit_block_prologue(u8 **translation_ptr_ref,
   (*meta)->start_pc = 0;
   (*meta)->end_pc = 0;
   (*meta)->thumb = 0;
-  (*meta)->flags = RISCV_BLOCK_NATIVE_SUPPORTED;
+  (*meta)->flags = (u16)RISCV_BLOCK_NATIVE_SUPPORTED;
 
   *translation_ptr_ref = ptr + block_prologue_size;
 }
@@ -7751,7 +7751,7 @@ void riscv_emit_block_finalize(riscv_jit_block_meta *meta,
 
   meta->start_pc = block_start_pc;
   meta->end_pc = block_end_pc;
-  meta->thumb = thumb_mode ? 1u : 0u;
+  meta->thumb = (u16)(thumb_mode ? 1u : 0u);
 
   if (!(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
   {
