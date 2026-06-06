@@ -361,10 +361,25 @@ static void riscv_emit_arm_cpsr_flag_value(u8 **ptr_ref,
   riscv_emit_arm_reg_load(&ptr, rd, REG_CPSR);
   translation_ptr = ptr;
   riscv_emit_srli(rd, rd, shift);
-  riscv_emit_andi(rd, rd, 1);
+  if (shift != 31u)
+    riscv_emit_andi(rd, rd, 1);
   ptr = translation_ptr;
 
   *ptr_ref = ptr;
+}
+
+static void riscv_emit_arm_loaded_cpsr_flag_value(u8 **ptr_ref,
+                                                  riscv_reg_number rd,
+                                                  riscv_reg_number cpsr,
+                                                  u32 shift)
+{
+  u8 *translation_ptr = *ptr_ref;
+
+  riscv_emit_srli(rd, cpsr, shift);
+  if (shift != 31u)
+    riscv_emit_andi(rd, rd, 1);
+
+  *ptr_ref = translation_ptr;
 }
 
 static bool riscv_emit_arm_condition_value(u8 **ptr_ref, u32 condition)
@@ -411,26 +426,41 @@ static bool riscv_emit_arm_condition_value(u8 **ptr_ref, u32 condition)
       ptr = translation_ptr;
       break;
     case 0x8:
-      riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 29);
-      riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t1, 30);
+      riscv_emit_arm_reg_load(&ptr, riscv_reg_t2, REG_CPSR);
       translation_ptr = ptr;
+      riscv_emit_arm_loaded_cpsr_flag_value(&translation_ptr,
+                                            riscv_reg_t0, riscv_reg_t2,
+                                            29);
+      riscv_emit_arm_loaded_cpsr_flag_value(&translation_ptr,
+                                            riscv_reg_t1, riscv_reg_t2,
+                                            30);
       riscv_emit_xori(riscv_reg_t1, riscv_reg_t1, 1);
       riscv_emit_and(riscv_reg_t0, riscv_reg_t0, riscv_reg_t1);
       ptr = translation_ptr;
       break;
     case 0x9:
-      riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 29);
-      riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t1, 30);
+      riscv_emit_arm_reg_load(&ptr, riscv_reg_t2, REG_CPSR);
       translation_ptr = ptr;
+      riscv_emit_arm_loaded_cpsr_flag_value(&translation_ptr,
+                                            riscv_reg_t0, riscv_reg_t2,
+                                            29);
+      riscv_emit_arm_loaded_cpsr_flag_value(&translation_ptr,
+                                            riscv_reg_t1, riscv_reg_t2,
+                                            30);
       riscv_emit_xori(riscv_reg_t0, riscv_reg_t0, 1);
       riscv_emit_or(riscv_reg_t0, riscv_reg_t0, riscv_reg_t1);
       ptr = translation_ptr;
       break;
     case 0xa:
     case 0xb:
-      riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 31);
-      riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t1, 28);
+      riscv_emit_arm_reg_load(&ptr, riscv_reg_t2, REG_CPSR);
       translation_ptr = ptr;
+      riscv_emit_arm_loaded_cpsr_flag_value(&translation_ptr,
+                                            riscv_reg_t0, riscv_reg_t2,
+                                            31);
+      riscv_emit_arm_loaded_cpsr_flag_value(&translation_ptr,
+                                            riscv_reg_t1, riscv_reg_t2,
+                                            28);
       riscv_emit_xor(riscv_reg_t0, riscv_reg_t0, riscv_reg_t1);
       if (condition == 0xa)
         riscv_emit_xori(riscv_reg_t0, riscv_reg_t0, 1);
@@ -438,10 +468,17 @@ static bool riscv_emit_arm_condition_value(u8 **ptr_ref, u32 condition)
       break;
     case 0xc:
     case 0xd:
-      riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t0, 31);
-      riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t1, 28);
-      riscv_emit_arm_cpsr_flag_value(&ptr, riscv_reg_t2, 30);
+      riscv_emit_arm_reg_load(&ptr, riscv_reg_t3, REG_CPSR);
       translation_ptr = ptr;
+      riscv_emit_arm_loaded_cpsr_flag_value(&translation_ptr,
+                                            riscv_reg_t0, riscv_reg_t3,
+                                            31);
+      riscv_emit_arm_loaded_cpsr_flag_value(&translation_ptr,
+                                            riscv_reg_t1, riscv_reg_t3,
+                                            28);
+      riscv_emit_arm_loaded_cpsr_flag_value(&translation_ptr,
+                                            riscv_reg_t2, riscv_reg_t3,
+                                            30);
       riscv_emit_xor(riscv_reg_t0, riscv_reg_t0, riscv_reg_t1);
       riscv_emit_xori(riscv_reg_t0, riscv_reg_t0, 1);
       riscv_emit_xori(riscv_reg_t2, riscv_reg_t2, 1);
