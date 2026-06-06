@@ -53,6 +53,15 @@ typedef unsigned int usize;
 #define FRAME_COMPLETE 0x80000000u
 #define RUN_CYCLES 200000u
 #define RUN_CHUNKS 64u
+#define ARMWRESTLER_TOP_BLOCKS 8u
+
+typedef struct
+{
+  u32 start_pc;
+  u32 end_pc;
+  u32 thumb;
+  u32 code_bytes;
+} armwrestler_block_hotspot;
 
 static const u32 g_arm_test_ids[ARMWRESTLER_ARM_TESTS] =
   { 0u, 1u, 2u, 3u, 4u };
@@ -106,6 +115,8 @@ static u32 g_total_observed_results;
 static u32 g_total_failure_mask;
 static u32 g_arm_code_bytes_total;
 static u32 g_thumb_code_bytes_total;
+static armwrestler_block_hotspot g_block_hotspots[ARMWRESTLER_TOP_BLOCKS];
+static u32 g_block_hotspot_count;
 
 static long syscall1(long n, long arg0)
 {
@@ -524,6 +535,56 @@ void riscv_note_runtime_block_execute(u32 start_pc, u32 end_pc, u32 thumb)
   g_trace_hash = fnv1a_update_u32(g_trace_hash, start_pc);
 }
 
+static int block_hotspot_before(const armwrestler_block_hotspot *left,
+                                const armwrestler_block_hotspot *right)
+{
+  if (left->code_bytes != right->code_bytes)
+    return left->code_bytes > right->code_bytes;
+  if (left->start_pc != right->start_pc)
+    return left->start_pc < right->start_pc;
+  if (left->end_pc != right->end_pc)
+    return left->end_pc < right->end_pc;
+  return left->thumb < right->thumb;
+}
+
+static void reset_block_hotspots(void)
+{
+  g_block_hotspot_count = 0;
+}
+
+void riscv_note_runtime_block_emit(u32 start_pc, u32 end_pc, u32 thumb,
+                                   u32 code_bytes)
+{
+  armwrestler_block_hotspot item;
+  u32 pos = 0;
+  u32 i;
+
+  if (code_bytes == 0)
+    return;
+
+  item.start_pc = start_pc;
+  item.end_pc = end_pc;
+  item.thumb = thumb;
+  item.code_bytes = code_bytes;
+
+  while (pos < g_block_hotspot_count &&
+         !block_hotspot_before(&item, &g_block_hotspots[pos]))
+  {
+    pos++;
+  }
+
+  if (pos >= ARMWRESTLER_TOP_BLOCKS)
+    return;
+
+  if (g_block_hotspot_count < ARMWRESTLER_TOP_BLOCKS)
+    g_block_hotspot_count++;
+
+  for (i = g_block_hotspot_count - 1u; i > pos; i--)
+    g_block_hotspots[i] = g_block_hotspots[i - 1u];
+
+  g_block_hotspots[pos] = item;
+}
+
 void riscv_note_runtime_fallback(u32 kind, u32 pc, u32 thumb,
                                  u32 lookup_result, u32 cycles_remaining)
 {
@@ -617,6 +678,40 @@ static u32 runtime_native_counter_sum(const riscv_runtime_stats *stats)
          stats->native_psr_insns;
 }
 
+static void print_block_hotspots(void)
+{
+  u32 i;
+
+  put_raw(" largest_block_pc=");
+  put_u32_hex(g_block_hotspot_count ? g_block_hotspots[0].start_pc : 0);
+  put_raw(" largest_block_end=");
+  put_u32_hex(g_block_hotspot_count ? g_block_hotspots[0].end_pc : 0);
+  put_raw(" largest_block_thumb=");
+  put_u32_dec(g_block_hotspot_count ? g_block_hotspots[0].thumb : 0);
+  put_raw(" largest_block_bytes=");
+  put_u32_dec(g_block_hotspot_count ? g_block_hotspots[0].code_bytes : 0);
+  put_raw(" block_hotspots=");
+
+  if (!g_block_hotspot_count)
+  {
+    put_raw("none");
+    return;
+  }
+
+  for (i = 0; i < g_block_hotspot_count; i++)
+  {
+    if (i)
+      put_raw(",");
+    put_u32_hex(g_block_hotspots[i].start_pc);
+    put_raw(":");
+    put_u32_hex(g_block_hotspots[i].end_pc);
+    put_raw(":");
+    put_u32_dec(g_block_hotspots[i].thumb);
+    put_raw(":");
+    put_u32_dec(g_block_hotspots[i].code_bytes);
+  }
+}
+
 static void print_summary(const char *result, const char *suite, u32 test_id,
                           u32 expected_results, const char *reason)
 {
@@ -651,6 +746,7 @@ static void print_summary(const char *result, const char *suite, u32 test_id,
   put_u32_dec(stats.blocks_executed);
   put_raw(" code_bytes=");
   put_u32_dec(code_bytes);
+  print_block_hotspots();
   put_raw(" arm_code_bytes_total=");
   put_u32_dec(g_arm_code_bytes_total);
   put_raw(" thumb_code_bytes_total=");
@@ -778,6 +874,7 @@ static int run_armwrestler_test(u32 test_id, u32 expected_results)
   init_memory_map();
   init_cpu_state();
   reset_dynarec_for_armwrestler();
+  reset_block_hotspots();
 
   riscv_get_runtime_stats(&before);
   before_execute_arm_calls = g_execute_arm_calls;
@@ -851,6 +948,7 @@ static int run_thumbwrestler_test(u32 test_id, u32 expected_results)
   init_memory_map();
   init_thumbwrestler_cpu_state();
   reset_dynarec_for_armwrestler();
+  reset_block_hotspots();
 
   riscv_get_runtime_stats(&before);
   before_execute_arm_calls = g_execute_arm_calls;

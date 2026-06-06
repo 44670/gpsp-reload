@@ -254,6 +254,7 @@ armwrestler-jit: $(ARMWRESTLER) | $(OUT_DIR)
 	grep -q 'observed_results=79 failure_mask=0x00000000' $(ARMWRESTLER_LOG)
 	grep -q 'fallbacks=0 fallback_events=0 execute_arm_calls=0' $(ARMWRESTLER_LOG)
 	for test in arm0 arm1 arm2 arm3 arm4 thumb0 thumb1 thumb2; do grep -Eq "command=armwrestler-jit-test test=$$test .* code_bytes=[1-9][0-9]*" $(ARMWRESTLER_LOG); done
+	for test in arm0 arm1 arm2 arm3 arm4 thumb0 thumb1 thumb2; do grep -Eq "command=armwrestler-jit-test test=$$test .* largest_block_bytes=[1-9][0-9]* block_hotspots=0x" $(ARMWRESTLER_LOG); done
 	awk -v arm0_max="$(ARMWRESTLER_ARM0_CODE_BYTES_MAX)" \
 		-v arm1_max="$(ARMWRESTLER_ARM1_CODE_BYTES_MAX)" \
 		-v arm2_max="$(ARMWRESTLER_ARM2_CODE_BYTES_MAX)" \
@@ -381,10 +382,13 @@ armwrestler-report: armwrestler
 				arm_store += store_delta; \
 				arm_psr += psr_delta; \
 			} \
-			printf("armwrestler_code_size test=%s mode=%s code_bytes=%s test_max=%s native_insns=%u bytes_per_native_x100=%u data_proc=%u branch=%u load=%u store=%u psr=%u arm_cumulative=%s thumb_cumulative=%s thumb_helpers=%s\n", \
+			printf("armwrestler_code_size test=%s mode=%s code_bytes=%s test_max=%s native_insns=%u bytes_per_native_x100=%u data_proc=%u branch=%u load=%u store=%u psr=%u largest_block_pc=%s largest_block_end=%s largest_block_thumb=%s largest_block_bytes=%s block_hotspots=%s arm_cumulative=%s thumb_cumulative=%s thumb_helpers=%s\n", \
 				test, mode, field("code_bytes"), max_for(test), \
 				native_delta, density_x100(code, native_delta), data_proc_delta, \
 				branch_delta, load_delta, store_delta, psr_delta, \
+				field("largest_block_pc"), field("largest_block_end"), \
+				field("largest_block_thumb"), field("largest_block_bytes"), \
+				field("block_hotspots"), \
 				field("arm_code_bytes_total"), field("thumb_code_bytes_total"), \
 				field("thumb_helpers")); \
 			prev_data_proc = data_proc; \

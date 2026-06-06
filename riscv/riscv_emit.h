@@ -330,6 +330,8 @@ u32 execute_arm_translate(u32 cycles);
 u32 execute_arm_translate_internal(u32 cycles, void *regptr);
 void init_emitter(bool must_swap);
 void riscv_get_runtime_stats(riscv_runtime_stats *stats);
+void riscv_note_runtime_block_emit(u32 start_pc, u32 end_pc, u32 thumb,
+                                   u32 code_bytes);
 void riscv_note_runtime_block_execute(u32 start_pc, u32 end_pc, u32 thumb);
 void riscv_note_runtime_fallback(u32 kind, u32 pc, u32 thumb,
                                  u32 lookup_result,

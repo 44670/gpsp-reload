@@ -230,6 +230,18 @@ void riscv_note_runtime_fallback(u32 kind, u32 pc, u32 thumb,
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((weak))
 #endif
+void riscv_note_runtime_block_emit(u32 start_pc, u32 end_pc, u32 thumb,
+                                   u32 code_bytes)
+{
+  (void)start_pc;
+  (void)end_pc;
+  (void)thumb;
+  (void)code_bytes;
+}
+
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((weak))
+#endif
 void riscv_note_runtime_block_execute(u32 start_pc, u32 end_pc, u32 thumb)
 {
   (void)start_pc;
@@ -7837,6 +7849,9 @@ void riscv_emit_block_finalize(riscv_jit_block_meta *meta,
   }
 
   *translation_ptr = riscv_align_ptr(ptr);
+  riscv_note_runtime_block_emit(block_start_pc, block_end_pc,
+                                thumb_mode ? 1u : 0u,
+                                (u32)(*translation_ptr - (u8 *)meta));
   riscv_blocks_emitted++;
 }
 
