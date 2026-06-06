@@ -6530,10 +6530,18 @@ static bool riscv_emit_native_thumb_hi_add_mov(u8 **translation_ptr_ref,
 
   if (exits)
   {
-    if (hi != 0x46u || hrd != REG_PC)
+    if ((hi != 0x44u && hi != 0x46u) || hrd != REG_PC)
       return false;
 
     riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t0, meta, hrs, pc + 4u);
+    if (hi == 0x44u)
+    {
+      riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_t1, pc + 4u);
+      translation_ptr = ptr;
+      riscv_emit_add(riscv_reg_t0, riscv_reg_t1, riscv_reg_t0);
+      ptr = translation_ptr;
+    }
+
     translation_ptr = ptr;
     riscv_emit_andi(riscv_reg_t0, riscv_reg_t0, -2);
     ptr = translation_ptr;

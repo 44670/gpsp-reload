@@ -80,6 +80,14 @@ typedef unsigned int usize;
 #define THUMB_HI_MOV_PC_TARGET 0x02001234u
 #define THUMB_HI_MOV_PC_SOURCE_VALUE (THUMB_HI_MOV_PC_TARGET | 1u)
 #define THUMB_HI_MOV_PC_CPSR_VALUE (CPSR_T_BIT | CPSR_LOW_VALUE)
+#define THUMB_HI_ADD_PC_START_PC 0x02001078u
+#define THUMB_HI_ADD_PC_END_PC (THUMB_HI_ADD_PC_START_PC + 2u)
+#define THUMB_HI_ADD_PC_CYCLES 1u
+#define THUMB_HI_ADD_PC_R8 0x44c7u
+#define THUMB_HI_ADD_PC_R8_VALUE 0x00000125u
+#define THUMB_HI_ADD_PC_TARGET \
+  ((THUMB_HI_ADD_PC_START_PC + 4u + THUMB_HI_ADD_PC_R8_VALUE) & ~1u)
+#define THUMB_HI_ADD_PC_CPSR_VALUE (CPSR_T_BIT | CPSR_LOW_VALUE)
 #define THUMB_FLAG_ALU_START_PC 0x02001080u
 #define THUMB_FLAG_ALU_END_PC (THUMB_FLAG_ALU_START_PC + 2u)
 #define THUMB_FLAG_ALU_CYCLES 1u
@@ -1494,6 +1502,7 @@ typedef unsigned int usize;
 #define THUMB_MEMORY_LOAD_BLOCK_OFFSET 81408u
 #define THUMB_REG_SHIFT_BLOCK_OFFSET 81920u
 #define THUMB_HI_MOV_PC_BLOCK_OFFSET 82944u
+#define THUMB_HI_ADD_PC_BLOCK_OFFSET 83456u
 #define THUMB_MEMORY_STORE_BLOCK_OFFSET 90624u
 #define THUMB_BLOCK_STORE_BLOCK_OFFSET 83968u
 #define THUMB_BLOCK_LOAD_BLOCK_OFFSET 86016u
@@ -1523,6 +1532,7 @@ static u8 *g_thumb_unsupported_entry;
 static u8 *g_thumb_simple_data_entry;
 static u8 *g_thumb_hi_cmp_entry;
 static u8 *g_thumb_hi_mov_pc_entry;
+static u8 *g_thumb_hi_add_pc_entry;
 static u8 *g_thumb_flag_alu_entry;
 static u8 *g_thumb_memory_load_entry;
 static u8 *g_thumb_memory_store_entry;
@@ -2410,6 +2420,42 @@ static u32 build_thumb_hi_mov_pc_block(u8 *code)
   riscv_emit_block_finalize(meta, &translation_ptr,
                             THUMB_HI_MOV_PC_START_PC,
                             THUMB_HI_MOV_PC_END_PC, true);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_thumb_hi_add_pc_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  bool cycles_emitted = true;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_thumb_hi_add_pc_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_thumb_instruction(&translation_ptr, meta,
+                                           THUMB_HI_ADD_PC_R8,
+                                           THUMB_HI_ADD_PC_START_PC,
+                                           THUMB_HI_ADD_PC_CYCLES,
+                                           true, &cycles_emitted))
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=thumb_hi_add_pc_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  if (cycles_emitted)
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=thumb_hi_add_pc_used_helper\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            THUMB_HI_ADD_PC_START_PC,
+                            THUMB_HI_ADD_PC_END_PC, true);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -5473,6 +5519,48 @@ static void run_thumb_hi_mov_pc_case(void)
   expect_runtime_fallback_delta("thumb_hi_mov_pc_stats",
                                 &stats_before, 1, 0, 0, 0, 0);
   expect_stickybits_cleared("thumb_hi_mov_pc");
+}
+
+static void run_thumb_hi_add_pc_case(void)
+{
+  riscv_runtime_stats stats_before;
+
+  reset_runtime_observations(THUMB_HI_ADD_PC_START_PC);
+  reg[REG_CPSR] = THUMB_HI_ADD_PC_CPSR_VALUE;
+  reg[8] = THUMB_HI_ADD_PC_R8_VALUE;
+  g_thumb_lookup_entry = g_thumb_hi_add_pc_entry;
+  g_thumb_lookup_entry_pc = THUMB_HI_ADD_PC_START_PC;
+  riscv_get_runtime_stats(&stats_before);
+
+  execute_arm_translate_internal(THUMB_HI_ADD_PC_CYCLES, &reg[0]);
+
+  if (reg[8] != THUMB_HI_ADD_PC_R8_VALUE)
+    fail_u32("thumb_hi_add_pc", "r8",
+             reg[8], THUMB_HI_ADD_PC_R8_VALUE);
+  if (reg[REG_PC] != THUMB_HI_ADD_PC_TARGET)
+    fail_u32("thumb_hi_add_pc", "pc",
+             reg[REG_PC], THUMB_HI_ADD_PC_TARGET);
+  if (reg[REG_CPSR] != THUMB_HI_ADD_PC_CPSR_VALUE)
+    fail_u32("thumb_hi_add_pc", "cpsr",
+             reg[REG_CPSR], THUMB_HI_ADD_PC_CPSR_VALUE);
+  if (g_lookup_calls != 0)
+    fail_u32("thumb_hi_add_pc", "arm_lookup_calls", g_lookup_calls, 0);
+  if (g_thumb_lookup_calls != 1)
+    fail_u32("thumb_hi_add_pc", "thumb_lookup_calls",
+             g_thumb_lookup_calls, 1);
+  if (g_thumb_lookup_pc != THUMB_HI_ADD_PC_START_PC)
+    fail_u32("thumb_hi_add_pc", "thumb_lookup_pc",
+             g_thumb_lookup_pc, THUMB_HI_ADD_PC_START_PC);
+  if (g_update_calls != 1)
+    fail_u32("thumb_hi_add_pc", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("thumb_hi_add_pc", "update_cycles",
+             (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("thumb_hi_add_pc", "execute_calls", g_execute_calls, 0);
+  expect_runtime_fallback_delta("thumb_hi_add_pc_stats",
+                                &stats_before, 1, 0, 0, 0, 0);
+  expect_stickybits_cleared("thumb_hi_add_pc");
 }
 
 static void run_thumb_flag_alu_case(void)
@@ -12168,6 +12256,7 @@ void _start(void)
   u32 thumb_simple_data_code_bytes;
   u32 thumb_hi_cmp_code_bytes;
   u32 thumb_hi_mov_pc_code_bytes;
+  u32 thumb_hi_add_pc_code_bytes;
   u32 thumb_flag_alu_code_bytes;
   u32 thumb_memory_load_code_bytes;
   u32 thumb_memory_store_code_bytes;
@@ -12339,6 +12428,8 @@ void _start(void)
     build_thumb_hi_cmp_block(code + THUMB_HI_CMP_BLOCK_OFFSET);
   thumb_hi_mov_pc_code_bytes =
     build_thumb_hi_mov_pc_block(code + THUMB_HI_MOV_PC_BLOCK_OFFSET);
+  thumb_hi_add_pc_code_bytes =
+    build_thumb_hi_add_pc_block(code + THUMB_HI_ADD_PC_BLOCK_OFFSET);
   thumb_flag_alu_code_bytes =
     build_thumb_flag_alu_block(code + THUMB_FLAG_ALU_BLOCK_OFFSET);
   thumb_memory_load_code_bytes =
@@ -12988,6 +13079,7 @@ void _start(void)
   run_thumb_simple_data_case();
   run_thumb_hi_cmp_case();
   run_thumb_hi_mov_pc_case();
+  run_thumb_hi_add_pc_case();
   run_thumb_flag_alu_case();
   run_thumb_memory_load_case();
   run_thumb_memory_store_case();
@@ -13275,6 +13367,8 @@ void _start(void)
   put_u32_dec(thumb_hi_cmp_code_bytes);
   put_raw(" thumb_hi_mov_pc_code_bytes=");
   put_u32_dec(thumb_hi_mov_pc_code_bytes);
+  put_raw(" thumb_hi_add_pc_code_bytes=");
+  put_u32_dec(thumb_hi_add_pc_code_bytes);
   put_raw(" thumb_flag_alu_code_bytes=");
   put_u32_dec(thumb_flag_alu_code_bytes);
   put_raw(" thumb_memory_load_code_bytes=");

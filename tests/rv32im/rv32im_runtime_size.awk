@@ -35,6 +35,7 @@ BEGIN {
 	track("thumb_simple_data_code_bytes", 152, "thumb_direct");
 	track("thumb_hi_cmp_code_bytes", 140, "thumb_direct");
 	track("thumb_hi_mov_pc_code_bytes", 52, "thumb_direct");
+	track("thumb_hi_add_pc_code_bytes", 64, "thumb_direct");
 	track("thumb_flag_alu_code_bytes", 132, "thumb_direct");
 	track("thumb_memory_load_code_bytes", 116, "thumb_direct");
 	track("thumb_memory_store_code_bytes", 148, "thumb_direct");
