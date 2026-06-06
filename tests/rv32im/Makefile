@@ -21,6 +21,7 @@ MIXED_LOG := $(OUT_DIR)/rv32im_harness_mixed.log
 REJECTS_LOG := $(OUT_DIR)/rv32im_harness_rejects.log
 ARMWRESTLER_LOG := $(OUT_DIR)/rv32im_armwrestler.log
 ARMWRESTLER_INTERP_LOG := $(OUT_DIR)/rv32im_armwrestler_interp.log
+RUNTIME_LOG := $(OUT_DIR)/rv32im_runtime.log
 ARMWRESTLER_ARM0_CODE_BYTES_MAX ?= 11980
 ARMWRESTLER_ARM1_CODE_BYTES_MAX ?= 8944
 ARMWRESTLER_ARM2_CODE_BYTES_MAX ?= 17100
@@ -366,8 +367,9 @@ abi: $(ABI_TEST)
 exec: $(EXEC_TEST)
 	$(QEMU_RISCV32) ./$(EXEC_TEST)
 
-runtime: $(RUNTIME_TEST)
-	$(QEMU_RISCV32) ./$(RUNTIME_TEST)
+runtime: $(RUNTIME_TEST) | $(OUT_DIR)
+	$(QEMU_RISCV32) ./$(RUNTIME_TEST) | tee $(RUNTIME_LOG)
+	awk -f rv32im_runtime_size.awk $(RUNTIME_LOG)
 
 test: codegen abi exec runtime frontend core-build rejects compare mixed smoke
 
