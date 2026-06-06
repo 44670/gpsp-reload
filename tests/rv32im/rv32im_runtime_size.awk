@@ -34,7 +34,7 @@ function require_eq(field, expected, value) {
 BEGIN {
 	track("thumb_simple_data_code_bytes", 152, "thumb_direct");
 	track("thumb_hi_cmp_code_bytes", 140, "thumb_direct");
-	track("thumb_flag_alu_code_bytes", 136, "thumb_direct");
+	track("thumb_flag_alu_code_bytes", 132, "thumb_direct");
 	track("thumb_memory_load_code_bytes", 116, "thumb_direct");
 	track("thumb_memory_store_code_bytes", 148, "thumb_direct");
 	track("thumb_reg_shift_code_bytes", 736, "thumb_direct");
@@ -54,19 +54,19 @@ BEGIN {
 	track("multiply_long_acc_flag_smlals_code_bytes", 144, "arm_multiply");
 
 	track("carry_data_code_bytes", 148, "arm_flags_shift");
-	track("cmp_borrow_code_bytes", 136, "arm_flags_shift");
-	track("cmp_equal_code_bytes", 136, "arm_flags_shift");
+	track("cmp_borrow_code_bytes", 132, "arm_flags_shift");
+	track("cmp_equal_code_bytes", 132, "arm_flags_shift");
 	track("tst_simple_code_bytes", 100, "arm_flags_shift");
 	track("tst_shift_code_bytes", 120, "arm_flags_shift");
-	track("cmn_overflow_code_bytes", 136, "arm_flags_shift");
+	track("cmn_overflow_code_bytes", 132, "arm_flags_shift");
 	track("teq_simple_code_bytes", 100, "arm_flags_shift");
-	track("flag_subs_code_bytes", 140, "arm_flags_shift");
+	track("flag_subs_code_bytes", 136, "arm_flags_shift");
 	track("flag_subs_nz_code_bytes", 104, "arm_flags_shift");
-	track("flag_adds_code_bytes", 140, "arm_flags_shift");
-	track("flag_rsbs_code_bytes", 136, "arm_flags_shift");
-	track("carry_flag_adcs_code_bytes", 164, "arm_flags_shift");
-	track("carry_flag_sbcs_code_bytes", 164, "arm_flags_shift");
-	track("carry_flag_rscs_code_bytes", 160, "arm_flags_shift");
+	track("flag_adds_code_bytes", 136, "arm_flags_shift");
+	track("flag_rsbs_code_bytes", 128, "arm_flags_shift");
+	track("carry_flag_adcs_code_bytes", 160, "arm_flags_shift");
+	track("carry_flag_sbcs_code_bytes", 160, "arm_flags_shift");
+	track("carry_flag_rscs_code_bytes", 152, "arm_flags_shift");
 	track("logical_flag_code_bytes", 448, "arm_flags_shift");
 	track("data_ext_code_bytes", 244, "arm_flags_shift");
 	track("reg_shift_data_code_bytes", 212, "arm_flags_shift");

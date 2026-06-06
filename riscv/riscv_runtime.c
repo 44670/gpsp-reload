@@ -3265,6 +3265,35 @@ static bool riscv_emit_arm_data_proc_logical_immediate_result(u8 **ptr_ref,
   return true;
 }
 
+/* Overflow flag code consumes only bit 31 of these expressions. */
+static riscv_reg_number riscv_emit_arm_overflow_xor_const_sign(
+  u8 **ptr_ref, riscv_reg_number rd, riscv_reg_number rs, u32 value)
+{
+  u8 *translation_ptr;
+
+  if (!(value & 0x80000000u))
+    return rs;
+
+  translation_ptr = *ptr_ref;
+  riscv_emit_xori(rd, rs, -1);
+  *ptr_ref = translation_ptr;
+  return rd;
+}
+
+static riscv_reg_number riscv_emit_arm_overflow_xnor_const_sign(
+  u8 **ptr_ref, riscv_reg_number rd, riscv_reg_number rs, u32 value)
+{
+  u8 *translation_ptr;
+
+  if (value & 0x80000000u)
+    return rs;
+
+  translation_ptr = *ptr_ref;
+  riscv_emit_xori(rd, rs, -1);
+  *ptr_ref = translation_ptr;
+  return rd;
+}
+
 static bool riscv_emit_arm_data_proc_arithmetic_immediate_flags(
   u8 **ptr_ref, u32 op, u32 immediate, u32 flag_mask)
 {
@@ -3275,6 +3304,8 @@ static bool riscv_emit_arm_data_proc_arithmetic_immediate_flags(
   u32 neg_immediate;
   u32 not_immediate;
   u32 next_immediate;
+  riscv_reg_number overflow_lhs = riscv_reg_t4;
+  riscv_reg_number overflow_rhs = riscv_reg_t6;
 
   if (immediate == 0 && (op == 0x2 || op == 0x4))
   {
@@ -3311,8 +3342,13 @@ static bool riscv_emit_arm_data_proc_arithmetic_immediate_flags(
       }
       if (need_v)
       {
-        riscv_emit_xori(riscv_reg_t4, riscv_reg_t0, (s32)immediate);
+        overflow_lhs =
+          riscv_emit_arm_overflow_xor_const_sign(&translation_ptr,
+                                                 riscv_reg_t4,
+                                                 riscv_reg_t0,
+                                                 immediate);
         riscv_emit_xor(riscv_reg_t6, riscv_reg_t0, riscv_reg_t2);
+        overflow_rhs = riscv_reg_t6;
       }
       break;
 
@@ -3346,8 +3382,16 @@ static bool riscv_emit_arm_data_proc_arithmetic_immediate_flags(
       }
       if (need_v)
       {
-        riscv_emit_xori(riscv_reg_t4, riscv_reg_t0, (s32)immediate);
-        riscv_emit_xori(riscv_reg_t6, riscv_reg_t2, (s32)immediate);
+        overflow_lhs =
+          riscv_emit_arm_overflow_xor_const_sign(&translation_ptr,
+                                                 riscv_reg_t4,
+                                                 riscv_reg_t0,
+                                                 immediate);
+        overflow_rhs =
+          riscv_emit_arm_overflow_xor_const_sign(&translation_ptr,
+                                                 riscv_reg_t6,
+                                                 riscv_reg_t2,
+                                                 immediate);
       }
       break;
 
@@ -3360,9 +3404,13 @@ static bool riscv_emit_arm_data_proc_arithmetic_immediate_flags(
         riscv_emit_sltu(riscv_reg_t3, riscv_reg_t2, riscv_reg_t0);
       if (need_v)
       {
-        riscv_emit_xori(riscv_reg_t4, riscv_reg_t0, (s32)immediate);
-        riscv_emit_xori(riscv_reg_t4, riscv_reg_t4, -1);
+        overflow_lhs =
+          riscv_emit_arm_overflow_xnor_const_sign(&translation_ptr,
+                                                  riscv_reg_t4,
+                                                  riscv_reg_t0,
+                                                  immediate);
         riscv_emit_xor(riscv_reg_t6, riscv_reg_t0, riscv_reg_t2);
+        overflow_rhs = riscv_reg_t6;
       }
       break;
 
@@ -3381,9 +3429,13 @@ static bool riscv_emit_arm_data_proc_arithmetic_immediate_flags(
       }
       if (need_v)
       {
-        riscv_emit_xori(riscv_reg_t4, riscv_reg_t0, (s32)immediate);
-        riscv_emit_xori(riscv_reg_t4, riscv_reg_t4, -1);
+        overflow_lhs =
+          riscv_emit_arm_overflow_xnor_const_sign(&translation_ptr,
+                                                  riscv_reg_t4,
+                                                  riscv_reg_t0,
+                                                  immediate);
         riscv_emit_xor(riscv_reg_t6, riscv_reg_t0, riscv_reg_t2);
+        overflow_rhs = riscv_reg_t6;
       }
       break;
 
@@ -3415,8 +3467,13 @@ static bool riscv_emit_arm_data_proc_arithmetic_immediate_flags(
       }
       if (need_v)
       {
-        riscv_emit_xori(riscv_reg_t4, riscv_reg_t0, (s32)immediate);
+        overflow_lhs =
+          riscv_emit_arm_overflow_xor_const_sign(&translation_ptr,
+                                                 riscv_reg_t4,
+                                                 riscv_reg_t0,
+                                                 immediate);
         riscv_emit_xor(riscv_reg_t6, riscv_reg_t0, riscv_reg_t2);
+        overflow_rhs = riscv_reg_t6;
       }
       break;
 
@@ -3447,8 +3504,16 @@ static bool riscv_emit_arm_data_proc_arithmetic_immediate_flags(
       }
       if (need_v)
       {
-        riscv_emit_xori(riscv_reg_t4, riscv_reg_t0, (s32)immediate);
-        riscv_emit_xori(riscv_reg_t6, riscv_reg_t2, (s32)immediate);
+        overflow_lhs =
+          riscv_emit_arm_overflow_xor_const_sign(&translation_ptr,
+                                                 riscv_reg_t4,
+                                                 riscv_reg_t0,
+                                                 immediate);
+        overflow_rhs =
+          riscv_emit_arm_overflow_xor_const_sign(&translation_ptr,
+                                                 riscv_reg_t6,
+                                                 riscv_reg_t2,
+                                                 immediate);
       }
       break;
 
@@ -3458,7 +3523,7 @@ static bool riscv_emit_arm_data_proc_arithmetic_immediate_flags(
 
   if (need_v)
   {
-    riscv_emit_and(riscv_reg_t4, riscv_reg_t4, riscv_reg_t6);
+    riscv_emit_and(riscv_reg_t4, overflow_lhs, overflow_rhs);
     riscv_emit_srli(riscv_reg_t4, riscv_reg_t4, 31);
   }
 
