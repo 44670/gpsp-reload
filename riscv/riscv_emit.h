@@ -205,6 +205,11 @@ bool riscv_emit_native_thumb_alu(u8 **translation_ptr,
                                  riscv_jit_block_meta *meta,
                                  u32 opcode,
                                  u32 flag_status);
+bool riscv_emit_native_thumb_hi_cmp(u8 **translation_ptr,
+                                    riscv_jit_block_meta *meta,
+                                    u32 opcode,
+                                    u32 pc,
+                                    u32 flag_status);
 bool riscv_emit_native_thumb_conditional_branch(u8 **translation_ptr,
                                                 riscv_jit_block_meta *meta,
                                                 u8 **branch_source,
@@ -256,6 +261,7 @@ void riscv_note_runtime_fallback(u32 kind, u32 pc, u32 thumb,
                                  u32 lookup_result,
                                  u32 cycles_remaining);
 void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
+void riscv_patch_conditional_branch(u8 *source, const u8 *target);
 
 #define generate_block_extra_vars()                                           \
   riscv_jit_block_meta *riscv_block_meta = NULL
@@ -290,7 +296,7 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
 #define generate_branch_patch_conditional(dest, offset)                       \
   do                                                                          \
   {                                                                           \
-    riscv_patch_unconditional_branch((dest), (offset));                       \
+    riscv_patch_conditional_branch((dest), (offset));                         \
   } while (0)
 
 #define generate_branch_patch_unconditional(dest, offset)                     \
@@ -680,7 +686,14 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
   riscv_emit_thumb_instruction(((opcode & 0x0087u) == 0x0087u))
 
 #define thumb_data_proc_test_hi(...)                                          \
-  riscv_emit_thumb_instruction(false)
+  do                                                                          \
+  {                                                                           \
+    if (!riscv_emit_native_thumb_hi_cmp(&translation_ptr, riscv_block_meta,   \
+                                        opcode, pc, flag_status))             \
+    {                                                                         \
+      riscv_emit_thumb_instruction(false);                                    \
+    }                                                                         \
+  } while (0)
 
 #define thumb_data_proc_mov_hi()                                              \
   riscv_emit_thumb_instruction(((opcode & 0x0087u) == 0x0087u))

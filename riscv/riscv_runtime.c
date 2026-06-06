@@ -185,9 +185,9 @@ static void riscv_emit_li(u8 **ptr, riscv_reg_number rd, u32 value)
 {
   u8 *translation_ptr = *ptr;
 
-  if (value <= 2047u)
+  if (value <= 2047u || value >= 0xfffff800u)
   {
-    riscv_emit_addi(rd, riscv_reg_zero, value);
+    riscv_emit_addi(rd, riscv_reg_zero, (s32)value);
   }
   else
   {
@@ -319,12 +319,33 @@ static u32 riscv_encode_b_inst(u32 funct3,
          riscv_opcode_branch;
 }
 
+static u32 riscv_encode_j_inst(riscv_reg_number rd, s32 offset)
+{
+  return ((((u32)offset >> 20) & 0x01) << 31) |
+         ((((u32)offset >> 1) & 0x3ff) << 21) |
+         ((((u32)offset >> 11) & 0x01) << 20) |
+         ((((u32)offset >> 12) & 0xff) << 12) |
+         (((u32)rd & 0x1f) << 7) |
+         riscv_opcode_jal;
+}
+
 static u8 *riscv_emit_unconditional_branch_patch_site(u8 **ptr_ref)
 {
   u8 *translation_ptr = *ptr_ref;
   u8 *source = translation_ptr;
 
   riscv_emit_nop();
+  riscv_emit_nop();
+
+  *ptr_ref = translation_ptr;
+  return source;
+}
+
+static u8 *riscv_emit_conditional_skip_patch_site(u8 **ptr_ref)
+{
+  u8 *translation_ptr = *ptr_ref;
+  u8 *source = translation_ptr;
+
   riscv_emit_nop();
 
   *ptr_ref = translation_ptr;
@@ -349,6 +370,17 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target)
   ((u32 *)source)[1] =
     riscv_encode_i(riscv_opcode_jalr, 0x0,
                    riscv_reg_zero, riscv_reg_t6, lower);
+}
+
+void riscv_patch_conditional_branch(u8 *source, const u8 *target)
+{
+  s32 offset;
+
+  if (!source || !target)
+    return;
+
+  offset = (s32)((intptr_t)target - (intptr_t)source);
+  ((u32 *)source)[0] = riscv_encode_j_inst(riscv_reg_zero, offset);
 }
 
 static void riscv_emit_arm_cpsr_flag_value(u8 **ptr_ref,
@@ -510,19 +542,18 @@ bool riscv_emit_arm_conditional_block_header(u8 **translation_ptr_ref,
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
     return false;
 
+  if (!branch_source)
+    return false;
+
   if (!riscv_emit_arm_condition_value(&ptr, condition))
     return false;
 
   riscv_emit_adjust_cycles(&ptr, cycles);
   translation_ptr = ptr;
-  riscv_emit_bne(riscv_reg_t0, riscv_reg_zero,
-                 4 + RISCV_BRANCH_PATCH_BYTES);
+  riscv_emit_bne(riscv_reg_t0, riscv_reg_zero, 8);
   ptr = translation_ptr;
 
-  if (branch_source)
-    *branch_source = riscv_emit_unconditional_branch_patch_site(&ptr);
-  else
-    riscv_emit_unconditional_branch_patch_site(&ptr);
+  *branch_source = riscv_emit_conditional_skip_patch_site(&ptr);
 
   *translation_ptr_ref = ptr;
   return true;
@@ -4051,6 +4082,58 @@ static bool riscv_emit_native_thumb_hi_add_mov(u8 **translation_ptr_ref,
   ptr = translation_ptr;
 
   *translation_ptr_ref = ptr;
+  return true;
+}
+
+bool riscv_emit_native_thumb_hi_cmp(u8 **translation_ptr_ref,
+                                    riscv_jit_block_meta *meta,
+                                    u32 opcode,
+                                    u32 pc,
+                                    u32 flag_status)
+{
+  u32 hi = opcode >> 8;
+  u32 hrs = (opcode >> 3) & 0x0fu;
+  u32 hrd = ((opcode >> 4) & 0x08u) | (opcode & 0x07u);
+  u32 generated_flag_mask = flag_status & 0x0fu;
+  u8 *ptr = *translation_ptr_ref;
+  u8 *translation_ptr;
+
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
+    return false;
+
+  if (hi != 0x45u)
+    return false;
+
+  if (!generated_flag_mask)
+  {
+    *translation_ptr_ref = ptr;
+    riscv_native_data_proc_insns++;
+    return true;
+  }
+
+  riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t0, hrd, pc + 4u);
+  riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t1, hrs, pc + 4u);
+
+  translation_ptr = ptr;
+  riscv_emit_sub(riscv_reg_t2, riscv_reg_t0, riscv_reg_t1);
+  if (generated_flag_mask & 0x03u)
+  {
+    riscv_emit_sltu(riscv_reg_t3, riscv_reg_t0, riscv_reg_t1);
+    riscv_emit_xori(riscv_reg_t3, riscv_reg_t3, 1);
+    riscv_emit_xor(riscv_reg_t4, riscv_reg_t0, riscv_reg_t1);
+    riscv_emit_xor(riscv_reg_t6, riscv_reg_t0, riscv_reg_t2);
+  }
+  if (generated_flag_mask & 0x01u)
+  {
+    riscv_emit_and(riscv_reg_t4, riscv_reg_t4, riscv_reg_t6);
+    riscv_emit_srli(riscv_reg_t4, riscv_reg_t4, 31);
+  }
+  ptr = translation_ptr;
+
+  riscv_emit_arm_cpsr_store_selected_nzcv(&ptr, generated_flag_mask);
+
+  *translation_ptr_ref = ptr;
+  riscv_native_data_proc_insns++;
   return true;
 }
 

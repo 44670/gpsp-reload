@@ -2644,7 +2644,7 @@ static int build_runtime_conditional_block(const char **reason,
     return 0;
   }
 
-  riscv_patch_unconditional_branch(cond_skip_source, translation_ptr);
+  riscv_patch_conditional_branch(cond_skip_source, translation_ptr);
   riscv_emit_block_finalize(meta, &translation_ptr, RUNTIME_COND_START_PC,
                             RUNTIME_COND_END_PC, false);
   *code_bytes_out = (u32)(translation_ptr - block_base);
