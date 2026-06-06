@@ -72,7 +72,8 @@ enum
   RISCV_BLOCK_NATIVE_SUPPORTED = 1u,
   RISCV_BLOCK_PC_WRITTEN = 2u,
   RISCV_BLOCK_PC_BASE_EMITTED = 4u,
-  RISCV_BLOCK_TERMINAL_EMITTED = 8u
+  RISCV_BLOCK_TERMINAL_EMITTED = 8u,
+  RISCV_BLOCK_NO_FALLTHROUGH = 16u
 };
 
 #define RISCV_INVALID_BLOCK_ENTRY ((u8 *)(uintptr_t)~(uintptr_t)0)
@@ -2127,6 +2128,12 @@ void riscv_mark_block_unsupported(riscv_jit_block_meta *meta)
 {
   if (meta)
     meta->flags &= ~RISCV_BLOCK_NATIVE_SUPPORTED;
+}
+
+void riscv_mark_block_no_fallthrough(riscv_jit_block_meta *meta)
+{
+  if (meta)
+    meta->flags |= RISCV_BLOCK_NO_FALLTHROUGH;
 }
 
 static void riscv_emit_arm_cpsr_c_load(u8 **ptr_ref, riscv_reg_number rd);
@@ -6965,15 +6972,23 @@ void riscv_emit_block_finalize(riscv_jit_block_meta *meta,
   }
   else if (!terminal_at_end)
   {
-    if (!(meta->flags & RISCV_BLOCK_PC_WRITTEN))
+    if ((meta->flags & RISCV_BLOCK_NO_FALLTHROUGH) &&
+        !store_alert_branches)
     {
-      riscv_emit_guest_pc_load_existing_base(&ptr, meta, riscv_reg_t0,
-                                             block_end_pc);
-      riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
+      helper_tail = NULL;
     }
+    else
+    {
+      if (!(meta->flags & RISCV_BLOCK_PC_WRITTEN))
+      {
+        riscv_emit_guest_pc_load_existing_base(&ptr, meta, riscv_reg_t0,
+                                               block_end_pc);
+        riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
+      }
 
-    helper_tail = ptr;
-    riscv_emit_helper_call(&ptr, meta);
+      helper_tail = ptr;
+      riscv_emit_helper_call(&ptr, meta);
+    }
   }
   else
   {

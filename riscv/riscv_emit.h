@@ -70,6 +70,7 @@ void riscv_emit_block_finalize(riscv_jit_block_meta *meta,
                                u32 block_end_pc,
                                bool thumb_mode);
 void riscv_mark_block_unsupported(riscv_jit_block_meta *meta);
+void riscv_mark_block_no_fallthrough(riscv_jit_block_meta *meta);
 bool riscv_emit_native_arm_data_proc(u8 **translation_ptr,
                                      riscv_jit_block_meta *meta,
                                      u32 opcode,
@@ -600,6 +601,8 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target);
     {                                                                         \
       block_exits[block_exit_position].branch_patch_short =                   \
         riscv_short_patch;                                                    \
+      if (!riscv_short_patch && pc + 4u == block_end_pc)                     \
+        riscv_mark_block_no_fallthrough(riscv_block_meta);                   \
       block_exit_position++;                                                  \
       cycle_count = 0;                                                        \
     }                                                                         \
@@ -621,6 +624,8 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target);
     {                                                                         \
       block_exits[block_exit_position].branch_patch_short =                   \
         riscv_short_patch;                                                    \
+      if (!riscv_short_patch && pc + 4u == block_end_pc)                     \
+        riscv_mark_block_no_fallthrough(riscv_block_meta);                   \
       block_exit_position++;                                                  \
       cycle_count = 0;                                                        \
     }                                                                         \
