@@ -4720,6 +4720,20 @@ static void riscv_emit_arm_block_s2_writeback_cursor_init(
   riscv_emit_arm_reg_load(&ptr, riscv_reg_s2, rn);
 
   translation_ptr = ptr;
+  if (origin_offset == -end_offset)
+  {
+    riscv_emit_addi(riscv_reg_t0, riscv_reg_s2, end_offset);
+    ptr = translation_ptr;
+    riscv_emit_arm_reg_store(&ptr, rn, riscv_reg_t0);
+
+    translation_ptr = ptr;
+    riscv_emit_andi(riscv_reg_s2, riscv_reg_s2, -4);
+    ptr = translation_ptr;
+
+    *ptr_ref = ptr;
+    return;
+  }
+
   if (end_offset)
     riscv_emit_addi(riscv_reg_s2, riscv_reg_s2, end_offset);
   ptr = translation_ptr;

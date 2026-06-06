@@ -38,10 +38,10 @@ BEGIN {
 	track("thumb_memory_load_code_bytes", 116, "thumb_direct");
 	track("thumb_memory_store_code_bytes", 148, "thumb_direct");
 	track("thumb_reg_shift_code_bytes", 736, "thumb_direct");
-	track("thumb_block_store_code_bytes", 112, "thumb_direct");
-	track("thumb_block_load_code_bytes", 124, "thumb_direct");
+	track("thumb_block_store_code_bytes", 108, "thumb_direct");
+	track("thumb_block_load_code_bytes", 120, "thumb_direct");
 	track("thumb_block_push_code_bytes", 132, "thumb_direct");
-	track("thumb_block_pop_pc_code_bytes", 116, "thumb_direct");
+	track("thumb_block_pop_pc_code_bytes", 112, "thumb_direct");
 
 	track("multiply_code_bytes", 96, "arm_multiply");
 	track("multiply_flag_muls_code_bytes", 104, "arm_multiply");
@@ -153,10 +153,10 @@ BEGIN {
 	track("reg_offset_writeback_store_code_bytes", 92, "arm_half_signed_memory");
 	track("reg_offset_writeback_load_code_bytes", 88, "arm_half_signed_memory");
 
-	track("block_mem_stm_code_bytes", 144, "arm_block_memory");
-	track("block_mem_ldm_code_bytes", 128, "arm_block_memory");
+	track("block_mem_stm_code_bytes", 140, "arm_block_memory");
+	track("block_mem_ldm_code_bytes", 124, "arm_block_memory");
 	track("block_mem_push_code_bytes", 148, "arm_block_memory");
-	track("block_mem_ldm_pc_code_bytes", 116, "arm_block_memory");
+	track("block_mem_ldm_pc_code_bytes", 112, "arm_block_memory");
 	track("block_mem_ldm_base_list_code_bytes", 116, "arm_block_memory");
 	track("block_mem_ldm_pc_s_code_bytes", 64, "arm_block_memory");
 
