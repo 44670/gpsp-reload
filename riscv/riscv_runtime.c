@@ -682,10 +682,221 @@ static u32 riscv_arm_const_nzcv(u32 result, bool carry, bool overflow)
   return flags;
 }
 
+static bool riscv_arm_const_old_carry(u32 known_flag_mask,
+                                      u32 known_flags,
+                                      u32 *carry_out)
+{
+  if (!(known_flag_mask & 0x02u))
+    return false;
+
+  *carry_out = (known_flags & 0x02u) ? 1u : 0u;
+  return true;
+}
+
+static bool riscv_arm_const_imm_shift_with_carry(u32 value,
+                                                 u32 shift_type,
+                                                 u32 shift,
+                                                 u32 known_flag_mask,
+                                                 u32 known_flags,
+                                                 u32 *result_out,
+                                                 u32 *carry_known_out,
+                                                 u32 *carry_out)
+{
+  u32 old_carry;
+
+  *carry_known_out = 1u;
+
+  switch (shift_type)
+  {
+    case 0:
+      *result_out = value << shift;
+      if (shift)
+        *carry_out = (value >> (32u - shift)) & 1u;
+      else if (!riscv_arm_const_old_carry(known_flag_mask, known_flags,
+                                          &old_carry))
+        *carry_known_out = 0;
+      else
+        *carry_out = old_carry;
+      return true;
+    case 1:
+      if (shift)
+      {
+        *result_out = value >> shift;
+        *carry_out = (value >> (shift - 1u)) & 1u;
+      }
+      else
+      {
+        *result_out = 0;
+        *carry_out = value >> 31;
+      }
+      return true;
+    case 2:
+      if (shift)
+      {
+        *result_out = (u32)((s32)value >> shift);
+        *carry_out = (value >> (shift - 1u)) & 1u;
+      }
+      else
+      {
+        *result_out = (u32)((s32)value >> 31);
+        *carry_out = value >> 31;
+      }
+      return true;
+    default:
+      if (shift)
+      {
+        *result_out = riscv_arm_const_ror(value, shift);
+        *carry_out = (value >> (shift - 1u)) & 1u;
+        return true;
+      }
+      if (!riscv_arm_const_old_carry(known_flag_mask, known_flags,
+                                     &old_carry))
+        return false;
+      *result_out = (old_carry << 31) | (value >> 1);
+      *carry_out = value & 1u;
+      return true;
+  }
+}
+
+static bool riscv_arm_const_reg_shift_with_carry(u32 value,
+                                                 u32 shift_type,
+                                                 u32 shift,
+                                                 u32 known_flag_mask,
+                                                 u32 known_flags,
+                                                 u32 *result_out,
+                                                 u32 *carry_known_out,
+                                                 u32 *carry_out)
+{
+  u32 old_carry;
+
+  shift &= 0xffu;
+  *carry_known_out = 1u;
+
+  if (!shift)
+  {
+    *result_out = value;
+    if (!riscv_arm_const_old_carry(known_flag_mask, known_flags,
+                                   &old_carry))
+      *carry_known_out = 0;
+    else
+      *carry_out = old_carry;
+    return true;
+  }
+
+  switch (shift_type)
+  {
+    case 0:
+      if (shift < 32u)
+      {
+        *result_out = value << shift;
+        *carry_out = (value >> (32u - shift)) & 1u;
+      }
+      else
+      {
+        *result_out = 0;
+        *carry_out = (shift == 32u) ? (value & 1u) : 0u;
+      }
+      return true;
+    case 1:
+      if (shift < 32u)
+      {
+        *result_out = value >> shift;
+        *carry_out = (value >> (shift - 1u)) & 1u;
+      }
+      else
+      {
+        *result_out = 0;
+        *carry_out = (shift == 32u) ? (value >> 31) : 0u;
+      }
+      return true;
+    case 2:
+      if (shift < 32u)
+      {
+        *result_out = (u32)((s32)value >> shift);
+        *carry_out = (value >> (shift - 1u)) & 1u;
+      }
+      else
+      {
+        *result_out = (u32)((s32)value >> 31);
+        *carry_out = value >> 31;
+      }
+      return true;
+    default:
+      *result_out = riscv_arm_const_ror(value, shift);
+      *carry_out = (value >> ((shift - 1u) & 31u)) & 1u;
+      return true;
+  }
+}
+
+static bool riscv_arm_const_operand2_with_carry(u32 opcode,
+                                                u32 pc,
+                                                u32 const_mask,
+                                                const u32 *const_values,
+                                                u32 known_flag_mask,
+                                                u32 known_flags,
+                                                u32 *value_out,
+                                                u32 *carry_known_out,
+                                                u32 *carry_out)
+{
+  u32 imm_op = (opcode >> 25) & 1u;
+  u32 rm = opcode & 0xfu;
+  u32 rs = (opcode >> 8) & 0xfu;
+  u32 shift_type = (opcode >> 5) & 0x3u;
+  u32 shift = (opcode >> 7) & 0x1fu;
+  u32 value;
+
+  *carry_known_out = 0;
+  *carry_out = 0;
+
+  if (imm_op)
+  {
+    *value_out = riscv_arm_expand_imm(opcode);
+    if ((opcode >> 8) & 0xfu)
+    {
+      *carry_known_out = 1;
+      *carry_out = *value_out >> 31;
+    }
+    else if (riscv_arm_const_old_carry(known_flag_mask, known_flags,
+                                       carry_out))
+    {
+      *carry_known_out = 1;
+    }
+    return true;
+  }
+
+  if ((opcode >> 4) & 1u)
+  {
+    u32 shift_value;
+
+    if (!riscv_arm_const_reg_value(rm, pc + 12u, const_mask,
+                                   const_values, &value) ||
+        !riscv_arm_const_reg_value(rs, pc + 8u, const_mask,
+                                   const_values, &shift_value))
+    {
+      return false;
+    }
+
+    return riscv_arm_const_reg_shift_with_carry(
+      value, shift_type, shift_value, known_flag_mask, known_flags,
+      value_out, carry_known_out, carry_out);
+  }
+
+  if (!riscv_arm_const_reg_value(rm, pc + 8u, const_mask,
+                                 const_values, &value))
+  {
+    return false;
+  }
+
+  return riscv_arm_const_imm_shift_with_carry(
+    value, shift_type, shift, known_flag_mask, known_flags, value_out,
+    carry_known_out, carry_out);
+}
+
 bool riscv_arm_const_data_proc_test_flags(u32 opcode,
                                           u32 pc,
                                           u32 const_mask,
                                           const u32 *const_values,
+                                          u32 *flag_mask_out,
                                           u32 *flags_out)
 {
   u32 op = (opcode >> 21) & 0xfu;
@@ -696,10 +907,11 @@ bool riscv_arm_const_data_proc_test_flags(u32 opcode,
   bool carry;
   bool overflow;
 
-  if (!flags_out || (opcode >> 28) != 0x0eu || !((opcode >> 20) & 1u))
+  if (!flag_mask_out || !flags_out ||
+      (opcode >> 28) != 0x0eu || !((opcode >> 20) & 1u))
     return false;
 
-  if (op != 0x0au && op != 0x0bu)
+  if (op != 0x08u && op != 0x09u && op != 0x0au && op != 0x0bu)
     return false;
 
   if (!riscv_arm_const_reg_value(rn, pc + 8u, const_mask,
@@ -708,6 +920,15 @@ bool riscv_arm_const_data_proc_test_flags(u32 opcode,
                                 &operand2))
   {
     return false;
+  }
+
+  if (op == 0x08u || op == 0x09u)
+  {
+    result = (op == 0x08u) ? (operand1 & operand2) :
+                             (operand1 ^ operand2);
+    *flag_mask_out = 0x0cu;
+    *flags_out = riscv_arm_const_nzcv(result, false, false);
+    return true;
   }
 
   if (op == 0x0au)
@@ -723,7 +944,159 @@ bool riscv_arm_const_data_proc_test_flags(u32 opcode,
     overflow = ((~(operand1 ^ operand2) & (operand1 ^ result)) >> 31) != 0;
   }
 
+  *flag_mask_out = 0x0fu;
   *flags_out = riscv_arm_const_nzcv(result, carry, overflow);
+  return true;
+}
+
+bool riscv_arm_const_data_proc_flags(u32 opcode,
+                                     u32 pc,
+                                     u32 const_mask,
+                                     const u32 *const_values,
+                                     u32 known_flag_mask,
+                                     u32 known_flags,
+                                     u32 *flag_mask_out,
+                                     u32 *flags_out)
+{
+  u32 op = (opcode >> 21) & 0xfu;
+  u32 rn = (opcode >> 16) & 0xfu;
+  u32 rd = (opcode >> 12) & 0xfu;
+  u32 operand1 = 0;
+  u32 operand2;
+  u32 result;
+  u32 shifter_carry_known = 0;
+  u32 shifter_carry = 0;
+  u32 carry_in = 0;
+  bool carry;
+  bool overflow;
+
+  if (!flag_mask_out || !flags_out ||
+      (opcode >> 28) != 0x0eu || !((opcode >> 20) & 1u) ||
+      rd == REG_PC)
+  {
+    return false;
+  }
+
+  if (op == 0x8u || op == 0x9u || op == 0xau || op == 0xbu)
+    return false;
+
+  if (op != 0xdu && op != 0xfu &&
+      !riscv_arm_const_reg_value(rn, pc + 8u, const_mask,
+                                 const_values, &operand1))
+  {
+    return false;
+  }
+
+  if (!riscv_arm_const_operand2_with_carry(
+        opcode, pc, const_mask, const_values, known_flag_mask, known_flags,
+        &operand2, &shifter_carry_known, &shifter_carry))
+  {
+    return false;
+  }
+
+  *flag_mask_out = 0;
+  *flags_out = 0;
+
+  switch (op)
+  {
+    case 0x0:
+      result = operand1 & operand2;
+      break;
+    case 0x1:
+      result = operand1 ^ operand2;
+      break;
+    case 0xcu:
+      result = operand1 | operand2;
+      break;
+    case 0xdu:
+      result = operand2;
+      break;
+    case 0xeu:
+      result = operand1 & ~operand2;
+      break;
+    case 0xfu:
+      result = ~operand2;
+      break;
+    case 0x2:
+      result = operand1 - operand2;
+      carry = operand1 >= operand2;
+      overflow = (((operand1 ^ operand2) & (operand1 ^ result)) >> 31) != 0;
+      *flag_mask_out = 0x0fu;
+      *flags_out = riscv_arm_const_nzcv(result, carry, overflow);
+      return true;
+    case 0x3:
+      result = operand2 - operand1;
+      carry = operand2 >= operand1;
+      overflow = (((operand2 ^ operand1) & (operand2 ^ result)) >> 31) != 0;
+      *flag_mask_out = 0x0fu;
+      *flags_out = riscv_arm_const_nzcv(result, carry, overflow);
+      return true;
+    case 0x4:
+      result = operand1 + operand2;
+      carry = result < operand1;
+      overflow = ((~(operand1 ^ operand2) & (operand1 ^ result)) >> 31) != 0;
+      *flag_mask_out = 0x0fu;
+      *flags_out = riscv_arm_const_nzcv(result, carry, overflow);
+      return true;
+    case 0x5:
+      if (!riscv_arm_const_old_carry(known_flag_mask, known_flags,
+                                     &carry_in))
+        return false;
+      {
+        u64 sum = (u64)operand1 + operand2 + carry_in;
+
+        result = (u32)sum;
+        carry = (sum >> 32) != 0;
+      }
+      overflow = ((~(operand1 ^ operand2) & (operand1 ^ result)) >> 31) != 0;
+      *flag_mask_out = 0x0fu;
+      *flags_out = riscv_arm_const_nzcv(result, carry, overflow);
+      return true;
+    case 0x6:
+      if (!riscv_arm_const_old_carry(known_flag_mask, known_flags,
+                                     &carry_in))
+        return false;
+      {
+        u64 rhs = (u64)operand2 + (carry_in ? 0u : 1u);
+
+        result = (u32)((u64)operand1 - rhs);
+        carry = (u64)operand1 >= rhs;
+      }
+      overflow = (((operand1 ^ operand2) & (operand1 ^ result)) >> 31) != 0;
+      *flag_mask_out = 0x0fu;
+      *flags_out = riscv_arm_const_nzcv(result, carry, overflow);
+      return true;
+    case 0x7:
+      if (!riscv_arm_const_old_carry(known_flag_mask, known_flags,
+                                     &carry_in))
+        return false;
+      {
+        u64 rhs = (u64)operand1 + (carry_in ? 0u : 1u);
+
+        result = (u32)((u64)operand2 - rhs);
+        carry = (u64)operand2 >= rhs;
+      }
+      overflow = (((operand2 ^ operand1) & (operand2 ^ result)) >> 31) != 0;
+      *flag_mask_out = 0x0fu;
+      *flags_out = riscv_arm_const_nzcv(result, carry, overflow);
+      return true;
+    default:
+      return false;
+  }
+
+  *flag_mask_out = 0x0cu;
+  *flags_out = riscv_arm_const_nzcv(result, false, false) & 0x0cu;
+  if (shifter_carry_known)
+  {
+    *flag_mask_out |= 0x02u;
+    if (shifter_carry)
+      *flags_out |= 0x02u;
+  }
+  if (known_flag_mask & 0x01u)
+  {
+    *flag_mask_out |= 0x01u;
+    *flags_out |= known_flags & 0x01u;
+  }
   return true;
 }
 
