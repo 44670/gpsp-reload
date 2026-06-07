@@ -434,6 +434,330 @@ static void riscv_emit_arm_reg_or_pc_load(u8 **ptr, riscv_reg_number rd,
     riscv_emit_arm_reg_load(ptr, rd, reg_index);
 }
 
+static void riscv_arm_const_clear_reg(u32 *const_mask, u32 reg_index)
+{
+  if (!const_mask)
+    return;
+
+  if (reg_index < REG_PC)
+    *const_mask &= ~(1u << reg_index);
+  else if (reg_index == REG_PC)
+    *const_mask = 0;
+}
+
+static void riscv_arm_const_set_reg(u32 *const_mask,
+                                    u32 *const_values,
+                                    u32 reg_index,
+                                    u32 value)
+{
+  if (!const_mask || !const_values)
+    return;
+
+  if (reg_index < REG_PC)
+  {
+    const_values[reg_index] = value;
+    *const_mask |= (1u << reg_index);
+  }
+  else if (reg_index == REG_PC)
+  {
+    *const_mask = 0;
+  }
+}
+
+static bool riscv_arm_const_reg_value(u32 reg_index,
+                                      u32 pc_value,
+                                      u32 const_mask,
+                                      const u32 *const_values,
+                                      u32 *value_out)
+{
+  if (reg_index == REG_PC)
+  {
+    *value_out = pc_value;
+    return true;
+  }
+
+  if (reg_index < REG_PC && const_values &&
+      (const_mask & (1u << reg_index)))
+  {
+    *value_out = const_values[reg_index];
+    return true;
+  }
+
+  return false;
+}
+
+static u32 riscv_arm_const_ror(u32 value, u32 shift)
+{
+  shift &= 31u;
+  if (!shift)
+    return value;
+
+  return (value >> shift) | (value << (32u - shift));
+}
+
+static bool riscv_arm_const_imm_shift(u32 value,
+                                      u32 shift_type,
+                                      u32 shift,
+                                      u32 *result_out)
+{
+  switch (shift_type)
+  {
+    case 0:
+      *result_out = value << shift;
+      return true;
+    case 1:
+      *result_out = shift ? (value >> shift) : 0;
+      return true;
+    case 2:
+      *result_out = (u32)((s32)value >> (shift ? shift : 31u));
+      return true;
+    default:
+      if (!shift)
+        return false;
+      *result_out = riscv_arm_const_ror(value, shift);
+      return true;
+  }
+}
+
+static bool riscv_arm_const_reg_shift(u32 value,
+                                      u32 shift_type,
+                                      u32 shift,
+                                      u32 *result_out)
+{
+  shift &= 0xffu;
+
+  switch (shift_type)
+  {
+    case 0:
+      if (!shift)
+        *result_out = value;
+      else if (shift < 32u)
+        *result_out = value << shift;
+      else
+        *result_out = 0;
+      return true;
+    case 1:
+      if (!shift)
+        *result_out = value;
+      else if (shift < 32u)
+        *result_out = value >> shift;
+      else
+        *result_out = 0;
+      return true;
+    case 2:
+      if (!shift)
+        *result_out = value;
+      else if (shift < 32u)
+        *result_out = (u32)((s32)value >> shift);
+      else
+        *result_out = (u32)((s32)value >> 31);
+      return true;
+    default:
+      if (!shift)
+        *result_out = value;
+      else
+        *result_out = riscv_arm_const_ror(value, shift);
+      return true;
+  }
+}
+
+static bool riscv_arm_const_operand2(u32 opcode,
+                                     u32 pc,
+                                     u32 const_mask,
+                                     const u32 *const_values,
+                                     u32 *value_out)
+{
+  u32 imm_op = (opcode >> 25) & 1u;
+  u32 rm = opcode & 0xfu;
+  u32 rs = (opcode >> 8) & 0xfu;
+  u32 shift_type = (opcode >> 5) & 0x3u;
+  u32 shift = (opcode >> 7) & 0x1fu;
+  u32 value;
+
+  if (imm_op)
+  {
+    *value_out = riscv_arm_expand_imm(opcode);
+    return true;
+  }
+
+  if ((opcode >> 4) & 1u)
+  {
+    u32 shift_value;
+
+    if (!riscv_arm_const_reg_value(rm, pc + 12u, const_mask,
+                                   const_values, &value) ||
+        !riscv_arm_const_reg_value(rs, pc + 8u, const_mask,
+                                   const_values, &shift_value))
+    {
+      return false;
+    }
+
+    return riscv_arm_const_reg_shift(value, shift_type, shift_value,
+                                     value_out);
+  }
+
+  if (!riscv_arm_const_reg_value(rm, pc + 8u, const_mask,
+                                 const_values, &value))
+  {
+    return false;
+  }
+
+  return riscv_arm_const_imm_shift(value, shift_type, shift, value_out);
+}
+
+static bool riscv_arm_data_proc_const_result(u32 opcode,
+                                             u32 pc,
+                                             u32 const_mask,
+                                             const u32 *const_values,
+                                             u32 *result_out)
+{
+  u32 op = (opcode >> 21) & 0xfu;
+  u32 rn = (opcode >> 16) & 0xfu;
+  u32 operand1 = 0;
+  u32 operand2;
+
+  if (op == 0x5 || op == 0x6 || op == 0x7)
+    return false;
+
+  if (op != 0xdu && op != 0xfu &&
+      !riscv_arm_const_reg_value(rn, pc + 8u, const_mask,
+                                 const_values, &operand1))
+  {
+    return false;
+  }
+
+  if (!riscv_arm_const_operand2(opcode, pc, const_mask, const_values,
+                                &operand2))
+  {
+    return false;
+  }
+
+  switch (op)
+  {
+    case 0x0:
+      *result_out = operand1 & operand2;
+      return true;
+    case 0x1:
+      *result_out = operand1 ^ operand2;
+      return true;
+    case 0x2:
+      *result_out = operand1 - operand2;
+      return true;
+    case 0x3:
+      *result_out = operand2 - operand1;
+      return true;
+    case 0x4:
+      *result_out = operand1 + operand2;
+      return true;
+    case 0xc:
+      *result_out = operand1 | operand2;
+      return true;
+    case 0xd:
+      *result_out = operand2;
+      return true;
+    case 0xe:
+      *result_out = operand1 & ~operand2;
+      return true;
+    case 0xf:
+      *result_out = ~operand2;
+      return true;
+    default:
+      return false;
+  }
+}
+
+void riscv_arm_const_update_data_proc(u32 opcode,
+                                      u32 pc,
+                                      u32 condition,
+                                      u32 *const_mask,
+                                      u32 *const_values)
+{
+  u32 rd = (opcode >> 12) & 0xfu;
+  u32 value;
+
+  if (rd >= REG_PC)
+  {
+    riscv_arm_const_clear_reg(const_mask, rd);
+    return;
+  }
+
+  if ((condition & 0x0fu) != 0x0eu)
+  {
+    riscv_arm_const_clear_reg(const_mask, rd);
+    return;
+  }
+
+  if (riscv_arm_data_proc_const_result(opcode, pc, *const_mask,
+                                       const_values, &value))
+    riscv_arm_const_set_reg(const_mask, const_values, rd, value);
+  else
+    riscv_arm_const_clear_reg(const_mask, rd);
+}
+
+void riscv_arm_const_update_access_memory(u32 opcode, u32 *const_mask)
+{
+  u32 pre_index = (opcode >> 24) & 1u;
+  u32 writeback = (opcode >> 21) & 1u;
+  u32 load = (opcode >> 20) & 1u;
+  u32 rn = (opcode >> 16) & 0xfu;
+  u32 rd = (opcode >> 12) & 0xfu;
+  bool writeback_address = writeback || !pre_index;
+
+  if (load)
+    riscv_arm_const_clear_reg(const_mask, rd);
+  if (writeback_address)
+    riscv_arm_const_clear_reg(const_mask, rn);
+}
+
+void riscv_arm_const_update_block_memory(u32 opcode, u32 *const_mask)
+{
+  u32 sbit = (opcode >> 22) & 1u;
+  u32 writeback = (opcode >> 21) & 1u;
+  u32 load = (opcode >> 20) & 1u;
+  u32 rn = (opcode >> 16) & 0xfu;
+  u32 reglist = opcode & 0xffffu;
+
+  if (sbit || rn == REG_PC)
+  {
+    if (const_mask)
+      *const_mask = 0;
+    return;
+  }
+
+  if (load)
+  {
+    if (reglist & (1u << REG_PC))
+    {
+      if (const_mask)
+        *const_mask = 0;
+    }
+    else if (const_mask)
+    {
+      *const_mask &= ~reglist;
+    }
+  }
+
+  if (writeback)
+    riscv_arm_const_clear_reg(const_mask, rn);
+}
+
+void riscv_arm_const_update_multiply(u32 opcode, u32 *const_mask)
+{
+  riscv_arm_const_clear_reg(const_mask, (opcode >> 16) & 0xfu);
+}
+
+void riscv_arm_const_update_multiply_long(u32 opcode, u32 *const_mask)
+{
+  riscv_arm_const_clear_reg(const_mask, (opcode >> 12) & 0xfu);
+  riscv_arm_const_clear_reg(const_mask, (opcode >> 16) & 0xfu);
+}
+
+void riscv_arm_const_update_psr(u32 opcode, u32 *const_mask)
+{
+  if ((opcode & 0x0fbf0fffu) == 0x010f0000u)
+    riscv_arm_const_clear_reg(const_mask, (opcode >> 12) & 0xfu);
+}
+
 static void riscv_emit_arm_memory_imm_offset(u8 **ptr_ref,
                                              riscv_reg_number rd,
                                              riscv_reg_number rs,
@@ -441,6 +765,8 @@ static void riscv_emit_arm_memory_imm_offset(u8 **ptr_ref,
                                              bool up);
 static bool riscv_arm_memory_reg_offset_const(u32 opcode,
                                               u32 pc,
+                                              u32 const_mask,
+                                              const u32 *const_values,
                                               u32 *offset_out);
 static void riscv_emit_arm_memory_const_offset(u8 **ptr_ref,
                                                bool pre_index,
@@ -5555,7 +5881,9 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
                                                u32 pc,
                                                u32 cycles,
                                                bool emit_cycles,
-                                               bool *cycles_emitted)
+                                               bool *cycles_emitted,
+                                               u32 const_mask,
+                                               const u32 *const_values)
 {
   u32 condition = opcode >> 28;
   u32 pre_index = (opcode >> 24) & 1u;
@@ -5572,8 +5900,11 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
   bool writeback_address = writeback || !pre_index;
   bool pc_base = rn == REG_PC;
   riscv_reg_number writeback_reg = riscv_reg_a0;
-  u32 const_register_offset = pc + 8u;
-  bool const_register_offset_valid = !immediate_offset && rm == REG_PC;
+  u32 const_register_offset = 0;
+  bool const_register_offset_valid =
+    !immediate_offset &&
+    riscv_arm_const_reg_value(rm, pc + 8u, const_mask, const_values,
+                              &const_register_offset);
   bool writeback_same_as_base =
     (immediate_offset && offset == 0) ||
     (const_register_offset_valid && const_register_offset == 0);
@@ -5771,12 +6102,14 @@ static void riscv_emit_arm_memory_imm_offset(u8 **ptr_ref,
 
 static bool riscv_arm_memory_reg_offset_const(u32 opcode,
                                               u32 pc,
+                                              u32 const_mask,
+                                              const u32 *const_values,
                                               u32 *offset_out)
 {
   u32 rm = opcode & 0xfu;
   u32 shift_type = (opcode >> 5) & 0x3u;
   u32 shift = (opcode >> 7) & 0x1fu;
-  u32 value = pc + 8u;
+  u32 value;
 
   if ((opcode >> 4) & 1u)
     return false;
@@ -5787,26 +6120,11 @@ static bool riscv_arm_memory_reg_offset_const(u32 opcode,
     return true;
   }
 
-  if (rm != REG_PC)
+  if (!riscv_arm_const_reg_value(rm, pc + 8u, const_mask, const_values,
+                                 &value))
     return false;
 
-  switch (shift_type)
-  {
-    case 0:
-      *offset_out = value << shift;
-      return true;
-    case 1:
-      *offset_out = shift ? (value >> shift) : 0;
-      return true;
-    case 2:
-      *offset_out = (u32)((s32)value >> (shift ? shift : 31u));
-      return true;
-    default:
-      if (!shift)
-        return false;
-      *offset_out = (value >> shift) | (value << (32u - shift));
-      return true;
-  }
+  return riscv_arm_const_imm_shift(value, shift_type, shift, offset_out);
 }
 
 static void riscv_emit_arm_memory_const_offset(u8 **ptr_ref,
@@ -5886,13 +6204,16 @@ static bool riscv_emit_arm_memory_reg_offset(u8 **ptr_ref,
   return true;
 }
 
-bool riscv_emit_native_arm_access_memory_ex(u8 **translation_ptr_ref,
-                                            riscv_jit_block_meta *meta,
-                                            u32 opcode,
-                                            u32 pc,
-                                            u32 cycles,
-                                            bool emit_cycles,
-                                            bool *cycles_emitted)
+bool riscv_emit_native_arm_access_memory_ex_const(
+  u8 **translation_ptr_ref,
+  riscv_jit_block_meta *meta,
+  u32 opcode,
+  u32 pc,
+  u32 cycles,
+  bool emit_cycles,
+  bool *cycles_emitted,
+  u32 const_mask,
+  const u32 *const_values)
 {
   u32 condition = opcode >> 28;
   u32 register_offset = (opcode >> 25) & 1u;
@@ -5911,7 +6232,8 @@ bool riscv_emit_native_arm_access_memory_ex(u8 **translation_ptr_ref,
   u32 const_register_offset = 0;
   bool const_register_offset_valid =
     register_offset &&
-    riscv_arm_memory_reg_offset_const(opcode, pc, &const_register_offset);
+    riscv_arm_memory_reg_offset_const(opcode, pc, const_mask, const_values,
+                                      &const_register_offset);
   bool writeback_same_as_base =
     (!register_offset && offset == 0) ||
     (const_register_offset_valid && const_register_offset == 0);
@@ -5925,7 +6247,8 @@ bool riscv_emit_native_arm_access_memory_ex(u8 **translation_ptr_ref,
   {
     return riscv_emit_native_arm_extra_memory(translation_ptr_ref, meta,
                                              opcode, pc, cycles,
-                                             emit_cycles, cycles_emitted);
+                                             emit_cycles, cycles_emitted,
+                                             const_mask, const_values);
   }
 
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
@@ -6056,6 +6379,19 @@ bool riscv_emit_native_arm_access_memory_ex(u8 **translation_ptr_ref,
 
   *translation_ptr_ref = ptr;
   return true;
+}
+
+bool riscv_emit_native_arm_access_memory_ex(u8 **translation_ptr_ref,
+                                            riscv_jit_block_meta *meta,
+                                            u32 opcode,
+                                            u32 pc,
+                                            u32 cycles,
+                                            bool emit_cycles,
+                                            bool *cycles_emitted)
+{
+  return riscv_emit_native_arm_access_memory_ex_const(
+    translation_ptr_ref, meta, opcode, pc, cycles, emit_cycles,
+    cycles_emitted, 0, NULL);
 }
 
 bool riscv_emit_native_arm_access_memory(u8 **translation_ptr_ref,

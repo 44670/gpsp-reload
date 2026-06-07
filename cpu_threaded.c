@@ -3531,6 +3531,9 @@ bool translate_block_arm(u32 pc, bool ram_region)
     if (pc != block_end_pc &&
         block_data[block_data_position].update_cycles)
     {
+#if defined(RISCV_ARCH)
+      riscv_arm_const_mask = 0;
+#endif
       generate_cycle_update();
     }
   }
