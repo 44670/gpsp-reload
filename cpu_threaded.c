@@ -313,13 +313,27 @@ void translate_icache_sync() {
       pc_address_block = load_gamepak_page(pc_region & 0x3FF);                \
   }                                                                           \
 
+#if defined(RISCV_ARCH)
+#define arm_backend_condition_known_check()                                   \
+  riscv_arm_condition_known_check()
+#define arm_backend_emit_instruction()                                        \
+  (!riscv_arm_skip_instruction)
+#else
+#define arm_backend_condition_known_check()
+#define arm_backend_emit_instruction()                                        \
+  1
+#endif
+
 #define translate_arm_instruction()                                           \
   check_pc_region(pc);                                                        \
   opcode = address32(pc_address_block, (pc & 0x7FFF));                        \
   condition = block_data[block_data_position].condition;                      \
   arm_load_flag_status();                                                     \
                                                                               \
-  if((condition != last_condition) || (condition >= 0x20))                    \
+  arm_backend_condition_known_check();                                        \
+                                                                              \
+  if(arm_backend_emit_instruction() &&                                        \
+   ((condition != last_condition) || (condition >= 0x20)))                    \
   {                                                                           \
     if((last_condition & 0x0F) != 0x0E)                                       \
     {                                                                         \
@@ -337,6 +351,7 @@ void translate_icache_sync() {
   }                                                                           \
   emit_trace_arm_instruction(pc);                                             \
                                                                               \
+  if(arm_backend_emit_instruction())                                          \
   switch((opcode >> 20) & 0xFF)                                               \
   {                                                                           \
     case 0x00:                                                                \

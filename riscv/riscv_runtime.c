@@ -666,6 +666,133 @@ static bool riscv_arm_data_proc_const_result(u32 opcode,
   }
 }
 
+static u32 riscv_arm_const_nzcv(u32 result, bool carry, bool overflow)
+{
+  u32 flags = 0;
+
+  if (result & 0x80000000u)
+    flags |= 0x08u;
+  if (!result)
+    flags |= 0x04u;
+  if (carry)
+    flags |= 0x02u;
+  if (overflow)
+    flags |= 0x01u;
+
+  return flags;
+}
+
+bool riscv_arm_const_data_proc_test_flags(u32 opcode,
+                                          u32 pc,
+                                          u32 const_mask,
+                                          const u32 *const_values,
+                                          u32 *flags_out)
+{
+  u32 op = (opcode >> 21) & 0xfu;
+  u32 rn = (opcode >> 16) & 0xfu;
+  u32 operand1;
+  u32 operand2;
+  u32 result;
+  bool carry;
+  bool overflow;
+
+  if (!flags_out || (opcode >> 28) != 0x0eu || !((opcode >> 20) & 1u))
+    return false;
+
+  if (op != 0x0au && op != 0x0bu)
+    return false;
+
+  if (!riscv_arm_const_reg_value(rn, pc + 8u, const_mask,
+                                 const_values, &operand1) ||
+      !riscv_arm_const_operand2(opcode, pc, const_mask, const_values,
+                                &operand2))
+  {
+    return false;
+  }
+
+  if (op == 0x0au)
+  {
+    result = operand1 - operand2;
+    carry = operand1 >= operand2;
+    overflow = (((operand1 ^ operand2) & (operand1 ^ result)) >> 31) != 0;
+  }
+  else
+  {
+    result = operand1 + operand2;
+    carry = result < operand1;
+    overflow = ((~(operand1 ^ operand2) & (operand1 ^ result)) >> 31) != 0;
+  }
+
+  *flags_out = riscv_arm_const_nzcv(result, carry, overflow);
+  return true;
+}
+
+bool riscv_arm_const_condition_passed(u32 flag_mask,
+                                      u32 flags,
+                                      u32 condition,
+                                      bool *passed_out)
+{
+  bool n = (flags & 0x08u) != 0;
+  bool z = (flags & 0x04u) != 0;
+  bool c = (flags & 0x02u) != 0;
+  bool v = (flags & 0x01u) != 0;
+
+  if (!passed_out)
+    return false;
+
+  switch (condition & 0x0fu)
+  {
+    case 0x0:
+    case 0x1:
+      if (!(flag_mask & 0x04u))
+        return false;
+      *passed_out = z == ((condition & 1u) == 0);
+      return true;
+    case 0x2:
+    case 0x3:
+      if (!(flag_mask & 0x02u))
+        return false;
+      *passed_out = c == ((condition & 1u) == 0);
+      return true;
+    case 0x4:
+    case 0x5:
+      if (!(flag_mask & 0x08u))
+        return false;
+      *passed_out = n == ((condition & 1u) == 0);
+      return true;
+    case 0x6:
+    case 0x7:
+      if (!(flag_mask & 0x01u))
+        return false;
+      *passed_out = v == ((condition & 1u) == 0);
+      return true;
+    case 0x8:
+    case 0x9:
+      if ((flag_mask & 0x06u) != 0x06u)
+        return false;
+      *passed_out = (condition == 0x8u) ? (c && !z) : (!c || z);
+      return true;
+    case 0x0a:
+    case 0x0b:
+      if ((flag_mask & 0x09u) != 0x09u)
+        return false;
+      *passed_out = (condition == 0x0au) ? (n == v) : (n != v);
+      return true;
+    case 0x0c:
+    case 0x0d:
+      if ((flag_mask & 0x0du) != 0x0du)
+        return false;
+      *passed_out = (condition == 0x0cu) ? (!z && (n == v)) :
+                                           (z || (n != v));
+      return true;
+    case 0x0e:
+      *passed_out = true;
+      return true;
+    default:
+      return false;
+  }
+}
+
 void riscv_arm_const_update_data_proc(u32 opcode,
                                       u32 pc,
                                       u32 condition,
@@ -694,19 +821,80 @@ void riscv_arm_const_update_data_proc(u32 opcode,
     riscv_arm_const_clear_reg(const_mask, rd);
 }
 
-void riscv_arm_const_update_access_memory(u32 opcode, u32 *const_mask)
+static bool riscv_arm_memory_reg_offset_const(u32 opcode,
+                                              u32 pc,
+                                              u32 const_mask,
+                                              const u32 *const_values,
+                                              u32 *offset_out);
+
+void riscv_arm_const_update_access_memory(u32 opcode,
+                                          u32 pc,
+                                          u32 *const_mask,
+                                          u32 *const_values)
 {
   u32 pre_index = (opcode >> 24) & 1u;
+  u32 up = (opcode >> 23) & 1u;
   u32 writeback = (opcode >> 21) & 1u;
   u32 load = (opcode >> 20) & 1u;
   u32 rn = (opcode >> 16) & 0xfu;
   u32 rd = (opcode >> 12) & 0xfu;
+  u32 base_value = 0;
+  u32 offset = 0;
+  bool offset_valid = false;
   bool writeback_address = writeback || !pre_index;
+  bool writeback_overwritten_by_load = load && rd == rn;
+
+  if ((opcode & 0x0c000000u) == 0x04000000u)
+  {
+    if ((opcode >> 25) & 1u)
+    {
+      offset_valid = riscv_arm_memory_reg_offset_const(
+        opcode, pc, const_mask ? *const_mask : 0, const_values, &offset);
+    }
+    else
+    {
+      offset = opcode & 0xfffu;
+      offset_valid = true;
+    }
+  }
+  else if ((opcode & 0x0e000090u) == 0x00000090u)
+  {
+    if ((opcode >> 22) & 1u)
+    {
+      offset = ((opcode >> 4) & 0xf0u) | (opcode & 0x0fu);
+      offset_valid = true;
+    }
+    else
+    {
+      u32 rm = opcode & 0x0fu;
+      offset_valid = riscv_arm_const_reg_value(
+        rm, pc + 8u, const_mask ? *const_mask : 0, const_values, &offset);
+    }
+  }
 
   if (load)
     riscv_arm_const_clear_reg(const_mask, rd);
-  if (writeback_address)
+
+  if (!writeback_address)
+    return;
+
+  if (writeback_overwritten_by_load)
+  {
     riscv_arm_const_clear_reg(const_mask, rn);
+    return;
+  }
+
+  if (riscv_arm_const_reg_value(rn, pc + 8u, const_mask ? *const_mask : 0,
+                                const_values, &base_value) &&
+      offset_valid)
+  {
+    u32 writeback_value = up ? (base_value + offset) : (base_value - offset);
+    riscv_arm_const_set_reg(const_mask, const_values, rn, writeback_value);
+  }
+  else
+  {
+    riscv_arm_const_clear_reg(const_mask, rn);
+  }
 }
 
 void riscv_arm_const_update_block_memory(u32 opcode, u32 *const_mask)

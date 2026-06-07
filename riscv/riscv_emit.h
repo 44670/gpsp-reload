@@ -351,7 +351,15 @@ void riscv_patch_unconditional_branch_short(u8 *source, const u8 *target);
 void riscv_patch_conditional_branch(u8 *source, const u8 *target);
 void riscv_arm_const_update_data_proc(u32 opcode, u32 pc, u32 condition,
                                       u32 *const_mask, u32 *const_values);
-void riscv_arm_const_update_access_memory(u32 opcode, u32 *const_mask);
+bool riscv_arm_const_data_proc_test_flags(u32 opcode, u32 pc,
+                                          u32 const_mask,
+                                          const u32 *const_values,
+                                          u32 *flags_out);
+bool riscv_arm_const_condition_passed(u32 flag_mask, u32 flags,
+                                      u32 condition, bool *passed_out);
+void riscv_arm_const_update_access_memory(u32 opcode, u32 pc,
+                                          u32 *const_mask,
+                                          u32 *const_values);
 void riscv_arm_const_update_block_memory(u32 opcode, u32 *const_mask);
 void riscv_arm_const_update_multiply(u32 opcode, u32 *const_mask);
 void riscv_arm_const_update_multiply_long(u32 opcode, u32 *const_mask);
@@ -360,7 +368,10 @@ void riscv_arm_const_update_psr(u32 opcode, u32 *const_mask);
 #define generate_block_extra_vars()                                           \
   riscv_jit_block_meta *riscv_block_meta = NULL;                             \
   u32 riscv_arm_const_mask = 0;                                               \
-  u32 riscv_arm_const_values[16]
+  u32 riscv_arm_const_values[16];                                             \
+  u32 riscv_arm_known_flag_mask = 0;                                          \
+  u32 riscv_arm_known_flags = 0;                                              \
+  bool riscv_arm_skip_instruction = false
 
 #define generate_block_extra_vars_arm()                                       \
   generate_block_extra_vars()
@@ -373,6 +384,9 @@ void riscv_arm_const_update_psr(u32 opcode, u32 *const_mask);
   {                                                                           \
     (void)riscv_arm_const_mask;                                               \
     (void)riscv_arm_const_values;                                             \
+    (void)riscv_arm_known_flag_mask;                                          \
+    (void)riscv_arm_known_flags;                                              \
+    (void)riscv_arm_skip_instruction;                                         \
     riscv_emit_block_prologue(&translation_ptr, &riscv_block_meta);           \
     if (block_needs_pc_base)                                                  \
       riscv_emit_block_pc_base(&translation_ptr, riscv_block_meta,            \
@@ -486,6 +500,38 @@ void riscv_arm_const_update_psr(u32 opcode, u32 *const_mask);
 #define riscv_arm_emit_cycles_here()                                          \
   ((pc + arm_instruction_width) == block_end_pc)
 
+#define riscv_arm_clear_known_flags()                                         \
+  do                                                                          \
+  {                                                                           \
+    riscv_arm_known_flag_mask = 0;                                            \
+    riscv_arm_known_flags = 0;                                                \
+  } while (0)
+
+#define riscv_arm_condition_known_check()                                     \
+  do                                                                          \
+  {                                                                           \
+    bool riscv_arm_condition_pass = false;                                    \
+    riscv_arm_skip_instruction = false;                                       \
+    if (((condition) & 0x0f) != 0x0e &&                                       \
+        riscv_arm_const_condition_passed(                                     \
+          riscv_arm_known_flag_mask, riscv_arm_known_flags,                   \
+          (condition) & 0x0f, &riscv_arm_condition_pass))                     \
+    {                                                                         \
+      if ((last_condition & 0x0f) != 0x0e)                                    \
+        generate_branch_patch_conditional(backpatch_address,                  \
+                                          translation_ptr);                   \
+      last_condition = 0x0e;                                                  \
+      condition &= 0x0f;                                                      \
+      if (!riscv_arm_condition_pass)                                          \
+        riscv_arm_skip_instruction = true;                                    \
+      else                                                                    \
+      {                                                                       \
+        opcode = (opcode & 0x0fffffffu) | 0xe0000000u;                       \
+        condition = 0x0e;                                                     \
+      }                                                                       \
+    }                                                                         \
+  } while (0)
+
 #define arm_data_proc(...)                                                    \
   do                                                                          \
   {                                                                           \
@@ -499,6 +545,8 @@ void riscv_arm_const_update_psr(u32 opcode, u32 *const_mask);
       riscv_arm_const_update_data_proc(riscv_arm_emitted_opcode, pc,          \
                                        condition, &riscv_arm_const_mask,      \
                                        riscv_arm_const_values);               \
+      if ((riscv_arm_emitted_opcode >> 20) & 1u)                              \
+        riscv_arm_clear_known_flags();                                        \
       if (riscv_arm_cycles_emitted)                                           \
         cycle_count = 0;                                                      \
     }                                                                         \
@@ -512,11 +560,24 @@ void riscv_arm_const_update_psr(u32 opcode, u32 *const_mask);
   do                                                                          \
   {                                                                           \
     bool riscv_arm_cycles_emitted = false;                                    \
+    u32 riscv_arm_emitted_opcode = riscv_arm_effective_opcode();             \
     if (riscv_emit_native_arm_data_proc_test_with_pc_ex_dead_flags(           \
-          &translation_ptr, riscv_block_meta, riscv_arm_effective_opcode(),   \
+          &translation_ptr, riscv_block_meta, riscv_arm_emitted_opcode,       \
           pc, cycle_count, flag_status, riscv_arm_emit_cycles_here(),         \
           &riscv_arm_cycles_emitted))                                         \
     {                                                                         \
+      u32 riscv_arm_test_flags = 0;                                           \
+      if (riscv_arm_const_data_proc_test_flags(                               \
+            riscv_arm_emitted_opcode, pc, riscv_arm_const_mask,               \
+            riscv_arm_const_values, &riscv_arm_test_flags))                   \
+      {                                                                       \
+        riscv_arm_known_flag_mask = 0x0f;                                     \
+        riscv_arm_known_flags = riscv_arm_test_flags;                         \
+      }                                                                       \
+      else                                                                    \
+      {                                                                       \
+        riscv_arm_clear_known_flags();                                        \
+      }                                                                       \
       if (riscv_arm_cycles_emitted)                                           \
         cycle_count = 0;                                                      \
     }                                                                         \
@@ -540,6 +601,8 @@ void riscv_arm_const_update_psr(u32 opcode, u32 *const_mask);
     {                                                                         \
       riscv_arm_const_update_multiply(riscv_arm_emitted_opcode,               \
                                       &riscv_arm_const_mask);                 \
+      if ((riscv_arm_emitted_opcode >> 20) & 1u)                              \
+        riscv_arm_clear_known_flags();                                        \
       cycle_count = (u32)(0u - riscv_multiply_extra_cycles);                 \
     }                                                                         \
     else                                                                      \
@@ -560,6 +623,8 @@ void riscv_arm_const_update_psr(u32 opcode, u32 *const_mask);
     {                                                                         \
       riscv_arm_const_update_multiply_long(riscv_arm_emitted_opcode,          \
                                            &riscv_arm_const_mask);            \
+      if ((riscv_arm_emitted_opcode >> 20) & 1u)                              \
+        riscv_arm_clear_known_flags();                                        \
       cycle_count = (u32)(0u - riscv_multiply_long_extra_cycles);            \
     }                                                                         \
     else                                                                      \
@@ -579,6 +644,7 @@ void riscv_arm_const_update_psr(u32 opcode, u32 *const_mask);
     {                                                                         \
       riscv_arm_const_update_psr(riscv_arm_emitted_opcode,                   \
                                  &riscv_arm_const_mask);                      \
+      riscv_arm_clear_known_flags();                                          \
       cycle_count = 0;                                                        \
     }                                                                         \
     else                                                                      \
@@ -598,8 +664,9 @@ void riscv_arm_const_update_psr(u32 opcode, u32 *const_mask);
           &riscv_arm_cycles_emitted, riscv_arm_const_mask,                   \
           riscv_arm_const_values))                                            \
     {                                                                         \
-      riscv_arm_const_update_access_memory(riscv_arm_emitted_opcode,          \
-                                           &riscv_arm_const_mask);            \
+      riscv_arm_const_update_access_memory(                                   \
+        riscv_arm_emitted_opcode, pc, &riscv_arm_const_mask,                 \
+        riscv_arm_const_values);                                              \
       if (riscv_arm_cycles_emitted)                                           \
         cycle_count = 0;                                                      \
     }                                                                         \
@@ -686,6 +753,7 @@ void riscv_arm_const_update_psr(u32 opcode, u32 *const_mask);
           riscv_short_patch))                                                 \
     {                                                                         \
       riscv_arm_const_mask = 0;                                               \
+      riscv_arm_clear_known_flags();                                          \
       block_exits[block_exit_position].branch_patch_short =                   \
         riscv_short_patch;                                                    \
       if (!riscv_internal_patch && pc + 4u == block_end_pc)                  \
@@ -711,6 +779,7 @@ void riscv_arm_const_update_psr(u32 opcode, u32 *const_mask);
           riscv_short_patch))                                                 \
     {                                                                         \
       riscv_arm_const_mask = 0;                                               \
+      riscv_arm_clear_known_flags();                                          \
       block_exits[block_exit_position].branch_patch_short =                   \
         riscv_short_patch;                                                    \
       if (!riscv_internal_patch && pc + 4u == block_end_pc)                  \
@@ -732,6 +801,7 @@ void riscv_arm_const_update_psr(u32 opcode, u32 *const_mask);
                                  pc, cycle_count))                            \
     {                                                                         \
       riscv_arm_const_mask = 0;                                               \
+      riscv_arm_clear_known_flags();                                          \
       cycle_count = 0;                                                        \
     }                                                                         \
     else                                                                      \
@@ -751,6 +821,7 @@ void riscv_arm_const_update_psr(u32 opcode, u32 *const_mask);
           riscv_short_patch))                                                 \
     {                                                                         \
       riscv_arm_const_mask = 0;                                               \
+      riscv_arm_clear_known_flags();                                          \
       block_exits[block_exit_position].branch_patch_short =                   \
         riscv_short_patch;                                                    \
       block_exit_position++;                                                  \
