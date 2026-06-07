@@ -4077,6 +4077,71 @@ static void riscv_emit_arm_cpsr_store_arithmetic_selected_nzcv(
   *ptr_ref = ptr;
 }
 
+static void riscv_emit_arm_cpsr_store_const_selected_nzcv(
+  u8 **ptr_ref, u32 flag_mask, u32 flags, bool clobber_dead_flags)
+{
+  u32 cpsr_clear_mask;
+  u32 cpsr_flags;
+  u8 *ptr;
+  u8 *translation_ptr;
+
+  flag_mask &= 0x0fu;
+  flags &= flag_mask;
+  if (!flag_mask)
+    return;
+
+  cpsr_clear_mask = riscv_arm_cpsr_flags_from_status(flag_mask);
+  cpsr_flags = riscv_arm_cpsr_flags_from_status(flags);
+
+  ptr = *ptr_ref;
+  riscv_emit_arm_reg_load(&ptr, riscv_reg_t6, REG_CPSR);
+  translation_ptr = ptr;
+
+  if (clobber_dead_flags)
+  {
+    riscv_emit_andi(riscv_reg_t6, riscv_reg_t6, 0xff);
+  }
+  else
+  {
+    switch (flag_mask)
+    {
+      case 0x0f:
+        riscv_emit_slli(riscv_reg_t6, riscv_reg_t6, 4);
+        riscv_emit_srli(riscv_reg_t6, riscv_reg_t6, 4);
+        break;
+      case 0x0e:
+        riscv_emit_slli(riscv_reg_t6, riscv_reg_t6, 3);
+        riscv_emit_srli(riscv_reg_t6, riscv_reg_t6, 3);
+        break;
+      case 0x0c:
+        riscv_emit_slli(riscv_reg_t6, riscv_reg_t6, 2);
+        riscv_emit_srli(riscv_reg_t6, riscv_reg_t6, 2);
+        break;
+      case 0x08:
+        riscv_emit_slli(riscv_reg_t6, riscv_reg_t6, 1);
+        riscv_emit_srli(riscv_reg_t6, riscv_reg_t6, 1);
+        break;
+      default:
+        riscv_emit_li(&ptr, riscv_reg_t5, ~cpsr_clear_mask);
+        translation_ptr = ptr;
+        riscv_emit_and(riscv_reg_t6, riscv_reg_t6, riscv_reg_t5);
+        break;
+    }
+  }
+  ptr = translation_ptr;
+
+  if (cpsr_flags)
+  {
+    riscv_emit_li(&ptr, riscv_reg_t5, cpsr_flags);
+    translation_ptr = ptr;
+    riscv_emit_or(riscv_reg_t6, riscv_reg_t6, riscv_reg_t5);
+  }
+  ptr = translation_ptr;
+
+  riscv_emit_arm_reg_store(&ptr, REG_CPSR, riscv_reg_t6);
+  *ptr_ref = ptr;
+}
+
 static void riscv_emit_arm_cpsr_store_addsub_zero_test(
   u8 **ptr_ref, u32 flag_mask, riscv_reg_number result_reg, bool subtract)
 {
@@ -4782,7 +4847,9 @@ static bool riscv_emit_native_arm_data_proc_with_pc_ex2(
   u32 flag_status,
   bool emit_cycles,
   bool *cycles_emitted,
-  bool clobber_dead_arithmetic_flags)
+  bool clobber_dead_arithmetic_flags,
+  u32 known_flag_mask,
+  u32 known_flags)
 {
   u32 condition = opcode >> 28;
   u32 op = (opcode >> 21) & 0xfu;
@@ -4809,6 +4876,7 @@ static bool riscv_emit_native_arm_data_proc_with_pc_ex2(
   riscv_reg_number result_reg = riscv_reg_t2;
   bool writes_pc;
   bool can_clobber_dead_logical_flags;
+  bool known_generated_flags;
   u32 immediate = 0;
 
   if (cycles_emitted)
@@ -4854,6 +4922,10 @@ static bool riscv_emit_native_arm_data_proc_with_pc_ex2(
   live_flags = generated_flag_mask != 0;
   can_clobber_dead_logical_flags = clobber_dead_arithmetic_flags &&
     ((live_flag_mask & ~generated_flag_mask) == 0);
+  known_flag_mask &= 0x0fu;
+  known_flags &= known_flag_mask;
+  known_generated_flags = live_flags &&
+    ((known_flag_mask & generated_flag_mask) == generated_flag_mask);
 
   if (imm_op)
   {
@@ -4931,8 +5003,8 @@ static bool riscv_emit_native_arm_data_proc_with_pc_ex2(
     }
   }
 
-  if (!result_emitted && logical_flags && (generated_flag_mask & 0x02u) &&
-      !logical_const_c)
+  if (!result_emitted && !known_generated_flags && logical_flags &&
+      (generated_flag_mask & 0x02u) && !logical_const_c)
   {
     if (!riscv_emit_arm_data_proc_operand2_with_carry(&ptr, meta, opcode, pc))
       return false;
@@ -5009,7 +5081,8 @@ static bool riscv_emit_native_arm_data_proc_with_pc_ex2(
     ptr = translation_ptr;
   }
 
-  if (!result_emitted && arithmetic_flags && live_flags)
+  if (!result_emitted && arithmetic_flags && live_flags &&
+      !known_generated_flags)
   {
     u8 *translation_ptr = ptr;
     bool need_c = (generated_flag_mask & 0x02u) != 0;
@@ -5114,7 +5187,14 @@ static bool riscv_emit_native_arm_data_proc_with_pc_ex2(
     riscv_emit_arm_reg_store(&ptr, rd, result_reg);
   if (writes_pc)
     meta->flags |= RISCV_BLOCK_PC_WRITTEN;
-  if (addsub_zero_flags)
+  if (known_generated_flags)
+  {
+    riscv_emit_arm_cpsr_store_const_selected_nzcv(
+      &ptr, generated_flag_mask, known_flags,
+      arithmetic_flags ? clobber_dead_arithmetic_flags :
+                         can_clobber_dead_logical_flags);
+  }
+  else if (addsub_zero_flags)
   {
     if (clobber_dead_arithmetic_flags)
       riscv_emit_arm_cpsr_store_addsub_zero_test_dead_flags(
@@ -5178,7 +5258,7 @@ bool riscv_emit_native_arm_data_proc_with_pc_ex(u8 **translation_ptr_ref,
 {
   return riscv_emit_native_arm_data_proc_with_pc_ex2(
     translation_ptr_ref, meta, opcode, pc, cycles, flag_status, emit_cycles,
-    cycles_emitted, false);
+    cycles_emitted, false, 0, 0);
 }
 
 bool riscv_emit_native_arm_data_proc_with_pc_ex_dead_flags(
@@ -5193,7 +5273,24 @@ bool riscv_emit_native_arm_data_proc_with_pc_ex_dead_flags(
 {
   return riscv_emit_native_arm_data_proc_with_pc_ex2(
     translation_ptr_ref, meta, opcode, pc, cycles, flag_status, emit_cycles,
-    cycles_emitted, true);
+    cycles_emitted, true, 0, 0);
+}
+
+bool riscv_emit_native_arm_data_proc_with_pc_ex_dead_flags_known(
+  u8 **translation_ptr_ref,
+  riscv_jit_block_meta *meta,
+  u32 opcode,
+  u32 pc,
+  u32 cycles,
+  u32 flag_status,
+  bool emit_cycles,
+  bool *cycles_emitted,
+  u32 known_flag_mask,
+  u32 known_flags)
+{
+  return riscv_emit_native_arm_data_proc_with_pc_ex2(
+    translation_ptr_ref, meta, opcode, pc, cycles, flag_status, emit_cycles,
+    cycles_emitted, true, known_flag_mask, known_flags);
 }
 
 bool riscv_emit_native_arm_data_proc_with_pc(u8 **translation_ptr_ref,
@@ -5225,7 +5322,9 @@ static bool riscv_emit_native_arm_data_proc_test_with_pc_ex2(
   u32 flag_status,
   bool emit_cycles,
   bool *cycles_emitted,
-  bool clobber_dead_arithmetic_flags)
+  bool clobber_dead_arithmetic_flags,
+  u32 known_flag_mask,
+  u32 known_flags)
 {
   u32 condition = opcode >> 28;
   u32 op = (opcode >> 21) & 0xfu;
@@ -5243,6 +5342,7 @@ static bool riscv_emit_native_arm_data_proc_test_with_pc_ex2(
   bool logical_const_c = false;
   u32 logical_carry = 0;
   bool can_clobber_dead_logical_flags;
+  bool known_generated_flags;
 
   if (cycles_emitted)
     *cycles_emitted = false;
@@ -5265,9 +5365,30 @@ static bool riscv_emit_native_arm_data_proc_test_with_pc_ex2(
   live_flags = generated_flag_mask != 0;
   can_clobber_dead_logical_flags = clobber_dead_arithmetic_flags &&
     ((live_flag_mask & ~generated_flag_mask) == 0);
+  known_flag_mask &= 0x0fu;
+  known_flags &= known_flag_mask;
+  known_generated_flags = live_flags &&
+    ((known_flag_mask & generated_flag_mask) == generated_flag_mask);
 
   if (!live_flags)
   {
+    if (emit_cycles)
+    {
+      riscv_emit_adjust_cycles(&ptr, cycles);
+      if (cycles_emitted)
+        *cycles_emitted = true;
+    }
+    *translation_ptr_ref = ptr;
+    riscv_native_data_proc_insns++;
+    return true;
+  }
+
+  if (known_generated_flags)
+  {
+    riscv_emit_arm_cpsr_store_const_selected_nzcv(
+      &ptr, generated_flag_mask, known_flags,
+      logical_test ? can_clobber_dead_logical_flags :
+                     clobber_dead_arithmetic_flags);
     if (emit_cycles)
     {
       riscv_emit_adjust_cycles(&ptr, cycles);
@@ -5445,7 +5566,7 @@ bool riscv_emit_native_arm_data_proc_test_with_pc_ex(u8 **translation_ptr_ref,
 {
   return riscv_emit_native_arm_data_proc_test_with_pc_ex2(
     translation_ptr_ref, meta, opcode, pc, cycles, flag_status, emit_cycles,
-    cycles_emitted, false);
+    cycles_emitted, false, 0, 0);
 }
 
 bool riscv_emit_native_arm_data_proc_test_with_pc_ex_dead_flags(
@@ -5460,7 +5581,24 @@ bool riscv_emit_native_arm_data_proc_test_with_pc_ex_dead_flags(
 {
   return riscv_emit_native_arm_data_proc_test_with_pc_ex2(
     translation_ptr_ref, meta, opcode, pc, cycles, flag_status, emit_cycles,
-    cycles_emitted, true);
+    cycles_emitted, true, 0, 0);
+}
+
+bool riscv_emit_native_arm_data_proc_test_with_pc_ex_dead_flags_known(
+  u8 **translation_ptr_ref,
+  riscv_jit_block_meta *meta,
+  u32 opcode,
+  u32 pc,
+  u32 cycles,
+  u32 flag_status,
+  bool emit_cycles,
+  bool *cycles_emitted,
+  u32 known_flag_mask,
+  u32 known_flags)
+{
+  return riscv_emit_native_arm_data_proc_test_with_pc_ex2(
+    translation_ptr_ref, meta, opcode, pc, cycles, flag_status, emit_cycles,
+    cycles_emitted, true, known_flag_mask, known_flags);
 }
 
 bool riscv_emit_native_arm_data_proc_test_with_pc(u8 **translation_ptr_ref,

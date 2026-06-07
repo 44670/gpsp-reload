@@ -102,6 +102,17 @@ bool riscv_emit_native_arm_data_proc_with_pc_ex_dead_flags(
   u32 flag_status,
   bool emit_cycles,
   bool *cycles_emitted);
+bool riscv_emit_native_arm_data_proc_with_pc_ex_dead_flags_known(
+  u8 **translation_ptr,
+  riscv_jit_block_meta *meta,
+  u32 opcode,
+  u32 pc,
+  u32 cycles,
+  u32 flag_status,
+  bool emit_cycles,
+  bool *cycles_emitted,
+  u32 known_flag_mask,
+  u32 known_flags);
 bool riscv_emit_native_arm_data_proc_test(u8 **translation_ptr,
                                           riscv_jit_block_meta *meta,
                                           u32 opcode,
@@ -128,6 +139,17 @@ bool riscv_emit_native_arm_data_proc_test_with_pc_ex_dead_flags(
   u32 flag_status,
   bool emit_cycles,
   bool *cycles_emitted);
+bool riscv_emit_native_arm_data_proc_test_with_pc_ex_dead_flags_known(
+  u8 **translation_ptr,
+  riscv_jit_block_meta *meta,
+  u32 opcode,
+  u32 pc,
+  u32 cycles,
+  u32 flag_status,
+  bool emit_cycles,
+  bool *cycles_emitted,
+  u32 known_flag_mask,
+  u32 known_flags);
 bool riscv_emit_native_arm_multiply(u8 **translation_ptr,
                                     riscv_jit_block_meta *meta,
                                     u32 opcode,
@@ -554,10 +576,12 @@ void riscv_arm_const_update_psr(u32 opcode, u32 *const_mask);
         riscv_arm_const_values, riscv_arm_known_flag_mask,                   \
         riscv_arm_known_flags, &riscv_arm_data_flag_mask,                    \
         &riscv_arm_data_flags);                                               \
-    if (riscv_emit_native_arm_data_proc_with_pc_ex_dead_flags(                \
+    if (riscv_emit_native_arm_data_proc_with_pc_ex_dead_flags_known(          \
           &translation_ptr, riscv_block_meta, riscv_arm_emitted_opcode,       \
           pc, cycle_count, flag_status, riscv_arm_emit_cycles_here(),         \
-          &riscv_arm_cycles_emitted))                                         \
+          &riscv_arm_cycles_emitted,                                          \
+          riscv_arm_data_flags_known ? riscv_arm_data_flag_mask : 0,          \
+          riscv_arm_data_flags_known ? riscv_arm_data_flags : 0))             \
     {                                                                         \
       riscv_arm_const_update_data_proc(riscv_arm_emitted_opcode, pc,          \
                                        condition, &riscv_arm_const_mask,      \
@@ -586,18 +610,22 @@ void riscv_arm_const_update_psr(u32 opcode, u32 *const_mask);
   {                                                                           \
     bool riscv_arm_cycles_emitted = false;                                    \
     u32 riscv_arm_emitted_opcode = riscv_arm_effective_opcode();             \
-    if (riscv_emit_native_arm_data_proc_test_with_pc_ex_dead_flags(           \
+    u32 riscv_arm_test_flags = 0;                                             \
+    u32 riscv_arm_test_flag_mask = 0;                                        \
+    bool riscv_arm_test_flags_known =                                        \
+      ((condition & 0x0f) == 0x0e) &&                                        \
+      riscv_arm_const_data_proc_test_flags(                                  \
+        riscv_arm_emitted_opcode, pc, riscv_arm_const_mask,                  \
+        riscv_arm_const_values, &riscv_arm_test_flag_mask,                   \
+        &riscv_arm_test_flags);                                               \
+    if (riscv_emit_native_arm_data_proc_test_with_pc_ex_dead_flags_known(     \
           &translation_ptr, riscv_block_meta, riscv_arm_emitted_opcode,       \
           pc, cycle_count, flag_status, riscv_arm_emit_cycles_here(),         \
-          &riscv_arm_cycles_emitted))                                         \
+          &riscv_arm_cycles_emitted,                                          \
+          riscv_arm_test_flags_known ? riscv_arm_test_flag_mask : 0,          \
+          riscv_arm_test_flags_known ? riscv_arm_test_flags : 0))             \
     {                                                                         \
-      u32 riscv_arm_test_flags = 0;                                           \
-      u32 riscv_arm_test_flag_mask = 0;                                      \
-      if (((condition & 0x0f) == 0x0e) &&                                     \
-          riscv_arm_const_data_proc_test_flags(                               \
-            riscv_arm_emitted_opcode, pc, riscv_arm_const_mask,               \
-            riscv_arm_const_values, &riscv_arm_test_flag_mask,                \
-            &riscv_arm_test_flags))                                           \
+      if (riscv_arm_test_flags_known)                                         \
       {                                                                       \
         riscv_arm_known_flag_mask = riscv_arm_test_flag_mask;                \
         riscv_arm_known_flags = riscv_arm_test_flags;                         \
