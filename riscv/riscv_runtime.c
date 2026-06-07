@@ -6184,41 +6184,6 @@ static void riscv_emit_thumb_cpsr_store_nz_preserve_cv(u8 **ptr_ref)
   *ptr_ref = ptr;
 }
 
-static void riscv_emit_thumb_cpsr_store_c_preserve_nzv(u8 **ptr_ref)
-{
-  u8 *ptr = *ptr_ref;
-  u8 *translation_ptr;
-
-  riscv_emit_arm_reg_load(&ptr, riscv_reg_t4, REG_CPSR);
-  riscv_emit_li(&ptr, riscv_reg_t5, ~RISCV_CPSR_C);
-  translation_ptr = ptr;
-
-  riscv_emit_and(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
-  riscv_emit_slli(riscv_reg_t3, riscv_reg_t3, 29);
-  riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t3);
-  ptr = translation_ptr;
-
-  riscv_emit_arm_reg_store(&ptr, REG_CPSR, riscv_reg_t4);
-  *ptr_ref = ptr;
-}
-
-static void riscv_emit_thumb_cpsr_store_c_preserve_nzv_loaded(u8 **ptr_ref)
-{
-  u8 *ptr = *ptr_ref;
-  u8 *translation_ptr = ptr;
-
-  riscv_emit_li(&ptr, riscv_reg_t5, ~RISCV_CPSR_C);
-  translation_ptr = ptr;
-
-  riscv_emit_and(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
-  riscv_emit_slli(riscv_reg_t3, riscv_reg_t3, 29);
-  riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t3);
-  ptr = translation_ptr;
-
-  riscv_emit_arm_reg_store(&ptr, REG_CPSR, riscv_reg_t4);
-  *ptr_ref = ptr;
-}
-
 static void riscv_emit_thumb_cpsr_store_nzc_preserve_v(u8 **ptr_ref)
 {
   u8 *ptr = *ptr_ref;
@@ -6264,6 +6229,105 @@ static void riscv_emit_thumb_cpsr_store_nzc_preserve_v_loaded(u8 **ptr_ref)
   *ptr_ref = ptr;
 }
 
+static void riscv_emit_thumb_cpsr_store_selected_nzc_preserve_v(
+  u8 **ptr_ref, u32 flag_mask)
+{
+  u8 *ptr;
+  u8 *translation_ptr;
+
+  flag_mask &= 0x0eu;
+  if (!flag_mask)
+    return;
+
+  if (flag_mask == 0x0eu)
+  {
+    riscv_emit_thumb_cpsr_store_nzc_preserve_v(ptr_ref);
+    return;
+  }
+
+  if (flag_mask == 0x0cu)
+  {
+    riscv_emit_thumb_cpsr_store_nz_preserve_cv(ptr_ref);
+    return;
+  }
+
+  if (!(flag_mask & 0x02u))
+  {
+    riscv_emit_arm_cpsr_store_selected_nzcv(ptr_ref, flag_mask,
+                                           riscv_reg_t2);
+    return;
+  }
+
+  ptr = *ptr_ref;
+  riscv_emit_arm_reg_load(&ptr, riscv_reg_t4, REG_CPSR);
+  translation_ptr = ptr;
+
+  riscv_emit_slli(riscv_reg_t4, riscv_reg_t4, 3);
+  riscv_emit_srli(riscv_reg_t4, riscv_reg_t4, 3);
+  if (flag_mask & 0x08u)
+  {
+    riscv_emit_srli(riscv_reg_t5, riscv_reg_t2, 31);
+    riscv_emit_slli(riscv_reg_t5, riscv_reg_t5, 31);
+    riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
+  }
+  if (flag_mask & 0x04u)
+  {
+    riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t2, 1);
+    riscv_emit_slli(riscv_reg_t5, riscv_reg_t5, 30);
+    riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
+  }
+  riscv_emit_slli(riscv_reg_t5, riscv_reg_t3, 29);
+  riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
+  ptr = translation_ptr;
+
+  riscv_emit_arm_reg_store(&ptr, REG_CPSR, riscv_reg_t4);
+  *ptr_ref = ptr;
+}
+
+static void riscv_emit_thumb_cpsr_store_selected_nzc_preserve_v_loaded(
+  u8 **ptr_ref, u32 flag_mask)
+{
+  u8 *ptr;
+  u8 *translation_ptr;
+
+  flag_mask &= 0x0eu;
+  if (!flag_mask)
+    return;
+
+  if (flag_mask == 0x0eu)
+  {
+    riscv_emit_thumb_cpsr_store_nzc_preserve_v_loaded(ptr_ref);
+    return;
+  }
+
+  ptr = *ptr_ref;
+  translation_ptr = ptr;
+
+  riscv_emit_slli(riscv_reg_t4, riscv_reg_t4, 3);
+  riscv_emit_srli(riscv_reg_t4, riscv_reg_t4, 3);
+  if (flag_mask & 0x08u)
+  {
+    riscv_emit_srli(riscv_reg_t5, riscv_reg_t2, 31);
+    riscv_emit_slli(riscv_reg_t5, riscv_reg_t5, 31);
+    riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
+  }
+  if (flag_mask & 0x04u)
+  {
+    riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t2, 1);
+    riscv_emit_slli(riscv_reg_t5, riscv_reg_t5, 30);
+    riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
+  }
+  if (flag_mask & 0x02u)
+  {
+    riscv_emit_slli(riscv_reg_t5, riscv_reg_t3, 29);
+    riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
+  }
+  ptr = translation_ptr;
+
+  riscv_emit_arm_reg_store(&ptr, REG_CPSR, riscv_reg_t4);
+  *ptr_ref = ptr;
+}
+
 static bool riscv_emit_native_thumb_reg_shift_alu(u8 **translation_ptr_ref,
                                                   u32 opcode,
                                                   u32 flag_status);
@@ -6278,8 +6342,8 @@ bool riscv_emit_native_thumb_shift(u8 **translation_ptr_ref,
   u32 rd = opcode & 7u;
   u32 rs = (opcode >> 3) & 7u;
   u32 imm = (opcode >> 6) & 0x1fu;
-  bool need_nz = (flag_status & 0x0cu) != 0;
   bool need_c = (flag_status & 0x02u) != 0;
+  u32 flag_mask = flag_status & 0x0eu;
   u8 *ptr = *translation_ptr_ref;
   u8 *translation_ptr;
 
@@ -6357,12 +6421,8 @@ bool riscv_emit_native_thumb_shift(u8 **translation_ptr_ref,
   ptr = translation_ptr;
   riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_t2);
 
-  if (need_nz && need_c)
-    riscv_emit_thumb_cpsr_store_nzc_preserve_v(&ptr);
-  else if (need_nz)
-    riscv_emit_thumb_cpsr_store_nz_preserve_cv(&ptr);
-  else if (need_c)
-    riscv_emit_thumb_cpsr_store_c_preserve_nzv(&ptr);
+  if (flag_mask)
+    riscv_emit_thumb_cpsr_store_selected_nzc_preserve_v(&ptr, flag_mask);
 
   *translation_ptr_ref = ptr;
   riscv_native_data_proc_insns++;
@@ -6403,7 +6463,8 @@ static bool riscv_emit_native_thumb_alu_flags(u8 **translation_ptr_ref,
 
     riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_t2);
     if (need_nz)
-      riscv_emit_thumb_cpsr_store_nz_preserve_cv(&ptr);
+      riscv_emit_thumb_cpsr_store_selected_nzc_preserve_v(
+        &ptr, flag_status & 0x0cu);
 
     *translation_ptr_ref = ptr;
     riscv_native_data_proc_insns++;
@@ -6555,8 +6616,8 @@ static bool riscv_emit_native_thumb_reg_shift_alu(u8 **translation_ptr_ref,
   u32 alu_op = (opcode >> 6) & 3u;
   u32 rd = opcode & 7u;
   u32 rs = (opcode >> 3) & 7u;
-  bool need_nz = (flag_status & 0x0cu) != 0;
   bool need_c = (flag_status & 0x02u) != 0;
+  u32 flag_mask = flag_status & 0x0eu;
   u8 *ptr = *translation_ptr_ref;
   u8 *translation_ptr;
   riscv_reg_number temp_reg = need_c ? riscv_reg_t5 : riscv_reg_t4;
@@ -6651,12 +6712,14 @@ static bool riscv_emit_native_thumb_reg_shift_alu(u8 **translation_ptr_ref,
 
   riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_t2);
 
-  if (need_nz && need_c)
-    riscv_emit_thumb_cpsr_store_nzc_preserve_v_loaded(&ptr);
-  else if (need_nz)
-    riscv_emit_thumb_cpsr_store_nz_preserve_cv(&ptr);
-  else if (need_c)
-    riscv_emit_thumb_cpsr_store_c_preserve_nzv_loaded(&ptr);
+  if (flag_mask)
+  {
+    if (need_c)
+      riscv_emit_thumb_cpsr_store_selected_nzc_preserve_v_loaded(
+        &ptr, flag_mask);
+    else
+      riscv_emit_thumb_cpsr_store_selected_nzc_preserve_v(&ptr, flag_mask);
+  }
 
   *translation_ptr_ref = ptr;
   riscv_native_data_proc_insns++;
