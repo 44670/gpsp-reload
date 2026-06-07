@@ -15,7 +15,7 @@ typedef unsigned int usize;
 #define PROT_EXEC 4
 #define MAP_PRIVATE 2
 #define MAP_ANONYMOUS 32
-#define EXEC_MAP_BYTES 106496u
+#define EXEC_MAP_BYTES 262144u
 
 #define BLOCK_START_PC 0x08000000u
 #define BLOCK_END_PC 0x08000004u
@@ -417,6 +417,37 @@ typedef unsigned int usize;
 #define CPSR_LOW_VALUE 0x9fu
 #define CPSR_V_LOW_VALUE (0x10000000u | CPSR_LOW_VALUE)
 #define CPSR_CV_LOW_VALUE (0x30000000u | CPSR_LOW_VALUE)
+#define MAPPED_GPR_START_PC 0x08001220u
+#define MAPPED_GPR_END_PC (MAPPED_GPR_START_PC + 8u)
+#define MAPPED_GPR_MOV_CYCLES 1u
+#define MAPPED_GPR_ADD_CYCLES 1u
+#define MAPPED_GPR_TOTAL_CYCLES \
+  (MAPPED_GPR_MOV_CYCLES + MAPPED_GPR_ADD_CYCLES)
+#define MAPPED_GPR_OLD_R0_VALUE 0x00000011u
+#define MAPPED_GPR_NEW_R0_VALUE 0x0000005au
+#define MAPPED_MOV_R0_0X5A 0xe3a0005au
+#define MAPPED_ADD_R2_R0_0 0xe2802000u
+#define MAPPED_HELPER_START_PC 0x08001240u
+#define MAPPED_HELPER_END_PC (MAPPED_HELPER_START_PC + 8u)
+#define MAPPED_HELPER_MOV_CYCLES 1u
+#define MAPPED_HELPER_TOTAL_CYCLES \
+  (MAPPED_HELPER_MOV_CYCLES + STORE_BASE_CYCLES + 1u)
+#define MAPPED_HELPER_STORE_ADDR (STORE_BASE_ADDR + 0x28u)
+#define MAPPED_HELPER_R1_VALUE 0x0000006du
+#define MAPPED_MOV_R1_0X6D 0xe3a0106du
+#define MAPPED_STR_R1_R3_0X28 0xe5831028u
+#define MAPPED_NZCV_START_PC 0x08001260u
+#define MAPPED_NZCV_END_PC (MAPPED_NZCV_START_PC + 8u)
+#define MAPPED_NZCV_CMP_CYCLES 1u
+#define MAPPED_NZCV_COND_CYCLES 1u
+#define MAPPED_NZCV_TOTAL_CYCLES \
+  (MAPPED_NZCV_CMP_CYCLES + MAPPED_NZCV_COND_CYCLES)
+#define MAPPED_NZCV_R0_VALUE 0x00000020u
+#define MAPPED_NZCV_STALE_CPSR \
+  (CPSR_N_BIT | CPSR_V_BIT | CPSR_LOW_VALUE)
+#define MAPPED_NZCV_EXPECTED_CPSR \
+  (CPSR_Z_BIT | CPSR_C_BIT | CPSR_LOW_VALUE)
+#define MAPPED_ADD_R2_R2_1 0xe2822001u
 #define CMP_BORROW_R0_VALUE 0x00000010u
 #define CMP_EQUAL_R0_VALUE 0x00000020u
 #define TST_SIMPLE_R0_VALUE 0x0f0f0000u
@@ -1616,29 +1647,32 @@ typedef unsigned int usize;
 #define HALF_REG_LOAD_PC_BLOCK_OFFSET 78336u
 #define SIGNED_BYTE_REG_LOAD_PC_BLOCK_OFFSET 78848u
 #define SIGNED_HALF_REG_LOAD_PC_BLOCK_OFFSET 79360u
-#define THUMB_SIMPLE_DATA_BLOCK_OFFSET 79872u
-#define THUMB_HI_CMP_BLOCK_OFFSET 80384u
-#define THUMB_FLAG_ALU_BLOCK_OFFSET 80896u
-#define THUMB_MEMORY_LOAD_BLOCK_OFFSET 81408u
-#define THUMB_REG_SHIFT_BLOCK_OFFSET 81920u
-#define THUMB_HI_MOV_PC_BLOCK_OFFSET 82944u
-#define THUMB_HI_ADD_PC_BLOCK_OFFSET 83456u
-#define THUMB_MEMORY_STORE_BLOCK_OFFSET 90624u
-#define THUMB_BLOCK_STORE_BLOCK_OFFSET 83968u
-#define THUMB_HI_ADD_MOV_BLOCK_OFFSET 84480u
-#define THUMB_BLOCK_LOAD_BLOCK_OFFSET 86016u
-#define THUMB_BLOCK_PUSH_BLOCK_OFFSET 88064u
-#define THUMB_BLOCK_POP_PC_BLOCK_OFFSET 90112u
-#define THUMB_COND_BRANCH_BLOCK_OFFSET 93184u
-#define THUMB_B_BLOCK_OFFSET 93696u
-#define THUMB_BX_BLOCK_OFFSET 94208u
-#define THUMB_SWI_BLOCK_OFFSET 94720u
-#define THUMB_BL_PAIR_BLOCK_OFFSET 95232u
-#define THUMB_BLH_BLOCK_OFFSET 95744u
-#define THUMB_CONTROL_TARGET_BLOCK_OFFSET 96256u
-#define DIRTY_INTERNAL_BRANCH_BLOCK_OFFSET 96768u
-#define THUMB_ALU_EDGE_BLOCK_OFFSET 97280u
-#define THUMB_ADD_EDGE_BLOCK_OFFSET 98304u
+#define THUMB_SIMPLE_DATA_BLOCK_OFFSET 106496u
+#define THUMB_HI_CMP_BLOCK_OFFSET 110592u
+#define THUMB_HI_MOV_PC_BLOCK_OFFSET 114688u
+#define THUMB_HI_ADD_PC_BLOCK_OFFSET 118784u
+#define THUMB_HI_ADD_MOV_BLOCK_OFFSET 122880u
+#define THUMB_FLAG_ALU_BLOCK_OFFSET 126976u
+#define THUMB_MEMORY_LOAD_BLOCK_OFFSET 131072u
+#define THUMB_MEMORY_STORE_BLOCK_OFFSET 135168u
+#define THUMB_REG_SHIFT_BLOCK_OFFSET 139264u
+#define THUMB_ALU_EDGE_BLOCK_OFFSET 143360u
+#define THUMB_ADD_EDGE_BLOCK_OFFSET 147456u
+#define THUMB_BLOCK_STORE_BLOCK_OFFSET 151552u
+#define THUMB_BLOCK_LOAD_BLOCK_OFFSET 155648u
+#define THUMB_BLOCK_PUSH_BLOCK_OFFSET 159744u
+#define THUMB_BLOCK_POP_PC_BLOCK_OFFSET 163840u
+#define THUMB_CONTROL_TARGET_BLOCK_OFFSET 167936u
+#define THUMB_COND_BRANCH_BLOCK_OFFSET 172032u
+#define THUMB_B_BLOCK_OFFSET 176128u
+#define THUMB_BX_BLOCK_OFFSET 180224u
+#define THUMB_SWI_BLOCK_OFFSET 184320u
+#define THUMB_BL_PAIR_BLOCK_OFFSET 188416u
+#define THUMB_BLH_BLOCK_OFFSET 192512u
+#define MAPPED_GPR_BLOCK_OFFSET 196608u
+#define MAPPED_HELPER_BLOCK_OFFSET 200704u
+#define MAPPED_NZCV_BLOCK_OFFSET 204800u
+#define DIRTY_INTERNAL_BRANCH_BLOCK_OFFSET 98816u
 #define EXPECTED_INITIAL_ROM_WATERMARK 16u
 
 u32 reg[REG_MAX];
@@ -1655,6 +1689,9 @@ static u32 g_lookup_next_pc;
 static u8 *g_thumb_lookup_entry;
 static u32 g_thumb_lookup_entry_pc;
 static u8 *g_data_entry;
+static u8 *g_mapped_gpr_entry;
+static u8 *g_mapped_helper_entry;
+static u8 *g_mapped_nzcv_entry;
 static u8 *g_chain_second_entry;
 static u8 *g_cycle_update_entry;
 static u8 *g_unsupported_entry;
@@ -1989,6 +2026,46 @@ static void *map_exec_page(void)
   return (void *)ret;
 }
 
+static void emit_test_li(u8 **ptr_ref, riscv_reg_number rd, u32 value)
+{
+  u8 *translation_ptr = *ptr_ref;
+  u32 upper = (value + 0x800u) >> 12;
+  s32 lower = (s32)(value - (upper << 12));
+
+  if (upper)
+  {
+    riscv_emit_lui(rd, upper);
+    if (lower)
+      riscv_emit_addi(rd, rd, lower);
+  }
+  else
+  {
+    riscv_emit_addi(rd, riscv_reg_zero, lower);
+  }
+
+  *ptr_ref = translation_ptr;
+}
+
+static void emit_test_state_copy(u8 **ptr_ref, u32 rd, u32 rn)
+{
+  u8 *translation_ptr = *ptr_ref;
+
+  riscv_emit_lw(riscv_reg_t1, riscv_reg_s0, rn * 4u);
+  riscv_emit_sw(riscv_reg_t1, riscv_reg_s0, rd * 4u);
+
+  *ptr_ref = translation_ptr;
+}
+
+static void emit_test_state_store_imm(u8 **ptr_ref, u32 rd, u32 value)
+{
+  u8 *translation_ptr;
+
+  emit_test_li(ptr_ref, riscv_reg_t1, value);
+  translation_ptr = *ptr_ref;
+  riscv_emit_sw(riscv_reg_t1, riscv_reg_s0, rd * 4u);
+  *ptr_ref = translation_ptr;
+}
+
 static void reset_runtime_observations(u32 pc)
 {
   unsigned i;
@@ -2154,6 +2231,8 @@ static void run_first_emit_stats_case(void)
              g_first_emit_stats.thumb_helper_insns, 0);
 }
 
+static void expect_stickybits_cleared(const char *test_name);
+
 static void run_first_execute_stats_case(void)
 {
   const u32 r0 = 0x12345678u;
@@ -2196,6 +2275,90 @@ static void run_first_execute_stats_case(void)
   if (g_first_execute_stats.thumb_helper_insns != 0)
     fail_u32("first_execute_stats", "thumb_helper",
              g_first_execute_stats.thumb_helper_insns, 0);
+}
+
+static void run_mapped_gpr_case(void)
+{
+  reset_runtime_observations(MAPPED_GPR_START_PC);
+  g_lookup_entry = g_mapped_gpr_entry;
+  reg[0] = MAPPED_GPR_OLD_R0_VALUE;
+
+  execute_arm_translate_internal(MAPPED_GPR_TOTAL_CYCLES, &reg[0]);
+
+  if (reg[0] != MAPPED_GPR_NEW_R0_VALUE)
+    fail_u32("mapped_gpr", "r0", reg[0], MAPPED_GPR_NEW_R0_VALUE);
+  if (reg[1] != MAPPED_GPR_OLD_R0_VALUE)
+    fail_u32("mapped_gpr", "stale_state_r1",
+             reg[1], MAPPED_GPR_OLD_R0_VALUE);
+  if (reg[2] != MAPPED_GPR_NEW_R0_VALUE)
+    fail_u32("mapped_gpr", "live_r2",
+             reg[2], MAPPED_GPR_NEW_R0_VALUE);
+  if (reg[REG_PC] != MAPPED_GPR_END_PC)
+    fail_u32("mapped_gpr", "pc", reg[REG_PC], MAPPED_GPR_END_PC);
+  if (g_update_calls != 1)
+    fail_u32("mapped_gpr", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("mapped_gpr", "update_cycles", (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("mapped_gpr", "execute_calls", g_execute_calls, 0);
+  expect_stickybits_cleared("mapped_gpr");
+}
+
+static void run_mapped_helper_case(void)
+{
+  reset_runtime_observations(MAPPED_HELPER_START_PC);
+  g_lookup_entry = g_mapped_helper_entry;
+  reg[3] = STORE_BASE_ADDR;
+
+  execute_arm_translate_internal(MAPPED_HELPER_TOTAL_CYCLES, &reg[0]);
+
+  if (reg[1] != MAPPED_HELPER_R1_VALUE)
+    fail_u32("mapped_helper", "r1", reg[1], MAPPED_HELPER_R1_VALUE);
+  if (g_write32_calls != 1)
+    fail_u32("mapped_helper", "write32_calls", g_write32_calls, 1);
+  if (g_write32_addr != MAPPED_HELPER_STORE_ADDR)
+    fail_u32("mapped_helper", "write32_addr",
+             g_write32_addr, MAPPED_HELPER_STORE_ADDR);
+  if (g_write32_value != MAPPED_HELPER_R1_VALUE)
+    fail_u32("mapped_helper", "write32_value",
+             g_write32_value, MAPPED_HELPER_R1_VALUE);
+  if (g_write32_pc != MAPPED_HELPER_END_PC)
+    fail_u32("mapped_helper", "write32_pc",
+             g_write32_pc, MAPPED_HELPER_END_PC);
+  if (reg[REG_PC] != MAPPED_HELPER_END_PC)
+    fail_u32("mapped_helper", "pc", reg[REG_PC], MAPPED_HELPER_END_PC);
+  if (g_update_calls != 1)
+    fail_u32("mapped_helper", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("mapped_helper", "update_cycles", (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("mapped_helper", "execute_calls", g_execute_calls, 0);
+  expect_stickybits_cleared("mapped_helper");
+}
+
+static void run_mapped_nzcv_case(void)
+{
+  reset_runtime_observations(MAPPED_NZCV_START_PC);
+  g_lookup_entry = g_mapped_nzcv_entry;
+  reg[0] = MAPPED_NZCV_R0_VALUE;
+  reg[REG_CPSR] = CPSR_LOW_VALUE;
+
+  execute_arm_translate_internal(MAPPED_NZCV_TOTAL_CYCLES, &reg[0]);
+
+  if (reg[2] != 1u)
+    fail_u32("mapped_nzcv", "r2", reg[2], 1u);
+  if (reg[REG_CPSR] != MAPPED_NZCV_EXPECTED_CPSR)
+    fail_u32("mapped_nzcv", "cpsr",
+             reg[REG_CPSR], MAPPED_NZCV_EXPECTED_CPSR);
+  if (reg[REG_PC] != MAPPED_NZCV_END_PC)
+    fail_u32("mapped_nzcv", "pc", reg[REG_PC], MAPPED_NZCV_END_PC);
+  if (g_update_calls != 1)
+    fail_u32("mapped_nzcv", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("mapped_nzcv", "update_cycles", (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("mapped_nzcv", "execute_calls", g_execute_calls, 0);
+  expect_stickybits_cleared("mapped_nzcv");
 }
 
 static void expect_runtime_fallback_delta(const char *test_name,
@@ -2282,6 +2445,124 @@ static u32 build_data_block(u8 *code)
 
   riscv_emit_block_finalize(meta, &translation_ptr, BLOCK_START_PC,
                             BLOCK_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_mapped_gpr_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_mapped_gpr_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       MAPPED_MOV_R0_0X5A,
+                                       MAPPED_GPR_MOV_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=mapped_gpr_mov_rejected\n");
+    sys_exit(1);
+  }
+
+  emit_test_state_copy(&translation_ptr, 1, 0);
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       MAPPED_ADD_R2_R0_0,
+                                       MAPPED_GPR_ADD_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=mapped_gpr_add_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            MAPPED_GPR_START_PC,
+                            MAPPED_GPR_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_mapped_helper_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_mapped_helper_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       MAPPED_MOV_R1_0X6D,
+                                       MAPPED_HELPER_MOV_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=mapped_helper_mov_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_access_memory(
+        &translation_ptr, meta, MAPPED_STR_R1_R3_0X28,
+        MAPPED_HELPER_START_PC + 4u, STORE_BASE_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=mapped_helper_str_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            MAPPED_HELPER_START_PC,
+                            MAPPED_HELPER_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_mapped_nzcv_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u8 *skip_source;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_mapped_nzcv_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_data_proc_test_with_pc(
+        &translation_ptr, meta, CMP_R0_0X20, MAPPED_NZCV_START_PC,
+        MAPPED_NZCV_CMP_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=mapped_nzcv_cmp_rejected\n");
+    sys_exit(1);
+  }
+
+  emit_test_state_store_imm(&translation_ptr, REG_CPSR,
+                            MAPPED_NZCV_STALE_CPSR);
+
+  if (!riscv_emit_arm_conditional_block_header(
+        &translation_ptr, meta, 0, MAPPED_NZCV_COND_CYCLES, &skip_source))
+  {
+    put_raw("result=FAIL command=runtime reason=mapped_nzcv_cond_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!skip_source)
+  {
+    put_raw("result=FAIL command=runtime reason=mapped_nzcv_no_patch\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       MAPPED_ADD_R2_R2_1, 0))
+  {
+    put_raw("result=FAIL command=runtime reason=mapped_nzcv_add_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_patch_conditional_branch(skip_source, translation_ptr);
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            MAPPED_NZCV_START_PC,
+                            MAPPED_NZCV_END_PC, false);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -13286,6 +13567,9 @@ void _start(void)
   u8 *code = (u8 *)map_exec_page();
   riscv_runtime_stats final_stats;
   u32 data_code_bytes;
+  u32 mapped_gpr_code_bytes;
+  u32 mapped_helper_code_bytes;
+  u32 mapped_nzcv_code_bytes;
   u32 chain_second_code_bytes;
   u32 cycle_update_code_bytes;
   u32 unsupported_code_bytes;
@@ -13456,6 +13740,15 @@ void _start(void)
   data_code_bytes = build_data_block(code);
   run_first_emit_stats_case();
   run_first_execute_stats_case();
+  mapped_gpr_code_bytes =
+    build_mapped_gpr_block(code + MAPPED_GPR_BLOCK_OFFSET);
+  mapped_helper_code_bytes =
+    build_mapped_helper_block(code + MAPPED_HELPER_BLOCK_OFFSET);
+  mapped_nzcv_code_bytes =
+    build_mapped_nzcv_block(code + MAPPED_NZCV_BLOCK_OFFSET);
+  run_mapped_gpr_case();
+  run_mapped_helper_case();
+  run_mapped_nzcv_case();
   cycle_update_code_bytes =
     build_cycle_update_block(code + CYCLE_UPDATE_BLOCK_OFFSET);
   chain_second_code_bytes =
@@ -14435,6 +14728,12 @@ void _start(void)
 
   put_raw("result=PASS command=runtime code_bytes=");
   put_u32_dec(data_code_bytes);
+  put_raw(" mapped_gpr_code_bytes=");
+  put_u32_dec(mapped_gpr_code_bytes);
+  put_raw(" mapped_helper_code_bytes=");
+  put_u32_dec(mapped_helper_code_bytes);
+  put_raw(" mapped_nzcv_code_bytes=");
+  put_u32_dec(mapped_nzcv_code_bytes);
   put_raw(" chain_second_code_bytes=");
   put_u32_dec(chain_second_code_bytes);
   put_raw(" cycle_update_code_bytes=");

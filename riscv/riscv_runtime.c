@@ -283,8 +283,10 @@ static u32 riscv_arm_conditional_entry_dirty_mask;
 static u32 riscv_arm_conditional_entry_valid_mask;
 
 #define RISCV_MAPPED_REG_COUNT 16u
-#define RISCV_MAPPED_CPSR_SLOT 15u
+#define RISCV_MAPPED_GPR_COUNT 15u
+#define RISCV_MAPPED_NZCV_SLOT 15u
 #define RISCV_MAPPED_REGS_MASK ((1u << RISCV_MAPPED_REG_COUNT) - 1u)
+#define RISCV_MAPPED_NZCV_MASK (1u << RISCV_MAPPED_NZCV_SLOT)
 #define RISCV_MAPPED_CALLER_SAVED_MASK ((1u << 5) - 1u)
 
 static const riscv_reg_number riscv_mapped_host_regs[RISCV_MAPPED_REG_COUNT] =
@@ -304,7 +306,7 @@ static const riscv_reg_number riscv_mapped_host_regs[RISCV_MAPPED_REG_COUNT] =
   riscv_reg_s8,  /* r12 */
   riscv_reg_s9,  /* r13 / SP */
   riscv_reg_s10, /* r14 / LR */
-  riscv_reg_s11  /* CPSR / NZCV */
+  riscv_reg_s11  /* packed NZCV: N=8, Z=4, C=2, V=1 */
 };
 
 static const u8 riscv_mapped_state_regs[RISCV_MAPPED_REG_COUNT] =
@@ -433,6 +435,57 @@ static void riscv_emit_guest_pc_load_existing_base(u8 **ptr_ref,
   riscv_emit_guest_pc_load_ex(ptr_ref, meta, rd, pc_value);
 }
 
+static void riscv_emit_cpsr_pack_nzcv(u8 **ptr_ref,
+                                      riscv_reg_number rd,
+                                      riscv_reg_number cpsr_reg)
+{
+  u8 *translation_ptr = *ptr_ref;
+
+  riscv_emit_srli(rd, cpsr_reg, 28);
+  riscv_emit_andi(rd, rd, 0x0f);
+
+  *ptr_ref = translation_ptr;
+}
+
+static riscv_reg_number riscv_scratch_not(riscv_reg_number avoid)
+{
+  return avoid == riscv_reg_t6 ? riscv_reg_t5 : riscv_reg_t6;
+}
+
+static void riscv_emit_cpsr_from_live_nzcv(u8 **ptr_ref,
+                                           riscv_reg_number rd)
+{
+  riscv_reg_number nzcv_reg =
+    riscv_mapped_host_regs[RISCV_MAPPED_NZCV_SLOT];
+  riscv_reg_number cpsr_reg = (rd == nzcv_reg) ? riscv_scratch_not(rd) : rd;
+  riscv_reg_number tmp = riscv_scratch_not(cpsr_reg);
+  u8 *translation_ptr = *ptr_ref;
+
+  riscv_emit_lw(cpsr_reg, riscv_reg_s0, REG_CPSR * 4u);
+  riscv_emit_slli(cpsr_reg, cpsr_reg, 4);
+  riscv_emit_srli(cpsr_reg, cpsr_reg, 4);
+  riscv_emit_slli(tmp, nzcv_reg, 28);
+  riscv_emit_or(cpsr_reg, cpsr_reg, tmp);
+  if (cpsr_reg != rd)
+    riscv_emit_addi(rd, cpsr_reg, 0);
+  *ptr_ref = translation_ptr;
+}
+
+static void riscv_emit_live_nzcv_flush(u8 **ptr_ref)
+{
+  u8 *translation_ptr = *ptr_ref;
+
+  riscv_emit_lw(riscv_reg_t0, riscv_reg_s0, REG_CPSR * 4u);
+  riscv_emit_slli(riscv_reg_t0, riscv_reg_t0, 4);
+  riscv_emit_srli(riscv_reg_t0, riscv_reg_t0, 4);
+  riscv_emit_slli(riscv_reg_t1,
+                  riscv_mapped_host_regs[RISCV_MAPPED_NZCV_SLOT], 28);
+  riscv_emit_or(riscv_reg_t0, riscv_reg_t0, riscv_reg_t1);
+  riscv_emit_sw(riscv_reg_t0, riscv_reg_s0, REG_CPSR * 4u);
+
+  *ptr_ref = translation_ptr;
+}
+
 static bool riscv_arm_reg_mapped(u32 reg_index, riscv_reg_number *host_reg,
                                  u32 *dirty_mask)
 {
@@ -442,14 +495,8 @@ static bool riscv_arm_reg_mapped(u32 reg_index, riscv_reg_number *host_reg,
   {
     slot = reg_index;
   }
-  else if (reg_index == REG_CPSR)
-  {
-    slot = RISCV_MAPPED_CPSR_SLOT;
-  }
   else
-  {
     return false;
-  }
 
   *host_reg = riscv_mapped_host_regs[slot];
   if (dirty_mask)
@@ -475,13 +522,19 @@ static void riscv_emit_mapped_regs_reload(u8 **ptr_ref)
   u8 *translation_ptr = *ptr_ref;
   u32 i;
 
-  for (i = 0; i < RISCV_MAPPED_REG_COUNT; i++)
+  for (i = 0; i < RISCV_MAPPED_GPR_COUNT; i++)
   {
     riscv_emit_lw(riscv_mapped_host_regs[i], riscv_reg_s0,
                   (u32)riscv_mapped_state_regs[i] * 4u);
   }
-
   *ptr_ref = translation_ptr;
+  riscv_emit_lw(riscv_mapped_host_regs[RISCV_MAPPED_NZCV_SLOT],
+                riscv_reg_s0, REG_CPSR * 4u);
+  *ptr_ref = translation_ptr;
+  riscv_emit_cpsr_pack_nzcv(
+    ptr_ref, riscv_mapped_host_regs[RISCV_MAPPED_NZCV_SLOT],
+    riscv_mapped_host_regs[RISCV_MAPPED_NZCV_SLOT]);
+
   riscv_mapped_valid_mask = RISCV_MAPPED_REGS_MASK;
   riscv_mapped_dirty_mask &= ~RISCV_MAPPED_REGS_MASK;
 }
@@ -495,7 +548,7 @@ static void riscv_emit_mapped_regs_reload_mask(u8 **ptr_ref, u32 reload_mask)
   if (!reload_mask)
     return;
 
-  for (i = 0; i < RISCV_MAPPED_REG_COUNT; i++)
+  for (i = 0; i < RISCV_MAPPED_GPR_COUNT; i++)
   {
     if (reload_mask & (1u << i))
     {
@@ -503,8 +556,17 @@ static void riscv_emit_mapped_regs_reload_mask(u8 **ptr_ref, u32 reload_mask)
                     (u32)riscv_mapped_state_regs[i] * 4u);
     }
   }
-
   *ptr_ref = translation_ptr;
+  if (reload_mask & RISCV_MAPPED_NZCV_MASK)
+  {
+    riscv_emit_lw(riscv_mapped_host_regs[RISCV_MAPPED_NZCV_SLOT],
+                  riscv_reg_s0, REG_CPSR * 4u);
+    *ptr_ref = translation_ptr;
+    riscv_emit_cpsr_pack_nzcv(
+      ptr_ref, riscv_mapped_host_regs[RISCV_MAPPED_NZCV_SLOT],
+      riscv_mapped_host_regs[RISCV_MAPPED_NZCV_SLOT]);
+  }
+
   riscv_mapped_valid_mask |= reload_mask;
   riscv_mapped_dirty_mask &= ~reload_mask;
 }
@@ -519,7 +581,7 @@ static void riscv_emit_mapped_regs_flush_mask(u8 **ptr_ref, u32 dirty_mask)
     return;
 
   translation_ptr = *ptr_ref;
-  for (i = 0; i < RISCV_MAPPED_REG_COUNT; i++)
+  for (i = 0; i < RISCV_MAPPED_GPR_COUNT; i++)
   {
     if (dirty_mask & (1u << i))
     {
@@ -528,6 +590,8 @@ static void riscv_emit_mapped_regs_flush_mask(u8 **ptr_ref, u32 dirty_mask)
     }
   }
   *ptr_ref = translation_ptr;
+  if (dirty_mask & RISCV_MAPPED_NZCV_MASK)
+    riscv_emit_live_nzcv_flush(ptr_ref);
   riscv_mapped_dirty_mask &= ~dirty_mask;
 }
 
@@ -549,6 +613,18 @@ static void riscv_emit_arm_reg_load(u8 **ptr, riscv_reg_number rd,
   riscv_reg_number mapped_reg;
   u32 mapped_mask;
   u8 *translation_ptr = *ptr;
+
+  if (reg_index == REG_CPSR)
+  {
+    *ptr = translation_ptr;
+    if (!(riscv_mapped_valid_mask & RISCV_MAPPED_NZCV_MASK))
+    {
+      riscv_emit_mapped_regs_reload_mask(ptr, RISCV_MAPPED_NZCV_MASK);
+      translation_ptr = *ptr;
+    }
+    riscv_emit_cpsr_from_live_nzcv(ptr, rd);
+    return;
+  }
 
   if (riscv_arm_reg_mapped(reg_index, &mapped_reg, &mapped_mask))
   {
@@ -577,11 +653,27 @@ static void riscv_emit_arm_reg_store(u8 **ptr, u32 reg_index,
 
   if (reg_index == REG_PC)
   {
-    *ptr = translation_ptr;
-    riscv_emit_mapped_regs_flush_dirty(ptr);
-    translation_ptr = *ptr;
     riscv_emit_sw(rs, riscv_reg_s0, reg_index * 4u);
     *ptr = translation_ptr;
+    riscv_emit_mapped_regs_flush_dirty(ptr);
+    return;
+  }
+
+  if (reg_index == REG_CPSR)
+  {
+    riscv_reg_number tmp = (rs == riscv_reg_t0) ? riscv_reg_t1 :
+      riscv_reg_t0;
+
+    riscv_emit_srli(riscv_mapped_host_regs[RISCV_MAPPED_NZCV_SLOT],
+                    rs, 28);
+    riscv_emit_andi(riscv_mapped_host_regs[RISCV_MAPPED_NZCV_SLOT],
+                    riscv_mapped_host_regs[RISCV_MAPPED_NZCV_SLOT], 0x0f);
+    riscv_emit_slli(tmp, rs, 4);
+    riscv_emit_srli(tmp, tmp, 4);
+    riscv_emit_sw(tmp, riscv_reg_s0, reg_index * 4u);
+    *ptr = translation_ptr;
+    riscv_mapped_valid_mask |= RISCV_MAPPED_NZCV_MASK;
+    riscv_mapped_dirty_mask |= RISCV_MAPPED_NZCV_MASK;
     return;
   }
 
