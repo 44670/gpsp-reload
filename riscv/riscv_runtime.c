@@ -2269,6 +2269,8 @@ static u32 riscv_encode_j_inst(riscv_reg_number rd, s32 offset)
 }
 
 static void riscv_patch_local_branch(u8 *source, const u8 *target);
+static void riscv_emit_helper_call_no_flush(
+  u8 **ptr, const riscv_jit_block_meta *meta);
 static void riscv_emit_terminal_helper_call(u8 **ptr,
                                             riscv_jit_block_meta *meta);
 static void riscv_emit_terminal_helper_call_no_flush(
@@ -2278,9 +2280,11 @@ void riscv_emit_arm_conditional_block_close(u8 **ptr_ref,
 static void riscv_emit_store_alert_branch(u8 **ptr_ref,
                                           riscv_jit_block_meta *meta);
 
-static u8 *riscv_emit_unconditional_branch_patch_site(u8 **ptr_ref)
+static u8 *riscv_emit_unconditional_branch_patch_site(u8 **ptr_ref,
+                                                      bool flush_before_patch)
 {
-  riscv_emit_mapped_regs_flush_dirty(ptr_ref);
+  if (flush_before_patch)
+    riscv_emit_mapped_regs_flush_dirty(ptr_ref);
 
   u8 *translation_ptr = *ptr_ref;
   u8 *source = translation_ptr;
@@ -2292,9 +2296,11 @@ static u8 *riscv_emit_unconditional_branch_patch_site(u8 **ptr_ref)
   return source;
 }
 
-static u8 *riscv_emit_unconditional_branch_patch_site_short(u8 **ptr_ref)
+static u8 *riscv_emit_unconditional_branch_patch_site_short(
+  u8 **ptr_ref, bool flush_before_patch)
 {
-  riscv_emit_mapped_regs_flush_dirty(ptr_ref);
+  if (flush_before_patch)
+    riscv_emit_mapped_regs_flush_dirty(ptr_ref);
 
   u8 *translation_ptr = *ptr_ref;
   u8 *source = translation_ptr;
@@ -2303,6 +2309,44 @@ static u8 *riscv_emit_unconditional_branch_patch_site_short(u8 **ptr_ref)
 
   *ptr_ref = translation_ptr;
   return source;
+}
+
+static u8 *riscv_emit_branch_patch_site_with_cycle_exit(
+  u8 **ptr_ref,
+  riscv_jit_block_meta *meta,
+  u32 target_pc,
+  bool short_patch_site,
+  bool flush_before_patch)
+{
+  u8 *ptr = *ptr_ref;
+  u8 *branch_source;
+  u8 *cycle_exit_branch;
+  u8 *translation_ptr;
+
+  if (flush_before_patch)
+    riscv_emit_mapped_regs_flush_dirty(&ptr);
+
+  riscv_emit_cycles_load(&ptr, riscv_reg_t4);
+  translation_ptr = ptr;
+  cycle_exit_branch = translation_ptr;
+  riscv_emit_bge(riscv_reg_zero, riscv_reg_t4, 0);
+  ptr = translation_ptr;
+
+  branch_source = short_patch_site ?
+    riscv_emit_unconditional_branch_patch_site_short(&ptr, false) :
+    riscv_emit_unconditional_branch_patch_site(&ptr, false);
+
+  riscv_patch_local_branch(cycle_exit_branch, ptr);
+
+  if (!flush_before_patch)
+    riscv_emit_mapped_regs_flush_dirty(&ptr);
+  riscv_invalidate_mapped_regs();
+  riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_t0, target_pc);
+  riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
+  riscv_emit_helper_call_no_flush(&ptr, meta);
+
+  *ptr_ref = ptr;
+  return branch_source;
 }
 
 void riscv_patch_unconditional_branch(u8 *source, const u8 *target)
@@ -2626,14 +2670,32 @@ void riscv_emit_arm_conditional_block_close(u8 **ptr_ref,
 
 bool riscv_emit_cycle_update(u8 **translation_ptr_ref,
                              riscv_jit_block_meta *meta,
+                             u32 pc,
                              u32 cycles)
 {
+  u8 *ptr;
+  u8 *translation_ptr;
+  u8 *continue_branch;
+
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
     return false;
 
   riscv_emit_mapped_regs_flush_dirty(translation_ptr_ref);
   riscv_invalidate_mapped_regs();
   riscv_emit_adjust_cycles(translation_ptr_ref, cycles);
+  ptr = *translation_ptr_ref;
+
+  riscv_emit_cycles_load(&ptr, riscv_reg_t4);
+  translation_ptr = ptr;
+  continue_branch = translation_ptr;
+  riscv_emit_b(0x4, riscv_reg_zero, riscv_reg_t4, 0);
+  ptr = translation_ptr;
+  riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_t0, pc);
+  riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
+  riscv_emit_helper_call_no_flush(&ptr, meta);
+  riscv_patch_local_branch(continue_branch, ptr);
+
+  *translation_ptr_ref = ptr;
   return true;
 }
 
@@ -6862,7 +6924,8 @@ static bool riscv_emit_native_arm_direct_branch(u8 **translation_ptr_ref,
                                                 u32 cycles,
                                                 bool link,
                                                 bool patchable,
-                                                bool short_patch_site)
+                                                bool short_patch_site,
+                                                bool flush_before_patch_site)
 {
   u32 condition = opcode >> 28;
   u8 *ptr = *translation_ptr_ref;
@@ -6896,14 +6959,18 @@ static bool riscv_emit_native_arm_direct_branch(u8 **translation_ptr_ref,
     /* The frontend patches direct branches before publishing the block. */
     if (branch_source)
       *branch_source = short_patch_site ?
-        riscv_emit_unconditional_branch_patch_site_short(&ptr) :
-        riscv_emit_unconditional_branch_patch_site(&ptr);
+        riscv_emit_unconditional_branch_patch_site_short(
+          &ptr, flush_before_patch_site) :
+        riscv_emit_unconditional_branch_patch_site(
+          &ptr, flush_before_patch_site);
     else
     {
       if (short_patch_site)
-        riscv_emit_unconditional_branch_patch_site_short(&ptr);
+        riscv_emit_unconditional_branch_patch_site_short(
+          &ptr, flush_before_patch_site);
       else
-        riscv_emit_unconditional_branch_patch_site(&ptr);
+        riscv_emit_unconditional_branch_patch_site(
+          &ptr, flush_before_patch_site);
     }
   }
   else
@@ -6924,7 +6991,7 @@ bool riscv_emit_native_arm_b(u8 **translation_ptr_ref,
 {
   return riscv_emit_native_arm_direct_branch(translation_ptr_ref, meta,
                                             NULL, opcode, pc, cycles,
-                                            false, false, false);
+                                            false, false, false, true);
 }
 
 bool riscv_emit_native_arm_bl(u8 **translation_ptr_ref,
@@ -6935,7 +7002,7 @@ bool riscv_emit_native_arm_bl(u8 **translation_ptr_ref,
 {
   return riscv_emit_native_arm_direct_branch(translation_ptr_ref, meta,
                                             NULL, opcode, pc, cycles,
-                                            true, false, false);
+                                            true, false, false, true);
 }
 
 bool riscv_emit_native_arm_b_patchable(u8 **translation_ptr_ref,
@@ -6944,12 +7011,14 @@ bool riscv_emit_native_arm_b_patchable(u8 **translation_ptr_ref,
                                        u32 opcode,
                                        u32 pc,
                                        u32 cycles,
-                                       bool short_patch_site)
+                                       bool short_patch_site,
+                                       bool flush_before_patch_site)
 {
   return riscv_emit_native_arm_direct_branch(translation_ptr_ref, meta,
                                             branch_source, opcode, pc,
                                             cycles, false, true,
-                                            short_patch_site);
+                                            short_patch_site,
+                                            flush_before_patch_site);
 }
 
 bool riscv_emit_native_arm_bl_patchable(u8 **translation_ptr_ref,
@@ -6958,12 +7027,14 @@ bool riscv_emit_native_arm_bl_patchable(u8 **translation_ptr_ref,
                                         u32 opcode,
                                         u32 pc,
                                         u32 cycles,
-                                        bool short_patch_site)
+                                        bool short_patch_site,
+                                        bool flush_before_patch_site)
 {
   return riscv_emit_native_arm_direct_branch(translation_ptr_ref, meta,
                                             branch_source, opcode, pc,
                                             cycles, true, true,
-                                            short_patch_site);
+                                            short_patch_site,
+                                            flush_before_patch_site);
 }
 
 bool riscv_emit_native_arm_bx(u8 **translation_ptr_ref,
@@ -7044,14 +7115,14 @@ static bool riscv_emit_native_arm_swi_common(u8 **translation_ptr_ref,
   {
     if (branch_source)
       *branch_source = short_patch_site ?
-        riscv_emit_unconditional_branch_patch_site_short(&ptr) :
-        riscv_emit_unconditional_branch_patch_site(&ptr);
+        riscv_emit_unconditional_branch_patch_site_short(&ptr, true) :
+        riscv_emit_unconditional_branch_patch_site(&ptr, true);
     else
     {
       if (short_patch_site)
-        riscv_emit_unconditional_branch_patch_site_short(&ptr);
+        riscv_emit_unconditional_branch_patch_site_short(&ptr, true);
       else
-        riscv_emit_unconditional_branch_patch_site(&ptr);
+        riscv_emit_unconditional_branch_patch_site(&ptr, true);
     }
     riscv_emit_terminal_helper_call_no_flush(&ptr, meta);
   }
@@ -8621,6 +8692,7 @@ static bool riscv_emit_native_thumb_reg_shift_alu(u8 **translation_ptr_ref,
   }
 
   translation_ptr = ptr;
+  riscv_emit_andi(riscv_reg_t1, riscv_reg_t1, 0xff);
   if (hi == 0x40u && alu_op == 2u)
   {
     if (need_c)
@@ -8674,20 +8746,22 @@ static bool riscv_emit_native_thumb_reg_shift_alu(u8 **translation_ptr_ref,
     riscv_reg_number neg_shift_reg = need_c ? riscv_reg_t5 : riscv_reg_t4;
     riscv_reg_number ror_temp_reg = need_c ? riscv_reg_t6 : riscv_reg_t5;
 
-    riscv_emit_sub(neg_shift_reg, riscv_reg_zero, riscv_reg_t1);
-    riscv_emit_srl(ror_temp_reg, riscv_reg_t2, riscv_reg_t1);
-    riscv_emit_sll(riscv_reg_t2, riscv_reg_t2, neg_shift_reg);
-    riscv_emit_or(riscv_reg_t2, riscv_reg_t2, ror_temp_reg);
-
     if (need_c)
     {
       u8 *carry_done;
 
       riscv_emit_branch_with_source(&translation_ptr, &carry_done, 0x0,
                                     riscv_reg_t1, riscv_reg_zero, 0);
-      riscv_emit_srli(riscv_reg_t3, riscv_reg_t2, 31);
+      riscv_emit_addi(ror_temp_reg, riscv_reg_t1, -1);
+      riscv_emit_srl(riscv_reg_t3, riscv_reg_t2, ror_temp_reg);
+      riscv_emit_andi(riscv_reg_t3, riscv_reg_t3, 1);
       riscv_patch_local_branch(carry_done, translation_ptr);
     }
+
+    riscv_emit_sub(neg_shift_reg, riscv_reg_zero, riscv_reg_t1);
+    riscv_emit_srl(ror_temp_reg, riscv_reg_t2, riscv_reg_t1);
+    riscv_emit_sll(riscv_reg_t2, riscv_reg_t2, neg_shift_reg);
+    riscv_emit_or(riscv_reg_t2, riscv_reg_t2, ror_temp_reg);
   }
   ptr = translation_ptr;
 
@@ -9549,15 +9623,18 @@ bool riscv_emit_native_thumb_conditional_branch(u8 **translation_ptr_ref,
                                                 u32 cycles,
                                                 u32 known_flag_mask,
                                                 u32 known_flags,
-                                                bool short_patch_site)
+                                                bool short_patch_site,
+                                                bool flush_before_patch_site)
 {
   u32 hi = opcode >> 8;
   u32 condition = hi & 0x0fu;
+  u32 target_pc =
+    pc + 4u + (u32)((s32)((opcode & 0xffu) << 24) >> 23);
   u8 *ptr = *translation_ptr_ref;
   u8 *branch_skip;
+  u32 fallthrough_valid_mask;
+  u32 fallthrough_dirty_mask;
   bool condition_passed = false;
-
-  (void)pc;
 
   if (branch_source)
     *branch_source = NULL;
@@ -9570,47 +9647,28 @@ bool riscv_emit_native_thumb_conditional_branch(u8 **translation_ptr_ref,
 
   riscv_emit_adjust_cycles(&ptr, cycles);
 
-  if (riscv_arm_const_condition_passed(known_flag_mask, known_flags,
-                                       condition, &condition_passed))
-  {
-    if (condition_passed)
-    {
-      if (branch_source)
-        *branch_source = short_patch_site ?
-          riscv_emit_unconditional_branch_patch_site_short(&ptr) :
-          riscv_emit_unconditional_branch_patch_site(&ptr);
-      else
-      {
-        if (short_patch_site)
-          riscv_emit_unconditional_branch_patch_site_short(&ptr);
-        else
-          riscv_emit_unconditional_branch_patch_site(&ptr);
-      }
-    }
-
-    *translation_ptr_ref = ptr;
-    riscv_native_branch_insns++;
-    return true;
-  }
+  (void)known_flag_mask;
+  (void)known_flags;
+  (void)condition_passed;
 
   if (!riscv_emit_arm_condition_branch(&ptr, condition ^ 1u, 0,
                                        &branch_skip))
     return false;
 
-  /* Taken path is patched to the target; fallthrough exits via finalizer. */
+  fallthrough_valid_mask = riscv_mapped_valid_mask;
+  fallthrough_dirty_mask = riscv_mapped_dirty_mask;
+
+  /* Taken path is patched to the target; fallthrough continues in this block. */
   if (branch_source)
-    *branch_source = short_patch_site ?
-      riscv_emit_unconditional_branch_patch_site_short(&ptr) :
-      riscv_emit_unconditional_branch_patch_site(&ptr);
+    *branch_source = riscv_emit_branch_patch_site_with_cycle_exit(
+      &ptr, meta, target_pc, short_patch_site, flush_before_patch_site);
   else
-  {
-    if (short_patch_site)
-      riscv_emit_unconditional_branch_patch_site_short(&ptr);
-    else
-      riscv_emit_unconditional_branch_patch_site(&ptr);
-  }
+    (void)riscv_emit_branch_patch_site_with_cycle_exit(
+      &ptr, meta, target_pc, short_patch_site, flush_before_patch_site);
 
   riscv_patch_local_branch(branch_skip, ptr);
+  riscv_mapped_valid_mask = fallthrough_valid_mask;
+  riscv_mapped_dirty_mask = fallthrough_dirty_mask;
 
   *translation_ptr_ref = ptr;
   riscv_native_branch_insns++;
@@ -9623,7 +9681,8 @@ bool riscv_emit_native_thumb_b_patchable(u8 **translation_ptr_ref,
                                          u32 opcode,
                                          u32 pc,
                                          u32 cycles,
-                                         bool short_patch_site)
+                                         bool short_patch_site,
+                                         bool flush_before_patch_site)
 {
   u32 hi = opcode >> 8;
   u32 target_pc;
@@ -9655,14 +9714,18 @@ bool riscv_emit_native_thumb_b_patchable(u8 **translation_ptr_ref,
 
   if (branch_source)
     *branch_source = short_patch_site ?
-      riscv_emit_unconditional_branch_patch_site_short(&ptr) :
-      riscv_emit_unconditional_branch_patch_site(&ptr);
+      riscv_emit_unconditional_branch_patch_site_short(
+        &ptr, flush_before_patch_site) :
+      riscv_emit_unconditional_branch_patch_site(
+        &ptr, flush_before_patch_site);
   else
   {
     if (short_patch_site)
-      riscv_emit_unconditional_branch_patch_site_short(&ptr);
+      riscv_emit_unconditional_branch_patch_site_short(
+        &ptr, flush_before_patch_site);
     else
-      riscv_emit_unconditional_branch_patch_site(&ptr);
+      riscv_emit_unconditional_branch_patch_site(
+        &ptr, flush_before_patch_site);
   }
 
   meta->flags |= RISCV_BLOCK_PC_WRITTEN;
@@ -9740,14 +9803,14 @@ bool riscv_emit_native_thumb_swi_patchable(u8 **translation_ptr_ref,
 
   if (branch_source)
     *branch_source = short_patch_site ?
-      riscv_emit_unconditional_branch_patch_site_short(&ptr) :
-      riscv_emit_unconditional_branch_patch_site(&ptr);
+      riscv_emit_unconditional_branch_patch_site_short(&ptr, true) :
+      riscv_emit_unconditional_branch_patch_site(&ptr, true);
   else
   {
     if (short_patch_site)
-      riscv_emit_unconditional_branch_patch_site_short(&ptr);
+      riscv_emit_unconditional_branch_patch_site_short(&ptr, true);
     else
-      riscv_emit_unconditional_branch_patch_site(&ptr);
+      riscv_emit_unconditional_branch_patch_site(&ptr, true);
   }
   riscv_emit_terminal_helper_call_no_flush(&ptr, meta);
 

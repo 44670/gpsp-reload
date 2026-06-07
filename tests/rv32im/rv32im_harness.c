@@ -3506,7 +3506,7 @@ static int build_runtime_fixture_block(const char **reason)
                                          RUNTIME_PATCH_BRANCH_B_PLUS_0X40,
                                          RUNTIME_PATCH_BRANCH_START_PC,
                                          RUNTIME_PATCH_BRANCH_CYCLES,
-                                         false))
+                                         false, true))
   {
     *reason = "runtime_patch_branch_emit_rejected";
     g_runtime_entry = (u8 *)0;
@@ -3556,7 +3556,7 @@ static int build_runtime_fixture_block(const char **reason)
         &internal_branch_source,
         RUNTIME_INTERNAL_BRANCH_B_PLUS_8,
         RUNTIME_INTERNAL_BRANCH_START_PC,
-        RUNTIME_INTERNAL_BRANCH_CYCLES, true))
+        RUNTIME_INTERNAL_BRANCH_CYCLES, true, false))
   {
     *reason = "runtime_internal_branch_emit_rejected";
     clear_runtime_fixture_entries();

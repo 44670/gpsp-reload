@@ -15,7 +15,7 @@ typedef unsigned int usize;
 #define PROT_EXEC 4
 #define MAP_PRIVATE 2
 #define MAP_ANONYMOUS 32
-#define EXEC_MAP_BYTES 98304u
+#define EXEC_MAP_BYTES 106496u
 
 #define BLOCK_START_PC 0x08000000u
 #define BLOCK_END_PC 0x08000004u
@@ -153,6 +153,51 @@ typedef unsigned int usize;
 #define THUMB_REG_SHIFT_R6_VALUE 0u
 #define THUMB_REG_SHIFT_R7_VALUE 1u
 #define THUMB_REG_SHIFT_CPSR_VALUE \
+  (CPSR_Z_BIT | CPSR_C_BIT | CPSR_T_BIT | CPSR_LOW_VALUE)
+#define THUMB_ALU_EDGE_START_PC 0x020010d0u
+#define THUMB_ALU_EDGE_END_PC (THUMB_ALU_EDGE_START_PC + 8u)
+#define THUMB_ALU_EDGE_TOTAL_CYCLES 14u
+#define THUMB_ALU_EDGE_ROR_R0_R3 0x41d8u
+#define THUMB_ALU_EDGE_ROR_R6_R4 0x41e6u
+#define THUMB_ALU_EDGE_ROR_R7_R5 0x41efu
+#define THUMB_ALU_EDGE_MUL_R1_R2 0x4351u
+#define THUMB_ALU_EDGE_R0_INITIAL 0x80000000u
+#define THUMB_ALU_EDGE_R1_INITIAL 20u
+#define THUMB_ALU_EDGE_R2_INITIAL 0xfffffff6u
+#define THUMB_ALU_EDGE_R3_INITIAL 0u
+#define THUMB_ALU_EDGE_R4_INITIAL 66u
+#define THUMB_ALU_EDGE_R5_INITIAL 32u
+#define THUMB_ALU_EDGE_R6_INITIAL 0x80000000u
+#define THUMB_ALU_EDGE_R7_INITIAL 0x80000000u
+#define THUMB_ALU_EDGE_R0_VALUE 0x80000000u
+#define THUMB_ALU_EDGE_R1_VALUE 0xffffff38u
+#define THUMB_ALU_EDGE_R6_VALUE 0x20000000u
+#define THUMB_ALU_EDGE_R7_VALUE 0x80000000u
+#define THUMB_ALU_EDGE_INITIAL_CPSR \
+  (CPSR_CV_LOW_VALUE | CPSR_T_BIT)
+#define THUMB_ALU_EDGE_CPSR_VALUE \
+  (CPSR_N_BIT | CPSR_C_BIT | CPSR_V_BIT | CPSR_T_BIT | CPSR_LOW_VALUE)
+#define THUMB_ADD_EDGE_START_PC 0x020010e0u
+#define THUMB_ADD_EDGE_END_PC (THUMB_ADD_EDGE_START_PC + 32u)
+#define THUMB_ADD_EDGE_MOV_R6_0 0x2600u
+#define THUMB_ADD_EDGE_MOV_R0_0 0x2000u
+#define THUMB_ADD_EDGE_MOV_R1_1 0x2101u
+#define THUMB_ADD_EDGE_MOV_R2_4 0x2204u
+#define THUMB_ADD_EDGE_MOV_R3_5 0x2305u
+#define THUMB_ADD_EDGE_ADD_R0_R1_2 0x1c88u
+#define THUMB_ADD_EDGE_ADD_R0_R1_R2 0x1888u
+#define THUMB_ADD_EDGE_MOV_R0_2 0x2002u
+#define THUMB_ADD_EDGE_MOV_R1_0 0x2100u
+#define THUMB_ADD_EDGE_MOV_R2_0 0x2200u
+#define THUMB_ADD_EDGE_ADD_R1_0 0x3100u
+#define THUMB_ADD_EDGE_ADD_R0_R11 0x4458u
+#define THUMB_ADD_EDGE_ADD_R1_R0_0 0x1c01u
+#define THUMB_ADD_EDGE_ADD_R0_0xff 0x30ffu
+#define THUMB_ADD_EDGE_ADD_R1_0xff 0x31ffu
+#define THUMB_ADD_EDGE_R0_LITERAL 0xffffff01u
+#define THUMB_ADD_EDGE_R5_VALUE 1u
+#define THUMB_ADD_EDGE_R11_VALUE 0xffffffffu
+#define THUMB_ADD_EDGE_CPSR_VALUE \
   (CPSR_Z_BIT | CPSR_C_BIT | CPSR_T_BIT | CPSR_LOW_VALUE)
 #define THUMB_BLOCK_STORE_START_PC 0x020010e0u
 #define THUMB_BLOCK_STORE_END_PC (THUMB_BLOCK_STORE_START_PC + 2u)
@@ -683,6 +728,29 @@ typedef unsigned int usize;
 #define INTERNAL_BRANCH_R1_VALUE 0x00000044u
 #define INTERNAL_BRANCH_SUM_VALUE \
   (INTERNAL_BRANCH_R0_VALUE + INTERNAL_BRANCH_R1_VALUE)
+#define DIRTY_INTERNAL_BRANCH_START_PC 0x08000ac0u
+#define DIRTY_INTERNAL_BRANCH_TARGET_PC \
+  (DIRTY_INTERNAL_BRANCH_START_PC + 12u)
+#define DIRTY_INTERNAL_BRANCH_END_PC \
+  (DIRTY_INTERNAL_BRANCH_START_PC + 16u)
+#define DIRTY_INTERNAL_BRANCH_DIRTY_CYCLES 3u
+#define DIRTY_INTERNAL_BRANCH_CYCLES 7u
+#define DIRTY_INTERNAL_BRANCH_UPDATE_CYCLES 5u
+#define DIRTY_INTERNAL_BRANCH_TARGET_CYCLES 11u
+#define DIRTY_INTERNAL_BRANCH_TOTAL_CYCLES \
+  (DIRTY_INTERNAL_BRANCH_DIRTY_CYCLES + \
+   DIRTY_INTERNAL_BRANCH_CYCLES + \
+   DIRTY_INTERNAL_BRANCH_UPDATE_CYCLES + \
+   DIRTY_INTERNAL_BRANCH_TARGET_CYCLES)
+#define DIRTY_INTERNAL_BRANCH_B_PLUS_8 0xea000000u
+#define DIRTY_INTERNAL_BRANCH_ADD_R6_R2_R1 0xe0826001u
+#define DIRTY_INTERNAL_BRANCH_R0_VALUE 0x00000123u
+#define DIRTY_INTERNAL_BRANCH_R1_VALUE 0x00000045u
+#define DIRTY_INTERNAL_BRANCH_R2_STALE 0xdeadc0deu
+#define DIRTY_INTERNAL_BRANCH_R2_VALUE \
+  (DIRTY_INTERNAL_BRANCH_R0_VALUE + DIRTY_INTERNAL_BRANCH_R1_VALUE)
+#define DIRTY_INTERNAL_BRANCH_R6_VALUE \
+  (DIRTY_INTERNAL_BRANCH_R2_VALUE + DIRTY_INTERNAL_BRANCH_R1_VALUE)
 #define EXTERNAL_BRANCH_START_PC 0x08000a80u
 #define EXTERNAL_BRANCH_END_PC (EXTERNAL_BRANCH_START_PC + 4u)
 #define EXTERNAL_BRANCH_TARGET_PC (EXTERNAL_BRANCH_START_PC + 0x40u)
@@ -1568,6 +1636,9 @@ typedef unsigned int usize;
 #define THUMB_BL_PAIR_BLOCK_OFFSET 95232u
 #define THUMB_BLH_BLOCK_OFFSET 95744u
 #define THUMB_CONTROL_TARGET_BLOCK_OFFSET 96256u
+#define DIRTY_INTERNAL_BRANCH_BLOCK_OFFSET 96768u
+#define THUMB_ALU_EDGE_BLOCK_OFFSET 97280u
+#define THUMB_ADD_EDGE_BLOCK_OFFSET 98304u
 #define EXPECTED_INITIAL_ROM_WATERMARK 16u
 
 u32 reg[REG_MAX];
@@ -1598,6 +1669,8 @@ static u8 *g_thumb_flag_alu_entry;
 static u8 *g_thumb_memory_load_entry;
 static u8 *g_thumb_memory_store_entry;
 static u8 *g_thumb_reg_shift_entry;
+static u8 *g_thumb_alu_edge_entry;
+static u8 *g_thumb_add_edge_entry;
 static u8 *g_thumb_block_store_entry;
 static u8 *g_thumb_block_load_entry;
 static u8 *g_thumb_block_push_entry;
@@ -1637,6 +1710,7 @@ static u8 *g_data_ext_entry;
 static u8 *g_branch_entry;
 static u8 *g_branch_target_entry;
 static u8 *g_internal_branch_entry;
+static u8 *g_dirty_internal_branch_entry;
 static u8 *g_external_branch_entry;
 static u8 *g_external_branch_target_entry;
 static u8 *g_repatch_branch_entry;
@@ -2246,6 +2320,7 @@ static u32 build_cycle_update_block(u8 *code)
   riscv_jit_block_meta *riscv_block_meta;
   u32 cycle_count = CYCLE_UPDATE_FIRST_CYCLES;
   u32 code_bytes;
+  u32 pc = CYCLE_UPDATE_START_PC;
 
   riscv_emit_block_prologue(&translation_ptr, &riscv_block_meta);
   g_cycle_update_entry = ((u8 *)riscv_block_meta) + block_prologue_size;
@@ -2409,7 +2484,8 @@ static u32 build_thumb_simple_data_block(u8 *code)
                                    THUMB_SIMPLE_DATA_R4_VALUE,
                                    &cycle_count, "thumb_pc_pool_const");
 
-  if (!riscv_emit_cycle_update(&translation_ptr, meta, cycle_count))
+  if (!riscv_emit_cycle_update(&translation_ptr, meta,
+                               THUMB_SIMPLE_DATA_END_PC, cycle_count))
   {
     put_raw("result=FAIL command=runtime "
             "reason=thumb_simple_data_cycle_emit_rejected\n");
@@ -2442,7 +2518,8 @@ static u32 build_thumb_hi_cmp_block(u8 *code)
     sys_exit(1);
   }
 
-  if (!riscv_emit_cycle_update(&translation_ptr, meta, THUMB_HI_CMP_CYCLES))
+  if (!riscv_emit_cycle_update(&translation_ptr, meta, THUMB_HI_CMP_END_PC,
+                               THUMB_HI_CMP_CYCLES))
   {
     put_raw("result=FAIL command=runtime "
             "reason=thumb_hi_cmp_cycle_emit_rejected\n");
@@ -2572,6 +2649,7 @@ static u32 build_thumb_hi_add_mov_block(u8 *code)
                                 "thumb_hi_mov");
 
   if (!riscv_emit_cycle_update(&translation_ptr, meta,
+                               THUMB_HI_ADD_MOV_END_PC,
                                THUMB_HI_ADD_MOV_CYCLES))
   {
     put_raw("result=FAIL command=runtime "
@@ -2604,7 +2682,8 @@ static u32 build_thumb_flag_alu_block(u8 *code)
     sys_exit(1);
   }
 
-  if (!riscv_emit_cycle_update(&translation_ptr, meta, THUMB_FLAG_ALU_CYCLES))
+  if (!riscv_emit_cycle_update(&translation_ptr, meta, THUMB_FLAG_ALU_END_PC,
+                               THUMB_FLAG_ALU_CYCLES))
   {
     put_raw("result=FAIL command=runtime "
             "reason=thumb_flag_alu_cycle_emit_rejected\n");
@@ -2761,6 +2840,7 @@ static u32 build_thumb_reg_shift_block(u8 *code)
                                    "thumb_reg_shift_mul");
 
   if (!riscv_emit_cycle_update(&translation_ptr, meta,
+                               THUMB_REG_SHIFT_END_PC,
                                THUMB_REG_SHIFT_TOTAL_CYCLES))
   {
     put_raw("result=FAIL command=runtime "
@@ -2771,6 +2851,159 @@ static u32 build_thumb_reg_shift_block(u8 *code)
   riscv_emit_block_finalize(meta, &translation_ptr,
                             THUMB_REG_SHIFT_START_PC,
                             THUMB_REG_SHIFT_END_PC, true);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static void emit_thumb_alu_checked(u8 **translation_ptr,
+                                   riscv_jit_block_meta *meta,
+                                   u32 opcode,
+                                   u32 flag_status,
+                                   const char *test_name)
+{
+  if (!riscv_emit_native_thumb_alu(translation_ptr, meta, opcode,
+                                   flag_status))
+  {
+    put_raw("result=FAIL command=runtime reason=");
+    put_raw(test_name);
+    put_raw("_emit_rejected\n");
+    sys_exit(1);
+  }
+}
+
+static void emit_thumb_counted_alu_checked(u8 **translation_ptr,
+                                           riscv_jit_block_meta *meta,
+                                           u32 opcode,
+                                           u32 flag_status,
+                                           u32 *cycle_count,
+                                           const char *test_name)
+{
+  *cycle_count += 1u;
+  emit_thumb_alu_checked(translation_ptr, meta, opcode, flag_status,
+                         test_name);
+}
+
+static u32 build_thumb_alu_edge_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_thumb_alu_edge_entry = ((u8 *)meta) + block_prologue_size;
+
+  emit_thumb_alu_checked(&translation_ptr, meta,
+                         THUMB_ALU_EDGE_ROR_R0_R3, 0x0eu,
+                         "thumb_alu_edge_ror0");
+  emit_thumb_alu_checked(&translation_ptr, meta,
+                         THUMB_ALU_EDGE_ROR_R6_R4, 0x0eu,
+                         "thumb_alu_edge_ror66");
+  emit_thumb_alu_checked(&translation_ptr, meta,
+                         THUMB_ALU_EDGE_ROR_R7_R5, 0x0eu,
+                         "thumb_alu_edge_ror32");
+  emit_thumb_alu_checked(&translation_ptr, meta,
+                         THUMB_ALU_EDGE_MUL_R1_R2, 0x0cu,
+                         "thumb_alu_edge_mul");
+
+  if (!riscv_emit_cycle_update(&translation_ptr, meta,
+                               THUMB_ALU_EDGE_END_PC,
+                               THUMB_ALU_EDGE_TOTAL_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=thumb_alu_edge_cycle_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            THUMB_ALU_EDGE_START_PC,
+                            THUMB_ALU_EDGE_END_PC, true);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_thumb_add_edge_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 cycle_count = 0;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_thumb_add_edge_entry = ((u8 *)meta) + block_prologue_size;
+
+  emit_thumb_simple_data_checked(&translation_ptr, meta,
+                                 THUMB_ADD_EDGE_MOV_R6_0,
+                                 THUMB_ADD_EDGE_START_PC,
+                                 &cycle_count, "thumb_add_edge_mov_r6");
+  emit_thumb_simple_data_checked(&translation_ptr, meta,
+                                 THUMB_ADD_EDGE_MOV_R0_0,
+                                 THUMB_ADD_EDGE_START_PC + 2u,
+                                 &cycle_count, "thumb_add_edge_mov_r0_0");
+  emit_thumb_simple_data_checked(&translation_ptr, meta,
+                                 THUMB_ADD_EDGE_MOV_R1_1,
+                                 THUMB_ADD_EDGE_START_PC + 4u,
+                                 &cycle_count, "thumb_add_edge_mov_r1_1");
+  emit_thumb_simple_data_checked(&translation_ptr, meta,
+                                 THUMB_ADD_EDGE_MOV_R2_4,
+                                 THUMB_ADD_EDGE_START_PC + 6u,
+                                 &cycle_count, "thumb_add_edge_mov_r2_4");
+  emit_thumb_simple_data_checked(&translation_ptr, meta,
+                                 THUMB_ADD_EDGE_MOV_R3_5,
+                                 THUMB_ADD_EDGE_START_PC + 8u,
+                                 &cycle_count, "thumb_add_edge_mov_r3_5");
+  emit_thumb_counted_alu_checked(&translation_ptr, meta,
+                                 THUMB_ADD_EDGE_ADD_R0_R1_2, 0x0fu,
+                                 &cycle_count, "thumb_add_edge_add_r0_i3");
+  emit_thumb_counted_alu_checked(&translation_ptr, meta,
+                                 THUMB_ADD_EDGE_ADD_R0_R1_R2, 0x0fu,
+                                 &cycle_count, "thumb_add_edge_add_r0_reg");
+  emit_thumb_simple_data_checked(&translation_ptr, meta,
+                                 THUMB_ADD_EDGE_MOV_R0_2,
+                                 THUMB_ADD_EDGE_START_PC + 14u,
+                                 &cycle_count, "thumb_add_edge_mov_r0_2");
+  emit_thumb_simple_data_checked(&translation_ptr, meta,
+                                 THUMB_ADD_EDGE_MOV_R1_0,
+                                 THUMB_ADD_EDGE_START_PC + 16u,
+                                 &cycle_count, "thumb_add_edge_mov_r1_0");
+  emit_thumb_simple_data_checked(&translation_ptr, meta,
+                                 THUMB_ADD_EDGE_MOV_R2_0,
+                                 THUMB_ADD_EDGE_START_PC + 18u,
+                                 &cycle_count, "thumb_add_edge_mov_r2_0");
+  emit_thumb_counted_alu_checked(&translation_ptr, meta,
+                                 THUMB_ADD_EDGE_ADD_R1_0, 0x0fu,
+                                 &cycle_count, "thumb_add_edge_add_r1_0");
+  cycle_count += 1u;
+  emit_thumb_hi_add_mov_checked(&translation_ptr, meta,
+                                THUMB_ADD_EDGE_ADD_R0_R11,
+                                THUMB_ADD_EDGE_START_PC + 22u,
+                                "thumb_add_edge_add_r0_r11");
+  emit_thumb_pc_pool_const_checked(&translation_ptr, meta, 0u,
+                                   THUMB_ADD_EDGE_R0_LITERAL,
+                                   &cycle_count,
+                                   "thumb_add_edge_literal");
+  emit_thumb_counted_alu_checked(&translation_ptr, meta,
+                                 THUMB_ADD_EDGE_ADD_R1_R0_0, 0x0fu,
+                                 &cycle_count, "thumb_add_edge_add_r1_r0_0");
+  emit_thumb_counted_alu_checked(&translation_ptr, meta,
+                                 THUMB_ADD_EDGE_ADD_R0_0xff, 0x0fu,
+                                 &cycle_count, "thumb_add_edge_add_r0_ff");
+  emit_thumb_counted_alu_checked(&translation_ptr, meta,
+                                 THUMB_ADD_EDGE_ADD_R1_0xff, 0x0fu,
+                                 &cycle_count, "thumb_add_edge_add_r1_ff");
+
+  if (!riscv_emit_cycle_update(&translation_ptr, meta,
+                               THUMB_ADD_EDGE_END_PC, cycle_count))
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=thumb_add_edge_cycle_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            THUMB_ADD_EDGE_START_PC,
+                            THUMB_ADD_EDGE_END_PC, true);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -2852,6 +3085,7 @@ static u32 build_thumb_branch_target_block(u8 *code)
     sys_exit(1);
   }
   if (!riscv_emit_cycle_update(&translation_ptr, meta,
+                               THUMB_BRANCH_TARGET_END_PC,
                                THUMB_BRANCH_TARGET_CYCLES))
   {
     put_raw("result=FAIL command=runtime "
@@ -2879,7 +3113,8 @@ static u32 build_thumb_cond_branch_block(u8 *code, u8 *target_entry)
 
   if (!riscv_emit_native_thumb_conditional_branch(
         &translation_ptr, meta, &branch_source, THUMB_COND_BRANCH_BEQ,
-        THUMB_COND_BRANCH_START_PC, THUMB_COND_BRANCH_CYCLES, 0, 0, true))
+        THUMB_COND_BRANCH_START_PC, THUMB_COND_BRANCH_CYCLES, 0, 0, true,
+        true))
   {
     put_raw("result=FAIL command=runtime "
             "reason=thumb_cond_branch_emit_rejected\n");
@@ -2913,7 +3148,7 @@ static u32 build_thumb_b_block(u8 *code, u8 *target_entry)
 
   if (!riscv_emit_native_thumb_b_patchable(
         &translation_ptr, meta, &branch_source, THUMB_B_OPCODE,
-        THUMB_B_START_PC, THUMB_B_CYCLES, true))
+        THUMB_B_START_PC, THUMB_B_CYCLES, true, true))
   {
     put_raw("result=FAIL command=runtime reason=thumb_b_emit_rejected\n");
     sys_exit(1);
@@ -3782,7 +4017,8 @@ static u32 build_internal_branch_block(u8 *code)
                                          &branch_source,
                                          INTERNAL_BRANCH_B_PLUS_8,
                                          INTERNAL_BRANCH_START_PC,
-                                         INTERNAL_BRANCH_CYCLES, true))
+                                         INTERNAL_BRANCH_CYCLES, true,
+                                         false))
   {
     put_raw("result=FAIL command=runtime reason=internal_branch_rejected\n");
     sys_exit(1);
@@ -3821,6 +4057,82 @@ static u32 build_internal_branch_block(u8 *code)
   return code_bytes;
 }
 
+static u32 build_dirty_internal_branch_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u8 *branch_source;
+  u8 *branch_target;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_dirty_internal_branch_entry = ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_arm_data_proc(
+        &translation_ptr, meta, ADD_R2_R0_R1,
+        DIRTY_INTERNAL_BRANCH_DIRTY_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=dirty_internal_dirty_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_b_patchable(
+        &translation_ptr, meta, &branch_source,
+        DIRTY_INTERNAL_BRANCH_B_PLUS_8,
+        DIRTY_INTERNAL_BRANCH_START_PC + 4u,
+        DIRTY_INTERNAL_BRANCH_CYCLES, true, false))
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=dirty_internal_branch_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!branch_source)
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=dirty_internal_branch_no_patch\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_data_proc(
+        &translation_ptr, meta, INTERNAL_BRANCH_ADD_R4_R0_R1,
+        INTERNAL_BRANCH_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=dirty_internal_skip_rejected\n");
+    sys_exit(1);
+  }
+
+  branch_target = translation_ptr;
+
+  if (!riscv_emit_cycle_update(&translation_ptr, meta,
+                               DIRTY_INTERNAL_BRANCH_TARGET_PC,
+                               DIRTY_INTERNAL_BRANCH_UPDATE_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=dirty_internal_update_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_native_arm_data_proc(
+        &translation_ptr, meta, DIRTY_INTERNAL_BRANCH_ADD_R6_R2_R1,
+        DIRTY_INTERNAL_BRANCH_TARGET_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=dirty_internal_target_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            DIRTY_INTERNAL_BRANCH_START_PC,
+                            DIRTY_INTERNAL_BRANCH_END_PC, false);
+  riscv_patch_unconditional_branch_short(branch_source, branch_target);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
 static u32 build_external_branch_block(u8 *code, u8 *target_entry)
 {
   u8 *translation_ptr = code;
@@ -3836,7 +4148,7 @@ static u32 build_external_branch_block(u8 *code, u8 *target_entry)
         &branch_source,
         EXTERNAL_BRANCH_B_PLUS_0X40,
         EXTERNAL_BRANCH_START_PC,
-        EXTERNAL_BRANCH_CYCLES, false))
+        EXTERNAL_BRANCH_CYCLES, false, true))
   {
     put_raw("result=FAIL command=runtime reason=external_branch_rejected\n");
     sys_exit(1);
@@ -3872,7 +4184,7 @@ static u32 build_repatch_branch_block(u8 *code)
         &branch_source,
         REPATCH_BRANCH_B_PLUS_0X40,
         REPATCH_BRANCH_START_PC,
-        REPATCH_BRANCH_CYCLES, false))
+        REPATCH_BRANCH_CYCLES, false, true))
   {
     put_raw("result=FAIL command=runtime reason=repatch_branch_rejected\n");
     sys_exit(1);
@@ -6183,6 +6495,109 @@ static void run_thumb_reg_shift_case(void)
   expect_runtime_fallback_delta("thumb_reg_shift_stats",
                                 &stats_before, 1, 0, 0, 0, 0);
   expect_stickybits_cleared("thumb_reg_shift");
+}
+
+static void run_thumb_alu_edge_case(void)
+{
+  riscv_runtime_stats stats_before;
+
+  reset_runtime_observations(THUMB_ALU_EDGE_START_PC);
+  reg[REG_CPSR] = THUMB_ALU_EDGE_INITIAL_CPSR;
+  reg[0] = THUMB_ALU_EDGE_R0_INITIAL;
+  reg[1] = THUMB_ALU_EDGE_R1_INITIAL;
+  reg[2] = THUMB_ALU_EDGE_R2_INITIAL;
+  reg[3] = THUMB_ALU_EDGE_R3_INITIAL;
+  reg[4] = THUMB_ALU_EDGE_R4_INITIAL;
+  reg[5] = THUMB_ALU_EDGE_R5_INITIAL;
+  reg[6] = THUMB_ALU_EDGE_R6_INITIAL;
+  reg[7] = THUMB_ALU_EDGE_R7_INITIAL;
+  g_thumb_lookup_entry = g_thumb_alu_edge_entry;
+  g_thumb_lookup_entry_pc = THUMB_ALU_EDGE_START_PC;
+  riscv_get_runtime_stats(&stats_before);
+
+  execute_arm_translate_internal(THUMB_ALU_EDGE_TOTAL_CYCLES, &reg[0]);
+
+  if (reg[0] != THUMB_ALU_EDGE_R0_VALUE)
+    fail_u32("thumb_alu_edge", "r0", reg[0], THUMB_ALU_EDGE_R0_VALUE);
+  if (reg[1] != THUMB_ALU_EDGE_R1_VALUE)
+    fail_u32("thumb_alu_edge", "r1", reg[1], THUMB_ALU_EDGE_R1_VALUE);
+  if (reg[6] != THUMB_ALU_EDGE_R6_VALUE)
+    fail_u32("thumb_alu_edge", "r6", reg[6], THUMB_ALU_EDGE_R6_VALUE);
+  if (reg[7] != THUMB_ALU_EDGE_R7_VALUE)
+    fail_u32("thumb_alu_edge", "r7", reg[7], THUMB_ALU_EDGE_R7_VALUE);
+  if (reg[REG_PC] != THUMB_ALU_EDGE_END_PC)
+    fail_u32("thumb_alu_edge", "pc",
+             reg[REG_PC], THUMB_ALU_EDGE_END_PC);
+  if (reg[REG_CPSR] != THUMB_ALU_EDGE_CPSR_VALUE)
+    fail_u32("thumb_alu_edge", "cpsr",
+             reg[REG_CPSR], THUMB_ALU_EDGE_CPSR_VALUE);
+  if (g_lookup_calls != 0)
+    fail_u32("thumb_alu_edge", "arm_lookup_calls", g_lookup_calls, 0);
+  if (g_thumb_lookup_calls != 1)
+    fail_u32("thumb_alu_edge", "thumb_lookup_calls",
+             g_thumb_lookup_calls, 1);
+  if (g_thumb_lookup_pc != THUMB_ALU_EDGE_START_PC)
+    fail_u32("thumb_alu_edge", "thumb_lookup_pc",
+             g_thumb_lookup_pc, THUMB_ALU_EDGE_START_PC);
+  if (g_update_calls != 1)
+    fail_u32("thumb_alu_edge", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("thumb_alu_edge", "update_cycles",
+             (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("thumb_alu_edge", "execute_calls", g_execute_calls, 0);
+  expect_runtime_fallback_delta("thumb_alu_edge_stats",
+                                &stats_before, 1, 0, 0, 0, 0);
+  expect_stickybits_cleared("thumb_alu_edge");
+}
+
+static void run_thumb_add_edge_case(void)
+{
+  riscv_runtime_stats stats_before;
+
+  reset_runtime_observations(THUMB_ADD_EDGE_START_PC);
+  reg[REG_CPSR] = CPSR_T_BIT | CPSR_LOW_VALUE;
+  reg[5] = THUMB_ADD_EDGE_R5_VALUE;
+  reg[11] = THUMB_ADD_EDGE_R11_VALUE;
+  g_thumb_lookup_entry = g_thumb_add_edge_entry;
+  g_thumb_lookup_entry_pc = THUMB_ADD_EDGE_START_PC;
+  riscv_get_runtime_stats(&stats_before);
+
+  execute_arm_translate_internal(16u, &reg[0]);
+
+  if (reg[0] != 0)
+    fail_u32("thumb_add_edge", "r0", reg[0], 0);
+  if (reg[1] != 0)
+    fail_u32("thumb_add_edge", "r1", reg[1], 0);
+  if (reg[5] != THUMB_ADD_EDGE_R5_VALUE)
+    fail_u32("thumb_add_edge", "r5", reg[5], THUMB_ADD_EDGE_R5_VALUE);
+  if (reg[6] != 0)
+    fail_u32("thumb_add_edge", "r6", reg[6], 0);
+  if (reg[11] != THUMB_ADD_EDGE_R11_VALUE)
+    fail_u32("thumb_add_edge", "r11", reg[11], THUMB_ADD_EDGE_R11_VALUE);
+  if (reg[REG_PC] != THUMB_ADD_EDGE_END_PC)
+    fail_u32("thumb_add_edge", "pc", reg[REG_PC], THUMB_ADD_EDGE_END_PC);
+  if (reg[REG_CPSR] != THUMB_ADD_EDGE_CPSR_VALUE)
+    fail_u32("thumb_add_edge", "cpsr",
+             reg[REG_CPSR], THUMB_ADD_EDGE_CPSR_VALUE);
+  if (g_lookup_calls != 0)
+    fail_u32("thumb_add_edge", "arm_lookup_calls", g_lookup_calls, 0);
+  if (g_thumb_lookup_calls != 1)
+    fail_u32("thumb_add_edge", "thumb_lookup_calls",
+             g_thumb_lookup_calls, 1);
+  if (g_thumb_lookup_pc != THUMB_ADD_EDGE_START_PC)
+    fail_u32("thumb_add_edge", "thumb_lookup_pc",
+             g_thumb_lookup_pc, THUMB_ADD_EDGE_START_PC);
+  if (g_update_calls != 1)
+    fail_u32("thumb_add_edge", "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("thumb_add_edge", "update_cycles",
+             (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("thumb_add_edge", "execute_calls", g_execute_calls, 0);
+  expect_runtime_fallback_delta("thumb_add_edge_stats",
+                                &stats_before, 1, 0, 0, 0, 0);
+  expect_stickybits_cleared("thumb_add_edge");
 }
 
 static void expect_thumb_block_write(const char *test_name,
@@ -8526,6 +8941,46 @@ static void run_internal_branch_patch_case(void)
     fail_u32("internal_branch_patch", "execute_calls",
              g_execute_calls, 0);
   expect_stickybits_cleared("internal_branch_patch");
+}
+
+static void run_dirty_internal_branch_patch_case(void)
+{
+  reset_runtime_observations(DIRTY_INTERNAL_BRANCH_START_PC);
+  g_lookup_entry = g_dirty_internal_branch_entry;
+  reg[0] = DIRTY_INTERNAL_BRANCH_R0_VALUE;
+  reg[1] = DIRTY_INTERNAL_BRANCH_R1_VALUE;
+  reg[2] = DIRTY_INTERNAL_BRANCH_R2_STALE;
+
+  execute_arm_translate_internal(DIRTY_INTERNAL_BRANCH_TOTAL_CYCLES,
+                                 &reg[0]);
+
+  if (reg[2] != DIRTY_INTERNAL_BRANCH_R2_VALUE)
+    fail_u32("dirty_internal_branch_patch", "r2",
+             reg[2], DIRTY_INTERNAL_BRANCH_R2_VALUE);
+  if (reg[4] != 0)
+    fail_u32("dirty_internal_branch_patch", "r4", reg[4], 0);
+  if (reg[6] != DIRTY_INTERNAL_BRANCH_R6_VALUE)
+    fail_u32("dirty_internal_branch_patch", "r6",
+             reg[6], DIRTY_INTERNAL_BRANCH_R6_VALUE);
+  if (reg[REG_PC] != DIRTY_INTERNAL_BRANCH_END_PC)
+    fail_u32("dirty_internal_branch_patch", "pc",
+             reg[REG_PC], DIRTY_INTERNAL_BRANCH_END_PC);
+  if (g_lookup_calls != 1)
+    fail_u32("dirty_internal_branch_patch", "lookup_calls",
+             g_lookup_calls, 1);
+  if (g_lookup_pc != DIRTY_INTERNAL_BRANCH_START_PC)
+    fail_u32("dirty_internal_branch_patch", "lookup_pc",
+             g_lookup_pc, DIRTY_INTERNAL_BRANCH_START_PC);
+  if (g_update_calls != 1)
+    fail_u32("dirty_internal_branch_patch", "update_calls",
+             g_update_calls, 1);
+  if ((u32)g_update_cycles != 0)
+    fail_u32("dirty_internal_branch_patch", "update_cycles",
+             (u32)g_update_cycles, 0);
+  if (g_execute_calls != 0)
+    fail_u32("dirty_internal_branch_patch", "execute_calls",
+             g_execute_calls, 0);
+  expect_stickybits_cleared("dirty_internal_branch_patch");
 }
 
 static void run_external_branch_patch_case(void)
@@ -12845,6 +13300,8 @@ void _start(void)
   u32 thumb_memory_load_code_bytes;
   u32 thumb_memory_store_code_bytes;
   u32 thumb_reg_shift_code_bytes;
+  u32 thumb_alu_edge_code_bytes;
+  u32 thumb_add_edge_code_bytes;
   u32 thumb_block_store_code_bytes;
   u32 thumb_block_load_code_bytes;
   u32 thumb_block_push_code_bytes;
@@ -12927,6 +13384,7 @@ void _start(void)
   u32 bx_arm_target_code_bytes;
   u32 branch_target_code_bytes;
   u32 internal_branch_code_bytes;
+  u32 dirty_internal_branch_code_bytes;
   u32 external_branch_code_bytes;
   u32 external_branch_target_code_bytes;
   u32 repatch_branch_code_bytes;
@@ -13031,6 +13489,10 @@ void _start(void)
     build_thumb_memory_store_block(code + THUMB_MEMORY_STORE_BLOCK_OFFSET);
   thumb_reg_shift_code_bytes =
     build_thumb_reg_shift_block(code + THUMB_REG_SHIFT_BLOCK_OFFSET);
+  thumb_alu_edge_code_bytes =
+    build_thumb_alu_edge_block(code + THUMB_ALU_EDGE_BLOCK_OFFSET);
+  thumb_add_edge_code_bytes =
+    build_thumb_add_edge_block(code + THUMB_ADD_EDGE_BLOCK_OFFSET);
   thumb_block_store_code_bytes =
     build_thumb_block_memory_single(code + THUMB_BLOCK_STORE_BLOCK_OFFSET,
                                     THUMB_BLOCK_STORE_OPCODE,
@@ -13298,6 +13760,9 @@ void _start(void)
                                  "branch_target_emit_rejected");
   internal_branch_code_bytes =
     build_internal_branch_block(code + INTERNAL_BRANCH_BLOCK_OFFSET);
+  dirty_internal_branch_code_bytes =
+    build_dirty_internal_branch_block(
+      code + DIRTY_INTERNAL_BRANCH_BLOCK_OFFSET);
   external_branch_target_code_bytes =
     build_single_data_proc_block(code + EXTERNAL_BRANCH_TARGET_BLOCK_OFFSET,
                                  ADD_R3_R2_R1,
@@ -13693,6 +14158,8 @@ void _start(void)
   run_thumb_memory_load_case();
   run_thumb_memory_store_case();
   run_thumb_reg_shift_case();
+  run_thumb_alu_edge_case();
+  run_thumb_add_edge_case();
   run_thumb_block_store_case();
   run_thumb_block_load_case();
   run_thumb_block_push_case();
@@ -13863,6 +14330,7 @@ void _start(void)
   run_branch_native_target_case();
   run_branch_idle_loop_case();
   run_internal_branch_patch_case();
+  run_dirty_internal_branch_patch_case();
   run_external_branch_patch_case();
   run_repatch_branch_case();
   run_bl_boundary_case();
@@ -13995,6 +14463,10 @@ void _start(void)
   put_u32_dec(thumb_memory_store_code_bytes);
   put_raw(" thumb_reg_shift_code_bytes=");
   put_u32_dec(thumb_reg_shift_code_bytes);
+  put_raw(" thumb_alu_edge_code_bytes=");
+  put_u32_dec(thumb_alu_edge_code_bytes);
+  put_raw(" thumb_add_edge_code_bytes=");
+  put_u32_dec(thumb_add_edge_code_bytes);
   put_raw(" thumb_block_store_code_bytes=");
   put_u32_dec(thumb_block_store_code_bytes);
   put_raw(" thumb_block_load_code_bytes=");
@@ -14105,6 +14577,8 @@ void _start(void)
   put_u32_dec(branch_target_code_bytes);
   put_raw(" internal_branch_code_bytes=");
   put_u32_dec(internal_branch_code_bytes);
+  put_raw(" dirty_internal_branch_code_bytes=");
+  put_u32_dec(dirty_internal_branch_code_bytes);
   put_raw(" external_branch_code_bytes=");
   put_u32_dec(external_branch_code_bytes);
   put_raw(" external_branch_target_code_bytes=");
@@ -14401,6 +14875,8 @@ void _start(void)
   put_u32_hex((u32)g_branch_target_entry);
   put_raw(" internal_branch_entry=");
   put_u32_hex((u32)g_internal_branch_entry);
+  put_raw(" dirty_internal_branch_entry=");
+  put_u32_hex((u32)g_dirty_internal_branch_entry);
   put_raw(" external_branch_entry=");
   put_u32_hex((u32)g_external_branch_entry);
   put_raw(" external_branch_target_entry=");

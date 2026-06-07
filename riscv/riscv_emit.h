@@ -199,14 +199,16 @@ bool riscv_emit_native_arm_b_patchable(u8 **translation_ptr,
                                        u32 opcode,
                                        u32 pc,
                                        u32 cycles,
-                                       bool short_patch_site);
+                                       bool short_patch_site,
+                                       bool flush_before_patch_site);
 bool riscv_emit_native_arm_bl_patchable(u8 **translation_ptr,
                                         riscv_jit_block_meta *meta,
                                         u8 **branch_source,
                                         u32 opcode,
                                         u32 pc,
                                         u32 cycles,
-                                        bool short_patch_site);
+                                        bool short_patch_site,
+                                        bool flush_before_patch_site);
 bool riscv_emit_native_arm_bx(u8 **translation_ptr,
                               riscv_jit_block_meta *meta,
                               u32 opcode,
@@ -330,14 +332,16 @@ bool riscv_emit_native_thumb_conditional_branch(u8 **translation_ptr,
                                                 u32 cycles,
                                                 u32 known_flag_mask,
                                                 u32 known_flags,
-                                                bool short_patch_site);
+                                                bool short_patch_site,
+                                                bool flush_before_patch_site);
 bool riscv_emit_native_thumb_b_patchable(u8 **translation_ptr,
                                          riscv_jit_block_meta *meta,
                                          u8 **branch_source,
                                          u32 opcode,
                                          u32 pc,
                                          u32 cycles,
-                                         bool short_patch_site);
+                                         bool short_patch_site,
+                                         bool flush_before_patch_site);
 bool riscv_emit_native_thumb_bx(u8 **translation_ptr,
                                 riscv_jit_block_meta *meta,
                                 u32 opcode,
@@ -367,6 +371,7 @@ bool riscv_emit_native_thumb_blh(u8 **translation_ptr,
                                  u32 cycles);
 bool riscv_emit_cycle_update(u8 **translation_ptr,
                              riscv_jit_block_meta *meta,
+                             u32 pc,
                              u32 cycles);
 
 u32 execute_arm_translate(u32 cycles);
@@ -452,7 +457,7 @@ void riscv_thumb_const_update(u32 opcode,
     if (cycle_count != 0)                                                     \
     {                                                                         \
       if (riscv_emit_cycle_update(&translation_ptr, riscv_block_meta,         \
-                                  cycle_count))                               \
+                                  pc, cycle_count))                           \
       {                                                                       \
         cycle_count = 0;                                                      \
       }                                                                       \
@@ -835,7 +840,7 @@ void riscv_thumb_const_update(u32 opcode,
           &translation_ptr, riscv_block_meta,                                 \
           &block_exits[block_exit_position].branch_source,                   \
           riscv_arm_effective_opcode(), pc, cycle_count,                      \
-          riscv_short_patch))                                                 \
+          riscv_short_patch, true))                                           \
     {                                                                         \
       riscv_arm_const_mask = 0;                                               \
       riscv_arm_clear_known_flags();                                          \
@@ -861,7 +866,7 @@ void riscv_thumb_const_update(u32 opcode,
           &translation_ptr, riscv_block_meta,                                 \
           &block_exits[block_exit_position].branch_source,                   \
           riscv_arm_effective_opcode(), pc, cycle_count,                      \
-          riscv_short_patch))                                                 \
+          riscv_short_patch, true))                                           \
     {                                                                         \
       riscv_arm_const_mask = 0;                                               \
       riscv_arm_clear_known_flags();                                          \
@@ -1100,7 +1105,7 @@ void riscv_thumb_const_update(u32 opcode,
           &translation_ptr, riscv_block_meta,                                 \
           &block_exits[block_exit_position].branch_source,                   \
           opcode, pc, cycle_count, riscv_arm_known_flag_mask,                 \
-          riscv_arm_known_flags, riscv_short_patch))                          \
+          riscv_arm_known_flags, riscv_short_patch, true))                    \
     {                                                                         \
       block_exits[block_exit_position].branch_patch_short =                   \
         riscv_short_patch;                                                    \
@@ -1119,7 +1124,7 @@ void riscv_thumb_const_update(u32 opcode,
     if (riscv_emit_native_thumb_b_patchable(                                  \
           &translation_ptr, riscv_block_meta,                                 \
           &block_exits[block_exit_position].branch_source,                   \
-          opcode, pc, cycle_count, riscv_short_patch))                        \
+          opcode, pc, cycle_count, riscv_short_patch, true))                  \
     {                                                                         \
       block_exits[block_exit_position].branch_patch_short =                   \
         riscv_short_patch;                                                    \

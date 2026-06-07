@@ -32,21 +32,23 @@ function require_eq(field, expected, value) {
 }
 
 BEGIN {
-	track("thumb_simple_data_code_bytes", 240, "thumb_direct");
-	track("thumb_hi_cmp_code_bytes", 220, "thumb_direct");
+	track("thumb_simple_data_code_bytes", 292, "thumb_direct");
+	track("thumb_hi_cmp_code_bytes", 272, "thumb_direct");
 	track("thumb_hi_mov_pc_code_bytes", 128, "thumb_direct");
 	track("thumb_hi_add_pc_code_bytes", 140, "thumb_direct");
-	track("thumb_hi_add_mov_code_bytes", 160, "thumb_direct");
-	track("thumb_flag_alu_code_bytes", 212, "thumb_direct");
+	track("thumb_hi_add_mov_code_bytes", 212, "thumb_direct");
+	track("thumb_flag_alu_code_bytes", 264, "thumb_direct");
 	track("thumb_memory_load_code_bytes", 248, "thumb_direct");
 	track("thumb_memory_store_code_bytes", 300, "thumb_direct");
-	track("thumb_reg_shift_code_bytes", 812, "thumb_direct");
+	track("thumb_reg_shift_code_bytes", 884, "thumb_direct");
+	track("thumb_alu_edge_code_bytes", 568, "thumb_direct");
+	track("thumb_add_edge_code_bytes", 836, "thumb_direct");
 	track("thumb_block_store_code_bytes", 248, "thumb_direct");
 	track("thumb_block_load_code_bytes", 304, "thumb_direct");
 	track("thumb_block_push_code_bytes", 284, "thumb_direct");
 	track("thumb_block_pop_pc_code_bytes", 292, "thumb_direct");
-	track("thumb_branch_target_code_bytes", 156, "thumb_direct");
-	track("thumb_cond_branch_code_bytes", 144, "thumb_direct");
+	track("thumb_branch_target_code_bytes", 208, "thumb_direct");
+	track("thumb_cond_branch_code_bytes", 196, "thumb_direct");
 	track("thumb_b_code_bytes", 140, "thumb_direct");
 	track("thumb_bx_code_bytes", 152, "thumb_direct");
 	track("thumb_swi_code_bytes", 136, "thumb_direct");
@@ -92,6 +94,7 @@ BEGIN {
 	track("pc_write_add_code_bytes", 128, "arm_control_flow");
 	track("branch_code_bytes", 128, "arm_control_flow");
 	track("internal_branch_code_bytes", 196, "arm_control_flow");
+	track("dirty_internal_branch_code_bytes", 300, "arm_control_flow");
 	track("external_branch_code_bytes", 136, "arm_control_flow");
 	track("bl_code_bytes", 144, "arm_control_flow");
 	track("bx_code_bytes", 156, "arm_control_flow");
