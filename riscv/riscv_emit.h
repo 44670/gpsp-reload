@@ -382,6 +382,8 @@ void riscv_note_runtime_fallback(u32 kind, u32 pc, u32 thumb,
 void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
 void riscv_patch_unconditional_branch_short(u8 *source, const u8 *target);
 void riscv_patch_conditional_branch(u8 *source, const u8 *target);
+void riscv_emit_arm_conditional_block_close(u8 **translation_ptr,
+                                            u8 *branch_source);
 void riscv_arm_const_update_data_proc(u32 opcode, u32 pc, u32 condition,
                                       u32 *const_mask, u32 *const_values);
 bool riscv_arm_const_data_proc_test_flags(u32 opcode, u32 pc,
@@ -574,8 +576,8 @@ void riscv_thumb_const_update(u32 opcode,
           (condition) & 0x0f, &riscv_arm_condition_pass))                     \
     {                                                                         \
       if ((last_condition & 0x0f) != 0x0e)                                    \
-        generate_branch_patch_conditional(backpatch_address,                  \
-                                          translation_ptr);                   \
+        riscv_emit_arm_conditional_block_close(&translation_ptr,              \
+                                               backpatch_address);            \
       last_condition = 0x0e;                                                  \
       condition &= 0x0f;                                                      \
       if (!riscv_arm_condition_pass)                                          \

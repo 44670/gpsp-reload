@@ -318,10 +318,14 @@ void translate_icache_sync() {
   riscv_arm_condition_known_check()
 #define arm_backend_emit_instruction()                                        \
   (!riscv_arm_skip_instruction)
+#define arm_backend_close_conditional_block(dest, offset)                     \
+  riscv_emit_arm_conditional_block_close(&translation_ptr, (dest))
 #else
 #define arm_backend_condition_known_check()
 #define arm_backend_emit_instruction()                                        \
   1
+#define arm_backend_close_conditional_block(dest, offset)                     \
+  generate_branch_patch_conditional((dest), (offset))
 #endif
 
 #define translate_arm_instruction()                                           \
@@ -337,7 +341,7 @@ void translate_icache_sync() {
   {                                                                           \
     if((last_condition & 0x0F) != 0x0E)                                       \
     {                                                                         \
-      generate_branch_patch_conditional(backpatch_address, translation_ptr);  \
+      arm_backend_close_conditional_block(backpatch_address, translation_ptr); \
     }                                                                         \
                                                                               \
     last_condition = condition;                                               \
@@ -3561,7 +3565,7 @@ bool translate_block_arm(u32 pc, bool ram_region)
 
   /* This can happen if the last instruction is *not* inconditional */
   if ((last_condition & 0x0F) != 0x0E) {
-    generate_branch_patch_conditional(backpatch_address, translation_ptr);
+    arm_backend_close_conditional_block(backpatch_address, translation_ptr);
   }
 
   /* Unconditionally generate translation targets. In case we hit one or
