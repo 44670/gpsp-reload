@@ -6091,7 +6091,7 @@ bool riscv_emit_native_arm_load_pc_pool_const(u8 **translation_ptr_ref,
 
   if (value)
   {
-    riscv_emit_li(&ptr, riscv_reg_t2, value);
+    riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_t2, value);
     translation_ptr = ptr;
     riscv_emit_sw(riscv_reg_t2, riscv_reg_s0, rd * 4u);
     ptr = translation_ptr;
@@ -7761,7 +7761,7 @@ bool riscv_emit_native_thumb_load_pc_pool_const(u8 **translation_ptr_ref,
 
   if (value)
   {
-    riscv_emit_li(&ptr, riscv_reg_t2, value);
+    riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_t2, value);
     translation_ptr = ptr;
     riscv_emit_sw(riscv_reg_t2, riscv_reg_s0, rd * 4u);
     ptr = translation_ptr;
