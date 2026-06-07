@@ -291,6 +291,15 @@ bool riscv_emit_native_thumb_alu_dead_flags(u8 **translation_ptr,
                                             riscv_jit_block_meta *meta,
                                             u32 opcode,
                                             u32 flag_status);
+bool riscv_emit_native_thumb_alu_dead_flags_known(
+  u8 **translation_ptr,
+  riscv_jit_block_meta *meta,
+  u32 opcode,
+  u32 flag_status,
+  u32 const_mask,
+  const u32 *const_values,
+  u32 known_flag_mask,
+  u32 known_flags);
 bool riscv_emit_native_thumb_hi_cmp(u8 **translation_ptr,
                                     riscv_jit_block_meta *meta,
                                     u32 opcode,
@@ -319,6 +328,8 @@ bool riscv_emit_native_thumb_conditional_branch(u8 **translation_ptr,
                                                 u32 opcode,
                                                 u32 pc,
                                                 u32 cycles,
+                                                u32 known_flag_mask,
+                                                u32 known_flags,
                                                 bool short_patch_site);
 bool riscv_emit_native_thumb_b_patchable(u8 **translation_ptr,
                                          riscv_jit_block_meta *meta,
@@ -393,6 +404,15 @@ void riscv_arm_const_update_block_memory(u32 opcode, u32 *const_mask);
 void riscv_arm_const_update_multiply(u32 opcode, u32 *const_mask);
 void riscv_arm_const_update_multiply_long(u32 opcode, u32 *const_mask);
 void riscv_arm_const_update_psr(u32 opcode, u32 *const_mask);
+void riscv_thumb_const_update(u32 opcode,
+                              u32 pc,
+                              u32 flag_status,
+                              bool ram_region,
+                              const u8 *pc_address_block,
+                              u32 *const_mask,
+                              u32 *const_values,
+                              u32 *known_flag_mask,
+                              u32 *known_flags);
 
 #define generate_block_extra_vars()                                           \
   riscv_jit_block_meta *riscv_block_meta = NULL;                             \
@@ -495,6 +515,13 @@ void riscv_arm_const_update_psr(u32 opcode, u32 *const_mask);
     riscv_mark_block_unsupported(riscv_block_meta);                           \
     cycle_count = 0;                                                          \
   } while (0)
+
+#define thumb_backend_post_instruction()                                      \
+  riscv_thumb_const_update(opcode, pc, flag_status, ram_region,              \
+                           pc_address_block, &riscv_arm_const_mask,          \
+                           riscv_arm_const_values,                           \
+                           &riscv_arm_known_flag_mask,                       \
+                           &riscv_arm_known_flags)
 
 #define arm_conditional_block_header()                                        \
   do                                                                          \
@@ -960,8 +987,10 @@ void riscv_arm_const_update_psr(u32 opcode, u32 *const_mask);
 #define thumb_data_proc(...)                                                  \
   do                                                                          \
   {                                                                           \
-    if (!riscv_emit_native_thumb_alu_dead_flags(                              \
-          &translation_ptr, riscv_block_meta, opcode, flag_status))           \
+    if (!riscv_emit_native_thumb_alu_dead_flags_known(                        \
+          &translation_ptr, riscv_block_meta, opcode, flag_status,            \
+          riscv_arm_const_mask, riscv_arm_const_values,                       \
+          riscv_arm_known_flag_mask, riscv_arm_known_flags))                  \
     {                                                                         \
       riscv_emit_thumb_instruction(false);                                    \
     }                                                                         \
@@ -970,8 +999,10 @@ void riscv_arm_const_update_psr(u32 opcode, u32 *const_mask);
 #define thumb_data_proc_test(...)                                             \
   do                                                                          \
   {                                                                           \
-    if (!riscv_emit_native_thumb_alu_dead_flags(                              \
-          &translation_ptr, riscv_block_meta, opcode, flag_status))           \
+    if (!riscv_emit_native_thumb_alu_dead_flags_known(                        \
+          &translation_ptr, riscv_block_meta, opcode, flag_status,            \
+          riscv_arm_const_mask, riscv_arm_const_values,                       \
+          riscv_arm_known_flag_mask, riscv_arm_known_flags))                  \
     {                                                                         \
       riscv_emit_thumb_instruction(false);                                    \
     }                                                                         \
@@ -980,8 +1011,10 @@ void riscv_arm_const_update_psr(u32 opcode, u32 *const_mask);
 #define thumb_data_proc_unary(...)                                            \
   do                                                                          \
   {                                                                           \
-    if (!riscv_emit_native_thumb_alu_dead_flags(                              \
-          &translation_ptr, riscv_block_meta, opcode, flag_status))           \
+    if (!riscv_emit_native_thumb_alu_dead_flags_known(                        \
+          &translation_ptr, riscv_block_meta, opcode, flag_status,            \
+          riscv_arm_const_mask, riscv_arm_const_values,                       \
+          riscv_arm_known_flag_mask, riscv_arm_known_flags))                  \
     {                                                                         \
       riscv_emit_thumb_instruction(false);                                    \
     }                                                                         \
@@ -1064,7 +1097,8 @@ void riscv_arm_const_update_psr(u32 opcode, u32 *const_mask);
     if (riscv_emit_native_thumb_conditional_branch(                           \
           &translation_ptr, riscv_block_meta,                                 \
           &block_exits[block_exit_position].branch_source,                   \
-          opcode, pc, cycle_count, riscv_short_patch))                        \
+          opcode, pc, cycle_count, riscv_arm_known_flag_mask,                 \
+          riscv_arm_known_flags, riscv_short_patch))                          \
     {                                                                         \
       block_exits[block_exit_position].branch_patch_short =                   \
         riscv_short_patch;                                                    \

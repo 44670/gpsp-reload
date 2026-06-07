@@ -2879,7 +2879,7 @@ static u32 build_thumb_cond_branch_block(u8 *code, u8 *target_entry)
 
   if (!riscv_emit_native_thumb_conditional_branch(
         &translation_ptr, meta, &branch_source, THUMB_COND_BRANCH_BEQ,
-        THUMB_COND_BRANCH_START_PC, THUMB_COND_BRANCH_CYCLES, true))
+        THUMB_COND_BRANCH_START_PC, THUMB_COND_BRANCH_CYCLES, 0, 0, true))
   {
     put_raw("result=FAIL command=runtime "
             "reason=thumb_cond_branch_emit_rejected\n");

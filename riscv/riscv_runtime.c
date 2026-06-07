@@ -1319,6 +1319,626 @@ void riscv_arm_const_update_psr(u32 opcode, u32 *const_mask)
     riscv_arm_const_clear_reg(const_mask, (opcode >> 12) & 0xfu);
 }
 
+static bool riscv_thumb_const_arm_opcode(u32 opcode,
+                                         u32 *arm_opcode_out,
+                                         bool *test_op_out)
+{
+  u32 hi = opcode >> 8;
+  u32 alu_op = (opcode >> 6) & 3u;
+  u32 rd = opcode & 7u;
+  u32 rs = (opcode >> 3) & 7u;
+  u32 rn = (opcode >> 6) & 7u;
+  u32 imm = opcode & 0xffu;
+  u32 arm_op = 0;
+  u32 arm_rn = 0;
+  u32 arm_rd = rd;
+  u32 arm_operand2 = 0;
+  bool immediate = false;
+  bool test_op = false;
+
+  if (hi >= 0x18u && hi <= 0x1fu)
+  {
+    arm_op = (hi & 0x02u) ? 0x2u : 0x4u;
+    arm_rn = rs;
+    if (hi & 0x04u)
+    {
+      immediate = true;
+      arm_operand2 = rn;
+    }
+    else
+    {
+      arm_operand2 = rn;
+    }
+  }
+  else if (hi >= 0x20u && hi <= 0x27u)
+  {
+    arm_op = 0xdu;
+    arm_rd = hi & 7u;
+    immediate = true;
+    arm_operand2 = imm;
+  }
+  else if (hi >= 0x28u && hi <= 0x2fu)
+  {
+    arm_op = 0xau;
+    arm_rn = hi & 7u;
+    immediate = true;
+    arm_operand2 = imm;
+    test_op = true;
+  }
+  else if (hi >= 0x30u && hi <= 0x3fu)
+  {
+    arm_op = (hi & 0x08u) ? 0x2u : 0x4u;
+    arm_rn = hi & 7u;
+    arm_rd = arm_rn;
+    immediate = true;
+    arm_operand2 = imm;
+  }
+  else if (hi == 0x40u)
+  {
+    if (alu_op > 1u)
+      return false;
+    arm_op = alu_op;
+    arm_rn = rd;
+    arm_operand2 = rs;
+  }
+  else if (hi == 0x41u)
+  {
+    if (alu_op != 1u && alu_op != 2u)
+      return false;
+    arm_op = alu_op == 1u ? 0x5u : 0x6u;
+    arm_rn = rd;
+    arm_operand2 = rs;
+  }
+  else if (hi == 0x42u)
+  {
+    switch (alu_op)
+    {
+      case 0:
+        arm_op = 0x8u;
+        arm_rn = rd;
+        arm_operand2 = rs;
+        test_op = true;
+        break;
+      case 1:
+        arm_op = 0x3u;
+        arm_rn = rs;
+        arm_rd = rd;
+        immediate = true;
+        arm_operand2 = 0;
+        break;
+      case 2:
+        arm_op = 0xau;
+        arm_rn = rd;
+        arm_operand2 = rs;
+        test_op = true;
+        break;
+      default:
+        arm_op = 0xbu;
+        arm_rn = rd;
+        arm_operand2 = rs;
+        test_op = true;
+        break;
+    }
+  }
+  else if (hi == 0x43u)
+  {
+    switch (alu_op)
+    {
+      case 0:
+        arm_op = 0xcu;
+        arm_rn = rd;
+        arm_operand2 = rs;
+        break;
+      case 2:
+        arm_op = 0xeu;
+        arm_rn = rd;
+        arm_operand2 = rs;
+        break;
+      case 3:
+        arm_op = 0xfu;
+        arm_operand2 = rs;
+        break;
+      default:
+        return false;
+    }
+  }
+  else
+  {
+    return false;
+  }
+
+  if (arm_opcode_out)
+  {
+    *arm_opcode_out = (0xeu << 28) | (immediate ? (1u << 25) : 0u) |
+      (arm_op << 21) | (1u << 20) | (arm_rn << 16) |
+      (arm_rd << 12) | arm_operand2;
+  }
+  if (test_op_out)
+    *test_op_out = test_op;
+  return true;
+}
+
+static void riscv_thumb_const_set_flags(u32 flag_status,
+                                        u32 computed_mask,
+                                        u32 computed_flags,
+                                        u32 *known_flag_mask,
+                                        u32 *known_flags)
+{
+  u32 live_mask = flag_status & 0x0fu;
+
+  if (!live_mask)
+    return;
+
+  computed_mask &= live_mask;
+  computed_flags &= computed_mask;
+  *known_flag_mask = computed_mask;
+  *known_flags = computed_flags;
+}
+
+static void riscv_thumb_const_clear_live_flags(u32 flag_status,
+                                               u32 *known_flag_mask,
+                                               u32 *known_flags)
+{
+  if (flag_status & 0x0fu)
+  {
+    *known_flag_mask = 0;
+    *known_flags = 0;
+  }
+}
+
+static void riscv_thumb_const_update_data_proc(u32 opcode,
+                                               u32 pc,
+                                               u32 flag_status,
+                                               u32 *const_mask,
+                                               u32 *const_values,
+                                               u32 *known_flag_mask,
+                                               u32 *known_flags)
+{
+  u32 arm_opcode;
+  bool test_op;
+
+  if (!riscv_thumb_const_arm_opcode(opcode, &arm_opcode, &test_op))
+    return;
+
+  if (flag_status & 0x0fu)
+  {
+    u32 flag_mask = 0;
+    u32 flags = 0;
+    bool known = test_op ?
+      riscv_arm_const_data_proc_test_flags(
+        arm_opcode, pc, *const_mask, const_values, &flag_mask, &flags) :
+      riscv_arm_const_data_proc_flags(
+        arm_opcode, pc, *const_mask, const_values, *known_flag_mask,
+        *known_flags, &flag_mask, &flags);
+
+    if (known)
+      riscv_thumb_const_set_flags(flag_status, flag_mask, flags,
+                                  known_flag_mask, known_flags);
+    else
+      riscv_thumb_const_clear_live_flags(flag_status, known_flag_mask,
+                                         known_flags);
+  }
+
+  if (!test_op)
+    riscv_arm_const_update_data_proc(arm_opcode, pc, 0x0eu, const_mask,
+                                     const_values);
+}
+
+static bool riscv_thumb_const_reg_value(u32 reg,
+                                        u32 pc_value,
+                                        u32 const_mask,
+                                        const u32 *const_values,
+                                        u32 *value_out)
+{
+  if (reg == REG_PC)
+  {
+    *value_out = pc_value;
+    return true;
+  }
+
+  if (reg < 16u && (const_mask & (1u << reg)))
+  {
+    *value_out = const_values[reg];
+    return true;
+  }
+
+  return false;
+}
+
+static u32 riscv_const_read_u32_le(const u8 *base, u32 offset)
+{
+  return ((u32)base[offset]) |
+         ((u32)base[offset + 1u] << 8) |
+         ((u32)base[offset + 2u] << 16) |
+         ((u32)base[offset + 3u] << 24);
+}
+
+static bool riscv_thumb_const_shift(u32 opcode,
+                                    u32 pc,
+                                    u32 flag_status,
+                                    u32 *const_mask,
+                                    u32 *const_values,
+                                    u32 *known_flag_mask,
+                                    u32 *known_flags)
+{
+  u32 hi = opcode >> 8;
+  u32 alu_op = (opcode >> 6) & 3u;
+  u32 rd = opcode & 7u;
+  u32 rs = (opcode >> 3) & 7u;
+  u32 shift_type;
+  u32 shift = 0;
+  u32 value = 0;
+  u32 result = 0;
+  u32 carry_known = 0;
+  u32 carry = 0;
+  bool result_known = false;
+
+  if (hi <= 0x17u)
+  {
+    shift_type = hi >> 3;
+    shift = (opcode >> 6) & 0x1fu;
+    if (riscv_thumb_const_reg_value(rs, pc + 4u, *const_mask, const_values,
+                                    &value))
+    {
+      result_known = riscv_arm_const_imm_shift_with_carry(
+        value, shift_type, shift, *known_flag_mask, *known_flags,
+        &result, &carry_known, &carry);
+    }
+  }
+  else if ((hi == 0x40u && alu_op >= 2u) ||
+           (hi == 0x41u && (alu_op == 0u || alu_op == 3u)))
+  {
+    u32 shift_value = 0;
+
+    if (hi == 0x40u)
+      shift_type = alu_op == 2u ? 0u : 1u;
+    else
+      shift_type = alu_op == 0u ? 2u : 3u;
+
+    if (riscv_thumb_const_reg_value(rd, pc + 4u, *const_mask, const_values,
+                                    &value) &&
+        riscv_thumb_const_reg_value(rs, pc + 4u, *const_mask, const_values,
+                                    &shift_value))
+    {
+      result_known = riscv_arm_const_reg_shift_with_carry(
+        value, shift_type, shift_value, *known_flag_mask, *known_flags,
+        &result, &carry_known, &carry);
+    }
+  }
+  else
+  {
+    return false;
+  }
+
+  if (result_known)
+    riscv_arm_const_set_reg(const_mask, const_values, rd, result);
+  else
+    riscv_arm_const_clear_reg(const_mask, rd);
+
+  if (flag_status & 0x0fu)
+  {
+    u32 flag_mask = 0;
+    u32 flags = 0;
+
+    if (result_known)
+    {
+      flag_mask = flag_status & 0x0cu;
+      flags = riscv_arm_const_nzcv(result, false, false) & flag_mask;
+      if (carry_known && (flag_status & 0x02u))
+      {
+        flag_mask |= 0x02u;
+        if (carry)
+          flags |= 0x02u;
+      }
+    }
+    riscv_thumb_const_set_flags(flag_status, flag_mask, flags,
+                                known_flag_mask, known_flags);
+  }
+  return true;
+}
+
+static bool riscv_thumb_const_mul(u32 opcode,
+                                  u32 flag_status,
+                                  u32 *const_mask,
+                                  u32 *const_values,
+                                  u32 *known_flag_mask,
+                                  u32 *known_flags)
+{
+  u32 hi = opcode >> 8;
+  u32 alu_op = (opcode >> 6) & 3u;
+  u32 rd = opcode & 7u;
+  u32 rs = (opcode >> 3) & 7u;
+  u32 lhs = 0;
+  u32 rhs = 0;
+  u32 result = 0;
+  bool known;
+
+  if (hi != 0x43u || alu_op != 1u)
+    return false;
+
+  known = riscv_thumb_const_reg_value(rd, 0, *const_mask, const_values,
+                                      &lhs) &&
+          riscv_thumb_const_reg_value(rs, 0, *const_mask, const_values,
+                                      &rhs);
+  if (known)
+  {
+    result = lhs * rhs;
+    riscv_arm_const_set_reg(const_mask, const_values, rd, result);
+  }
+  else
+  {
+    riscv_arm_const_clear_reg(const_mask, rd);
+  }
+
+  if (flag_status & 0x0fu)
+  {
+    u32 flag_mask = known ? (flag_status & 0x0cu) : 0;
+    u32 flags = known ? (riscv_arm_const_nzcv(result, false, false) &
+                         flag_mask) : 0;
+
+    riscv_thumb_const_set_flags(flag_status, flag_mask, flags,
+                                known_flag_mask, known_flags);
+  }
+  return true;
+}
+
+static void riscv_thumb_const_update_hi(u32 opcode,
+                                        u32 pc,
+                                        u32 flag_status,
+                                        u32 *const_mask,
+                                        u32 *const_values,
+                                        u32 *known_flag_mask,
+                                        u32 *known_flags)
+{
+  u32 hi = opcode >> 8;
+  u32 rs = (opcode >> 3) & 0x0fu;
+  u32 rd = ((opcode >> 4) & 0x08u) | (opcode & 0x07u);
+  u32 lhs = 0;
+  u32 rhs = 0;
+
+  if (hi == 0x44u)
+  {
+    if (rd == REG_PC)
+    {
+      *const_mask = 0;
+      riscv_thumb_const_clear_live_flags(0x0fu, known_flag_mask, known_flags);
+    }
+    else if (riscv_thumb_const_reg_value(rd, pc + 4u, *const_mask,
+                                         const_values, &lhs) &&
+             riscv_thumb_const_reg_value(rs, pc + 4u, *const_mask,
+                                         const_values, &rhs))
+    {
+      riscv_arm_const_set_reg(const_mask, const_values, rd, lhs + rhs);
+    }
+    else
+    {
+      riscv_arm_const_clear_reg(const_mask, rd);
+    }
+  }
+  else if (hi == 0x45u)
+  {
+    if (flag_status & 0x0fu)
+    {
+      if (riscv_thumb_const_reg_value(rd, pc + 4u, *const_mask,
+                                      const_values, &lhs) &&
+          riscv_thumb_const_reg_value(rs, pc + 4u, *const_mask,
+                                      const_values, &rhs))
+      {
+        u32 result = lhs - rhs;
+        u32 flags = riscv_arm_const_nzcv(
+          result, lhs >= rhs,
+          (((lhs ^ rhs) & (lhs ^ result)) >> 31) != 0);
+        riscv_thumb_const_set_flags(flag_status, 0x0fu, flags,
+                                    known_flag_mask, known_flags);
+      }
+      else
+      {
+        riscv_thumb_const_clear_live_flags(flag_status, known_flag_mask,
+                                           known_flags);
+      }
+    }
+  }
+  else if (hi == 0x46u)
+  {
+    if (rd == REG_PC)
+    {
+      *const_mask = 0;
+      riscv_thumb_const_clear_live_flags(0x0fu, known_flag_mask, known_flags);
+    }
+    else if (riscv_thumb_const_reg_value(rs, pc + 4u, *const_mask,
+                                         const_values, &rhs))
+    {
+      riscv_arm_const_set_reg(const_mask, const_values, rd, rhs);
+    }
+    else
+    {
+      riscv_arm_const_clear_reg(const_mask, rd);
+    }
+  }
+}
+
+void riscv_thumb_const_update(u32 opcode,
+                              u32 pc,
+                              u32 flag_status,
+                              bool ram_region,
+                              const u8 *pc_address_block,
+                              u32 *const_mask,
+                              u32 *const_values,
+                              u32 *known_flag_mask,
+                              u32 *known_flags)
+{
+  u32 hi = opcode >> 8;
+  u32 rd = opcode & 7u;
+  u32 imm = opcode & 0xffu;
+
+  if (!const_mask || !const_values || !known_flag_mask || !known_flags)
+    return;
+
+  if (riscv_thumb_const_shift(opcode, pc, flag_status, const_mask,
+                              const_values, known_flag_mask, known_flags))
+  {
+    return;
+  }
+
+  if (riscv_thumb_const_mul(opcode, flag_status, const_mask, const_values,
+                            known_flag_mask, known_flags))
+  {
+    return;
+  }
+
+  if (riscv_thumb_const_arm_opcode(opcode, NULL, NULL))
+  {
+    riscv_thumb_const_update_data_proc(opcode, pc, flag_status, const_mask,
+                                       const_values, known_flag_mask,
+                                       known_flags);
+    return;
+  }
+
+  if (hi >= 0x44u && hi <= 0x46u)
+  {
+    riscv_thumb_const_update_hi(opcode, pc, flag_status, const_mask,
+                                const_values, known_flag_mask, known_flags);
+    return;
+  }
+
+  if (hi == 0x47u)
+  {
+    *const_mask = 0;
+    *known_flag_mask = 0;
+    *known_flags = 0;
+    return;
+  }
+
+  if (hi >= 0x48u && hi <= 0x4fu)
+  {
+    u32 aoff = (pc & ~2u) + (imm * 4u) + 4u;
+    rd = hi & 7u;
+    if (!ram_region && pc_address_block &&
+        (((aoff + 4u) >> 15) == (pc >> 15)))
+    {
+      riscv_arm_const_set_reg(const_mask, const_values, rd,
+                              riscv_const_read_u32_le(
+                                pc_address_block, aoff & 0x7fffu));
+    }
+    else
+    {
+      riscv_arm_const_clear_reg(const_mask, rd);
+    }
+    return;
+  }
+
+  if (hi >= 0x50u && hi <= 0x9fu)
+  {
+    bool load = false;
+
+    if (hi < 0x60u)
+      load = ((opcode >> 11) & 1u) != 0;
+    else if (hi < 0x90u)
+      load = (hi & 0x08u) != 0;
+    else
+      load = hi >= 0x98u;
+
+    if (load)
+      riscv_arm_const_clear_reg(const_mask, rd);
+    return;
+  }
+
+  if (hi >= 0xa0u && hi <= 0xafu)
+  {
+    rd = hi & 7u;
+    if (hi < 0xa8u)
+    {
+      riscv_arm_const_set_reg(const_mask, const_values, rd,
+                              (pc & ~2u) + 4u + (imm * 4u));
+    }
+    else if (*const_mask & (1u << REG_SP))
+    {
+      riscv_arm_const_set_reg(const_mask, const_values, rd,
+                              const_values[REG_SP] + (imm * 4u));
+    }
+    else
+    {
+      riscv_arm_const_clear_reg(const_mask, rd);
+    }
+    return;
+  }
+
+  if (hi >= 0xb0u && hi <= 0xb3u)
+  {
+    u32 offset = (opcode & 0x7fu) * 4u;
+
+    if (*const_mask & (1u << REG_SP))
+    {
+      if (opcode & 0x80u)
+        const_values[REG_SP] -= offset;
+      else
+        const_values[REG_SP] += offset;
+    }
+    else
+    {
+      riscv_arm_const_clear_reg(const_mask, REG_SP);
+    }
+    return;
+  }
+
+  if (hi == 0xb4u || hi == 0xb5u)
+  {
+    riscv_arm_const_clear_reg(const_mask, REG_SP);
+    return;
+  }
+
+  if (hi == 0xbcu || hi == 0xbdu)
+  {
+    *const_mask &= ~(opcode & 0xffu);
+    riscv_arm_const_clear_reg(const_mask, REG_SP);
+    if (hi == 0xbdu)
+    {
+      *const_mask = 0;
+      *known_flag_mask = 0;
+      *known_flags = 0;
+    }
+    return;
+  }
+
+  if (hi >= 0xc0u && hi <= 0xcfu)
+  {
+    u32 base = hi & 7u;
+
+    if (hi >= 0xc8u)
+      *const_mask &= ~(opcode & 0xffu);
+    riscv_arm_const_clear_reg(const_mask, base);
+    return;
+  }
+
+  if (hi >= 0xd0u && hi <= 0xddu)
+  {
+    bool passed = false;
+
+    if (riscv_arm_const_condition_passed(*known_flag_mask, *known_flags,
+                                         hi & 0x0fu, &passed) &&
+        !passed)
+    {
+      return;
+    }
+
+    *const_mask = 0;
+    *known_flag_mask = 0;
+    *known_flags = 0;
+    return;
+  }
+
+  if (hi >= 0xdeu)
+  {
+    *const_mask = 0;
+    *known_flag_mask = 0;
+    *known_flags = 0;
+    return;
+  }
+
+  riscv_thumb_const_clear_live_flags(flag_status, known_flag_mask,
+                                     known_flags);
+}
+
 static void riscv_emit_arm_memory_imm_offset(u8 **ptr_ref,
                                              riscv_reg_number rd,
                                              riscv_reg_number rs,
@@ -7468,7 +8088,11 @@ static bool riscv_emit_native_thumb_alu_flags(u8 **translation_ptr_ref,
                                               riscv_jit_block_meta *meta,
                                               u32 opcode,
                                               u32 flag_status,
-                                              bool clobber_dead_arithmetic_flags)
+                                              bool clobber_dead_arithmetic_flags,
+                                              u32 const_mask,
+                                              const u32 *const_values,
+                                              u32 known_flag_mask,
+                                              u32 known_flags)
 {
   u32 hi = opcode >> 8;
   u32 alu_op = (opcode >> 6) & 3u;
@@ -7483,6 +8107,9 @@ static bool riscv_emit_native_thumb_alu_flags(u8 **translation_ptr_ref,
   bool immediate = false;
   bool test_op = false;
   u32 arm_opcode;
+  u32 generated_flag_mask = 0;
+  u32 generated_flags = 0;
+  bool generated_flags_known = false;
 
   if (hi == 0x43u && alu_op == 1u)
   {
@@ -7623,12 +8250,36 @@ static bool riscv_emit_native_thumb_alu_flags(u8 **translation_ptr_ref,
                (arm_op << 21) | (1u << 20) | (arm_rn << 16) |
                (arm_rd << 12) | arm_operand2;
 
+  if (const_values && (flag_status & 0x0fu))
+  {
+    generated_flags_known = test_op ?
+      riscv_arm_const_data_proc_test_flags(
+        arm_opcode, 0, const_mask, const_values, &generated_flag_mask,
+        &generated_flags) :
+      riscv_arm_const_data_proc_flags(
+        arm_opcode, 0, const_mask, const_values, known_flag_mask,
+        known_flags, &generated_flag_mask, &generated_flags);
+    if (generated_flags_known)
+    {
+      generated_flag_mask &= flag_status & 0x0fu;
+      generated_flags &= generated_flag_mask;
+      generated_flags_known = generated_flag_mask != 0;
+    }
+  }
+
   if (test_op)
   {
     if (clobber_dead_arithmetic_flags)
+    {
+      if (generated_flags_known)
+        return riscv_emit_native_arm_data_proc_test_with_pc_ex_dead_flags_known(
+          translation_ptr_ref, meta, arm_opcode, 0, 0, flag_status, false,
+          NULL, generated_flag_mask, generated_flags);
+
       return riscv_emit_native_arm_data_proc_test_with_pc_ex_dead_flags(
         translation_ptr_ref, meta, arm_opcode, 0, 0, flag_status, false,
         NULL);
+    }
 
     return riscv_emit_native_arm_data_proc_test_with_pc_ex(
       translation_ptr_ref, meta, arm_opcode, 0, 0, flag_status, false,
@@ -7636,8 +8287,15 @@ static bool riscv_emit_native_thumb_alu_flags(u8 **translation_ptr_ref,
   }
 
   if (clobber_dead_arithmetic_flags)
+  {
+    if (generated_flags_known)
+      return riscv_emit_native_arm_data_proc_with_pc_ex_dead_flags_known(
+        translation_ptr_ref, meta, arm_opcode, 0, 0, flag_status, false,
+        NULL, generated_flag_mask, generated_flags);
+
     return riscv_emit_native_arm_data_proc_with_pc_ex_dead_flags(
       translation_ptr_ref, meta, arm_opcode, 0, 0, flag_status, false, NULL);
+  }
 
   return riscv_emit_native_arm_data_proc_with_pc_ex(
     translation_ptr_ref, meta, arm_opcode, 0, 0, flag_status, false, NULL);
@@ -7765,7 +8423,11 @@ static bool riscv_emit_native_thumb_alu2(u8 **translation_ptr_ref,
                                          riscv_jit_block_meta *meta,
                                          u32 opcode,
                                          u32 flag_status,
-                                         bool clobber_dead_arithmetic_flags)
+                                         bool clobber_dead_arithmetic_flags,
+                                         u32 const_mask,
+                                         const u32 *const_values,
+                                         u32 known_flag_mask,
+                                         u32 known_flags)
 {
   u32 hi = opcode >> 8;
   u32 alu_op = (opcode >> 6) & 3u;
@@ -7789,7 +8451,9 @@ static bool riscv_emit_native_thumb_alu2(u8 **translation_ptr_ref,
   if (need_flags)
     return riscv_emit_native_thumb_alu_flags(translation_ptr_ref, meta,
                                             opcode, flag_status,
-                                            clobber_dead_arithmetic_flags);
+                                            clobber_dead_arithmetic_flags,
+                                            const_mask, const_values,
+                                            known_flag_mask, known_flags);
 
   if ((hi >= 0x28u && hi <= 0x2fu) ||
       (hi == 0x42u && alu_op != 1u))
@@ -7919,7 +8583,7 @@ bool riscv_emit_native_thumb_alu(u8 **translation_ptr_ref,
                                  u32 flag_status)
 {
   return riscv_emit_native_thumb_alu2(translation_ptr_ref, meta, opcode,
-                                     flag_status, false);
+                                     flag_status, false, 0, NULL, 0, 0);
 }
 
 bool riscv_emit_native_thumb_alu_dead_flags(u8 **translation_ptr_ref,
@@ -7928,7 +8592,22 @@ bool riscv_emit_native_thumb_alu_dead_flags(u8 **translation_ptr_ref,
                                             u32 flag_status)
 {
   return riscv_emit_native_thumb_alu2(translation_ptr_ref, meta, opcode,
-                                     flag_status, true);
+                                     flag_status, true, 0, NULL, 0, 0);
+}
+
+bool riscv_emit_native_thumb_alu_dead_flags_known(
+  u8 **translation_ptr_ref,
+  riscv_jit_block_meta *meta,
+  u32 opcode,
+  u32 flag_status,
+  u32 const_mask,
+  const u32 *const_values,
+  u32 known_flag_mask,
+  u32 known_flags)
+{
+  return riscv_emit_native_thumb_alu2(
+    translation_ptr_ref, meta, opcode, flag_status, true, const_mask,
+    const_values, known_flag_mask, known_flags);
 }
 
 static bool riscv_emit_native_thumb_simple_data(u8 **translation_ptr_ref,
@@ -8546,12 +9225,15 @@ bool riscv_emit_native_thumb_conditional_branch(u8 **translation_ptr_ref,
                                                 u32 opcode,
                                                 u32 pc,
                                                 u32 cycles,
+                                                u32 known_flag_mask,
+                                                u32 known_flags,
                                                 bool short_patch_site)
 {
   u32 hi = opcode >> 8;
   u32 condition = hi & 0x0fu;
   u8 *ptr = *translation_ptr_ref;
   u8 *branch_skip;
+  bool condition_passed = false;
 
   (void)pc;
 
@@ -8565,6 +9247,29 @@ bool riscv_emit_native_thumb_conditional_branch(u8 **translation_ptr_ref,
     return false;
 
   riscv_emit_adjust_cycles(&ptr, cycles);
+
+  if (riscv_arm_const_condition_passed(known_flag_mask, known_flags,
+                                       condition, &condition_passed))
+  {
+    if (condition_passed)
+    {
+      if (branch_source)
+        *branch_source = short_patch_site ?
+          riscv_emit_unconditional_branch_patch_site_short(&ptr) :
+          riscv_emit_unconditional_branch_patch_site(&ptr);
+      else
+      {
+        if (short_patch_site)
+          riscv_emit_unconditional_branch_patch_site_short(&ptr);
+        else
+          riscv_emit_unconditional_branch_patch_site(&ptr);
+      }
+    }
+
+    *translation_ptr_ref = ptr;
+    riscv_native_branch_insns++;
+    return true;
+  }
 
   if (!riscv_emit_arm_condition_branch(&ptr, condition ^ 1u, 0,
                                        &branch_skip))

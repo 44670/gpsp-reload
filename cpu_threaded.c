@@ -2027,6 +2027,11 @@ void translate_icache_sync() {
 
 #endif
 
+#ifndef thumb_backend_post_instruction
+#define thumb_backend_post_instruction()                                      \
+
+#endif
+
 #define translate_thumb_instruction()                                         \
   flag_status = block_data[block_data_position].flag_data;                    \
   check_pc_region(pc);                                                        \
@@ -2625,6 +2630,7 @@ void translate_icache_sync() {
     }                                                                         \
   }                                                                           \
                                                                               \
+  thumb_backend_post_instruction();                                           \
   pc += 2                                                                     \
 
 #define thumb_flag_modifies_all()                                             \
@@ -3782,6 +3788,10 @@ bool translate_block_thumb(u32 pc, bool ram_region)
     if (pc != block_end_pc &&
         block_data[block_data_position].update_cycles)
     {
+#if defined(RISCV_ARCH)
+      riscv_arm_const_mask = 0;
+      riscv_arm_clear_known_flags();
+#endif
       generate_cycle_update();
     }
   }
