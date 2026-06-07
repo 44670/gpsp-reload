@@ -86,7 +86,7 @@ BEGIN {
 	track("reg_shift_flag_ror0_code_bytes", 244, "arm_flags_shift");
 	track("reg_shift_test_code_bytes", 248, "arm_flags_shift");
 	track("pc_source_code_bytes", 460, "arm_control_flow");
-	track("conditional_code_bytes", 2216, "arm_control_flow");
+	track("conditional_code_bytes", 2272, "arm_control_flow");
 	track("pc_write_mov_code_bytes", 124, "arm_control_flow");
 	track("pc_write_movs_code_bytes", 176, "arm_control_flow");
 	track("pc_write_add_code_bytes", 128, "arm_control_flow");

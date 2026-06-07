@@ -279,6 +279,8 @@ static u32 riscv_mapped_dirty_mask;
 static u32 riscv_mapped_valid_mask;
 static u32 riscv_terminal_helper_size;
 static bool riscv_arm_conditional_block_active;
+static u32 riscv_arm_conditional_entry_dirty_mask;
+static u32 riscv_arm_conditional_entry_valid_mask;
 
 #define RISCV_MAPPED_REG_COUNT 16u
 #define RISCV_MAPPED_CPSR_SLOT 15u
@@ -548,8 +550,7 @@ static void riscv_emit_arm_reg_load(u8 **ptr, riscv_reg_number rd,
   u32 mapped_mask;
   u8 *translation_ptr = *ptr;
 
-  if (!riscv_arm_conditional_block_active &&
-      riscv_arm_reg_mapped(reg_index, &mapped_reg, &mapped_mask))
+  if (riscv_arm_reg_mapped(reg_index, &mapped_reg, &mapped_mask))
   {
     if (!(riscv_mapped_valid_mask & mapped_mask))
     {
@@ -580,16 +581,6 @@ static void riscv_emit_arm_reg_store(u8 **ptr, u32 reg_index,
     riscv_emit_mapped_regs_flush_dirty(ptr);
     translation_ptr = *ptr;
     riscv_emit_sw(rs, riscv_reg_s0, reg_index * 4u);
-    *ptr = translation_ptr;
-    return;
-  }
-
-  if (riscv_arm_conditional_block_active &&
-      riscv_arm_reg_mapped(reg_index, &mapped_reg, &dirty_mask))
-  {
-    riscv_emit_sw(rs, riscv_reg_s0, reg_index * 4u);
-    riscv_mapped_valid_mask &= ~dirty_mask;
-    riscv_mapped_dirty_mask &= ~dirty_mask;
     *ptr = translation_ptr;
     return;
   }
@@ -2605,13 +2596,17 @@ bool riscv_emit_arm_conditional_block_header(u8 **translation_ptr_ref,
   if (condition > 0x0du)
     return false;
 
-  riscv_emit_mapped_regs_flush_dirty(&ptr);
-  riscv_arm_conditional_block_active = true;
+  riscv_emit_mapped_regs_reload_mask(&ptr,
+    RISCV_MAPPED_REGS_MASK & ~riscv_mapped_valid_mask);
 
   riscv_emit_adjust_cycles(&ptr, cycles);
   if (!riscv_emit_arm_condition_branch(&ptr, condition ^ 1u, 0,
                                        branch_source))
     return false;
+
+  riscv_arm_conditional_entry_valid_mask = riscv_mapped_valid_mask;
+  riscv_arm_conditional_entry_dirty_mask = riscv_mapped_dirty_mask;
+  riscv_arm_conditional_block_active = true;
 
   *translation_ptr_ref = ptr;
   return true;
@@ -2620,8 +2615,12 @@ bool riscv_emit_arm_conditional_block_header(u8 **translation_ptr_ref,
 void riscv_emit_arm_conditional_block_close(u8 **ptr_ref,
                                             u8 *branch_source)
 {
+  if (riscv_arm_conditional_block_active)
+  {
+    riscv_mapped_valid_mask |= riscv_arm_conditional_entry_valid_mask;
+    riscv_mapped_dirty_mask |= riscv_arm_conditional_entry_dirty_mask;
+  }
   riscv_arm_conditional_block_active = false;
-  riscv_invalidate_mapped_regs();
   riscv_patch_conditional_branch(branch_source, *ptr_ref);
 }
 
@@ -4065,6 +4064,8 @@ void riscv_emit_block_prologue(u8 **translation_ptr_ref,
   riscv_invalidate_mapped_regs();
   riscv_terminal_helper_size = 0;
   riscv_arm_conditional_block_active = false;
+  riscv_arm_conditional_entry_dirty_mask = 0;
+  riscv_arm_conditional_entry_valid_mask = 0;
 
   *meta = (riscv_jit_block_meta *)(void *)ptr;
   (*meta)->start_pc = 0;
