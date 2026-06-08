@@ -32,6 +32,9 @@ function require_eq(field, expected, value) {
 }
 
 BEGIN {
+	arm_tracked_total_max = 18000;
+	thumb_direct_total_max = 5600;
+
 	track("mapped_gpr_code_bytes", 176, "mapped_contract");
 	track("mapped_helper_code_bytes", 208, "mapped_contract");
 	track("mapped_nzcv_code_bytes", 336, "mapped_contract");
@@ -217,8 +220,13 @@ BEGIN {
 		printf("runtime_code_size group=%s total=%u max=%u\n",
 		       group, group_total[group], group_max[group]);
 	}
-	printf("runtime_code_size arm_tracked_total=%u arm_tracked_max=%u thumb_helpers=0 first_exec_fallbacks=0\n",
-	       arm_tracked_total, arm_tracked_max);
+	if (arm_tracked_total > arm_tracked_total_max)
+		fail("arm_tracked_total=" arm_tracked_total " max=" arm_tracked_total_max);
+	if (group_total["thumb_direct"] > thumb_direct_total_max)
+		fail("thumb_direct_total=" group_total["thumb_direct"] " max=" thumb_direct_total_max);
+	printf("runtime_code_size arm_tracked_total=%u arm_tracked_max=%u arm_tracked_total_max=%u thumb_direct_total_max=%u thumb_helpers=0 first_exec_fallbacks=0\n",
+	       arm_tracked_total, arm_tracked_max, arm_tracked_total_max,
+	       thumb_direct_total_max);
 }
 
 END {
