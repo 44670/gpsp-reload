@@ -5,4 +5,5 @@ rv32im_armwrestler_interp
 rv32im_abi_test
 rv32im_exec_test
 rv32im_runtime_test
+rv32im_perf
 out/

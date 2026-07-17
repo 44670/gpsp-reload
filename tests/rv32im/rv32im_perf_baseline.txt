@@ -1,0 +1,13 @@
+baseline=rv32im-perf-m0-v1
+measurement=qemu-user-exec-trace qemu_version=10.0.8 isa=rv32im compressed=0
+csr_probe=rdinstret available=1 repeatable=0 gate_source=qemu_exec_trace
+workload=control phase=empty rv32_instret_raw=3 rv32_instret=0
+workload=control phase=probe control_iterations=4096 rv32_instret=16396 control_hash=0x765dabdf
+workload=mapped_alu phase=cold guest_insns=256 guest_cycles=256 rv32_instret=110942 generated_bytes=3760 state_hash=0x011b51b6 memory_hash=0x811c9dc5 scheduler_hash=0x1c430938 trace_hash=0x2d938744
+workload=mapped_alu phase=warm guest_insns=32768 guest_cycles=32768 rv32_instret=169890 rv32_instret_per_guest_x100=518 generated_bytes=3760 state_hash=0x89018a9d memory_hash=0x811c9dc5 scheduler_hash=0xaaeb39c5 trace_hash=0x70d241c5
+workload=memory_read phase=cold guest_insns=48 guest_cycles=50 rv32_instret=31201 generated_bytes=2536 state_hash=0xb9e5c390 memory_hash=0x5fbb5540 scheduler_hash=0x084354f4 trace_hash=0x3f285294
+workload=memory_read phase=warm guest_insns=3072 guest_cycles=3200 rv32_instret=222050 rv32_instret_per_guest_x100=7228 generated_bytes=2536 state_hash=0xb9e5c390 memory_hash=0x28f6afc5 scheduler_hash=0x1e4d33c5 trace_hash=0xc648afc5
+workload=branch_chain phase=cold guest_insns=63 guest_cycles=63 rv32_instret=27801 generated_bytes=2424 state_hash=0x7615e4db memory_hash=0x811c9dc5 scheduler_hash=0x1171fe38 trace_hash=0x0a69f0a4
+workload=branch_chain phase=warm guest_insns=8064 guest_cycles=8064 rv32_instret=87586 rv32_instret_per_guest_x100=1086 generated_bytes=2424 state_hash=0x1c8bb6b0 memory_hash=0x811c9dc5 scheduler_hash=0x35da79c5 trace_hash=0x23e541c5
+workload=mixed phase=cold guest_insns=61 guest_cycles=61 rv32_instret=30221 generated_bytes=1500 state_hash=0x403e59d4 memory_hash=0xc45006d7 scheduler_hash=0x76e1433c trace_hash=0x1bfebbf4
+workload=mixed phase=warm guest_insns=3904 guest_cycles=3904 rv32_instret=87394 rv32_instret_per_guest_x100=2238 generated_bytes=1500 state_hash=0x403e59d4 memory_hash=0xb8a06245 scheduler_hash=0xea4b69c5 trace_hash=0x3bea2fc5

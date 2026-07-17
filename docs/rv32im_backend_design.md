@@ -71,12 +71,12 @@ or Thumb block, restores mapped guest registers, and jumps into generated code.
 RV32IM needs the same entry shape, with psABI-preserved registers saved before
 generated code reuses them.
 
-The current RV32IM entry loop keeps the scheduler cycle budget live in `s11`
-while generated blocks execute, with `s10` pointing at the backing
-`riscv_cycles_remaining` storage. Terminal exits sync `s11` back before
-entering `riscv_jit_run_block()`. Helper-backed Thumb execution preserves the
-live register and returns dynamic extra cycles to emitted code instead of
-loading/storing the global counter around every helper call.
+The current RV32IM entry loop keeps the scheduler cycle budget in its private
+JIT stack frame while generated blocks execute. Generated cycle checkpoints
+load/update/store that slot, and the terminal tail syncs it to
+`riscv_cycles_remaining` before entering `riscv_jit_run_block()`. This is a
+correctness-first implementation; later cycle-register residency work must
+retain identical helper, alert, and scheduler visibility.
 
 ### Translation Cache Ownership
 
@@ -173,20 +173,22 @@ The MIPS backend keeps many guest registers resident in host registers, then
 saves/restores them around C helpers and special memory paths. It also
 collapses/extracts CPSR flags at helper boundaries that observe or mutate CPSR.
 
-For RV32IM first phase:
+The current RV32IM backend maps guest `r0..r4` to `a3..a7`, `r5..r14` to
+`s1..s10`, keeps packed NZCV in `s11`, and reserves `s0` as the CPU-state base.
+Caller-saved mappings are flushed/reloaded around standard C helpers, while
+stateful helpers invalidate or reload the full mapping as required. Therefore:
 
 - keep helper calls psABI-correct
 - do not keep guest values live across C calls unless the stub saves them
 - preserve any guest-visible register, CPSR, SPSR, mode, bus-value, OAM, HALT,
   and sleep-cycle state that a helper can observe
-- avoid adding a dynamic guest register cache during the first milestone
 - generated helper calls may clobber `ra`; the entry loop keeps the block-return
-  address in callee-saved `s3`, and every terminal exit restores `ra` from `s3`
-  before tail-jumping to `riscv_jit_run_block()`
+  address in its private stack frame, and every terminal exit restores that
+  continuation before tail-jumping to `riscv_jit_run_block()`
 
-A fixed register mapping may be introduced only if it is explicit and covered
-by save/restore logic comparable to the MIPS stubs. A state-backed model is
-acceptable for the earliest correctness path.
+The fixed mapping is part of the tested backend ABI. Any later allocation or
+helper-boundary optimization must preserve the same explicit dirty/valid-state
+contract and interpreter-visible state.
 
 ### Memory Helpers, SMC, And I/O Side Effects
 
@@ -236,9 +238,9 @@ before being treated as a real backend.
 - Reserve enough bytes for every patch site before the first branch-patching
   implementation. Prefer conservative long-branch sequences over range
   assumptions.
-- Keep the first backend state-backed. Do not add a guest register cache before
-  helper calls, exits, scheduler return, cache sync, and invalidation are
-  proven.
+- Keep the fixed mapped-register ABI explicit. Do not add a second dynamic
+  allocation layer before helper calls, exits, scheduler return, cache sync,
+  and invalidation remain proven.
 - Use qemu-user proofs before broad opcode lowering. Each new backend boundary
   should have a deterministic `result=PASS` runtime case before it is treated
   as stable.
@@ -264,7 +266,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 | Register-offset `LDRH pc` | native+compare | Standalone qemu-user and runtime `compare` proofs cover boundary, remaining-cycle, and native-target chaining. |
 | Register-offset `LDRSB pc` / `LDRSH pc` | native+compare | Standalone qemu-user and runtime `compare` proofs cover boundary, remaining-cycle, and native-target chaining. |
 | PC-base writeback and unsafe memory forms | explicit reject | `rejects runtime` pins PC-base writeback forms and the unsafe shifted-register offset form until parity proof exists. |
-| Branch, patch sites, conditional headers, BX/BL, PC-write chaining | native+compare | `compare`, `tracepc runtime`, `stepb runtime`, and patch-site standalone proof cover direct, indirect, internal/external patched, conditional, SWI, PC-write, Thumb fallback, and repatching behavior. Compound condition lowering shares one CPSR load per emitted condition while the backend remains state-backed. |
+| Branch, patch sites, conditional headers, BX/BL, PC-write chaining | native+compare | `compare`, `tracepc runtime`, `stepb runtime`, and patch-site standalone proof cover direct, indirect, internal/external patched, conditional, SWI, PC-write, Thumb fallback, and repatching behavior. Compound condition lowering shares the mapped packed-NZCV state. |
 | Block memory and PC-loaded block memory | native+compare | `compare` covers STM/LDM, push, ordered transfers, writeback, PC-loaded chaining/fallthrough, and SPSR restore/update behavior. |
 | SWP/SWPB | native+compare | `compare` covers word/byte swap helper order, old-value reads, writes, SMC/IRQ/HALT alerts, and remaining-cycle handoffs. |
 | Unsafe SWP source/register form | explicit reject | `rejects runtime` pins `SWP` with `rm == pc`. |
@@ -274,12 +276,40 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 | Scheduler exits, update_gba(), frame completion, fallback buckets | native+compare | `run runtime`, `cont runtime`, `sched runtime`, `counters runtime`, and `compare` pin update/refill, PC-change, frame-complete, fallback source breakdown, and snapshot hashes. |
 | Mixed contract chain across semantic boundaries | native+compare | `mixed` runs native data processing, helper-backed load, PC-writing load into a native target, alerting helper-backed store, scheduler refill, and deliberate fallback without resetting state. It pins register, memory, scheduler, trace, instruction-step, memory-event, scheduler-event, fallback-event, shadow-memory, counter, code-byte, and runtime-frame evidence. |
 | Armwrestler ARM Tests 0-4 and Thumbwrestler Tests 0-2 external ROM | interpreter+frontend JIT compare | `make -C tests/rv32im armwrestler` loads `/home/john/ref/armwrestler-gba-fixed/armwrestler-gba-fixed.gba`, patches only each loaded copy for deterministic `TESTNUM`, `VSync`, and `DrawResult` result capture, runs ARM Tests 0-4 and Thumb Tests 0-2 under the host `cpu.cc` interpreter and under `cpu_threaded.c` plus generated RV32IM in `qemu-riscv32`, and requires 79 results, failure mask `0`, native blocks/code bytes/nonzero native counters, ROM trace PCs, `fallbacks=0`, `fallback_events=0`, and `execute_arm_calls=0`. Tests 5-9 are Armwrestler stubs in this ROM. |
-| Armwrestler code-size reporting | regression ratchet | `make -C tests/rv32im armwrestler-report` prints stable `armwrestler_code_size` lines for every ARM/Thumb subtest plus final `arm_total`, `thumb_total`, `arm_max`, and `thumb_max`. Current thresholds are ARM `64120` bytes and Thumb `21732` bytes. |
+| Armwrestler code-size reporting | regression ratchet | `make -C tests/rv32im armwrestler-report` prints stable `armwrestler_code_size` lines for every ARM/Thumb subtest plus final `arm_total`, `thumb_total`, `arm_max`, and `thumb_max`. The current measured totals are ARM `86084` bytes and Thumb `39964` bytes; Makefile ceilings are ARM `87000` and Thumb `40500`, with per-test ceilings as additional ratchets. |
+| Deterministic performance baseline | measured+ratcheted | `make -C tests/rv32im perf` runs cold/warm `mapped_alu`, `memory_read`, `branch_chain`, and `mixed` workloads twice, checks exact dynamic RV32 instruction counts plus state/event hashes, and enforces code-byte and instruction ceilings. |
 | Thumb instruction lowering | native+ongoing | Thumbwrestler Tests 0-2 currently run through frontend JIT with zero fallbacks. Native lowering covers the Armwrestler Thumb paths, including high-register `ADD`/`MOV` with non-PC destinations, conditional branch taken/skipped cycle handling, direct `B`/`BX`, direct BL/BLH LR/PC updates, BL-pair target derivation from the live link value when it fits RV32IM `addi`, and patchable non-HLE SWI exits. Broader Thumb coverage remains an active MIPS-alignment task. |
 
-Next milestone selection comes from this table and the code-size report: move
-toward MIPS-class native ARM and Thumb code size while keeping the external ROM
-gate green and regression thresholds tight.
+The active optimization milestone is the common no-flags/no-PC mapped ARM ALU
+path. It must reduce the pinned warm `mapped_alu` dynamic instruction count by
+at least 25% and reduce generated bytes while keeping all correctness and
+external-ROM gates green.
+
+### Deterministic qemu-user performance baseline
+
+The M0 baseline is recorded in `tests/rv32im/rv32im_perf_baseline.txt`.
+Synthetic workloads use an explicit reference model and pin state, memory,
+scheduler, and trace hashes. Perf-only emission counters record helper-call
+sites and mapped flush/store/invalidate/reload operations without inserting
+counter instructions into generated production code.
+
+On the installed QEMU 10.0.8 linux-user build, the architectural `instret` CSR
+is readable but is derived from host ticks when QEMU icount is disabled. The
+same control window therefore changes across runs and is reported only as
+`rdinstret_csr_*` diagnostics with `rdinstret_csr_repeatable=0`. The regression
+gate uses QEMU's `in_asm,exec,nochain` trace between unique measurement markers
+to count executed guest RV32 instructions exactly; an empty three-instruction
+window is measured and subtracted. Two complete runs must match after removing
+only the explicitly unstable raw CSR diagnostics. Wall time is never a gate.
+
+The initial warm baseline is:
+
+| Workload | Guest instructions | Dynamic RV32 instructions | RV32/guest | Generated bytes |
+| --- | ---: | ---: | ---: | ---: |
+| `mapped_alu` | 32768 | 169890 | 5.18 | 3760 |
+| `memory_read` | 3072 | 222050 | 72.28 | 2536 |
+| `branch_chain` | 8064 | 87586 | 10.86 | 2424 |
+| `mixed` | 3904 | 87394 | 22.38 | 1500 |
 
 - raw RV32I/M emitter encoding checks against clang/LLVM reference output
 - qemu-riscv32 ABI entry/return checks
@@ -562,8 +592,9 @@ CPU mode or IRQ state; control-field stores still use the helper/exit path.
 Regular ARM multiply flag forms now update only N/Z and preserve C/V directly,
 matching the ARM contract without the older full NZCV rebuild.
 Current high-value Thumb work is to keep expanding MIPS-aligned direct lowering
-beyond the Armwrestler-covered paths. Compressed RISC-V emission, guest register
-caching, performance tuning, and ESP32-specific work remain later phases.
+beyond the Armwrestler-covered paths. Compressed RISC-V emission, dynamic guest
+register allocation beyond the fixed mapping, and ESP32-specific work remain
+later phases; measured RV32IM performance tuning is now active.
 
 Remaining first-phase gaps should stay narrow and evidence-driven:
 
@@ -612,13 +643,13 @@ Remaining first-phase gaps should stay narrow and evidence-driven:
   low-level emitter API.
 - Keep unsupported or architecturally risky PC/register combinations rejected
   until there is a matching interpreter-parity proof.
-- Broader performance work, guest register caching, compressed RISC-V emission,
-  and ESP32-specific tuning remain out of scope for the first correctness
-  phase.
+- Dynamic guest register allocation beyond the fixed mapping, compressed
+  RISC-V emission, and ESP32-specific tuning remain out of scope for the
+  current mapped-ALU optimization milestone.
 
 ## Semi-Milestone Gate
 
 Every validated RV32IM semi-milestone should be committed separately. For
 codegen changes, the current gate is `git diff --check` plus
-`make -C tests/rv32im runtime armwrestler mixed smoke`; broader integration
+`make -C tests/rv32im perf runtime armwrestler mixed smoke`; broader integration
 milestones should also run `make -C tests/rv32im test` and `core-build`.

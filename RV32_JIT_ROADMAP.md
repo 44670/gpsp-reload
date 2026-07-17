@@ -156,9 +156,13 @@ into a single unexplained number.
 
 ### Required RV32 metrics
 
-The qemu-user performance gate should prefer architectural `rdinstret` around a
+The qemu-user performance gate should probe architectural `rdinstret` around a
 bounded execution window. It must report raw measurement overhead and a control
-workload so the net count is auditable.
+workload so the net count is auditable. If a qemu-user build exposes the CSR as
+a host-tick-derived, non-repeatable value rather than architectural retired
+instructions, that raw value must be labeled diagnostic-only. An exact QEMU
+execution trace between explicit markers may then supply the regression count;
+wall time or an unstable CSR value may not silently replace retired work.
 
 Each workload summary must include:
 
@@ -230,8 +234,8 @@ fields may be appended; existing meanings should not be silently changed.
 
 | Milestone | Outcome | Status |
 | --- | --- | --- |
-| M0 | Trusted perf baseline and synchronized documentation | Next |
-| M1 | Direct mapped-register ARM ALU lowering | Planned |
+| M0 | Trusted perf baseline and synchronized documentation | Complete |
+| M1 | Direct mapped-register ARM ALU lowering | Next |
 | M2 | Lower-cost helper/state synchronization ABI | Planned |
 | M3 | Inline safe memory fast paths | Planned |
 | M4 | Efficient block memory and complex memory operations | Planned |

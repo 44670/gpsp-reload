@@ -266,6 +266,28 @@ static u32 riscv_native_psr_insns;
 static u32 riscv_thumb_helper_insns;
 static cpu_alert_type riscv_cpu_alert;
 
+#if defined(RISCV_RUNTIME_PERF_COUNTERS)
+static u32 riscv_perf_helper_call_sites;
+static u32 riscv_perf_terminal_call_sites;
+static u32 riscv_perf_mapped_flush_sites;
+static u32 riscv_perf_mapped_store_ops;
+static u32 riscv_perf_mapped_invalidate_sites;
+static u32 riscv_perf_mapped_reload_sites;
+static u32 riscv_perf_mapped_reload_ops;
+
+static u32 riscv_perf_popcount(u32 value)
+{
+  u32 count = 0;
+
+  while (value)
+  {
+    count += value & 1u;
+    value >>= 1;
+  }
+  return count;
+}
+#endif
+
 static u32 riscv_arm_expand_imm(u32 opcode);
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -697,6 +719,11 @@ static void riscv_emit_mapped_regs_reload_mask(u8 **ptr_ref, u32 reload_mask)
   if (!reload_mask)
     return;
 
+#if defined(RISCV_RUNTIME_PERF_COUNTERS)
+  riscv_perf_mapped_reload_sites++;
+  riscv_perf_mapped_reload_ops += riscv_perf_popcount(reload_mask);
+#endif
+
   for (i = 0; i < RISCV_MAPPED_GPR_COUNT; i++)
   {
     if (reload_mask & (1u << i))
@@ -728,6 +755,11 @@ static void riscv_emit_mapped_regs_flush_mask(u8 **ptr_ref, u32 dirty_mask)
   dirty_mask &= riscv_mapped_valid_mask;
   if (!dirty_mask)
     return;
+
+#if defined(RISCV_RUNTIME_PERF_COUNTERS)
+  riscv_perf_mapped_flush_sites++;
+  riscv_perf_mapped_store_ops += riscv_perf_popcount(dirty_mask);
+#endif
 
   translation_ptr = *ptr_ref;
   for (i = 0; i < RISCV_MAPPED_GPR_COUNT; i++)
@@ -2437,6 +2469,10 @@ static void riscv_emit_c_call_stack_raw(u8 **ptr, u32 stack_offset)
 {
   u8 *translation_ptr = *ptr;
 
+#if defined(RISCV_RUNTIME_PERF_COUNTERS)
+  riscv_perf_helper_call_sites++;
+#endif
+
   riscv_emit_lw(riscv_reg_t0, riscv_reg_sp, stack_offset);
   riscv_emit_jalr(riscv_reg_ra, riscv_reg_t0, 0);
 
@@ -2447,6 +2483,9 @@ static void riscv_emit_c_call_stack(u8 **ptr, u32 stack_offset)
 {
   riscv_emit_mapped_regs_flush_dirty(ptr);
   riscv_emit_c_call_stack_raw(ptr, stack_offset);
+#if defined(RISCV_RUNTIME_PERF_COUNTERS)
+  riscv_perf_mapped_invalidate_sites++;
+#endif
   riscv_mapped_valid_mask &= ~RISCV_MAPPED_CALLER_SAVED_MASK;
   riscv_mapped_dirty_mask &= ~RISCV_MAPPED_CALLER_SAVED_MASK;
   riscv_emit_mapped_regs_reload_mask(ptr, RISCV_MAPPED_CALLER_SAVED_MASK);
@@ -2457,6 +2496,9 @@ static void riscv_emit_stateful_c_call_stack(u8 **ptr, u32 stack_offset,
 {
   riscv_emit_mapped_regs_flush_dirty(ptr);
   riscv_emit_c_call_stack_raw(ptr, stack_offset);
+#if defined(RISCV_RUNTIME_PERF_COUNTERS)
+  riscv_perf_mapped_invalidate_sites++;
+#endif
   riscv_note_c_call_clobbers_mapped_regs();
   if (reload_after)
     riscv_emit_mapped_regs_reload(ptr);
@@ -4281,6 +4323,9 @@ static s32 riscv_arm_branch_delta(u32 opcode)
 static void riscv_emit_helper_call_no_flush(u8 **ptr,
                                             const riscv_jit_block_meta *meta)
 {
+#if defined(RISCV_RUNTIME_PERF_COUNTERS)
+  riscv_perf_terminal_call_sites++;
+#endif
   riscv_emit_li(ptr, riscv_reg_a0, (u32)(uintptr_t)meta);
   riscv_emit_jit_run_block_tail_jump(ptr);
 }
@@ -10000,6 +10045,15 @@ void init_emitter(bool must_swap)
   riscv_native_store_insns = 0;
   riscv_native_psr_insns = 0;
   riscv_thumb_helper_insns = 0;
+#if defined(RISCV_RUNTIME_PERF_COUNTERS)
+  riscv_perf_helper_call_sites = 0;
+  riscv_perf_terminal_call_sites = 0;
+  riscv_perf_mapped_flush_sites = 0;
+  riscv_perf_mapped_store_ops = 0;
+  riscv_perf_mapped_invalidate_sites = 0;
+  riscv_perf_mapped_reload_sites = 0;
+  riscv_perf_mapped_reload_ops = 0;
+#endif
   riscv_cpu_alert = CPU_ALERT_NONE;
   rom_cache_watermark = RISCV_INITIAL_ROM_WATERMARK;
   init_bios_hooks();
@@ -10022,6 +10076,24 @@ void riscv_get_runtime_stats(riscv_runtime_stats *stats)
   stats->native_store_insns = riscv_native_store_insns;
   stats->native_psr_insns = riscv_native_psr_insns;
   stats->thumb_helper_insns = riscv_thumb_helper_insns;
+#if defined(RISCV_RUNTIME_PERF_COUNTERS)
+  stats->perf_helper_call_sites = riscv_perf_helper_call_sites;
+  stats->perf_terminal_call_sites = riscv_perf_terminal_call_sites;
+  stats->perf_mapped_flush_sites = riscv_perf_mapped_flush_sites;
+  stats->perf_mapped_store_ops = riscv_perf_mapped_store_ops;
+  stats->perf_mapped_invalidate_sites =
+    riscv_perf_mapped_invalidate_sites;
+  stats->perf_mapped_reload_sites = riscv_perf_mapped_reload_sites;
+  stats->perf_mapped_reload_ops = riscv_perf_mapped_reload_ops;
+#else
+  stats->perf_helper_call_sites = 0;
+  stats->perf_terminal_call_sites = 0;
+  stats->perf_mapped_flush_sites = 0;
+  stats->perf_mapped_store_ops = 0;
+  stats->perf_mapped_invalidate_sites = 0;
+  stats->perf_mapped_reload_sites = 0;
+  stats->perf_mapped_reload_ops = 0;
+#endif
 }
 
 u32 execute_arm_translate(u32 cycles)

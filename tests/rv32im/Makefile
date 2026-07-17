@@ -10,6 +10,7 @@ ARMWRESTLER_INTERP := rv32im_armwrestler_interp
 ABI_TEST := rv32im_abi_test
 EXEC_TEST := rv32im_exec_test
 RUNTIME_TEST := rv32im_runtime_test
+PERF_TEST := rv32im_perf
 OUT_DIR := out
 SMOKE_PNG := $(OUT_DIR)/rv32im_harness.png
 SMOKE_RUNTIME_PNG := $(OUT_DIR)/rv32im_harness_runtime.png
@@ -22,6 +23,16 @@ REJECTS_LOG := $(OUT_DIR)/rv32im_harness_rejects.log
 ARMWRESTLER_LOG := $(OUT_DIR)/rv32im_armwrestler.log
 ARMWRESTLER_INTERP_LOG := $(OUT_DIR)/rv32im_armwrestler_interp.log
 RUNTIME_LOG := $(OUT_DIR)/rv32im_runtime.log
+PERF_LOG := $(OUT_DIR)/rv32im_perf.log
+PERF_REPEAT_LOG := $(OUT_DIR)/rv32im_perf_repeat.log
+PERF_RAW_LOG := $(OUT_DIR)/rv32im_perf_raw.log
+PERF_REPEAT_RAW_LOG := $(OUT_DIR)/rv32im_perf_repeat_raw.log
+PERF_QEMU_LOG := $(OUT_DIR)/rv32im_perf_qemu.log
+PERF_REPEAT_QEMU_LOG := $(OUT_DIR)/rv32im_perf_repeat_qemu.log
+PERF_TRACE_COUNTS := $(OUT_DIR)/rv32im_perf_trace_counts.log
+PERF_REPEAT_TRACE_COUNTS := $(OUT_DIR)/rv32im_perf_repeat_trace_counts.log
+PERF_STABLE_LOG := $(OUT_DIR)/rv32im_perf_stable.log
+PERF_REPEAT_STABLE_LOG := $(OUT_DIR)/rv32im_perf_repeat_stable.log
 ARMWRESTLER_ARM0_CODE_BYTES_MAX ?= 13000
 ARMWRESTLER_ARM1_CODE_BYTES_MAX ?= 12400
 ARMWRESTLER_ARM2_CODE_BYTES_MAX ?= 21800
@@ -33,6 +44,16 @@ ARMWRESTLER_THUMB2_CODE_BYTES_MAX ?= 8500
 ARMWRESTLER_ARM_CODE_BYTES_MAX ?= 87000
 ARMWRESTLER_THUMB_CODE_BYTES_MAX ?= 40500
 ARMWRESTLER_THUMB_HELPERS_MAX ?= 0
+PERF_MAPPED_ALU_BASELINE_WARM_INSTRET := 169890
+PERF_MAPPED_ALU_BASELINE_BYTES := 3760
+PERF_MAPPED_ALU_WARM_INSTRET_MAX ?= 169890
+PERF_MAPPED_ALU_BYTES_MAX ?= 3760
+PERF_MEMORY_READ_WARM_INSTRET_MAX ?= 222050
+PERF_MEMORY_READ_BYTES_MAX ?= 2536
+PERF_BRANCH_CHAIN_WARM_INSTRET_MAX ?= 87586
+PERF_BRANCH_CHAIN_BYTES_MAX ?= 2424
+PERF_MIXED_WARM_INSTRET_MAX ?= 87394
+PERF_MIXED_BYTES_MAX ?= 1500
 CODEGEN_BIN := $(OUT_DIR)/rv32im_codegen.bin
 CODEGEN_REF_ELF := $(OUT_DIR)/rv32im_codegen_ref.elf
 CODEGEN_REF_BIN := $(OUT_DIR)/rv32im_codegen_ref.bin
@@ -73,8 +94,9 @@ FRONTEND_WARNFLAGS := \
 HOST_CC ?= cc
 HOST_CXX ?= c++
 LLVM_OBJCOPY ?= llvm-objcopy
+LLVM_NM ?= llvm-nm
 
-all: $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_INTERP) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST)
+all: $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_INTERP) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST)
 
 $(HARNESS): rv32im_harness.c $(ROOT)/riscv/riscv_runtime.c \
 		$(ROOT)/riscv/riscv_emit.h $(ROOT)/riscv/riscv_codegen.h \
@@ -98,6 +120,14 @@ $(RUNTIME_TEST): rv32im_runtime_test.c $(ROOT)/riscv/riscv_runtime.c \
 	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) \
 		-DRISCV_RUNTIME_STANDALONE_TEST -I$(ROOT) -I$(ROOT)/riscv \
 		-o $@ rv32im_runtime_test.c $(ROOT)/riscv/riscv_runtime.c
+
+$(PERF_TEST): rv32im_perf.c $(ROOT)/riscv/riscv_runtime.c \
+		$(ROOT)/riscv/riscv_emit.h $(ROOT)/riscv/riscv_codegen.h \
+		$(ROOT)/riscv/riscv_runtime_test_shim.h
+	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) \
+		-DRISCV_RUNTIME_STANDALONE_TEST -DRISCV_RUNTIME_PERF_COUNTERS \
+		-I$(ROOT) -I$(ROOT)/riscv \
+		-o $@ rv32im_perf.c $(ROOT)/riscv/riscv_runtime.c
 
 $(ARMWRESTLER): rv32im_armwrestler.c rv32im_frontend_shim.h \
 		$(ROOT)/cpu_threaded.c $(ROOT)/riscv/riscv_runtime.c \
@@ -419,10 +449,56 @@ runtime: $(RUNTIME_TEST) | $(OUT_DIR)
 	$(QEMU_RISCV32) ./$(RUNTIME_TEST) | tee $(RUNTIME_LOG)
 	awk -f rv32im_runtime_size.awk $(RUNTIME_LOG)
 
-test: codegen abi exec runtime frontend core-build rejects compare mixed smoke
+perf: $(PERF_TEST) | $(OUT_DIR)
+	@begin_pc=`$(LLVM_NM) -n $(PERF_TEST) | awk '$$3 == "rv32im_perf_measure_begin" { print $$1 }'`; \
+	end_pc=`$(LLVM_NM) -n $(PERF_TEST) | awk '$$3 == "rv32im_perf_measure_end" { print $$1 }'`; \
+	test -n "$$begin_pc" && test -n "$$end_pc"; \
+	$(QEMU_RISCV32) -d in_asm,exec,nochain -D $(PERF_QEMU_LOG) \
+		./$(PERF_TEST) > $(PERF_RAW_LOG) || { \
+		rc=$$?; \
+		echo "result=FAIL command=rv32im-perf workload=control phase=probe backend=rv32im reason=rdinstret_unavailable_or_runner_failed" | tee -a $(PERF_RAW_LOG); \
+		exit $$rc; \
+	}; \
+	awk -v begin_pc="$$begin_pc" -v end_pc="$$end_pc" \
+		-f rv32im_qemu_trace_count.awk $(PERF_QEMU_LOG) > $(PERF_TRACE_COUNTS); \
+	awk -f rv32im_perf_merge.awk $(PERF_TRACE_COUNTS) $(PERF_RAW_LOG) > $(PERF_LOG)
+	@cat $(PERF_LOG)
+	@begin_pc=`$(LLVM_NM) -n $(PERF_TEST) | awk '$$3 == "rv32im_perf_measure_begin" { print $$1 }'`; \
+	end_pc=`$(LLVM_NM) -n $(PERF_TEST) | awk '$$3 == "rv32im_perf_measure_end" { print $$1 }'`; \
+	$(QEMU_RISCV32) -d in_asm,exec,nochain -D $(PERF_REPEAT_QEMU_LOG) \
+		./$(PERF_TEST) > $(PERF_REPEAT_RAW_LOG) || { \
+		rc=$$?; \
+		echo "result=FAIL command=rv32im-perf workload=control phase=probe backend=rv32im reason=rdinstret_unavailable_or_runner_failed" | tee -a $(PERF_REPEAT_RAW_LOG); \
+		exit $$rc; \
+	}; \
+	awk -v begin_pc="$$begin_pc" -v end_pc="$$end_pc" \
+		-f rv32im_qemu_trace_count.awk $(PERF_REPEAT_QEMU_LOG) > $(PERF_REPEAT_TRACE_COUNTS); \
+	awk -f rv32im_perf_merge.awk $(PERF_REPEAT_TRACE_COUNTS) \
+		$(PERF_REPEAT_RAW_LOG) > $(PERF_REPEAT_LOG)
+	grep '^result=.* command=rv32im-perf ' $(PERF_LOG) > $(PERF_STABLE_LOG)
+	grep '^result=.* command=rv32im-perf ' $(PERF_REPEAT_LOG) > $(PERF_REPEAT_STABLE_LOG)
+	@sed -E 's/ rdinstret_csr_raw=[^ ]+//; s/ rdinstret_csr_overhead=[^ ]+//; s/ rdinstret_csr_net=[^ ]+//' \
+		$(PERF_STABLE_LOG) > $(PERF_STABLE_LOG).normalized
+	@sed -E 's/ rdinstret_csr_raw=[^ ]+//; s/ rdinstret_csr_overhead=[^ ]+//; s/ rdinstret_csr_net=[^ ]+//' \
+		$(PERF_REPEAT_STABLE_LOG) > $(PERF_REPEAT_STABLE_LOG).normalized
+	cmp $(PERF_STABLE_LOG).normalized $(PERF_REPEAT_STABLE_LOG).normalized
+	awk \
+		-v mapped_alu_baseline_instret=$(PERF_MAPPED_ALU_BASELINE_WARM_INSTRET) \
+		-v mapped_alu_baseline_bytes=$(PERF_MAPPED_ALU_BASELINE_BYTES) \
+		-v mapped_alu_instret_max=$(PERF_MAPPED_ALU_WARM_INSTRET_MAX) \
+		-v mapped_alu_bytes_max=$(PERF_MAPPED_ALU_BYTES_MAX) \
+		-v memory_read_instret_max=$(PERF_MEMORY_READ_WARM_INSTRET_MAX) \
+		-v memory_read_bytes_max=$(PERF_MEMORY_READ_BYTES_MAX) \
+		-v branch_chain_instret_max=$(PERF_BRANCH_CHAIN_WARM_INSTRET_MAX) \
+		-v branch_chain_bytes_max=$(PERF_BRANCH_CHAIN_BYTES_MAX) \
+		-v mixed_instret_max=$(PERF_MIXED_WARM_INSTRET_MAX) \
+		-v mixed_bytes_max=$(PERF_MIXED_BYTES_MAX) \
+		-f rv32im_perf_check.awk $(PERF_LOG)
+
+test: codegen abi exec runtime perf frontend core-build rejects compare mixed smoke
 
 clean:
-	rm -f $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_INTERP) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST)
+	rm -f $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_INTERP) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST)
 	rm -rf $(OUT_DIR)
 
-.PHONY: all codegen abi exec runtime frontend core-build smoke compare mixed rejects armwrestler-jit armwrestler-interp armwrestler armwrestler-report test clean
+.PHONY: all codegen abi exec runtime perf frontend core-build smoke compare mixed rejects armwrestler-jit armwrestler-interp armwrestler armwrestler-report test clean

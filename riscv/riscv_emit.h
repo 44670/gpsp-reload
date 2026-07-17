@@ -46,6 +46,18 @@ typedef struct riscv_runtime_stats
   u32 native_store_insns;
   u32 native_psr_insns;
   u32 thumb_helper_insns;
+  /* Emission-time perf instrumentation. These remain zero unless the
+   * runtime is built with RISCV_RUNTIME_PERF_COUNTERS. They count code sites
+   * and state-sync operations emitted into the measured path; the perf
+   * harness combines them with its deterministic execution count to report
+   * dynamic totals without perturbing generated code. */
+  u32 perf_helper_call_sites;
+  u32 perf_terminal_call_sites;
+  u32 perf_mapped_flush_sites;
+  u32 perf_mapped_store_ops;
+  u32 perf_mapped_invalidate_sites;
+  u32 perf_mapped_reload_sites;
+  u32 perf_mapped_reload_ops;
 } riscv_runtime_stats;
 
 typedef enum riscv_runtime_fallback_kind
