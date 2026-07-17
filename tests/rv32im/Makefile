@@ -33,27 +33,29 @@ PERF_TRACE_COUNTS := $(OUT_DIR)/rv32im_perf_trace_counts.log
 PERF_REPEAT_TRACE_COUNTS := $(OUT_DIR)/rv32im_perf_repeat_trace_counts.log
 PERF_STABLE_LOG := $(OUT_DIR)/rv32im_perf_stable.log
 PERF_REPEAT_STABLE_LOG := $(OUT_DIR)/rv32im_perf_repeat_stable.log
-ARMWRESTLER_ARM0_CODE_BYTES_MAX ?= 13000
-ARMWRESTLER_ARM1_CODE_BYTES_MAX ?= 12400
-ARMWRESTLER_ARM2_CODE_BYTES_MAX ?= 21800
-ARMWRESTLER_ARM3_CODE_BYTES_MAX ?= 12500
-ARMWRESTLER_ARM4_CODE_BYTES_MAX ?= 28200
-ARMWRESTLER_THUMB0_CODE_BYTES_MAX ?= 22000
-ARMWRESTLER_THUMB1_CODE_BYTES_MAX ?= 10400
-ARMWRESTLER_THUMB2_CODE_BYTES_MAX ?= 8500
-ARMWRESTLER_ARM_CODE_BYTES_MAX ?= 87000
-ARMWRESTLER_THUMB_CODE_BYTES_MAX ?= 40500
+ARMWRESTLER_ARM0_CODE_BYTES_MAX ?= 12648
+ARMWRESTLER_ARM1_CODE_BYTES_MAX ?= 12080
+ARMWRESTLER_ARM2_CODE_BYTES_MAX ?= 21388
+ARMWRESTLER_ARM3_CODE_BYTES_MAX ?= 12156
+ARMWRESTLER_ARM4_CODE_BYTES_MAX ?= 27876
+ARMWRESTLER_THUMB0_CODE_BYTES_MAX ?= 21788
+ARMWRESTLER_THUMB1_CODE_BYTES_MAX ?= 10212
+ARMWRESTLER_THUMB2_CODE_BYTES_MAX ?= 8348
+ARMWRESTLER_ARM_CODE_BYTES_MAX ?= 85636
+ARMWRESTLER_THUMB_CODE_BYTES_MAX ?= 39964
 ARMWRESTLER_THUMB_HELPERS_MAX ?= 0
 PERF_MAPPED_ALU_BASELINE_WARM_INSTRET := 169890
 PERF_MAPPED_ALU_BASELINE_BYTES := 3760
-PERF_MAPPED_ALU_WARM_INSTRET_MAX ?= 169890
-PERF_MAPPED_ALU_BYTES_MAX ?= 3760
+PERF_MAPPED_ALU_MIN_IMPROVEMENT_PERCENT ?= 25
+PERF_MAPPED_ALU_COLD_INSTRET_MAX ?= 72809
+PERF_MAPPED_ALU_WARM_INSTRET_MAX ?= 85410
+PERF_MAPPED_ALU_BYTES_MAX ?= 1120
 PERF_MEMORY_READ_WARM_INSTRET_MAX ?= 222050
 PERF_MEMORY_READ_BYTES_MAX ?= 2536
-PERF_BRANCH_CHAIN_WARM_INSTRET_MAX ?= 87586
-PERF_BRANCH_CHAIN_BYTES_MAX ?= 2424
-PERF_MIXED_WARM_INSTRET_MAX ?= 87394
-PERF_MIXED_BYTES_MAX ?= 1500
+PERF_BRANCH_CHAIN_WARM_INSTRET_MAX ?= 75298
+PERF_BRANCH_CHAIN_BYTES_MAX ?= 2040
+PERF_MIXED_WARM_INSTRET_MAX ?= 79586
+PERF_MIXED_BYTES_MAX ?= 1012
 CODEGEN_BIN := $(OUT_DIR)/rv32im_codegen.bin
 CODEGEN_REF_ELF := $(OUT_DIR)/rv32im_codegen_ref.elf
 CODEGEN_REF_BIN := $(OUT_DIR)/rv32im_codegen_ref.bin
@@ -239,7 +241,7 @@ smoke: $(HARNESS) $(SMOKE_LOAD) $(SMOKE_PNG_SIG) $(OUT_DIR)
 	grep -q 'command=compare.*harness_mode=runtime_fixture frame_mode=runtime_snapshot mem_mode=runtime_stickybits' $(SMOKE_LOG)
 	grep -q 'reason=runtime_state_snapshot_frame_equal' $(SMOKE_LOG)
 	grep -q 'result=PASS command=mixed workload=mixed_dataproc_load_pcload_alert_update_fallback' $(SMOKE_LOG)
-	grep -q 'command=mixed .*rv32im_blocks=4 rv32im_fallbacks=1 rv32im_initial_lookup_fallbacks=0 rv32im_relookup_fallbacks=1 rv32im_unsupported_fallbacks=0 rv32im_native_data_proc=96 rv32im_native_branch=7 rv32im_native_load=49 rv32im_native_store=33 rv32im_native_psr=5 code_bytes=17708' $(SMOKE_LOG)
+	grep -q 'command=mixed .*rv32im_blocks=4 rv32im_fallbacks=1 rv32im_initial_lookup_fallbacks=0 rv32im_relookup_fallbacks=1 rv32im_unsupported_fallbacks=0 rv32im_native_data_proc=96 rv32im_native_branch=7 rv32im_native_load=49 rv32im_native_store=33 rv32im_native_psr=5 code_bytes=17228' $(SMOKE_LOG)
 	grep -q 'command=mixed .*interp_trace_count=5 rv32im_trace_count=5 .*interp_stepi_count=5 rv32im_stepi_count=5 .*interp_mem_event_count=3 rv32im_mem_event_count=3 .*interp_sched_event_count=1 rv32im_sched_event_count=1 .*interp_fallback_event_count=1 rv32im_fallback_event_count=1 .*interp_shadow_bytes=4 rv32im_shadow_bytes=4' $(SMOKE_LOG)
 	grep -q 'command=mixed .*harness_mode=runtime_fixture frame_mode=runtime_snapshot mem_mode=runtime_events scheduler_mode=runtime_events fallback_mode=runtime_events reason=runtime_mixed_contract_chain_equal' $(SMOKE_LOG)
 	grep -q 'result=PASS command=framehash backend=rv32im width=240 height=160 bytes=76800 hash=.* snapshot_frame_hash=.* harness_mode=runtime_fixture frame_mode=runtime_snapshot reason=runtime_snapshot_frame' $(SMOKE_LOG)
@@ -268,7 +270,7 @@ mixed: $(HARNESS) | $(OUT_DIR)
 	grep -q 'interp_trace_count=5 rv32im_trace_count=5 interp_trace_hash=0x5dea3b65 rv32im_trace_hash=0x5dea3b65 interp_stepi_count=5 rv32im_stepi_count=5 interp_stepi_hash=0xc1c4ce49 rv32im_stepi_hash=0xc1c4ce49' $(MIXED_LOG)
 	grep -q 'interp_mem_event_count=3 rv32im_mem_event_count=3 interp_mem_event_hash=0x9abf465c rv32im_mem_event_hash=0x9abf465c interp_sched_event_count=1 rv32im_sched_event_count=1 interp_sched_event_hash=0x0792f634 rv32im_sched_event_hash=0x0792f634' $(MIXED_LOG)
 	grep -q 'interp_fallback_event_count=1 rv32im_fallback_event_count=1 interp_fallback_event_hash=0xc4528507 rv32im_fallback_event_hash=0xc4528507 interp_shadow_bytes=4 rv32im_shadow_bytes=4 interp_shadow_hash=0x6c30726c rv32im_shadow_hash=0x6c30726c' $(MIXED_LOG)
-	grep -q 'rv32im_blocks=4 rv32im_fallbacks=1 rv32im_initial_lookup_fallbacks=0 rv32im_relookup_fallbacks=1 rv32im_unsupported_fallbacks=0 rv32im_native_data_proc=96 rv32im_native_branch=7 rv32im_native_load=49 rv32im_native_store=33 rv32im_native_psr=5 code_bytes=17708' $(MIXED_LOG)
+	grep -q 'rv32im_blocks=4 rv32im_fallbacks=1 rv32im_initial_lookup_fallbacks=0 rv32im_relookup_fallbacks=1 rv32im_unsupported_fallbacks=0 rv32im_native_data_proc=96 rv32im_native_branch=7 rv32im_native_load=49 rv32im_native_store=33 rv32im_native_psr=5 code_bytes=17228' $(MIXED_LOG)
 	grep -q 'harness_mode=runtime_fixture frame_mode=runtime_snapshot mem_mode=runtime_events scheduler_mode=runtime_events fallback_mode=runtime_events reason=runtime_mixed_contract_chain_equal' $(MIXED_LOG)
 	grep -q 'result=PASS command=quit backend=interp' $(MIXED_LOG)
 
@@ -485,6 +487,8 @@ perf: $(PERF_TEST) | $(OUT_DIR)
 	awk \
 		-v mapped_alu_baseline_instret=$(PERF_MAPPED_ALU_BASELINE_WARM_INSTRET) \
 		-v mapped_alu_baseline_bytes=$(PERF_MAPPED_ALU_BASELINE_BYTES) \
+		-v mapped_alu_min_improvement=$(PERF_MAPPED_ALU_MIN_IMPROVEMENT_PERCENT) \
+		-v mapped_alu_cold_instret_max=$(PERF_MAPPED_ALU_COLD_INSTRET_MAX) \
 		-v mapped_alu_instret_max=$(PERF_MAPPED_ALU_WARM_INSTRET_MAX) \
 		-v mapped_alu_bytes_max=$(PERF_MAPPED_ALU_BYTES_MAX) \
 		-v memory_read_instret_max=$(PERF_MEMORY_READ_WARM_INSTRET_MAX) \

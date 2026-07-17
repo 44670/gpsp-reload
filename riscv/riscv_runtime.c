@@ -479,6 +479,96 @@ static bool riscv_arm_data_proc_is_noop(u32 opcode)
   return op == 0xdu && rd == (opcode & 0xfu);
 }
 
+static bool riscv_arm_reg_mapped(u32 reg_index,
+                                 riscv_reg_number *host_reg,
+                                 u32 *dirty_mask);
+static void riscv_emit_mapped_regs_reload_mask(u8 **ptr_ref,
+                                                u32 reload_mask);
+
+static bool riscv_emit_arm_data_proc_mapped_reg_alu(u8 **ptr_ref,
+                                                     u32 opcode)
+{
+  u32 condition = opcode >> 28;
+  u32 op = (opcode >> 21) & 0xfu;
+  u32 set_flags = (opcode >> 20) & 1u;
+  u32 rn = (opcode >> 16) & 0xfu;
+  u32 rd = (opcode >> 12) & 0xfu;
+  u32 rm = opcode & 0xfu;
+  riscv_reg_number rn_host;
+  riscv_reg_number rd_host;
+  riscv_reg_number rm_host;
+  u32 rn_mask;
+  u32 rd_mask;
+  u32 rm_mask;
+  u32 source_mask;
+  u8 *translation_ptr;
+
+  if (condition != 0xe || set_flags || ((opcode >> 25) & 1u) ||
+      (opcode & 0x00000ff0u) != 0 ||
+      rn == REG_PC || rd == REG_PC || rm == REG_PC)
+  {
+    return false;
+  }
+
+  if (op != 0x0 && op != 0x1 && op != 0x2 && op != 0x3 &&
+      op != 0x4 && op != 0xc && op != 0xd && op != 0xe && op != 0xf)
+  {
+    return false;
+  }
+
+  if (!riscv_arm_reg_mapped(rn, &rn_host, &rn_mask) ||
+      !riscv_arm_reg_mapped(rd, &rd_host, &rd_mask) ||
+      !riscv_arm_reg_mapped(rm, &rm_host, &rm_mask))
+  {
+    return false;
+  }
+
+  source_mask = rm_mask;
+  if (op != 0xd && op != 0xf)
+    source_mask |= rn_mask;
+  riscv_emit_mapped_regs_reload_mask(
+    ptr_ref, source_mask & ~riscv_mapped_valid_mask);
+
+  translation_ptr = *ptr_ref;
+  switch (op)
+  {
+    case 0x0:
+      riscv_emit_and(rd_host, rn_host, rm_host);
+      break;
+    case 0x1:
+      riscv_emit_xor(rd_host, rn_host, rm_host);
+      break;
+    case 0x2:
+      riscv_emit_sub(rd_host, rn_host, rm_host);
+      break;
+    case 0x3:
+      riscv_emit_sub(rd_host, rm_host, rn_host);
+      break;
+    case 0x4:
+      riscv_emit_add(rd_host, rn_host, rm_host);
+      break;
+    case 0xc:
+      riscv_emit_or(rd_host, rn_host, rm_host);
+      break;
+    case 0xd:
+      riscv_emit_addi(rd_host, rm_host, 0);
+      break;
+    case 0xe:
+      riscv_emit_xori(riscv_reg_t0, rm_host, -1);
+      riscv_emit_and(rd_host, rn_host, riscv_reg_t0);
+      break;
+    case 0xf:
+      riscv_emit_xori(rd_host, rm_host, -1);
+      break;
+    default:
+      return false;
+  }
+  *ptr_ref = translation_ptr;
+  riscv_mapped_valid_mask |= rd_mask;
+  riscv_mapped_dirty_mask |= rd_mask;
+  return true;
+}
+
 static void riscv_emit_guest_pc_load_ex(u8 **ptr_ref,
                                         riscv_jit_block_meta *meta,
                                         riscv_reg_number rd,
@@ -554,8 +644,6 @@ static void riscv_emit_live_nzcv_flush(u8 **ptr_ref)
 
   *ptr_ref = translation_ptr;
 }
-
-static void riscv_emit_mapped_regs_reload_mask(u8 **ptr_ref, u32 reload_mask);
 
 static void riscv_emit_live_nzcv_bit_load(u8 **ptr_ref,
                                           riscv_reg_number rd,
@@ -5822,6 +5910,20 @@ static bool riscv_emit_native_arm_data_proc_with_pc_ex2(
     return true;
   }
 
+  if (riscv_emit_arm_data_proc_mapped_reg_alu(&ptr, opcode))
+  {
+    if (emit_cycles)
+    {
+      riscv_emit_adjust_cycles(&ptr, cycles);
+      if (cycles_emitted)
+        *cycles_emitted = true;
+    }
+
+    *translation_ptr_ref = ptr;
+    riscv_native_data_proc_insns++;
+    return true;
+  }
+
   if (logical_flags &&
       (generated_flag_mask & 0x02u) &&
       riscv_arm_operand2_preserves_carry(opcode))
@@ -6572,6 +6674,34 @@ static bool riscv_emit_native_arm_multiply2(u8 **translation_ptr_ref,
       (accumulate && rn == REG_PC))
   {
     return false;
+  }
+
+  if (!accumulate && !set_flags)
+  {
+    riscv_reg_number rd_host;
+    riscv_reg_number rm_host;
+    riscv_reg_number rs_host;
+    u32 rd_mask;
+    u32 rm_mask;
+    u32 rs_mask;
+
+    if (riscv_arm_reg_mapped(rd, &rd_host, &rd_mask) &&
+        riscv_arm_reg_mapped(rm, &rm_host, &rm_mask) &&
+        riscv_arm_reg_mapped(rs, &rs_host, &rs_mask))
+    {
+      riscv_emit_mapped_regs_reload_mask(
+        &ptr, (rm_mask | rs_mask) & ~riscv_mapped_valid_mask);
+      translation_ptr = ptr;
+      riscv_emit_mul(rd_host, rm_host, rs_host);
+      ptr = translation_ptr;
+      riscv_mapped_valid_mask |= rd_mask;
+      riscv_mapped_dirty_mask |= rd_mask;
+      riscv_emit_adjust_cycles(&ptr, cycles);
+
+      *translation_ptr_ref = ptr;
+      riscv_native_data_proc_insns++;
+      return true;
+    }
   }
 
   riscv_emit_arm_reg_load(&ptr, riscv_reg_t0, rm);

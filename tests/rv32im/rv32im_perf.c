@@ -495,6 +495,199 @@ static int emit_memory_range(u8 **ptr, riscv_jit_block_meta *meta,
   return 1;
 }
 
+typedef struct mapped_alu_encoding_case
+{
+  const char *name;
+  u32 opcode;
+  u32 expected[2];
+  u32 expected_words;
+} mapped_alu_encoding_case;
+
+static u32 encode_rv32_r(u32 funct7, u32 funct3, riscv_reg_number rd,
+                         riscv_reg_number rs1, riscv_reg_number rs2)
+{
+  return ((funct7 & 0x7fu) << 25) |
+    (((u32)rs2 & 0x1fu) << 20) |
+    (((u32)rs1 & 0x1fu) << 15) |
+    ((funct3 & 0x7u) << 12) |
+    (((u32)rd & 0x1fu) << 7) | 0x33u;
+}
+
+static u32 encode_rv32_i(u32 funct3, riscv_reg_number rd,
+                         riscv_reg_number rs1, s32 immediate)
+{
+  return (((u32)immediate & 0xfffu) << 20) |
+    (((u32)rs1 & 0x1fu) << 15) |
+    ((funct3 & 0x7u) << 12) |
+    (((u32)rd & 0x1fu) << 7) | 0x13u;
+}
+
+static u32 encode_arm_reg_alu(u32 op, u32 rn, u32 rd, u32 rm)
+{
+  return 0xe0000000u | (op << 21) | (rn << 16) | (rd << 12) | rm;
+}
+
+static int verify_mapped_alu_encodings(void)
+{
+  mapped_alu_encoding_case cases[12];
+  u32 case_count = 0;
+  u32 i;
+
+#define ADD_ENCODING_CASE(case_name, arm_op, arm_rn, arm_rd, arm_rm, words)   \
+  do                                                                          \
+  {                                                                           \
+    cases[case_count].name = (case_name);                                      \
+    cases[case_count].opcode =                                                 \
+      encode_arm_reg_alu((arm_op), (arm_rn), (arm_rd), (arm_rm));             \
+    cases[case_count].expected_words = (words);                                \
+    case_count++;                                                              \
+  } while (0)
+
+  ADD_ENCODING_CASE("add", 0x4, 0, 2, 1, 1);
+  cases[0].expected[0] =
+    encode_rv32_r(0x00, 0x0, riscv_reg_a5, riscv_reg_a3, riscv_reg_a4);
+  ADD_ENCODING_CASE("sub_alias_rn", 0x2, 0, 0, 1, 1);
+  cases[1].expected[0] =
+    encode_rv32_r(0x20, 0x0, riscv_reg_a3, riscv_reg_a3, riscv_reg_a4);
+  ADD_ENCODING_CASE("rsb_alias_rm", 0x3, 0, 1, 1, 1);
+  cases[2].expected[0] =
+    encode_rv32_r(0x20, 0x0, riscv_reg_a4, riscv_reg_a4, riscv_reg_a3);
+  ADD_ENCODING_CASE("eor", 0x1, 5, 8, 14, 1);
+  cases[3].expected[0] =
+    encode_rv32_r(0x00, 0x4, riscv_reg_s4, riscv_reg_s1, riscv_reg_s10);
+  ADD_ENCODING_CASE("and", 0x0, 3, 4, 2, 1);
+  cases[4].expected[0] =
+    encode_rv32_r(0x00, 0x7, riscv_reg_a7, riscv_reg_a6, riscv_reg_a5);
+  ADD_ENCODING_CASE("orr", 0xc, 11, 12, 10, 1);
+  cases[5].expected[0] =
+    encode_rv32_r(0x00, 0x6, riscv_reg_s8, riscv_reg_s7, riscv_reg_s6);
+  ADD_ENCODING_CASE("mov", 0xd, 0, 6, 9, 1);
+  cases[6].expected[0] =
+    encode_rv32_i(0x0, riscv_reg_s2, riscv_reg_s5, 0);
+  ADD_ENCODING_CASE("mvn", 0xf, 0, 10, 7, 1);
+  cases[7].expected[0] =
+    encode_rv32_i(0x4, riscv_reg_s6, riscv_reg_s3, -1);
+  ADD_ENCODING_CASE("bic", 0xe, 1, 3, 2, 2);
+  cases[8].expected[0] =
+    encode_rv32_i(0x4, riscv_reg_t0, riscv_reg_a5, -1);
+  cases[8].expected[1] =
+    encode_rv32_r(0x00, 0x7, riscv_reg_a6, riscv_reg_a4, riscv_reg_t0);
+  ADD_ENCODING_CASE("bic_alias_rm", 0xe, 1, 0, 0, 2);
+  cases[9].expected[0] =
+    encode_rv32_i(0x4, riscv_reg_t0, riscv_reg_a3, -1);
+  cases[9].expected[1] =
+    encode_rv32_r(0x00, 0x7, riscv_reg_a3, riscv_reg_a4, riscv_reg_t0);
+  ADD_ENCODING_CASE("add_all_alias", 0x4, 4, 4, 4, 1);
+  cases[10].expected[0] =
+    encode_rv32_r(0x00, 0x0, riscv_reg_a7, riscv_reg_a7, riscv_reg_a7);
+  ADD_ENCODING_CASE("add_sp_lr_alias", 0x4, 13, 14, 14, 1);
+  cases[11].expected[0] =
+    encode_rv32_r(0x00, 0x0, riscv_reg_s10, riscv_reg_s9, riscv_reg_s10);
+
+#undef ADD_ENCODING_CASE
+
+  init_emitter(false);
+  for (i = 0; i < case_count; i++)
+  {
+    u8 *ptr = g_perf_code;
+    u8 *body;
+    riscv_jit_block_meta *meta;
+    bool cycles_emitted = true;
+    u32 actual_words;
+    u32 word;
+
+    riscv_emit_block_prologue(&ptr, &meta);
+    body = ptr;
+    if (!riscv_emit_native_arm_data_proc_with_pc_ex(
+          &ptr, meta, cases[i].opcode, PERF_ALU_START_PC, 1u, 0,
+          false, &cycles_emitted))
+    {
+      put_raw("result=FAIL command=rv32im-perf workload=mapped_alu_encoding ");
+      put_raw("phase=check backend=rv32im case=");
+      put_raw(cases[i].name);
+      put_raw(" reason=lowering_rejected\n");
+      return 0;
+    }
+    actual_words = (u32)(ptr - body) / 4u;
+    if (cycles_emitted || ((u32)(ptr - body) & 3u) != 0 ||
+        actual_words != cases[i].expected_words)
+    {
+      put_raw("result=FAIL command=rv32im-perf workload=mapped_alu_encoding ");
+      put_raw("phase=check backend=rv32im case=");
+      put_raw(cases[i].name);
+      put_raw(" expected_words=");
+      put_u32_dec(cases[i].expected_words);
+      put_raw(" actual_words=");
+      put_u32_dec(actual_words);
+      put_raw(" reason=instruction_count_mismatch\n");
+      return 0;
+    }
+    for (word = 0; word < actual_words; word++)
+    {
+      u32 actual = ((u32 *)(void *)body)[word];
+
+      if (actual != cases[i].expected[word])
+      {
+        put_raw("result=FAIL command=rv32im-perf workload=mapped_alu_encoding ");
+        put_raw("phase=check backend=rv32im case=");
+        put_raw(cases[i].name);
+        put_raw(" word=");
+        put_u32_dec(word);
+        put_raw(" expected=");
+        put_u32_hex(cases[i].expected[word]);
+        put_raw(" actual=");
+        put_u32_hex(actual);
+        put_raw(" reason=encoding_mismatch\n");
+        return 0;
+      }
+    }
+  }
+
+  {
+    u8 *ptr = g_perf_code;
+    u8 *body;
+    riscv_jit_block_meta *meta;
+    u32 expected =
+      encode_rv32_r(0x01, 0x0, riscv_reg_a7, riscv_reg_a4, riscv_reg_a5);
+    u32 actual_words;
+
+    riscv_emit_block_prologue(&ptr, &meta);
+    body = ptr;
+    if (!riscv_emit_native_arm_multiply(
+          &ptr, meta, 0xe0040291u, 0u))
+    {
+      put_raw("result=FAIL command=rv32im-perf workload=mapped_alu_encoding ");
+      put_raw("phase=check backend=rv32im case=mul reason=lowering_rejected\n");
+      return 0;
+    }
+    actual_words = (u32)(ptr - body) / 4u;
+    if (actual_words != 1u || ((u32)(ptr - body) & 3u) != 0)
+    {
+      put_raw("result=FAIL command=rv32im-perf workload=mapped_alu_encoding ");
+      put_raw("phase=check backend=rv32im case=mul expected_words=1 actual_words=");
+      put_u32_dec(actual_words);
+      put_raw(" reason=instruction_count_mismatch\n");
+      return 0;
+    }
+    if (((u32 *)(void *)body)[0] != expected)
+    {
+      put_raw("result=FAIL command=rv32im-perf workload=mapped_alu_encoding ");
+      put_raw("phase=check backend=rv32im case=mul expected=");
+      put_u32_hex(expected);
+      put_raw(" actual=");
+      put_u32_hex(((u32 *)(void *)body)[0]);
+      put_raw(" reason=encoding_mismatch\n");
+      return 0;
+    }
+  }
+
+  put_raw("result=PASS command=rv32im-perf workload=mapped_alu_encoding ");
+  put_raw("phase=check backend=rv32im cases=");
+  put_u32_dec(case_count + 1u);
+  put_raw(" harness_mode=runtime_fixture reason=exact_mapped_alu_encodings\n");
+  return 1;
+}
+
 static void clear_program(perf_workload_kind kind, const char *name,
                           u32 start_pc, u32 warm_runs)
 {
@@ -1272,6 +1465,7 @@ void _start(void)
   g_perf_code = (u8 *)map_result;
 
   if (!run_rdinstret_probe() ||
+      !verify_mapped_alu_encodings() ||
       !run_workload(PERF_WORKLOAD_MAPPED_ALU) ||
       !run_workload(PERF_WORKLOAD_MEMORY_READ) ||
       !run_workload(PERF_WORKLOAD_BRANCH_CHAIN) ||
