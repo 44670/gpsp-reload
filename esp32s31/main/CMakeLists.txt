@@ -1,8 +1,7 @@
 set(GPSP_ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
 set(GPSP_COMMON "${GPSP_ROOT}/libretro/libretro-common")
 
-set(GPSP_SOURCES
-    "${GPSP_ROOT}/bios_data.S"
+set(GPSP_CORE_SOURCES
     "${GPSP_ROOT}/main.c"
     "${GPSP_ROOT}/cpu_backend.c"
     "${GPSP_ROOT}/jsjit_backend.c"
@@ -20,6 +19,11 @@ set(GPSP_SOURCES
     "${GPSP_ROOT}/gba_cc_lut.c"
     "${GPSP_ROOT}/video.cc"
     "${GPSP_ROOT}/cpu.cc"
+)
+
+set(GPSP_SOURCES
+    "${GPSP_ROOT}/bios_data.S"
+    ${GPSP_CORE_SOURCES}
     "${GPSP_COMMON}/compat/compat_posix_string.c"
     "${GPSP_COMMON}/compat/compat_strl.c"
     "${GPSP_COMMON}/compat/fopen_utf8.c"
@@ -65,6 +69,19 @@ idf_component_register(
       esp_timer
       heap
 )
+
+if(GPSP_ESP32S31_LTO)
+    if(NOT CONFIG_COMPILER_LTO_LINKTIME)
+        message(FATAL_ERROR
+            "GPSP_ESP32S31_LTO requires CONFIG_COMPILER_LTO_LINKTIME")
+    endif()
+    if(CONFIG_COMPILER_LTO_COMPILETIME)
+        message(FATAL_ERROR
+            "Global compile-time LTO is disabled; only gpSP may use LTO")
+    endif()
+    set_source_files_properties(${GPSP_CORE_SOURCES} PROPERTIES
+        COMPILE_OPTIONS "-flto=auto")
+endif()
 
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
     RISCV_ARCH

@@ -178,6 +178,14 @@ Set `GPSP_ESP32S31_PC_PROFILE=1` only for interrupted-PC sampling; its 16 KiB
 sample array is placed in LP/RTC SRAM so it does not consume the HP SRAM being
 measured.
 
+`GPSP_ESP32S31_LTO=1` applies LTO only to gpSP emulator sources. Board drivers,
+the LCD refill path, USB, libretro-common support code, and ESP-IDF remain
+ordinary objects. It is intentionally off by default: two non-LTO reset runs
+reproduced within 0.03%, while one intervening LTO run increased `retro_run`
+from 15.294 to 15.426 ms/frame (+0.87%) and `cpu_backend` from 14.379 to
+14.507 ms/frame (+0.89%). LTO also added 1,404 image bytes and grew the
+SRAM-resident `execute_arm` loop by 712 bytes.
+
 The active one-snapshot display/touch path was hardware-tested on 2026-07-18
 with the factory timing, 16 MiB octal PSRAM at 250 MHz, and 16 MiB QIO flash at
 80 MHz. Three reset windows reported 62.5--66.1 FPS. Copying 76,800 bytes from
