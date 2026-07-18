@@ -1866,6 +1866,8 @@ static u32 g_update_first_pc;
 static u32 g_execute_calls;
 static u32 g_execute_cycles;
 static u32 g_execute_pc;
+static u32 g_jit_sticky_preserve_checks;
+static u32 g_interpreter_sticky_clear_checks;
 static u32 g_read32_calls;
 static u32 g_read32_addr;
 static u32 g_read32_pc;
@@ -2231,7 +2233,7 @@ static void run_first_emit_stats_case(void)
              g_first_emit_stats.thumb_helper_insns, 0);
 }
 
-static void expect_stickybits_cleared(const char *test_name);
+static void expect_stickybits_match_execution_mode(const char *test_name);
 
 static void run_first_execute_stats_case(void)
 {
@@ -2301,7 +2303,7 @@ static void run_mapped_gpr_case(void)
     fail_u32("mapped_gpr", "update_cycles", (u32)g_update_cycles, 0);
   if (g_execute_calls != 0)
     fail_u32("mapped_gpr", "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared("mapped_gpr");
+  expect_stickybits_match_execution_mode("mapped_gpr");
 }
 
 static void run_mapped_helper_case(void)
@@ -2333,7 +2335,7 @@ static void run_mapped_helper_case(void)
     fail_u32("mapped_helper", "update_cycles", (u32)g_update_cycles, 0);
   if (g_execute_calls != 0)
     fail_u32("mapped_helper", "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared("mapped_helper");
+  expect_stickybits_match_execution_mode("mapped_helper");
 }
 
 static void run_mapped_nzcv_case(void)
@@ -2358,7 +2360,7 @@ static void run_mapped_nzcv_case(void)
     fail_u32("mapped_nzcv", "update_cycles", (u32)g_update_cycles, 0);
   if (g_execute_calls != 0)
     fail_u32("mapped_nzcv", "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared("mapped_nzcv");
+  expect_stickybits_match_execution_mode("mapped_nzcv");
 }
 
 static void expect_runtime_fallback_delta(const char *test_name,
@@ -6120,14 +6122,20 @@ static void expect_multiply_long_rejected(u8 *code)
   }
 }
 
-static void expect_stickybits_cleared(const char *test_name)
+static void expect_stickybits_match_execution_mode(const char *test_name)
 {
+  u32 expected = g_execute_calls ? 0u : 0xffffffffu;
   unsigned i;
+
+  if (g_execute_calls)
+    g_interpreter_sticky_clear_checks++;
+  else
+    g_jit_sticky_preserve_checks++;
 
   for (i = 0; i < (1024 / 32); i++)
   {
-    if (gamepak_sticky_bit[i])
-      fail_u32(test_name, "sticky", gamepak_sticky_bit[i], 0);
+    if (gamepak_sticky_bit[i] != expected)
+      fail_u32(test_name, "sticky", gamepak_sticky_bit[i], expected);
   }
 }
 
@@ -6158,7 +6166,7 @@ static void run_cycle_boundary_case(void)
     fail_u32("cycle_boundary", "update_cycles", (u32)g_update_cycles, 0);
   if (g_execute_calls != 0)
     fail_u32("cycle_boundary", "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared("cycle_boundary");
+  expect_stickybits_match_execution_mode("cycle_boundary");
 }
 
 static void run_cycle_update_checkpoint_case(void)
@@ -6191,7 +6199,7 @@ static void run_cycle_update_checkpoint_case(void)
   if (g_execute_calls != 0)
     fail_u32("cycle_update_checkpoint", "execute_calls",
              g_execute_calls, 0);
-  expect_stickybits_cleared("cycle_update_checkpoint");
+  expect_stickybits_match_execution_mode("cycle_update_checkpoint");
 }
 
 static void run_unsupported_block_fallback_case(void)
@@ -6224,7 +6232,7 @@ static void run_unsupported_block_fallback_case(void)
              g_execute_pc, UNSUPPORTED_START_PC);
   expect_runtime_fallback_delta("unsupported_fallback_stats",
                                 &stats_before, 1, 1, 0, 0, 1);
-  expect_stickybits_cleared("unsupported_fallback");
+  expect_stickybits_match_execution_mode("unsupported_fallback");
 }
 
 static void run_partial_unsupported_finalize_case(void)
@@ -6264,7 +6272,7 @@ static void run_partial_unsupported_finalize_case(void)
              g_execute_pc, PARTIAL_UNSUPPORTED_START_PC);
   expect_runtime_fallback_delta("partial_unsupported_stats",
                                 &stats_before, 1, 1, 0, 0, 1);
-  expect_stickybits_cleared("partial_unsupported");
+  expect_stickybits_match_execution_mode("partial_unsupported");
 }
 
 static void run_thumb_unsupported_block_fallback_case(void)
@@ -6308,7 +6316,7 @@ static void run_thumb_unsupported_block_fallback_case(void)
              g_execute_pc, THUMB_UNSUPPORTED_START_PC);
   expect_runtime_fallback_delta("thumb_unsupported_fallback_stats",
                                 &stats_before, 1, 1, 0, 0, 1);
-  expect_stickybits_cleared("thumb_unsupported_fallback");
+  expect_stickybits_match_execution_mode("thumb_unsupported_fallback");
 }
 
 static void run_thumb_simple_data_case(void)
@@ -6365,7 +6373,7 @@ static void run_thumb_simple_data_case(void)
     fail_u32("thumb_simple_data", "execute_calls", g_execute_calls, 0);
   expect_runtime_fallback_delta("thumb_simple_data_stats",
                                 &stats_before, 1, 0, 0, 0, 0);
-  expect_stickybits_cleared("thumb_simple_data");
+  expect_stickybits_match_execution_mode("thumb_simple_data");
 }
 
 static void run_thumb_hi_cmp_case(void)
@@ -6407,7 +6415,7 @@ static void run_thumb_hi_cmp_case(void)
     fail_u32("thumb_hi_cmp", "execute_calls", g_execute_calls, 0);
   expect_runtime_fallback_delta("thumb_hi_cmp_stats",
                                 &stats_before, 1, 0, 0, 0, 0);
-  expect_stickybits_cleared("thumb_hi_cmp");
+  expect_stickybits_match_execution_mode("thumb_hi_cmp");
 }
 
 static void run_thumb_hi_mov_pc_case(void)
@@ -6449,7 +6457,7 @@ static void run_thumb_hi_mov_pc_case(void)
     fail_u32("thumb_hi_mov_pc", "execute_calls", g_execute_calls, 0);
   expect_runtime_fallback_delta("thumb_hi_mov_pc_stats",
                                 &stats_before, 1, 0, 0, 0, 0);
-  expect_stickybits_cleared("thumb_hi_mov_pc");
+  expect_stickybits_match_execution_mode("thumb_hi_mov_pc");
 }
 
 static void run_thumb_hi_add_pc_case(void)
@@ -6491,7 +6499,7 @@ static void run_thumb_hi_add_pc_case(void)
     fail_u32("thumb_hi_add_pc", "execute_calls", g_execute_calls, 0);
   expect_runtime_fallback_delta("thumb_hi_add_pc_stats",
                                 &stats_before, 1, 0, 0, 0, 0);
-  expect_stickybits_cleared("thumb_hi_add_pc");
+  expect_stickybits_match_execution_mode("thumb_hi_add_pc");
 }
 
 static void run_thumb_hi_add_mov_case(void)
@@ -6546,7 +6554,7 @@ static void run_thumb_hi_add_mov_case(void)
     fail_u32("thumb_hi_add_mov", "execute_calls", g_execute_calls, 0);
   expect_runtime_fallback_delta("thumb_hi_add_mov_stats",
                                 &stats_before, 1, 0, 0, 0, 0);
-  expect_stickybits_cleared("thumb_hi_add_mov");
+  expect_stickybits_match_execution_mode("thumb_hi_add_mov");
 }
 
 static void run_thumb_flag_alu_case(void)
@@ -6587,7 +6595,7 @@ static void run_thumb_flag_alu_case(void)
     fail_u32("thumb_flag_alu", "execute_calls", g_execute_calls, 0);
   expect_runtime_fallback_delta("thumb_flag_alu_stats",
                                 &stats_before, 1, 0, 0, 0, 0);
-  expect_stickybits_cleared("thumb_flag_alu");
+  expect_stickybits_match_execution_mode("thumb_flag_alu");
 }
 
 static void run_thumb_memory_load_case(void)
@@ -6644,7 +6652,7 @@ static void run_thumb_memory_load_case(void)
     fail_u32("thumb_memory_load", "execute_calls", g_execute_calls, 0);
   expect_runtime_fallback_delta("thumb_memory_load_stats",
                                 &stats_before, 1, 0, 0, 0, 0);
-  expect_stickybits_cleared("thumb_memory_load");
+  expect_stickybits_match_execution_mode("thumb_memory_load");
 }
 
 static void run_thumb_memory_store_case(void)
@@ -6717,7 +6725,7 @@ static void run_thumb_memory_store_case(void)
     fail_u32("thumb_memory_store", "execute_calls", g_execute_calls, 0);
   expect_runtime_fallback_delta("thumb_memory_store_stats",
                                 &stats_before, 1, 0, 0, 0, 0);
-  expect_stickybits_cleared("thumb_memory_store");
+  expect_stickybits_match_execution_mode("thumb_memory_store");
 }
 
 static void run_thumb_reg_shift_case(void)
@@ -6775,7 +6783,7 @@ static void run_thumb_reg_shift_case(void)
     fail_u32("thumb_reg_shift", "execute_calls", g_execute_calls, 0);
   expect_runtime_fallback_delta("thumb_reg_shift_stats",
                                 &stats_before, 1, 0, 0, 0, 0);
-  expect_stickybits_cleared("thumb_reg_shift");
+  expect_stickybits_match_execution_mode("thumb_reg_shift");
 }
 
 static void run_thumb_alu_edge_case(void)
@@ -6829,7 +6837,7 @@ static void run_thumb_alu_edge_case(void)
     fail_u32("thumb_alu_edge", "execute_calls", g_execute_calls, 0);
   expect_runtime_fallback_delta("thumb_alu_edge_stats",
                                 &stats_before, 1, 0, 0, 0, 0);
-  expect_stickybits_cleared("thumb_alu_edge");
+  expect_stickybits_match_execution_mode("thumb_alu_edge");
 }
 
 static void run_thumb_add_edge_case(void)
@@ -6878,7 +6886,7 @@ static void run_thumb_add_edge_case(void)
     fail_u32("thumb_add_edge", "execute_calls", g_execute_calls, 0);
   expect_runtime_fallback_delta("thumb_add_edge_stats",
                                 &stats_before, 1, 0, 0, 0, 0);
-  expect_stickybits_cleared("thumb_add_edge");
+  expect_stickybits_match_execution_mode("thumb_add_edge");
 }
 
 static void expect_thumb_block_write(const char *test_name,
@@ -6937,7 +6945,7 @@ static void run_thumb_block_store_case(void)
     fail_u32("thumb_block_store", "execute_calls", g_execute_calls, 0);
   expect_runtime_fallback_delta("thumb_block_store_stats",
                                 &stats_before, 1, 0, 0, 0, 0);
-  expect_stickybits_cleared("thumb_block_store");
+  expect_stickybits_match_execution_mode("thumb_block_store");
 }
 
 static void run_thumb_block_load_case(void)
@@ -6990,7 +6998,7 @@ static void run_thumb_block_load_case(void)
     fail_u32("thumb_block_load", "execute_calls", g_execute_calls, 0);
   expect_runtime_fallback_delta("thumb_block_load_stats",
                                 &stats_before, 1, 0, 0, 0, 0);
-  expect_stickybits_cleared("thumb_block_load");
+  expect_stickybits_match_execution_mode("thumb_block_load");
 }
 
 static void run_thumb_block_push_case(void)
@@ -7039,7 +7047,7 @@ static void run_thumb_block_push_case(void)
     fail_u32("thumb_block_push", "execute_calls", g_execute_calls, 0);
   expect_runtime_fallback_delta("thumb_block_push_stats",
                                 &stats_before, 1, 0, 0, 0, 0);
-  expect_stickybits_cleared("thumb_block_push");
+  expect_stickybits_match_execution_mode("thumb_block_push");
 }
 
 static void run_thumb_block_pop_pc_case(void)
@@ -7089,7 +7097,7 @@ static void run_thumb_block_pop_pc_case(void)
     fail_u32("thumb_block_pop_pc", "execute_calls", g_execute_calls, 0);
   expect_runtime_fallback_delta("thumb_block_pop_pc_stats",
                                 &stats_before, 1, 0, 0, 0, 0);
-  expect_stickybits_cleared("thumb_block_pop_pc");
+  expect_stickybits_match_execution_mode("thumb_block_pop_pc");
 }
 
 static void expect_thumb_control_common(const char *test_name,
@@ -7112,7 +7120,7 @@ static void expect_thumb_control_common(const char *test_name,
   if (g_execute_calls != 0)
     fail_u32(test_name, "execute_calls", g_execute_calls, 0);
   expect_runtime_fallback_delta(test_name, before, 1, 0, 0, 0, 0);
-  expect_stickybits_cleared(test_name);
+  expect_stickybits_match_execution_mode(test_name);
 }
 
 static void run_thumb_cond_branch_taken_case(void)
@@ -7313,7 +7321,7 @@ static void run_initial_lookup_fallback_case(const char *test_name,
   if (g_execute_pc != BLOCK_START_PC)
     fail_u32(test_name, "execute_pc", g_execute_pc, BLOCK_START_PC);
   expect_runtime_fallback_delta(test_name, &stats_before, 0, 1, 1, 0, 0);
-  expect_stickybits_cleared(test_name);
+  expect_stickybits_match_execution_mode(test_name);
 }
 
 static void run_initial_lookup_miss_fallback_case(void)
@@ -7362,7 +7370,7 @@ static void run_initial_thumb_lookup_fallback_case(const char *test_name,
   if (g_execute_pc != BX_THUMB_TARGET_PC)
     fail_u32(test_name, "execute_pc", g_execute_pc, BX_THUMB_TARGET_PC);
   expect_runtime_fallback_delta(test_name, &stats_before, 0, 1, 1, 0, 0);
-  expect_stickybits_cleared(test_name);
+  expect_stickybits_match_execution_mode(test_name);
 }
 
 static void run_initial_thumb_lookup_miss_fallback_case(void)
@@ -7404,7 +7412,7 @@ static void run_remaining_cycles_case(void)
              g_execute_cycles, extra_cycles);
   if (g_execute_pc != BLOCK_END_PC)
     fail_u32("remaining_cycles", "execute_pc", g_execute_pc, BLOCK_END_PC);
-  expect_stickybits_cleared("remaining_cycles");
+  expect_stickybits_match_execution_mode("remaining_cycles");
 }
 
 static void run_invalid_relookup_fallback_case(void)
@@ -7442,7 +7450,7 @@ static void run_invalid_relookup_fallback_case(void)
              g_execute_pc, BLOCK_END_PC);
   expect_runtime_fallback_delta("invalid_relookup_stats",
                                 &stats_before, 1, 1, 0, 1, 0);
-  expect_stickybits_cleared("invalid_relookup");
+  expect_stickybits_match_execution_mode("invalid_relookup");
 }
 
 static void run_native_chain_remaining_case(void)
@@ -7480,7 +7488,7 @@ static void run_native_chain_remaining_case(void)
   if (g_execute_pc != CHAIN_SECOND_END_PC)
     fail_u32("native_chain", "execute_pc",
              g_execute_pc, CHAIN_SECOND_END_PC);
-  expect_stickybits_cleared("native_chain");
+  expect_stickybits_match_execution_mode("native_chain");
 }
 
 static void run_update_cycle_refill_chain_case(void)
@@ -7515,7 +7523,7 @@ static void run_update_cycle_refill_chain_case(void)
              (u32)g_update_cycles, 0);
   if (g_execute_calls != 0)
     fail_u32("update_refill_chain", "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared("update_refill_chain");
+  expect_stickybits_match_execution_mode("update_refill_chain");
 }
 
 static void run_update_pc_change_chain_case(void)
@@ -7551,7 +7559,7 @@ static void run_update_pc_change_chain_case(void)
              (u32)g_update_cycles, 0);
   if (g_execute_calls != 0)
     fail_u32("update_pc_chain", "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared("update_pc_chain");
+  expect_stickybits_match_execution_mode("update_pc_chain");
 }
 
 static void run_update_frame_complete_pc_change_case(void)
@@ -7586,7 +7594,7 @@ static void run_update_frame_complete_pc_change_case(void)
              (u32)g_update_cycles, 0);
   if (g_execute_calls != 0)
     fail_u32("update_frame_pc", "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared("update_frame_pc");
+  expect_stickybits_match_execution_mode("update_frame_pc");
 }
 
 static void run_multiply_remaining_cycles_case(void)
@@ -7619,7 +7627,7 @@ static void run_multiply_remaining_cycles_case(void)
   if (g_execute_pc != MULTIPLY_END_PC)
     fail_u32("multiply_remaining", "execute_pc",
              g_execute_pc, MULTIPLY_END_PC);
-  expect_stickybits_cleared("multiply_remaining");
+  expect_stickybits_match_execution_mode("multiply_remaining");
 }
 
 static void run_multiply_flag_muls_case(void)
@@ -7648,7 +7656,7 @@ static void run_multiply_flag_muls_case(void)
              (u32)g_update_cycles, 0);
   if (g_execute_calls != 0)
     fail_u32("multiply_flag_muls", "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared("multiply_flag_muls");
+  expect_stickybits_match_execution_mode("multiply_flag_muls");
 }
 
 static void run_multiply_flag_mlas_case(void)
@@ -7684,7 +7692,7 @@ static void run_multiply_flag_mlas_case(void)
   if (g_execute_pc != MULTIPLY_FLAG_MLAS_END_PC)
     fail_u32("multiply_flag_mlas", "execute_pc",
              g_execute_pc, MULTIPLY_FLAG_MLAS_END_PC);
-  expect_stickybits_cleared("multiply_flag_mlas");
+  expect_stickybits_match_execution_mode("multiply_flag_mlas");
 }
 
 static void run_multiply_long_remaining_cycles_case(void)
@@ -7732,7 +7740,7 @@ static void run_multiply_long_remaining_cycles_case(void)
   if (g_execute_pc != MULTIPLY_LONG_END_PC)
     fail_u32("multiply_long_remaining", "execute_pc",
              g_execute_pc, MULTIPLY_LONG_END_PC);
-  expect_stickybits_cleared("multiply_long_remaining");
+  expect_stickybits_match_execution_mode("multiply_long_remaining");
 }
 
 static void run_multiply_long_flag_umulls_case(void)
@@ -7766,7 +7774,7 @@ static void run_multiply_long_flag_umulls_case(void)
   if (g_execute_calls != 0)
     fail_u32("multiply_long_flag_umulls", "execute_calls",
              g_execute_calls, 0);
-  expect_stickybits_cleared("multiply_long_flag_umulls");
+  expect_stickybits_match_execution_mode("multiply_long_flag_umulls");
 }
 
 static void run_multiply_long_flag_smulls_case(void)
@@ -7806,7 +7814,7 @@ static void run_multiply_long_flag_smulls_case(void)
   if (g_execute_pc != MULTIPLY_LONG_FLAG_SMULLS_END_PC)
     fail_u32("multiply_long_flag_smulls", "execute_pc",
              g_execute_pc, MULTIPLY_LONG_FLAG_SMULLS_END_PC);
-  expect_stickybits_cleared("multiply_long_flag_smulls");
+  expect_stickybits_match_execution_mode("multiply_long_flag_smulls");
 }
 
 static void run_multiply_long_acc_remaining_cycles_case(void)
@@ -7856,7 +7864,7 @@ static void run_multiply_long_acc_remaining_cycles_case(void)
   if (g_execute_pc != MULTIPLY_LONG_ACC_END_PC)
     fail_u32("multiply_long_acc", "execute_pc",
              g_execute_pc, MULTIPLY_LONG_ACC_END_PC);
-  expect_stickybits_cleared("multiply_long_acc");
+  expect_stickybits_match_execution_mode("multiply_long_acc");
 }
 
 static void run_multiply_long_acc_flag_umlals_case(void)
@@ -7893,7 +7901,7 @@ static void run_multiply_long_acc_flag_umlals_case(void)
   if (g_execute_calls != 0)
     fail_u32("multiply_long_acc_flag_umlals", "execute_calls",
              g_execute_calls, 0);
-  expect_stickybits_cleared("multiply_long_acc_flag_umlals");
+  expect_stickybits_match_execution_mode("multiply_long_acc_flag_umlals");
 }
 
 static void run_multiply_long_acc_flag_smlals_case(void)
@@ -7935,7 +7943,7 @@ static void run_multiply_long_acc_flag_smlals_case(void)
   if (g_execute_pc != MULTIPLY_LONG_ACC_FLAG_SMLALS_END_PC)
     fail_u32("multiply_long_acc_flag_smlals", "execute_pc",
              g_execute_pc, MULTIPLY_LONG_ACC_FLAG_SMLALS_END_PC);
-  expect_stickybits_cleared("multiply_long_acc_flag_smlals");
+  expect_stickybits_match_execution_mode("multiply_long_acc_flag_smlals");
 }
 
 static void expect_carry_data_results(const char *test_name)
@@ -7974,7 +7982,7 @@ static void run_carry_data_boundary_case(void)
              (u32)g_update_cycles, 0);
   if (g_execute_calls != 0)
     fail_u32("carry_data_boundary", "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared("carry_data_boundary");
+  expect_stickybits_match_execution_mode("carry_data_boundary");
 }
 
 static void run_carry_data_remaining_cycles_case(void)
@@ -8000,7 +8008,7 @@ static void run_carry_data_remaining_cycles_case(void)
   if (g_execute_pc != CARRY_DATA_END_PC)
     fail_u32("carry_data_remaining", "execute_pc",
              g_execute_pc, CARRY_DATA_END_PC);
-  expect_stickybits_cleared("carry_data_remaining");
+  expect_stickybits_match_execution_mode("carry_data_remaining");
 }
 
 static void run_data_test_boundary_case(const char *test_name, u8 *entry,
@@ -8030,7 +8038,7 @@ static void run_data_test_boundary_case(const char *test_name, u8 *entry,
     fail_u32(test_name, "update_cycles", (u32)g_update_cycles, 0);
   if (g_execute_calls != 0)
     fail_u32(test_name, "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared(test_name);
+  expect_stickybits_match_execution_mode(test_name);
 }
 
 static void run_data_test_remaining_case(const char *test_name, u8 *entry,
@@ -8060,7 +8068,7 @@ static void run_data_test_remaining_case(const char *test_name, u8 *entry,
     fail_u32(test_name, "execute_cycles", g_execute_cycles, extra_cycles);
   if (g_execute_pc != end_pc)
     fail_u32(test_name, "execute_pc", g_execute_pc, end_pc);
-  expect_stickybits_cleared(test_name);
+  expect_stickybits_match_execution_mode(test_name);
 }
 
 static void run_data_test_two_reg_boundary_case(const char *test_name,
@@ -8089,7 +8097,7 @@ static void run_data_test_two_reg_boundary_case(const char *test_name,
     fail_u32(test_name, "update_cycles", (u32)g_update_cycles, 0);
   if (g_execute_calls != 0)
     fail_u32(test_name, "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared(test_name);
+  expect_stickybits_match_execution_mode(test_name);
 }
 
 static void run_flag_data_case(const char *test_name, u8 *entry,
@@ -8138,7 +8146,7 @@ static void run_flag_data_case(const char *test_name, u8 *entry,
       fail_u32(test_name, "execute_calls", g_execute_calls, 0);
   }
 
-  expect_stickybits_cleared(test_name);
+  expect_stickybits_match_execution_mode(test_name);
 }
 
 static void run_logical_flag_remaining_case(void)
@@ -8188,7 +8196,7 @@ static void run_logical_flag_remaining_case(void)
   if (g_execute_pc != LOGICAL_FLAG_END_PC)
     fail_u32("logical_flag_remaining", "execute_pc",
              g_execute_pc, LOGICAL_FLAG_END_PC);
-  expect_stickybits_cleared("logical_flag_remaining");
+  expect_stickybits_match_execution_mode("logical_flag_remaining");
 }
 
 static void run_data_ext_remaining_cycles_case(void)
@@ -8233,7 +8241,7 @@ static void run_data_ext_remaining_cycles_case(void)
   if (g_execute_pc != DATA_EXT_END_PC)
     fail_u32("data_ext_remaining", "execute_pc",
              g_execute_pc, DATA_EXT_END_PC);
-  expect_stickybits_cleared("data_ext_remaining");
+  expect_stickybits_match_execution_mode("data_ext_remaining");
 }
 
 static void run_reg_shift_data_remaining_case(void)
@@ -8272,7 +8280,7 @@ static void run_reg_shift_data_remaining_case(void)
   if (g_execute_pc != REG_SHIFT_DATA_END_PC)
     fail_u32("reg_shift_data", "execute_pc",
              g_execute_pc, REG_SHIFT_DATA_END_PC);
-  expect_stickybits_cleared("reg_shift_data");
+  expect_stickybits_match_execution_mode("reg_shift_data");
 }
 
 static void setup_reg_shift_flag_inputs(void)
@@ -8329,7 +8337,7 @@ static void run_reg_shift_flag_case(const char *test_name, u8 *entry,
       fail_u32(test_name, "execute_calls", g_execute_calls, 0);
   }
 
-  expect_stickybits_cleared(test_name);
+  expect_stickybits_match_execution_mode(test_name);
 }
 
 static void run_reg_shift_test_remaining_case(void)
@@ -8358,7 +8366,7 @@ static void run_reg_shift_test_remaining_case(void)
   if (g_execute_pc != REG_SHIFT_TEST_END_PC)
     fail_u32("reg_shift_test", "execute_pc",
              g_execute_pc, REG_SHIFT_TEST_END_PC);
-  expect_stickybits_cleared("reg_shift_test");
+  expect_stickybits_match_execution_mode("reg_shift_test");
 }
 
 static void setup_pc_source_inputs(void)
@@ -8408,7 +8416,7 @@ static void run_pc_source_boundary_case(void)
              (u32)g_update_cycles, 0);
   if (g_execute_calls != 0)
     fail_u32("pc_source_boundary", "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared("pc_source_boundary");
+  expect_stickybits_match_execution_mode("pc_source_boundary");
 }
 
 static void run_pc_source_remaining_case(void)
@@ -8433,7 +8441,7 @@ static void run_pc_source_remaining_case(void)
   if (g_execute_pc != PC_SOURCE_END_PC)
     fail_u32("pc_source_remaining", "execute_pc",
              g_execute_pc, PC_SOURCE_END_PC);
-  expect_stickybits_cleared("pc_source_remaining");
+  expect_stickybits_match_execution_mode("pc_source_remaining");
 }
 
 typedef struct conditional_case
@@ -8505,7 +8513,7 @@ static void run_conditional_case(const char *test_name, u32 condition,
     fail_u32(test_name, "update_cycles", (u32)g_update_cycles, 0);
   if (g_execute_calls != 0)
     fail_u32(test_name, "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared(test_name);
+  expect_stickybits_match_execution_mode(test_name);
 }
 
 static void run_conditional_condition_case(u32 condition)
@@ -8574,7 +8582,7 @@ static void run_swi_boundary_case(void)
     fail_u32("swi_boundary", "update_cycles", (u32)g_update_cycles, 0);
   if (g_execute_calls != 0)
     fail_u32("swi_boundary", "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared("swi_boundary");
+  expect_stickybits_match_execution_mode("swi_boundary");
 }
 
 static void run_swi_remaining_case(void)
@@ -8597,7 +8605,7 @@ static void run_swi_remaining_case(void)
              extra_cycles);
   if (g_execute_pc != SWI_TARGET_PC)
     fail_u32("swi_remaining", "execute_pc", g_execute_pc, SWI_TARGET_PC);
-  expect_stickybits_cleared("swi_remaining");
+  expect_stickybits_match_execution_mode("swi_remaining");
 }
 
 static void run_swi_native_target_case(void)
@@ -8649,7 +8657,7 @@ static void run_swi_native_target_case(void)
   if (g_execute_pc != SWI_TARGET_END_PC)
     fail_u32("swi_native_target", "execute_pc",
              g_execute_pc, SWI_TARGET_END_PC);
-  expect_stickybits_cleared("swi_native_target");
+  expect_stickybits_match_execution_mode("swi_native_target");
 }
 
 static void run_swi_patched_target_case(void)
@@ -8693,7 +8701,7 @@ static void run_swi_patched_target_case(void)
              (u32)g_update_cycles, 0);
   if (g_execute_calls != 0)
     fail_u32("swi_patched_target", "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared("swi_patched_target");
+  expect_stickybits_match_execution_mode("swi_patched_target");
 }
 
 static void run_swp_word_boundary_case(void)
@@ -8735,7 +8743,7 @@ static void run_swp_word_boundary_case(void)
              (u32)g_update_cycles, 0);
   if (g_execute_calls != 0)
     fail_u32("swp_word_boundary", "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared("swp_word_boundary");
+  expect_stickybits_match_execution_mode("swp_word_boundary");
 }
 
 static void run_swp_byte_remaining_case(void)
@@ -8783,7 +8791,7 @@ static void run_swp_byte_remaining_case(void)
   if (g_execute_pc != SWP_BYTE_END_PC)
     fail_u32("swpb_remaining", "execute_pc",
              g_execute_pc, SWP_BYTE_END_PC);
-  expect_stickybits_cleared("swpb_remaining");
+  expect_stickybits_match_execution_mode("swpb_remaining");
 }
 
 static void run_swp_word_smc_irq_alert_case(void)
@@ -8836,7 +8844,7 @@ static void run_swp_word_smc_irq_alert_case(void)
   if (g_execute_pc != SWP_WORD_END_PC)
     fail_u32("swp_smc_irq", "execute_pc",
              g_execute_pc, SWP_WORD_END_PC);
-  expect_stickybits_cleared("swp_smc_irq");
+  expect_stickybits_match_execution_mode("swp_smc_irq");
 }
 
 static void run_swp_word_halt_alert_case(void)
@@ -8892,7 +8900,7 @@ static void run_swp_word_halt_alert_case(void)
              (u32)g_update_cycles, extra_cycles);
   if (g_execute_calls != 0)
     fail_u32("swp_halt", "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared("swp_halt");
+  expect_stickybits_match_execution_mode("swp_halt");
 }
 
 static void run_pc_write_mov_boundary_case(void)
@@ -8918,7 +8926,7 @@ static void run_pc_write_mov_boundary_case(void)
              (u32)g_update_cycles, 0);
   if (g_execute_calls != 0)
     fail_u32("pc_write_mov_boundary", "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared("pc_write_mov_boundary");
+  expect_stickybits_match_execution_mode("pc_write_mov_boundary");
 }
 
 static void run_pc_write_movs_spsr_restore_case(void)
@@ -8958,7 +8966,7 @@ static void run_pc_write_movs_spsr_restore_case(void)
   if (g_execute_calls != 0)
     fail_u32("pc_write_movs_spsr", "execute_calls",
              g_execute_calls, 0);
-  expect_stickybits_cleared("pc_write_movs_spsr");
+  expect_stickybits_match_execution_mode("pc_write_movs_spsr");
 }
 
 static void run_pc_write_movs_thumb_fallback_case(void)
@@ -9014,7 +9022,7 @@ static void run_pc_write_movs_thumb_fallback_case(void)
              g_execute_pc, BX_THUMB_TARGET_PC);
   expect_runtime_fallback_delta("pc_write_movs_thumb_stats",
                                 &stats_before, 1, 1, 0, 1, 0);
-  expect_stickybits_cleared("pc_write_movs_thumb");
+  expect_stickybits_match_execution_mode("pc_write_movs_thumb");
 }
 
 static void run_pc_write_mov_native_target_case(void)
@@ -9056,7 +9064,7 @@ static void run_pc_write_mov_native_target_case(void)
   if (g_execute_pc != LOAD_PC_TARGET_END_PC)
     fail_u32("pc_write_mov_native_target", "execute_pc",
              g_execute_pc, LOAD_PC_TARGET_END_PC);
-  expect_stickybits_cleared("pc_write_mov_native_target");
+  expect_stickybits_match_execution_mode("pc_write_mov_native_target");
 }
 
 static void run_pc_write_add_remaining_case(void)
@@ -9082,7 +9090,7 @@ static void run_pc_write_add_remaining_case(void)
   if (g_execute_pc != PC_WRITE_ADD_TARGET)
     fail_u32("pc_write_add_remaining", "execute_pc",
              g_execute_pc, PC_WRITE_ADD_TARGET);
-  expect_stickybits_cleared("pc_write_add_remaining");
+  expect_stickybits_match_execution_mode("pc_write_add_remaining");
 }
 
 static void run_branch_boundary_case(void)
@@ -9104,7 +9112,7 @@ static void run_branch_boundary_case(void)
     fail_u32("branch_boundary", "update_cycles", (u32)g_update_cycles, 0);
   if (g_execute_calls != 0)
     fail_u32("branch_boundary", "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared("branch_boundary");
+  expect_stickybits_match_execution_mode("branch_boundary");
 }
 
 static void run_branch_remaining_cycles_case(void)
@@ -9128,7 +9136,7 @@ static void run_branch_remaining_cycles_case(void)
   if (g_execute_pc != BRANCH_TARGET_PC)
     fail_u32("branch_remaining", "execute_pc",
              g_execute_pc, BRANCH_TARGET_PC);
-  expect_stickybits_cleared("branch_remaining");
+  expect_stickybits_match_execution_mode("branch_remaining");
 }
 
 static void run_branch_native_target_case(void)
@@ -9165,7 +9173,7 @@ static void run_branch_native_target_case(void)
   if (g_execute_pc != BRANCH_TARGET_END_PC)
     fail_u32("branch_native_target", "execute_pc",
              g_execute_pc, BRANCH_TARGET_END_PC);
-  expect_stickybits_cleared("branch_native_target");
+  expect_stickybits_match_execution_mode("branch_native_target");
 }
 
 static void run_branch_idle_loop_case(void)
@@ -9186,7 +9194,7 @@ static void run_branch_idle_loop_case(void)
     fail_u32("branch_idle_loop", "update_cycles", (u32)g_update_cycles, 0);
   if (g_execute_calls != 0)
     fail_u32("branch_idle_loop", "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared("branch_idle_loop");
+  expect_stickybits_match_execution_mode("branch_idle_loop");
 }
 
 static void run_internal_branch_patch_case(void)
@@ -9221,7 +9229,7 @@ static void run_internal_branch_patch_case(void)
   if (g_execute_calls != 0)
     fail_u32("internal_branch_patch", "execute_calls",
              g_execute_calls, 0);
-  expect_stickybits_cleared("internal_branch_patch");
+  expect_stickybits_match_execution_mode("internal_branch_patch");
 }
 
 static void run_dirty_internal_branch_patch_case(void)
@@ -9261,7 +9269,7 @@ static void run_dirty_internal_branch_patch_case(void)
   if (g_execute_calls != 0)
     fail_u32("dirty_internal_branch_patch", "execute_calls",
              g_execute_calls, 0);
-  expect_stickybits_cleared("dirty_internal_branch_patch");
+  expect_stickybits_match_execution_mode("dirty_internal_branch_patch");
 }
 
 static void run_external_branch_patch_case(void)
@@ -9294,7 +9302,7 @@ static void run_external_branch_patch_case(void)
   if (g_execute_calls != 0)
     fail_u32("external_branch_patch", "execute_calls",
              g_execute_calls, 0);
-  expect_stickybits_cleared("external_branch_patch");
+  expect_stickybits_match_execution_mode("external_branch_patch");
 }
 
 static u32 patch_repatch_branch_target(u8 *target_entry)
@@ -9352,7 +9360,7 @@ static void run_repatch_branch_target_case(const char *test_name,
   if (g_execute_calls != 0)
     fail_u32(test_name, "execute_calls",
              g_execute_calls, 0);
-  expect_stickybits_cleared(test_name);
+  expect_stickybits_match_execution_mode(test_name);
 }
 
 static void run_repatch_branch_case(void)
@@ -9388,7 +9396,7 @@ static void run_bl_boundary_case(void)
     fail_u32("bl_boundary", "update_cycles", (u32)g_update_cycles, 0);
   if (g_execute_calls != 0)
     fail_u32("bl_boundary", "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared("bl_boundary");
+  expect_stickybits_match_execution_mode("bl_boundary");
 }
 
 static void run_bl_remaining_cycles_case(void)
@@ -9414,7 +9422,7 @@ static void run_bl_remaining_cycles_case(void)
   if (g_execute_pc != BL_TARGET_PC)
     fail_u32("bl_remaining", "execute_pc",
              g_execute_pc, BL_TARGET_PC);
-  expect_stickybits_cleared("bl_remaining");
+  expect_stickybits_match_execution_mode("bl_remaining");
 }
 
 static void run_bl_native_target_case(void)
@@ -9453,7 +9461,7 @@ static void run_bl_native_target_case(void)
   if (g_execute_pc != BL_TARGET_END_PC)
     fail_u32("bl_native_target", "execute_pc",
              g_execute_pc, BL_TARGET_END_PC);
-  expect_stickybits_cleared("bl_native_target");
+  expect_stickybits_match_execution_mode("bl_native_target");
 }
 
 static void run_bx_arm_remaining_cycles_case(void)
@@ -9480,7 +9488,7 @@ static void run_bx_arm_remaining_cycles_case(void)
   if (g_execute_pc != BX_ARM_TARGET)
     fail_u32("bx_arm_remaining", "execute_pc",
              g_execute_pc, BX_ARM_TARGET);
-  expect_stickybits_cleared("bx_arm_remaining");
+  expect_stickybits_match_execution_mode("bx_arm_remaining");
 }
 
 static void run_bx_arm_native_target_case(void)
@@ -9524,7 +9532,7 @@ static void run_bx_arm_native_target_case(void)
   if (g_execute_pc != BX_ARM_TARGET_END_PC)
     fail_u32("bx_arm_native_target", "execute_pc",
              g_execute_pc, BX_ARM_TARGET_END_PC);
-  expect_stickybits_cleared("bx_arm_native_target");
+  expect_stickybits_match_execution_mode("bx_arm_native_target");
 }
 
 static void run_bx_thumb_boundary_case(void)
@@ -9547,7 +9555,7 @@ static void run_bx_thumb_boundary_case(void)
     fail_u32("bx_thumb_boundary", "update_cycles", (u32)g_update_cycles, 0);
   if (g_execute_calls != 0)
     fail_u32("bx_thumb_boundary", "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared("bx_thumb_boundary");
+  expect_stickybits_match_execution_mode("bx_thumb_boundary");
 }
 
 static void run_bx_thumb_remaining_cycles_case(void)
@@ -9585,7 +9593,7 @@ static void run_bx_thumb_remaining_cycles_case(void)
   if (g_execute_pc != BX_THUMB_TARGET_PC)
     fail_u32("bx_thumb_remaining", "execute_pc",
              g_execute_pc, BX_THUMB_TARGET_PC);
-  expect_stickybits_cleared("bx_thumb_remaining");
+  expect_stickybits_match_execution_mode("bx_thumb_remaining");
 }
 
 static void expect_load_helpers(const char *test_name)
@@ -9629,7 +9637,7 @@ static void run_load_boundary_case(void)
   if (g_execute_calls != 0)
     fail_u32("load_boundary", "execute_calls", g_execute_calls, 0);
   expect_load_helpers("load_boundary");
-  expect_stickybits_cleared("load_boundary");
+  expect_stickybits_match_execution_mode("load_boundary");
 }
 
 static void run_load_remaining_cycles_case(void)
@@ -9658,7 +9666,7 @@ static void run_load_remaining_cycles_case(void)
   if (g_execute_pc != LOAD_END_PC)
     fail_u32("load_remaining", "execute_pc", g_execute_pc, LOAD_END_PC);
   expect_load_helpers("load_remaining");
-  expect_stickybits_cleared("load_remaining");
+  expect_stickybits_match_execution_mode("load_remaining");
 }
 
 static void expect_load_pc_helper(const char *test_name)
@@ -9773,7 +9781,7 @@ static void run_load_pc_boundary_case(void)
   if (g_execute_calls != 0)
     fail_u32("load_pc_boundary", "execute_calls", g_execute_calls, 0);
   expect_load_pc_helper("load_pc_boundary");
-  expect_stickybits_cleared("load_pc_boundary");
+  expect_stickybits_match_execution_mode("load_pc_boundary");
 }
 
 static void run_load_pc_remaining_case(void)
@@ -9799,7 +9807,7 @@ static void run_load_pc_remaining_case(void)
     fail_u32("load_pc_remaining", "execute_pc",
              g_execute_pc, LOAD_PC_TARGET);
   expect_load_pc_helper("load_pc_remaining");
-  expect_stickybits_cleared("load_pc_remaining");
+  expect_stickybits_match_execution_mode("load_pc_remaining");
 }
 
 static void run_load_pc_native_target_case(void)
@@ -9840,7 +9848,7 @@ static void run_load_pc_native_target_case(void)
     fail_u32("load_pc_native_target", "execute_pc",
              g_execute_pc, LOAD_PC_TARGET_END_PC);
   expect_load_pc_helper("load_pc_native_target");
-  expect_stickybits_cleared("load_pc_native_target");
+  expect_stickybits_match_execution_mode("load_pc_native_target");
 }
 
 static void run_load_byte_pc_boundary_case(void)
@@ -9867,7 +9875,7 @@ static void run_load_byte_pc_boundary_case(void)
   if (g_execute_calls != 0)
     fail_u32("load_byte_pc_boundary", "execute_calls", g_execute_calls, 0);
   expect_load_byte_pc_helper("load_byte_pc_boundary");
-  expect_stickybits_cleared("load_byte_pc_boundary");
+  expect_stickybits_match_execution_mode("load_byte_pc_boundary");
 }
 
 static void run_load_byte_pc_remaining_case(void)
@@ -9895,7 +9903,7 @@ static void run_load_byte_pc_remaining_case(void)
     fail_u32("load_byte_pc_remaining", "execute_pc",
              g_execute_pc, LOAD_BYTE_PC_TARGET);
   expect_load_byte_pc_helper("load_byte_pc_remaining");
-  expect_stickybits_cleared("load_byte_pc_remaining");
+  expect_stickybits_match_execution_mode("load_byte_pc_remaining");
 }
 
 static void run_load_byte_pc_native_target_case(void)
@@ -9938,7 +9946,7 @@ static void run_load_byte_pc_native_target_case(void)
     fail_u32("load_byte_pc_native_target", "execute_pc",
              g_execute_pc, LOAD_BYTE_PC_TARGET_END_PC);
   expect_load_byte_pc_helper("load_byte_pc_native_target");
-  expect_stickybits_cleared("load_byte_pc_native_target");
+  expect_stickybits_match_execution_mode("load_byte_pc_native_target");
 }
 
 static void run_half_load_pc_boundary_case(void)
@@ -9965,7 +9973,7 @@ static void run_half_load_pc_boundary_case(void)
   if (g_execute_calls != 0)
     fail_u32("half_load_pc_boundary", "execute_calls", g_execute_calls, 0);
   expect_half_load_pc_helper("half_load_pc_boundary");
-  expect_stickybits_cleared("half_load_pc_boundary");
+  expect_stickybits_match_execution_mode("half_load_pc_boundary");
 }
 
 static void run_half_load_pc_remaining_case(void)
@@ -9993,7 +10001,7 @@ static void run_half_load_pc_remaining_case(void)
     fail_u32("half_load_pc_remaining", "execute_pc",
              g_execute_pc, HALF_LOAD_PC_TARGET);
   expect_half_load_pc_helper("half_load_pc_remaining");
-  expect_stickybits_cleared("half_load_pc_remaining");
+  expect_stickybits_match_execution_mode("half_load_pc_remaining");
 }
 
 static void run_half_load_pc_native_target_case(void)
@@ -10036,7 +10044,7 @@ static void run_half_load_pc_native_target_case(void)
     fail_u32("half_load_pc_native_target", "execute_pc",
              g_execute_pc, HALF_LOAD_PC_TARGET_END_PC);
   expect_half_load_pc_helper("half_load_pc_native_target");
-  expect_stickybits_cleared("half_load_pc_native_target");
+  expect_stickybits_match_execution_mode("half_load_pc_native_target");
 }
 
 static void run_half_reg_load_pc_boundary_case(void)
@@ -10067,7 +10075,7 @@ static void run_half_reg_load_pc_boundary_case(void)
     fail_u32("half_reg_load_pc_boundary", "execute_calls",
              g_execute_calls, 0);
   expect_half_reg_load_pc_helper("half_reg_load_pc_boundary");
-  expect_stickybits_cleared("half_reg_load_pc_boundary");
+  expect_stickybits_match_execution_mode("half_reg_load_pc_boundary");
 }
 
 static void run_half_reg_load_pc_remaining_case(void)
@@ -10098,7 +10106,7 @@ static void run_half_reg_load_pc_remaining_case(void)
     fail_u32("half_reg_load_pc_remaining", "execute_pc",
              g_execute_pc, HALF_REG_LOAD_PC_TARGET);
   expect_half_reg_load_pc_helper("half_reg_load_pc_remaining");
-  expect_stickybits_cleared("half_reg_load_pc_remaining");
+  expect_stickybits_match_execution_mode("half_reg_load_pc_remaining");
 }
 
 static void run_half_reg_load_pc_native_target_case(void)
@@ -10143,7 +10151,7 @@ static void run_half_reg_load_pc_native_target_case(void)
     fail_u32("half_reg_load_pc_native_target", "execute_pc",
              g_execute_pc, HALF_REG_LOAD_PC_TARGET_END_PC);
   expect_half_reg_load_pc_helper("half_reg_load_pc_native_target");
-  expect_stickybits_cleared("half_reg_load_pc_native_target");
+  expect_stickybits_match_execution_mode("half_reg_load_pc_native_target");
 }
 
 static void run_signed_byte_reg_load_pc_boundary_case(void)
@@ -10175,7 +10183,7 @@ static void run_signed_byte_reg_load_pc_boundary_case(void)
     fail_u32("signed_byte_reg_load_pc_boundary", "execute_calls",
              g_execute_calls, 0);
   expect_signed_byte_reg_load_pc_helper("signed_byte_reg_load_pc_boundary");
-  expect_stickybits_cleared("signed_byte_reg_load_pc_boundary");
+  expect_stickybits_match_execution_mode("signed_byte_reg_load_pc_boundary");
 }
 
 static void run_signed_byte_reg_load_pc_remaining_case(void)
@@ -10206,7 +10214,7 @@ static void run_signed_byte_reg_load_pc_remaining_case(void)
     fail_u32("signed_byte_reg_load_pc_remaining", "execute_pc",
              g_execute_pc, SIGNED_BYTE_REG_LOAD_PC_TARGET);
   expect_signed_byte_reg_load_pc_helper("signed_byte_reg_load_pc_remaining");
-  expect_stickybits_cleared("signed_byte_reg_load_pc_remaining");
+  expect_stickybits_match_execution_mode("signed_byte_reg_load_pc_remaining");
 }
 
 static void run_signed_byte_reg_load_pc_native_target_case(void)
@@ -10251,7 +10259,7 @@ static void run_signed_byte_reg_load_pc_native_target_case(void)
              g_execute_pc, SIGNED_BYTE_REG_LOAD_PC_TARGET_END_PC);
   expect_signed_byte_reg_load_pc_helper(
     "signed_byte_reg_load_pc_native_target");
-  expect_stickybits_cleared("signed_byte_reg_load_pc_native_target");
+  expect_stickybits_match_execution_mode("signed_byte_reg_load_pc_native_target");
 }
 
 static void run_signed_half_reg_load_pc_boundary_case(void)
@@ -10283,7 +10291,7 @@ static void run_signed_half_reg_load_pc_boundary_case(void)
     fail_u32("signed_half_reg_load_pc_boundary", "execute_calls",
              g_execute_calls, 0);
   expect_signed_half_reg_load_pc_helper("signed_half_reg_load_pc_boundary");
-  expect_stickybits_cleared("signed_half_reg_load_pc_boundary");
+  expect_stickybits_match_execution_mode("signed_half_reg_load_pc_boundary");
 }
 
 static void run_signed_half_reg_load_pc_remaining_case(void)
@@ -10314,7 +10322,7 @@ static void run_signed_half_reg_load_pc_remaining_case(void)
     fail_u32("signed_half_reg_load_pc_remaining", "execute_pc",
              g_execute_pc, SIGNED_HALF_REG_LOAD_PC_TARGET);
   expect_signed_half_reg_load_pc_helper("signed_half_reg_load_pc_remaining");
-  expect_stickybits_cleared("signed_half_reg_load_pc_remaining");
+  expect_stickybits_match_execution_mode("signed_half_reg_load_pc_remaining");
 }
 
 static void run_signed_half_reg_load_pc_native_target_case(void)
@@ -10359,7 +10367,7 @@ static void run_signed_half_reg_load_pc_native_target_case(void)
              g_execute_pc, SIGNED_HALF_REG_LOAD_PC_TARGET_END_PC);
   expect_signed_half_reg_load_pc_helper(
     "signed_half_reg_load_pc_native_target");
-  expect_stickybits_cleared("signed_half_reg_load_pc_native_target");
+  expect_stickybits_match_execution_mode("signed_half_reg_load_pc_native_target");
 }
 
 static void run_signed_byte_load_pc_boundary_case(void)
@@ -10389,7 +10397,7 @@ static void run_signed_byte_load_pc_boundary_case(void)
     fail_u32("signed_byte_load_pc_boundary", "execute_calls",
              g_execute_calls, 0);
   expect_signed_byte_load_pc_helper("signed_byte_load_pc_boundary");
-  expect_stickybits_cleared("signed_byte_load_pc_boundary");
+  expect_stickybits_match_execution_mode("signed_byte_load_pc_boundary");
 }
 
 static void run_signed_byte_load_pc_remaining_case(void)
@@ -10419,7 +10427,7 @@ static void run_signed_byte_load_pc_remaining_case(void)
     fail_u32("signed_byte_load_pc_remaining", "execute_pc",
              g_execute_pc, SIGNED_BYTE_LOAD_PC_TARGET);
   expect_signed_byte_load_pc_helper("signed_byte_load_pc_remaining");
-  expect_stickybits_cleared("signed_byte_load_pc_remaining");
+  expect_stickybits_match_execution_mode("signed_byte_load_pc_remaining");
 }
 
 static void run_signed_byte_load_pc_native_target_case(void)
@@ -10463,7 +10471,7 @@ static void run_signed_byte_load_pc_native_target_case(void)
     fail_u32("signed_byte_load_pc_native_target", "execute_pc",
              g_execute_pc, SIGNED_BYTE_LOAD_PC_TARGET_END_PC);
   expect_signed_byte_load_pc_helper("signed_byte_load_pc_native_target");
-  expect_stickybits_cleared("signed_byte_load_pc_native_target");
+  expect_stickybits_match_execution_mode("signed_byte_load_pc_native_target");
 }
 
 static void run_signed_half_load_pc_boundary_case(void)
@@ -10493,7 +10501,7 @@ static void run_signed_half_load_pc_boundary_case(void)
     fail_u32("signed_half_load_pc_boundary", "execute_calls",
              g_execute_calls, 0);
   expect_signed_half_load_pc_helper("signed_half_load_pc_boundary");
-  expect_stickybits_cleared("signed_half_load_pc_boundary");
+  expect_stickybits_match_execution_mode("signed_half_load_pc_boundary");
 }
 
 static void run_signed_half_load_pc_remaining_case(void)
@@ -10523,7 +10531,7 @@ static void run_signed_half_load_pc_remaining_case(void)
     fail_u32("signed_half_load_pc_remaining", "execute_pc",
              g_execute_pc, SIGNED_HALF_LOAD_PC_TARGET);
   expect_signed_half_load_pc_helper("signed_half_load_pc_remaining");
-  expect_stickybits_cleared("signed_half_load_pc_remaining");
+  expect_stickybits_match_execution_mode("signed_half_load_pc_remaining");
 }
 
 static void run_signed_half_load_pc_native_target_case(void)
@@ -10567,7 +10575,7 @@ static void run_signed_half_load_pc_native_target_case(void)
     fail_u32("signed_half_load_pc_native_target", "execute_pc",
              g_execute_pc, SIGNED_HALF_LOAD_PC_TARGET_END_PC);
   expect_signed_half_load_pc_helper("signed_half_load_pc_native_target");
-  expect_stickybits_cleared("signed_half_load_pc_native_target");
+  expect_stickybits_match_execution_mode("signed_half_load_pc_native_target");
 }
 
 static void expect_pc_base_load_helpers(const char *test_name)
@@ -10617,7 +10625,7 @@ static void run_pc_base_load_remaining_case(void)
     fail_u32("pc_base_load", "execute_pc",
              g_execute_pc, PC_BASE_LOAD_END_PC);
   expect_pc_base_load_helpers("pc_base_load");
-  expect_stickybits_cleared("pc_base_load");
+  expect_stickybits_match_execution_mode("pc_base_load");
 }
 
 static void expect_half_load_helpers(const char *test_name)
@@ -10673,7 +10681,7 @@ static void run_half_load_remaining_cycles_case(void)
     fail_u32("half_load_remaining", "execute_pc",
              g_execute_pc, HALF_LOAD_END_PC);
   expect_half_load_helpers("half_load_remaining");
-  expect_stickybits_cleared("half_load_remaining");
+  expect_stickybits_match_execution_mode("half_load_remaining");
 }
 
 static void run_pc_base_half_load_remaining_case(void)
@@ -10732,7 +10740,7 @@ static void run_pc_base_half_load_remaining_case(void)
   if (g_execute_pc != PC_BASE_HALF_LOAD_END_PC)
     fail_u32("pc_base_half_load", "execute_pc",
              g_execute_pc, PC_BASE_HALF_LOAD_END_PC);
-  expect_stickybits_cleared("pc_base_half_load");
+  expect_stickybits_match_execution_mode("pc_base_half_load");
 }
 
 static void run_pc_base_half_store_remaining_case(void)
@@ -10770,7 +10778,7 @@ static void run_pc_base_half_store_remaining_case(void)
   if (g_execute_pc != PC_BASE_HALF_STORE_END_PC)
     fail_u32("pc_base_half_store", "execute_pc",
              g_execute_pc, PC_BASE_HALF_STORE_END_PC);
-  expect_stickybits_cleared("pc_base_half_store");
+  expect_stickybits_match_execution_mode("pc_base_half_store");
 }
 
 static void run_pc_base_half_neg_store_remaining_case(void)
@@ -10809,7 +10817,7 @@ static void run_pc_base_half_neg_store_remaining_case(void)
   if (g_execute_pc != PC_BASE_HALF_NEG_STORE_END_PC)
     fail_u32("pc_base_half_neg_store", "execute_pc",
              g_execute_pc, PC_BASE_HALF_NEG_STORE_END_PC);
-  expect_stickybits_cleared("pc_base_half_neg_store");
+  expect_stickybits_match_execution_mode("pc_base_half_neg_store");
 }
 
 static void run_half_store_smc_irq_alert_case(void)
@@ -10850,7 +10858,7 @@ static void run_half_store_smc_irq_alert_case(void)
   if (g_execute_cycles != extra_cycles)
     fail_u32("half_store_smc_irq", "execute_cycles",
              g_execute_cycles, extra_cycles);
-  expect_stickybits_cleared("half_store_smc_irq");
+  expect_stickybits_match_execution_mode("half_store_smc_irq");
 }
 
 static void run_half_store_halt_alert_case(void)
@@ -10894,7 +10902,7 @@ static void run_half_store_halt_alert_case(void)
              (u32)g_update_cycles, extra_cycles);
   if (g_execute_calls != 0)
     fail_u32("half_store_halt", "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared("half_store_halt");
+  expect_stickybits_match_execution_mode("half_store_halt");
 }
 
 static void run_half_reg_load_remaining_cycles_case(void)
@@ -10952,7 +10960,7 @@ static void run_half_reg_load_remaining_cycles_case(void)
   if (g_execute_pc != HALF_REG_LOAD_END_PC)
     fail_u32("half_reg_load", "execute_pc",
              g_execute_pc, HALF_REG_LOAD_END_PC);
-  expect_stickybits_cleared("half_reg_load");
+  expect_stickybits_match_execution_mode("half_reg_load");
 }
 
 static void run_half_reg_pc_load_remaining_cycles_case(void)
@@ -11012,7 +11020,7 @@ static void run_half_reg_pc_load_remaining_cycles_case(void)
   if (g_execute_pc != HALF_REG_PC_LOAD_END_PC)
     fail_u32("half_reg_pc_load", "execute_pc",
              g_execute_pc, HALF_REG_PC_LOAD_END_PC);
-  expect_stickybits_cleared("half_reg_pc_load");
+  expect_stickybits_match_execution_mode("half_reg_pc_load");
 }
 
 static void run_half_reg_pc_store_remaining_cycles_case(void)
@@ -11051,7 +11059,7 @@ static void run_half_reg_pc_store_remaining_cycles_case(void)
   if (g_execute_pc != HALF_REG_PC_STORE_END_PC)
     fail_u32("half_reg_pc_store", "execute_pc",
              g_execute_pc, HALF_REG_PC_STORE_END_PC);
-  expect_stickybits_cleared("half_reg_pc_store");
+  expect_stickybits_match_execution_mode("half_reg_pc_store");
 }
 
 static void run_half_reg_store_remaining_cycles_case(void)
@@ -11091,7 +11099,7 @@ static void run_half_reg_store_remaining_cycles_case(void)
   if (g_execute_pc != HALF_REG_STORE_END_PC)
     fail_u32("half_reg_store", "execute_pc",
              g_execute_pc, HALF_REG_STORE_END_PC);
-  expect_stickybits_cleared("half_reg_store");
+  expect_stickybits_match_execution_mode("half_reg_store");
 }
 
 static void run_half_writeback_store_case(void)
@@ -11132,7 +11140,7 @@ static void run_half_writeback_store_case(void)
   if (g_execute_pc != HALF_WRITEBACK_STORE_END_PC)
     fail_u32("half_wb_store", "execute_pc",
              g_execute_pc, HALF_WRITEBACK_STORE_END_PC);
-  expect_stickybits_cleared("half_wb_store");
+  expect_stickybits_match_execution_mode("half_wb_store");
 }
 
 static void run_half_post_load_case(void)
@@ -11174,7 +11182,7 @@ static void run_half_post_load_case(void)
   if (g_execute_pc != HALF_WRITEBACK_LOAD_END_PC)
     fail_u32("half_post_load", "execute_pc",
              g_execute_pc, HALF_WRITEBACK_LOAD_END_PC);
-  expect_stickybits_cleared("half_post_load");
+  expect_stickybits_match_execution_mode("half_post_load");
 }
 
 static void run_reg_offset_load_remaining_cycles_case(void)
@@ -11222,7 +11230,7 @@ static void run_reg_offset_load_remaining_cycles_case(void)
   if (g_execute_pc != REG_OFFSET_LOAD_END_PC)
     fail_u32("reg_offset_load", "execute_pc",
              g_execute_pc, REG_OFFSET_LOAD_END_PC);
-  expect_stickybits_cleared("reg_offset_load");
+  expect_stickybits_match_execution_mode("reg_offset_load");
 }
 
 static void run_reg_offset_pc_load_remaining_cycles_case(void)
@@ -11271,7 +11279,7 @@ static void run_reg_offset_pc_load_remaining_cycles_case(void)
   if (g_execute_pc != REG_OFFSET_PC_LOAD_END_PC)
     fail_u32("reg_offset_pc_load", "execute_pc",
              g_execute_pc, REG_OFFSET_PC_LOAD_END_PC);
-  expect_stickybits_cleared("reg_offset_pc_load");
+  expect_stickybits_match_execution_mode("reg_offset_pc_load");
 }
 
 static void run_reg_offset_pc_store_remaining_cycles_case(void)
@@ -11310,7 +11318,7 @@ static void run_reg_offset_pc_store_remaining_cycles_case(void)
   if (g_execute_pc != REG_OFFSET_PC_STORE_END_PC)
     fail_u32("reg_offset_pc_store", "execute_pc",
              g_execute_pc, REG_OFFSET_PC_STORE_END_PC);
-  expect_stickybits_cleared("reg_offset_pc_store");
+  expect_stickybits_match_execution_mode("reg_offset_pc_store");
 }
 
 static void run_reg_offset_pc_byte_store_remaining_cycles_case(void)
@@ -11349,7 +11357,7 @@ static void run_reg_offset_pc_byte_store_remaining_cycles_case(void)
   if (g_execute_pc != REG_OFFSET_PC_BYTE_STORE_END_PC)
     fail_u32("reg_offset_pc_byte_store", "execute_pc",
              g_execute_pc, REG_OFFSET_PC_BYTE_STORE_END_PC);
-  expect_stickybits_cleared("reg_offset_pc_byte_store");
+  expect_stickybits_match_execution_mode("reg_offset_pc_byte_store");
 }
 
 static void run_reg_offset_store_remaining_cycles_case(void)
@@ -11386,7 +11394,7 @@ static void run_reg_offset_store_remaining_cycles_case(void)
   if (g_execute_cycles != extra_cycles)
     fail_u32("reg_offset_store", "execute_cycles",
              g_execute_cycles, extra_cycles);
-  expect_stickybits_cleared("reg_offset_store");
+  expect_stickybits_match_execution_mode("reg_offset_store");
 }
 
 static void run_shifted_reg_offset_load_case(void)
@@ -11423,7 +11431,7 @@ static void run_shifted_reg_offset_load_case(void)
   if (g_execute_cycles != extra_cycles)
     fail_u32("shifted_reg_offset", "execute_cycles",
              g_execute_cycles, extra_cycles);
-  expect_stickybits_cleared("shifted_reg_offset");
+  expect_stickybits_match_execution_mode("shifted_reg_offset");
 }
 
 static void run_shifted_reg_offset_store_remaining_case(void)
@@ -11466,7 +11474,7 @@ static void run_shifted_reg_offset_store_remaining_case(void)
   if (g_execute_pc != SHIFTED_REG_OFFSET_STORE_END_PC)
     fail_u32("shifted_reg_offset_store", "execute_pc",
              g_execute_pc, SHIFTED_REG_OFFSET_STORE_END_PC);
-  expect_stickybits_cleared("shifted_reg_offset_store");
+  expect_stickybits_match_execution_mode("shifted_reg_offset_store");
 }
 
 static void run_shifted_reg_offset_pc_store_remaining_case(void)
@@ -11509,7 +11517,7 @@ static void run_shifted_reg_offset_pc_store_remaining_case(void)
   if (g_execute_pc != SHIFTED_REG_OFFSET_PC_STORE_END_PC)
     fail_u32("shifted_reg_offset_pc_store", "execute_pc",
              g_execute_pc, SHIFTED_REG_OFFSET_PC_STORE_END_PC);
-  expect_stickybits_cleared("shifted_reg_offset_pc_store");
+  expect_stickybits_match_execution_mode("shifted_reg_offset_pc_store");
 }
 
 static void run_shifted_reg_offset_pc_lsr_load_case(void)
@@ -11551,7 +11559,7 @@ static void run_shifted_reg_offset_pc_lsr_load_case(void)
   if (g_execute_pc != SHIFTED_REG_OFFSET_PC_LSR_END_PC)
     fail_u32("shifted_reg_offset_pc_lsr", "execute_pc",
              g_execute_pc, SHIFTED_REG_OFFSET_PC_LSR_END_PC);
-  expect_stickybits_cleared("shifted_reg_offset_pc_lsr");
+  expect_stickybits_match_execution_mode("shifted_reg_offset_pc_lsr");
 }
 
 static void run_shifted_reg_offset_pc_lsr_store_remaining_case(void)
@@ -11594,7 +11602,7 @@ static void run_shifted_reg_offset_pc_lsr_store_remaining_case(void)
   if (g_execute_pc != SHIFTED_REG_OFFSET_PC_LSR_STORE_END_PC)
     fail_u32("shifted_reg_offset_pc_lsr_store", "execute_pc",
              g_execute_pc, SHIFTED_REG_OFFSET_PC_LSR_STORE_END_PC);
-  expect_stickybits_cleared("shifted_reg_offset_pc_lsr_store");
+  expect_stickybits_match_execution_mode("shifted_reg_offset_pc_lsr_store");
 }
 
 static void run_shifted_reg_offset_pc_asr_load_case(void)
@@ -11636,7 +11644,7 @@ static void run_shifted_reg_offset_pc_asr_load_case(void)
   if (g_execute_pc != SHIFTED_REG_OFFSET_PC_ASR_END_PC)
     fail_u32("shifted_reg_offset_pc_asr", "execute_pc",
              g_execute_pc, SHIFTED_REG_OFFSET_PC_ASR_END_PC);
-  expect_stickybits_cleared("shifted_reg_offset_pc_asr");
+  expect_stickybits_match_execution_mode("shifted_reg_offset_pc_asr");
 }
 
 static void run_shifted_reg_offset_pc_asr_store_remaining_case(void)
@@ -11679,7 +11687,7 @@ static void run_shifted_reg_offset_pc_asr_store_remaining_case(void)
   if (g_execute_pc != SHIFTED_REG_OFFSET_PC_ASR_STORE_END_PC)
     fail_u32("shifted_reg_offset_pc_asr_store", "execute_pc",
              g_execute_pc, SHIFTED_REG_OFFSET_PC_ASR_STORE_END_PC);
-  expect_stickybits_cleared("shifted_reg_offset_pc_asr_store");
+  expect_stickybits_match_execution_mode("shifted_reg_offset_pc_asr_store");
 }
 
 static void run_shifted_reg_offset_pc_ror_load_case(void)
@@ -11721,7 +11729,7 @@ static void run_shifted_reg_offset_pc_ror_load_case(void)
   if (g_execute_pc != SHIFTED_REG_OFFSET_PC_ROR_END_PC)
     fail_u32("shifted_reg_offset_pc_ror", "execute_pc",
              g_execute_pc, SHIFTED_REG_OFFSET_PC_ROR_END_PC);
-  expect_stickybits_cleared("shifted_reg_offset_pc_ror");
+  expect_stickybits_match_execution_mode("shifted_reg_offset_pc_ror");
 }
 
 static void run_shifted_reg_offset_pc_ror_store_remaining_case(void)
@@ -11764,7 +11772,7 @@ static void run_shifted_reg_offset_pc_ror_store_remaining_case(void)
   if (g_execute_pc != SHIFTED_REG_OFFSET_PC_ROR_STORE_END_PC)
     fail_u32("shifted_reg_offset_pc_ror_store", "execute_pc",
              g_execute_pc, SHIFTED_REG_OFFSET_PC_ROR_STORE_END_PC);
-  expect_stickybits_cleared("shifted_reg_offset_pc_ror_store");
+  expect_stickybits_match_execution_mode("shifted_reg_offset_pc_ror_store");
 }
 
 static void run_shifted_reg_offset_pc_word_load_case(
@@ -11795,7 +11803,7 @@ static void run_shifted_reg_offset_pc_word_load_case(
     fail_u32(test_name, "execute_cycles", g_execute_cycles, extra_cycles);
   if (g_execute_pc != end_pc)
     fail_u32(test_name, "execute_pc", g_execute_pc, end_pc);
-  expect_stickybits_cleared(test_name);
+  expect_stickybits_match_execution_mode(test_name);
 }
 
 static void run_shifted_reg_offset_pc_word_store_case(
@@ -11827,7 +11835,7 @@ static void run_shifted_reg_offset_pc_word_store_case(
     fail_u32(test_name, "execute_cycles", g_execute_cycles, extra_cycles);
   if (g_execute_pc != end_pc)
     fail_u32(test_name, "execute_pc", g_execute_pc, end_pc);
-  expect_stickybits_cleared(test_name);
+  expect_stickybits_match_execution_mode(test_name);
 }
 
 static void run_shifted_reg_offset_pc_word_cases(void)
@@ -11931,7 +11939,7 @@ static void run_shifted_reg_offset_lsr_load_case(void)
   if (g_execute_pc != SHIFTED_REG_OFFSET_LSR_END_PC)
     fail_u32("shifted_reg_offset_lsr", "execute_pc",
              g_execute_pc, SHIFTED_REG_OFFSET_LSR_END_PC);
-  expect_stickybits_cleared("shifted_reg_offset_lsr");
+  expect_stickybits_match_execution_mode("shifted_reg_offset_lsr");
 }
 
 static void run_shifted_reg_offset_lsr_store_remaining_case(void)
@@ -11975,7 +11983,7 @@ static void run_shifted_reg_offset_lsr_store_remaining_case(void)
   if (g_execute_pc != SHIFTED_REG_OFFSET_LSR_STORE_END_PC)
     fail_u32("shifted_reg_offset_lsr_store", "execute_pc",
              g_execute_pc, SHIFTED_REG_OFFSET_LSR_STORE_END_PC);
-  expect_stickybits_cleared("shifted_reg_offset_lsr_store");
+  expect_stickybits_match_execution_mode("shifted_reg_offset_lsr_store");
 }
 
 static void run_shifted_reg_offset_asr_store_remaining_case(void)
@@ -12019,7 +12027,7 @@ static void run_shifted_reg_offset_asr_store_remaining_case(void)
   if (g_execute_pc != SHIFTED_REG_OFFSET_ASR_STORE_END_PC)
     fail_u32("shifted_reg_offset_asr_store", "execute_pc",
              g_execute_pc, SHIFTED_REG_OFFSET_ASR_STORE_END_PC);
-  expect_stickybits_cleared("shifted_reg_offset_asr_store");
+  expect_stickybits_match_execution_mode("shifted_reg_offset_asr_store");
 }
 
 static void run_shifted_reg_offset_ror_store_remaining_case(void)
@@ -12063,7 +12071,7 @@ static void run_shifted_reg_offset_ror_store_remaining_case(void)
   if (g_execute_pc != SHIFTED_REG_OFFSET_ROR_STORE_END_PC)
     fail_u32("shifted_reg_offset_ror_store", "execute_pc",
              g_execute_pc, SHIFTED_REG_OFFSET_ROR_STORE_END_PC);
-  expect_stickybits_cleared("shifted_reg_offset_ror_store");
+  expect_stickybits_match_execution_mode("shifted_reg_offset_ror_store");
 }
 
 static void run_shifted_reg_offset_asr_load_case(void)
@@ -12103,7 +12111,7 @@ static void run_shifted_reg_offset_asr_load_case(void)
   if (g_execute_pc != SHIFTED_REG_OFFSET_ASR_END_PC)
     fail_u32("shifted_reg_offset_asr", "execute_pc",
              g_execute_pc, SHIFTED_REG_OFFSET_ASR_END_PC);
-  expect_stickybits_cleared("shifted_reg_offset_asr");
+  expect_stickybits_match_execution_mode("shifted_reg_offset_asr");
 }
 
 static void run_shifted_reg_offset_ror_load_case(void)
@@ -12143,7 +12151,7 @@ static void run_shifted_reg_offset_ror_load_case(void)
   if (g_execute_pc != SHIFTED_REG_OFFSET_ROR_END_PC)
     fail_u32("shifted_reg_offset_ror", "execute_pc",
              g_execute_pc, SHIFTED_REG_OFFSET_ROR_END_PC);
-  expect_stickybits_cleared("shifted_reg_offset_ror");
+  expect_stickybits_match_execution_mode("shifted_reg_offset_ror");
 }
 
 static void run_reg_offset_rrx_load_case(void)
@@ -12184,7 +12192,7 @@ static void run_reg_offset_rrx_load_case(void)
   if (g_execute_pc != REG_OFFSET_RRX_LOAD_END_PC)
     fail_u32("reg_offset_rrx", "execute_pc",
              g_execute_pc, REG_OFFSET_RRX_LOAD_END_PC);
-  expect_stickybits_cleared("reg_offset_rrx");
+  expect_stickybits_match_execution_mode("reg_offset_rrx");
 }
 
 static void run_reg_offset_rrx_store_remaining_case(void)
@@ -12228,7 +12236,7 @@ static void run_reg_offset_rrx_store_remaining_case(void)
   if (g_execute_pc != REG_OFFSET_RRX_STORE_END_PC)
     fail_u32("reg_offset_rrx_store", "execute_pc",
              g_execute_pc, REG_OFFSET_RRX_STORE_END_PC);
-  expect_stickybits_cleared("reg_offset_rrx_store");
+  expect_stickybits_match_execution_mode("reg_offset_rrx_store");
 }
 
 static void run_psr_remaining_case(void)
@@ -12265,7 +12273,7 @@ static void run_psr_remaining_case(void)
              g_execute_cycles, extra_cycles);
   if (g_execute_pc != PSR_END_PC)
     fail_u32("psr_remaining", "execute_pc", g_execute_pc, PSR_END_PC);
-  expect_stickybits_cleared("psr_remaining");
+  expect_stickybits_match_execution_mode("psr_remaining");
 }
 
 static void run_msr_cpsr_flags_boundary_case(void)
@@ -12293,7 +12301,7 @@ static void run_msr_cpsr_flags_boundary_case(void)
     fail_u32("msr_cpsr_flags", "update_cycles", (u32)g_update_cycles, 0);
   if (g_execute_calls != 0)
     fail_u32("msr_cpsr_flags", "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared("msr_cpsr_flags");
+  expect_stickybits_match_execution_mode("msr_cpsr_flags");
 }
 
 static void run_msr_cpsr_control_remaining_case(void)
@@ -12333,7 +12341,7 @@ static void run_msr_cpsr_control_remaining_case(void)
   if (g_execute_pc != PSR_MSR_CPSR_CONTROL_END_PC)
     fail_u32("msr_cpsr_control", "execute_pc", g_execute_pc,
              PSR_MSR_CPSR_CONTROL_END_PC);
-  expect_stickybits_cleared("msr_cpsr_control");
+  expect_stickybits_match_execution_mode("msr_cpsr_control");
 }
 
 static void run_msr_spsr_remaining_case(void)
@@ -12368,7 +12376,7 @@ static void run_msr_spsr_remaining_case(void)
     fail_u32("msr_spsr", "execute_cycles", g_execute_cycles, extra_cycles);
   if (g_execute_pc != PSR_MSR_SPSR_END_PC)
     fail_u32("msr_spsr", "execute_pc", g_execute_pc, PSR_MSR_SPSR_END_PC);
-  expect_stickybits_cleared("msr_spsr");
+  expect_stickybits_match_execution_mode("msr_spsr");
 }
 
 static void expect_block_write(const char *test_name, u32 index,
@@ -12415,7 +12423,7 @@ static void run_block_mem_stm_boundary_case(void)
     fail_u32("block_stm", "update_cycles", (u32)g_update_cycles, 0);
   if (g_execute_calls != 0)
     fail_u32("block_stm", "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared("block_stm");
+  expect_stickybits_match_execution_mode("block_stm");
 }
 
 static void run_block_mem_stm_smc_irq_alert_case(void)
@@ -12464,7 +12472,7 @@ static void run_block_mem_stm_smc_irq_alert_case(void)
   if (g_execute_pc != BLOCK_MEM_STM_END_PC)
     fail_u32("block_stm_smc_irq", "execute_pc",
              g_execute_pc, BLOCK_MEM_STM_END_PC);
-  expect_stickybits_cleared("block_stm_smc_irq");
+  expect_stickybits_match_execution_mode("block_stm_smc_irq");
 }
 
 static void run_block_mem_stm_halt_alert_case(void)
@@ -12518,7 +12526,7 @@ static void run_block_mem_stm_halt_alert_case(void)
              (u32)g_update_cycles, extra_cycles);
   if (g_execute_calls != 0)
     fail_u32("block_stm_halt", "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared("block_stm_halt");
+  expect_stickybits_match_execution_mode("block_stm_halt");
 }
 
 static void run_block_mem_ldm_remaining_case(void)
@@ -12561,7 +12569,7 @@ static void run_block_mem_ldm_remaining_case(void)
   if (g_execute_pc != BLOCK_MEM_LDM_END_PC)
     fail_u32("block_ldm", "execute_pc", g_execute_pc,
              BLOCK_MEM_LDM_END_PC);
-  expect_stickybits_cleared("block_ldm");
+  expect_stickybits_match_execution_mode("block_ldm");
 }
 
 static void run_block_mem_ldm_base_list_remaining_case(void)
@@ -12606,7 +12614,7 @@ static void run_block_mem_ldm_base_list_remaining_case(void)
   if (g_execute_pc != BLOCK_MEM_LDM_BASE_LIST_END_PC)
     fail_u32("block_ldm_base_list", "execute_pc",
              g_execute_pc, BLOCK_MEM_LDM_BASE_LIST_END_PC);
-  expect_stickybits_cleared("block_ldm_base_list");
+  expect_stickybits_match_execution_mode("block_ldm_base_list");
 }
 
 static void run_block_mem_push_remaining_case(void)
@@ -12643,7 +12651,7 @@ static void run_block_mem_push_remaining_case(void)
   if (g_execute_cycles != extra_cycles)
     fail_u32("block_push", "execute_cycles",
              g_execute_cycles, extra_cycles);
-  expect_stickybits_cleared("block_push");
+  expect_stickybits_match_execution_mode("block_push");
 }
 
 static void run_block_mem_ldm_pc_native_target_case(void)
@@ -12698,7 +12706,7 @@ static void run_block_mem_ldm_pc_native_target_case(void)
   if (g_execute_pc != LOAD_PC_TARGET_END_PC)
     fail_u32("block_ldm_pc", "execute_pc",
              g_execute_pc, LOAD_PC_TARGET_END_PC);
-  expect_stickybits_cleared("block_ldm_pc");
+  expect_stickybits_match_execution_mode("block_ldm_pc");
 }
 
 static void run_block_mem_ldm_pc_spsr_restore_case(void)
@@ -12757,7 +12765,7 @@ static void run_block_mem_ldm_pc_spsr_restore_case(void)
   if (g_execute_calls != 0)
     fail_u32("block_ldm_pc_spsr", "execute_calls",
              g_execute_calls, 0);
-  expect_stickybits_cleared("block_ldm_pc_spsr");
+  expect_stickybits_match_execution_mode("block_ldm_pc_spsr");
 }
 
 static void run_hle_div_boundary_case(void)
@@ -12783,7 +12791,7 @@ static void run_hle_div_boundary_case(void)
     fail_u32("hle_div", "update_cycles", (u32)g_update_cycles, 0);
   if (g_execute_calls != 0)
     fail_u32("hle_div", "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared("hle_div");
+  expect_stickybits_match_execution_mode("hle_div");
 }
 
 static void run_hle_divarm_remaining_case(void)
@@ -12815,7 +12823,7 @@ static void run_hle_divarm_remaining_case(void)
   if (g_execute_pc != HLE_DIVARM_END_PC)
     fail_u32("hle_divarm", "execute_pc", g_execute_pc,
              HLE_DIVARM_END_PC);
-  expect_stickybits_cleared("hle_divarm");
+  expect_stickybits_match_execution_mode("hle_divarm");
 }
 
 static void run_writeback_store_case(void)
@@ -12855,7 +12863,7 @@ static void run_writeback_store_case(void)
   if (g_execute_pc != WRITEBACK_STORE_END_PC)
     fail_u32("writeback_store", "execute_pc",
              g_execute_pc, WRITEBACK_STORE_END_PC);
-  expect_stickybits_cleared("writeback_store");
+  expect_stickybits_match_execution_mode("writeback_store");
 }
 
 static void run_writeback_post_load_case(void)
@@ -12896,7 +12904,7 @@ static void run_writeback_post_load_case(void)
   if (g_execute_pc != WRITEBACK_LOAD_END_PC)
     fail_u32("writeback_post_load", "execute_pc",
              g_execute_pc, WRITEBACK_LOAD_END_PC);
-  expect_stickybits_cleared("writeback_post_load");
+  expect_stickybits_match_execution_mode("writeback_post_load");
 }
 
 static void run_reg_offset_writeback_store_case(void)
@@ -12938,7 +12946,7 @@ static void run_reg_offset_writeback_store_case(void)
   if (g_execute_pc != REG_OFFSET_WRITEBACK_STORE_END_PC)
     fail_u32("reg_wb_store", "execute_pc",
              g_execute_pc, REG_OFFSET_WRITEBACK_STORE_END_PC);
-  expect_stickybits_cleared("reg_wb_store");
+  expect_stickybits_match_execution_mode("reg_wb_store");
 }
 
 static void run_reg_offset_post_load_case(void)
@@ -12981,7 +12989,7 @@ static void run_reg_offset_post_load_case(void)
   if (g_execute_pc != REG_OFFSET_WRITEBACK_LOAD_END_PC)
     fail_u32("reg_post_load", "execute_pc",
              g_execute_pc, REG_OFFSET_WRITEBACK_LOAD_END_PC);
-  expect_stickybits_cleared("reg_post_load");
+  expect_stickybits_match_execution_mode("reg_post_load");
 }
 
 static void expect_store_word(const char *test_name, u32 pc)
@@ -13018,7 +13026,7 @@ static void run_store_word_boundary_case(void)
     fail_u32("store_word_boundary", "flush_calls", g_flush_calls, 0);
   if (g_irq_check_calls != 0)
     fail_u32("store_word_boundary", "irq_calls", g_irq_check_calls, 0);
-  expect_stickybits_cleared("store_word_boundary");
+  expect_stickybits_match_execution_mode("store_word_boundary");
 }
 
 static void run_store_word_remaining_cycles_case(void)
@@ -13045,7 +13053,7 @@ static void run_store_word_remaining_cycles_case(void)
   if (g_execute_pc != STORE_WORD_END_PC)
     fail_u32("store_word_remaining", "execute_pc",
              g_execute_pc, STORE_WORD_END_PC);
-  expect_stickybits_cleared("store_word_remaining");
+  expect_stickybits_match_execution_mode("store_word_remaining");
 }
 
 static void run_store_pc_value_case(void)
@@ -13075,7 +13083,7 @@ static void run_store_pc_value_case(void)
   if (g_execute_cycles != extra_cycles)
     fail_u32("store_pc_value", "execute_cycles",
              g_execute_cycles, extra_cycles);
-  expect_stickybits_cleared("store_pc_value");
+  expect_stickybits_match_execution_mode("store_pc_value");
 }
 
 static void run_pc_base_store_remaining_case(void)
@@ -13111,7 +13119,7 @@ static void run_pc_base_store_remaining_case(void)
   if (g_execute_pc != PC_BASE_STORE_END_PC)
     fail_u32("pc_base_store", "execute_pc",
              g_execute_pc, PC_BASE_STORE_END_PC);
-  expect_stickybits_cleared("pc_base_store");
+  expect_stickybits_match_execution_mode("pc_base_store");
 }
 
 static void run_store_byte_remaining_cycles_case(void)
@@ -13143,7 +13151,7 @@ static void run_store_byte_remaining_cycles_case(void)
   if (g_execute_cycles != extra_cycles)
     fail_u32("store_byte_remaining", "execute_cycles",
              g_execute_cycles, extra_cycles);
-  expect_stickybits_cleared("store_byte_remaining");
+  expect_stickybits_match_execution_mode("store_byte_remaining");
 }
 
 static void expect_store_byte(const char *test_name, u32 pc)
@@ -13188,7 +13196,7 @@ static void run_store_byte_smc_irq_alert_case(void)
   if (g_execute_pc != STORE_BYTE_END_PC)
     fail_u32("store_byte_smc_irq", "execute_pc",
              g_execute_pc, STORE_BYTE_END_PC);
-  expect_stickybits_cleared("store_byte_smc_irq");
+  expect_stickybits_match_execution_mode("store_byte_smc_irq");
 }
 
 static void run_store_byte_halt_alert_case(void)
@@ -13218,7 +13226,7 @@ static void run_store_byte_halt_alert_case(void)
              (u32)g_update_cycles, extra_cycles);
   if (g_execute_calls != 0)
     fail_u32("store_byte_halt", "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared("store_byte_halt");
+  expect_stickybits_match_execution_mode("store_byte_halt");
 }
 
 static void run_store_smc_irq_alert_case(void)
@@ -13245,7 +13253,7 @@ static void run_store_smc_irq_alert_case(void)
   if (g_execute_cycles != extra_cycles)
     fail_u32("store_smc_irq", "execute_cycles",
              g_execute_cycles, extra_cycles);
-  expect_stickybits_cleared("store_smc_irq");
+  expect_stickybits_match_execution_mode("store_smc_irq");
 }
 
 static void run_store_smc_irq_native_chain_case(void)
@@ -13290,7 +13298,7 @@ static void run_store_smc_irq_native_chain_case(void)
              g_execute_calls, 0);
   expect_runtime_fallback_delta("store_smc_irq_chain_stats",
                                 &stats_before, 2, 0, 0, 0, 0);
-  expect_stickybits_cleared("store_smc_irq_chain");
+  expect_stickybits_match_execution_mode("store_smc_irq_chain");
 }
 
 static void run_store_halt_alert_case(void)
@@ -13313,7 +13321,7 @@ static void run_store_halt_alert_case(void)
              (u32)g_update_cycles, extra_cycles);
   if (g_execute_calls != 0)
     fail_u32("store_halt", "execute_calls", g_execute_calls, 0);
-  expect_stickybits_cleared("store_halt");
+  expect_stickybits_match_execution_mode("store_halt");
 }
 
 void execute_arm(u32 cycles)
@@ -15076,6 +15084,10 @@ void _start(void)
   put_u32_dec(final_stats.relookup_fallbacks);
   put_raw(" final_unsupported_fallbacks=");
   put_u32_dec(final_stats.unsupported_fallbacks);
+  put_raw(" jit_sticky_preserve_checks=");
+  put_u32_dec(g_jit_sticky_preserve_checks);
+  put_raw(" interpreter_sticky_clear_checks=");
+  put_u32_dec(g_interpreter_sticky_clear_checks);
   put_raw(" data_entry=");
   put_u32_hex((u32)g_data_entry);
   put_raw(" chain_second_entry=");

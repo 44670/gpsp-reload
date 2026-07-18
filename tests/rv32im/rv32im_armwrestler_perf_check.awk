@@ -42,6 +42,7 @@ function capture_result(profile, test, prefix) {
   result_mapped_alu_enabled[prefix] = field("mapped_alu_fastpath_enabled")
   result_fast_ram_reads_enabled[prefix] = field("fast_ram_reads_enabled")
   result_fast_ram_stores_enabled[prefix] = field("fast_ram_stores_enabled")
+  result_entry_setup_optimized[prefix] = field("entry_setup_optimized")
   result_harness[prefix] = field("harness_mode")
 }
 
@@ -77,6 +78,8 @@ FILENAME == spec_file && /^benchmark_id=/ {
   spec_baseline_mapped_alu = field("baseline_mapped_alu_fastpath_enabled")
   spec_baseline_fast_ram_reads = field("baseline_fast_ram_reads_enabled")
   spec_baseline_fast_ram_stores = field("baseline_fast_ram_stores_enabled")
+  spec_baseline_entry_setup = field("baseline_entry_setup_optimized")
+  spec_code_size_policy = field("code_size_policy")
   next
 }
 
@@ -141,6 +144,7 @@ FILENAME == spec_file && /^summary=baseline/ {
   aggregate_mapped_alu_enabled[profile] = field("mapped_alu_fastpath_enabled")
   aggregate_fast_ram_reads_enabled[profile] = field("fast_ram_reads_enabled")
   aggregate_fast_ram_stores_enabled[profile] = field("fast_ram_stores_enabled")
+  aggregate_entry_setup_optimized[profile] = field("entry_setup_optimized")
   aggregate_harness[profile] = field("harness_mode")
   next
 }
@@ -160,7 +164,9 @@ END {
   if (spec_optimization != isolated_optimization ||
       spec_baseline_mapped_alu != baseline_mapped_alu_enabled ||
       spec_baseline_fast_ram_reads != baseline_fast_ram_reads_enabled ||
-      spec_baseline_fast_ram_stores != baseline_fast_ram_stores_enabled)
+      spec_baseline_fast_ram_stores != baseline_fast_ram_stores_enabled ||
+      spec_baseline_entry_setup != baseline_entry_setup_optimized ||
+      spec_code_size_policy != code_size_policy)
     fail("frozen baseline did not isolate the selected optimization")
 
   for (ti = 1; ti <= 8; ti++) {
@@ -198,12 +204,17 @@ END {
         baseline_fast_ram_reads_enabled : optimized_fast_ram_reads_enabled
       expected_fast_ram_stores = profile == "baseline" ? \
         baseline_fast_ram_stores_enabled : optimized_fast_ram_stores_enabled
+      expected_entry_setup = profile == "baseline" ? \
+        baseline_entry_setup_optimized : optimized_entry_setup_optimized
       if (expected_fast_ram_stores == "na")
         expected_fast_ram_stores = ""
+      if (expected_entry_setup == "na")
+        expected_entry_setup = ""
       if (result_jit_profile[prefix] != jit_profile ||
           result_mapped_alu_enabled[prefix] != baseline_mapped_alu_enabled ||
           result_fast_ram_reads_enabled[prefix] != expected_fast_ram_reads ||
           result_fast_ram_stores_enabled[prefix] != expected_fast_ram_stores ||
+          result_entry_setup_optimized[prefix] != expected_entry_setup ||
           result_harness[prefix] != "armwrestler_frontend_jit_only")
         fail(prefix " did not run the isolated selector profile")
     }
@@ -284,8 +295,12 @@ END {
       baseline_fast_ram_reads_enabled : optimized_fast_ram_reads_enabled
     expected_fast_ram_stores = profile == "baseline" ? \
       baseline_fast_ram_stores_enabled : optimized_fast_ram_stores_enabled
+    expected_entry_setup = profile == "baseline" ? \
+      baseline_entry_setup_optimized : optimized_entry_setup_optimized
     if (expected_fast_ram_stores == "na")
       expected_fast_ram_stores = ""
+    if (expected_entry_setup == "na")
+      expected_entry_setup = ""
     if (aggregate_seen[profile] != 1 || aggregate_result[profile] != "PASS" ||
         aggregate_expected[profile] != "79" ||
         aggregate_observed[profile] != "79" ||
@@ -300,6 +315,7 @@ END {
         aggregate_mapped_alu_enabled[profile] != baseline_mapped_alu_enabled ||
         aggregate_fast_ram_reads_enabled[profile] != expected_fast_ram_reads ||
         aggregate_fast_ram_stores_enabled[profile] != expected_fast_ram_stores ||
+        aggregate_entry_setup_optimized[profile] != expected_entry_setup ||
         aggregate_harness[profile] != "armwrestler_frontend_jit_only")
       fail(profile " aggregate native/correctness contract changed")
   }
@@ -311,10 +327,21 @@ END {
   if ((aggregate_arm_code["optimized"] + 0) > \
         (aggregate_arm_code["baseline"] + 0) ||
       (aggregate_thumb_code["optimized"] + 0) > \
-        (aggregate_thumb_code["baseline"] + 0) ||
-      (aggregate_arm_code["optimized"] + aggregate_thumb_code["optimized"]) >= \
-        (aggregate_arm_code["baseline"] + aggregate_thumb_code["baseline"]))
+        (aggregate_thumb_code["baseline"] + 0))
     fail("aggregate code size regressed or did not improve overall")
+  if (code_size_policy == "decrease" &&
+      (aggregate_arm_code["optimized"] + \
+       aggregate_thumb_code["optimized"]) >= \
+      (aggregate_arm_code["baseline"] + \
+       aggregate_thumb_code["baseline"]))
+    fail("aggregate code size did not decrease")
+  if (code_size_policy == "equal" &&
+      (aggregate_arm_code["optimized"] != aggregate_arm_code["baseline"] ||
+       aggregate_thumb_code["optimized"] != \
+         aggregate_thumb_code["baseline"]))
+    fail("entry-only profile changed generated code size")
+  if (code_size_policy != "decrease" && code_size_policy != "equal")
+    fail("unknown code-size policy")
   if (totals["optimized:all:cold"] * 10000 > \
       totals["baseline:all:cold"] * \
         (10000 + cold_aggregate_regression_max_x100))
@@ -386,6 +413,9 @@ END {
       " optimized_fast_ram_reads_enabled=" optimized_fast_ram_reads_enabled \
       " baseline_fast_ram_stores_enabled=" baseline_fast_ram_stores_enabled \
       " optimized_fast_ram_stores_enabled=" optimized_fast_ram_stores_enabled \
+      " baseline_entry_setup_optimized=" baseline_entry_setup_optimized \
+      " optimized_entry_setup_optimized=" optimized_entry_setup_optimized \
+      " code_size_policy=" code_size_policy \
       " repeatability=byte_exact" \
       " environment_manifest_sha256=" environment_sha \
       " text_sha256=" text_sha " reason=real_frontend_ab_verified"

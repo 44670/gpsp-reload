@@ -31,6 +31,12 @@ function require_eq(field, expected, value) {
 		fail("field=" field " value=" value " expected=" expected);
 }
 
+function require_positive(field, value) {
+	value = value_of(field);
+	if (value == "" || (value + 0) <= 0)
+		fail("field=" field " must be positive");
+}
+
 BEGIN {
 	arm_tracked_total_max = 18000;
 	thumb_direct_total_max = 5600;
@@ -194,6 +200,8 @@ BEGIN {
 	seen = 1;
 	require_eq("final_thumb_helpers", 0);
 	require_eq("first_exec_fallbacks", 0);
+	require_positive("jit_sticky_preserve_checks");
+	require_positive("interpreter_sticky_clear_checks");
 
 	for (i = 1; i <= field_count; i++) {
 		field = fields[i];

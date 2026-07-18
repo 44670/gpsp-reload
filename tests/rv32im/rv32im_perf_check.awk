@@ -80,10 +80,10 @@ BEGIN {
   trace_hash["mixed:warm"] = "0x3bea2fc5"
 
   cold_exec_max["mapped_alu"] = mapped_alu_cold_exec_max
-  cold_exec_max["memory_read"] = 31204
-  cold_exec_max["branch_chain"] = 26609
-  cold_exec_max["scheduler"] = 1679
-  cold_exec_max["mixed"] = 23230
+  cold_exec_max["memory_read"] = memory_read_cold_exec_max
+  cold_exec_max["branch_chain"] = branch_chain_cold_exec_max
+  cold_exec_max["scheduler"] = scheduler_cold_exec_max
+  cold_exec_max["mixed"] = mixed_cold_exec_max
   warm_exec_max["mapped_alu"] = mapped_alu_exec_max
   warm_exec_max["memory_read"] = memory_read_exec_max
   warm_exec_max["branch_chain"] = branch_chain_exec_max

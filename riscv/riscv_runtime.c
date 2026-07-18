@@ -510,6 +510,7 @@ static void riscv_emit_mapped_regs_reload_mask(u8 **ptr_ref,
 extern volatile u32 riscv_runtime_perf_disable_mapped_alu_fastpath;
 extern volatile u32 riscv_runtime_perf_disable_fast_ram_reads;
 extern volatile u32 riscv_runtime_perf_disable_fast_ram_stores;
+extern volatile u32 riscv_runtime_perf_disable_entry_setup_opt;
 #endif
 
 #if !defined(RISCV_RUNTIME_DISABLE_MAPPED_ALU_FASTPATH)
@@ -2697,6 +2698,17 @@ static bool riscv_fast_ram_stores_enabled(void)
 #endif
 }
 
+static bool riscv_entry_setup_optimized(void)
+{
+#if defined(RISCV_RUNTIME_DISABLE_ENTRY_SETUP_OPT)
+  return false;
+#elif defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
+  return !riscv_runtime_perf_disable_entry_setup_opt;
+#else
+  return true;
+#endif
+}
+
 static void riscv_emit_memory_read_call_stack(u8 **ptr, u32 stack_offset)
 {
 #if defined(RISCV_RUNTIME_HAS_FAST_RAM_READS)
@@ -3864,6 +3876,11 @@ static void riscv_run_interpreter_remainder(void)
 {
   if (riscv_cycles_remaining > 0)
   {
+    /* ROM-page sticky bits protect interpreter fetches only.  Native entry
+     * leaves them untouched, but every fallback starts a fresh interpreter
+     * slice and must retain the interpreter's old clear-before-run contract. */
+    if (riscv_entry_setup_optimized())
+      clear_gamepak_stickybits();
     execute_arm((u32)riscv_cycles_remaining);
     riscv_cycles_remaining = 0;
   }
@@ -10907,6 +10924,11 @@ void init_emitter(bool must_swap)
 {
   (void)must_swap;
 
+  /* The helper addresses are stable between emitter resets.  Production
+   * initializes the table once here instead of rebuilding it at every
+   * scheduler entry; the profiling selector retains the old path for A/B. */
+  if (riscv_entry_setup_optimized())
+    riscv_init_helper_table();
   riscv_cycles_remaining = 0;
   riscv_blocks_emitted = 0;
   riscv_blocks_executed = 0;
@@ -10981,10 +11003,12 @@ u32 execute_arm_translate_internal(u32 cycles, void *regptr)
   u8 *entry_data;
   u32 pc;
   u32 thumb;
+  bool optimized_entry_setup = riscv_entry_setup_optimized();
 
   riscv_cycles_remaining = (s32)cycles;
   riscv_cpu_alert = CPU_ALERT_NONE;
-  clear_gamepak_stickybits();
+  if (!optimized_entry_setup)
+    clear_gamepak_stickybits();
 
   if (cycles == 0)
     return 0;
@@ -10999,12 +11023,15 @@ u32 execute_arm_translate_internal(u32 cycles, void *regptr)
                                 pc, thumb,
                                 riscv_lookup_result_from_entry(entry_data),
                                 cycles);
+    if (optimized_entry_setup)
+      clear_gamepak_stickybits();
     execute_arm(cycles);
     riscv_cycles_remaining = 0;
     return 0;
   }
 
-  riscv_init_helper_table();
+  if (!optimized_entry_setup)
+    riscv_init_helper_table();
   (void)riscv_enter_jit(entry_data, regptr,
                         (void *)(uintptr_t)riscv_jit_run_block,
                         (void *)(uintptr_t)riscv_thumb_execute,
