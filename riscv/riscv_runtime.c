@@ -76,8 +76,13 @@ enum
   RISCV_HELPER_SWAP_U32,
   RISCV_HELPER_ARM_BLOCK_MEMORY,
   RISCV_HELPER_CYCLES_REMAINING,
+  RISCV_HELPER_THUMB_EXECUTE,
   RISCV_HELPER_COUNT
 };
+
+static uintptr_t riscv_helper_table[RISCV_HELPER_COUNT];
+typedef char riscv_helper_state_size_check[
+  (REG_USERDEF + RISCV_HELPER_COUNT <= REG_MAX) ? 1 : -1];
 
 enum
 {
@@ -121,9 +126,15 @@ enum
 
 /* Blocks may tail-jump into each other, so one outer JIT frame owns saved regs. */
 #if defined(__riscv) && defined(__riscv_xlen) && (__riscv_xlen == 32)
+#if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
+u8 *riscv_enter_jit(u8 *entry_data, void *reg_base, void *run_block,
+                    void *thumb_execute, void *thumb_bl_pair,
+                    const void *helper_table, u32 state_helper_calls);
+#else
 u8 *riscv_enter_jit(u8 *entry_data, void *reg_base, void *run_block,
                     void *thumb_execute, void *thumb_bl_pair,
                     const void *helper_table);
+#endif
 
 __asm__(
   ".text\n"
@@ -147,6 +158,11 @@ __asm__(
   "  sw s11, 124(sp)\n"
   "  mv s0, a1\n"
   "  sw a2, 92(sp)\n"
+#if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
+  "  bnez a6, 3f\n"
+#endif
+#if defined(RISCV_RUNTIME_DISABLE_STATE_HELPER_OPT) || \
+    defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
   "  sw a3, 84(sp)\n"
   "  lw t0, 0(a5)\n"
   "  sw t0, 8(sp)\n"
@@ -186,6 +202,10 @@ __asm__(
   "  sw t0, 76(sp)\n"
   "  lw t0, 72(a5)\n"
   "  sw t0, 80(sp)\n"
+#endif
+#if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
+  "3:\n"
+#endif
   "  lw t0, 76(a5)\n"
   "  sw t0, 96(sp)\n"
   "1:\n"
@@ -249,15 +269,25 @@ __asm__(
   "  jalr zero, t0, 0\n"
   ".size riscv_jit_run_block_tail, .-riscv_jit_run_block_tail\n");
 #else
+#if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
+static u8 *riscv_enter_jit(u8 *entry_data, void *reg_base, void *run_block,
+                           void *thumb_execute, void *thumb_bl_pair,
+                           const void *helper_table,
+                           u32 state_helper_calls)
+#else
 static u8 *riscv_enter_jit(u8 *entry_data, void *reg_base, void *run_block,
                            void *thumb_execute, void *thumb_bl_pair,
                            const void *helper_table)
+#endif
 {
   (void)reg_base;
   (void)run_block;
   (void)thumb_execute;
   (void)thumb_bl_pair;
   (void)helper_table;
+#if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
+  (void)state_helper_calls;
+#endif
 
   do
   {
@@ -511,6 +541,7 @@ extern volatile u32 riscv_runtime_perf_disable_mapped_alu_fastpath;
 extern volatile u32 riscv_runtime_perf_disable_fast_ram_reads;
 extern volatile u32 riscv_runtime_perf_disable_fast_ram_stores;
 extern volatile u32 riscv_runtime_perf_disable_entry_setup_opt;
+extern volatile u32 riscv_runtime_perf_disable_state_helper_opt;
 #endif
 
 #if !defined(RISCV_RUNTIME_DISABLE_MAPPED_ALU_FASTPATH)
@@ -2583,18 +2614,16 @@ static void riscv_note_c_call_clobbers_mapped_regs(void)
   riscv_invalidate_mapped_regs();
 }
 
-static void riscv_emit_c_call_stack_raw(u8 **ptr, u32 stack_offset)
+static bool riscv_entry_setup_optimized(void);
+static bool riscv_state_helpers_enabled(void);
+
+static u32 riscv_helper_state_offset_from_stack_offset(u32 stack_offset)
 {
-  u8 *translation_ptr = *ptr;
+  if (stack_offset == RISCV_STACK_HELPER_THUMB_EXECUTE)
+    return (REG_USERDEF + RISCV_HELPER_THUMB_EXECUTE) * 4u;
 
-#if defined(RISCV_RUNTIME_PERF_COUNTERS)
-  riscv_perf_helper_call_sites++;
-#endif
-
-  riscv_emit_lw(riscv_reg_t0, riscv_reg_sp, stack_offset);
-  riscv_emit_jalr(riscv_reg_ra, riscv_reg_t0, 0);
-
-  *ptr = translation_ptr;
+  return (REG_USERDEF +
+          (stack_offset - RISCV_STACK_HELPER_READ32) / 4u) * 4u;
 }
 
 #if defined(RISCV_RUNTIME_HAS_FAST_RAM_READS) || \
@@ -2602,21 +2631,50 @@ static void riscv_emit_c_call_stack_raw(u8 **ptr, u32 stack_offset)
 static void riscv_emit_c_call_address_raw(u8 **ptr, uintptr_t target)
 {
   u8 *translation_ptr = *ptr;
-  s32 offset = (s32)((u32)target - (u32)(uintptr_t)translation_ptr);
-  int64_t rounded = (int64_t)offset + 0x800;
-  s32 upper = (s32)(rounded >> 12);
-  s32 lower = (s32)((int64_t)offset - (int64_t)upper * 4096);
+  u32 offset = (u32)target - (u32)(uintptr_t)translation_ptr;
+  s32 lower = (s32)(((offset & 0xfffu) ^ 0x800u) - 0x800u);
+  u32 upper = (offset - (u32)lower) >> 12;
 
 #if defined(RISCV_RUNTIME_PERF_COUNTERS)
   riscv_perf_helper_call_sites++;
 #endif
 
-  riscv_emit_auipc(riscv_reg_t0, (u32)upper);
+  /* AUIPC plus signed JALR-low reaches the complete RV32 address space.
+   * Split the wrapping 32-bit delta directly; 64-bit arithmetic here would
+   * make cold translation call compiler runtime helpers on RV32. */
+  riscv_emit_auipc(riscv_reg_t0, upper);
   riscv_emit_jalr(riscv_reg_ra, riscv_reg_t0, lower);
 
   *ptr = translation_ptr;
 }
 #endif
+
+static void riscv_emit_c_call_stack_raw(u8 **ptr, u32 stack_offset)
+{
+  u8 *translation_ptr = *ptr;
+  riscv_reg_number helper_base = riscv_reg_sp;
+  u32 helper_offset = stack_offset;
+
+  if (riscv_state_helpers_enabled())
+  {
+    /* REG_USERDEF is backend-owned storage.  Like the mature ARM backend,
+     * address immutable helpers through the already-live CPU-state base.
+     * This retains the two-instruction indirect-call shape without copying
+     * nineteen pointers into every outer JIT stack frame. */
+    helper_base = riscv_reg_s0;
+    helper_offset =
+      riscv_helper_state_offset_from_stack_offset(stack_offset);
+  }
+
+#if defined(RISCV_RUNTIME_PERF_COUNTERS)
+  riscv_perf_helper_call_sites++;
+#endif
+
+  riscv_emit_lw(riscv_reg_t0, helper_base, helper_offset);
+  riscv_emit_jalr(riscv_reg_ra, riscv_reg_t0, 0);
+
+  *ptr = translation_ptr;
+}
 
 static void riscv_emit_c_call_stack(u8 **ptr, u32 stack_offset)
 {
@@ -2704,6 +2762,17 @@ static bool riscv_entry_setup_optimized(void)
   return false;
 #elif defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
   return !riscv_runtime_perf_disable_entry_setup_opt;
+#else
+  return true;
+#endif
+}
+
+static bool riscv_state_helpers_enabled(void)
+{
+#if defined(RISCV_RUNTIME_DISABLE_STATE_HELPER_OPT)
+  return false;
+#elif defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
+  return !riscv_runtime_perf_disable_state_helper_opt;
 #else
   return true;
 #endif
@@ -3740,8 +3809,6 @@ static u32 function_cc riscv_swap_u8(u32 address, u32 value, u32 pc);
 static u32 function_cc riscv_swap_u32(u32 address, u32 value, u32 pc);
 static void function_cc riscv_arm_block_memory(u32 opcode, u32 pc);
 
-static uintptr_t riscv_helper_table[RISCV_HELPER_COUNT];
-
 static void riscv_init_helper_table(void)
 {
 #if defined(RISCV_RUNTIME_HAS_FAST_RAM_READS)
@@ -3833,6 +3900,19 @@ static void riscv_init_helper_table(void)
     (uintptr_t)riscv_arm_block_memory;
   riscv_helper_table[RISCV_HELPER_CYCLES_REMAINING] =
     (uintptr_t)&riscv_cycles_remaining;
+}
+
+static void riscv_init_helper_state(void)
+{
+  u32 helper_index;
+
+  /* cpu.cc deliberately preserves REG_USERDEF across guest resets.  Keep
+   * the immutable RV32 helper vector there so s0 can address it directly. */
+  riscv_helper_table[RISCV_HELPER_THUMB_EXECUTE] =
+    (uintptr_t)riscv_thumb_execute;
+  for (helper_index = 0; helper_index < RISCV_HELPER_COUNT; helper_index++)
+    reg[REG_USERDEF + helper_index] =
+      (u32)riscv_helper_table[helper_index];
 }
 
 static u32 function_cc riscv_swap_u8(u32 address, u32 value, u32 pc)
@@ -10924,11 +11004,17 @@ void init_emitter(bool must_swap)
 {
   (void)must_swap;
 
-  /* The helper addresses are stable between emitter resets.  Production
-   * initializes the table once here instead of rebuilding it at every
-   * scheduler entry; the profiling selector retains the old path for A/B. */
-  if (riscv_entry_setup_optimized())
+  /* Helper addresses are stable between emitter resets.  The entry-setup
+   * selector controls whether the stack-source table is rebuilt per entry;
+   * the state-helper selector installs the independent REG_USERDEF vector. */
+  if (riscv_entry_setup_optimized() || riscv_state_helpers_enabled())
+  {
     riscv_init_helper_table();
+  }
+  if (riscv_state_helpers_enabled())
+  {
+    riscv_init_helper_state();
+  }
   riscv_cycles_remaining = 0;
   riscv_blocks_emitted = 0;
   riscv_blocks_executed = 0;
@@ -11004,6 +11090,9 @@ u32 execute_arm_translate_internal(u32 cycles, void *regptr)
   u32 pc;
   u32 thumb;
   bool optimized_entry_setup = riscv_entry_setup_optimized();
+#if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
+  bool state_helpers = riscv_state_helpers_enabled();
+#endif
 
   riscv_cycles_remaining = (s32)cycles;
   riscv_cpu_alert = CPU_ALERT_NONE;
@@ -11032,11 +11121,20 @@ u32 execute_arm_translate_internal(u32 cycles, void *regptr)
 
   if (!optimized_entry_setup)
     riscv_init_helper_table();
+#if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
+  (void)riscv_enter_jit(entry_data, regptr,
+                        (void *)(uintptr_t)riscv_jit_run_block,
+                        (void *)(uintptr_t)riscv_thumb_execute,
+                        (void *)(uintptr_t)riscv_thumb_execute_bl_pair,
+                        riscv_helper_table,
+                        state_helpers ? 1u : 0u);
+#else
   (void)riscv_enter_jit(entry_data, regptr,
                         (void *)(uintptr_t)riscv_jit_run_block,
                         (void *)(uintptr_t)riscv_thumb_execute,
                         (void *)(uintptr_t)riscv_thumb_execute_bl_pair,
                         riscv_helper_table);
+#endif
 
   return 0;
 }

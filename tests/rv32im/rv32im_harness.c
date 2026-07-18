@@ -2517,7 +2517,8 @@ static void reset_runtime_fixture_state(u32 pc)
 {
   unsigned i;
 
-  for (i = 0; i < REG_MAX; i++)
+  /* Keep the backend-private helper vector installed by init_emitter(). */
+  for (i = 0; i < REG_USERDEF; i++)
     reg[i] = 0;
   for (i = 0; i < 6; i++)
     spsr[i] = 0;

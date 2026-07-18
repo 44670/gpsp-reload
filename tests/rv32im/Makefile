@@ -13,6 +13,8 @@ ARMWRESTLER_STORE_PERF_BASELINE := rv32im_armwrestler_store_perf_baseline
 ARMWRESTLER_STORE_PERF_OPTIMIZED := rv32im_armwrestler_store_perf_optimized
 ARMWRESTLER_ENTRY_PERF_BASELINE := rv32im_armwrestler_entry_perf_baseline
 ARMWRESTLER_ENTRY_PERF_OPTIMIZED := rv32im_armwrestler_entry_perf_optimized
+ARMWRESTLER_STATE_HELPER_PERF_BASELINE := rv32im_armwrestler_state_helper_perf_baseline
+ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED := rv32im_armwrestler_state_helper_perf_optimized
 ARMWRESTLER_INTERP := rv32im_armwrestler_interp
 FRONTEND_CONTROL_JIT := rv32im_frontend_control_jit
 FRONTEND_CONTROL_INTERP := rv32im_frontend_control_interp
@@ -92,6 +94,18 @@ ARMWRESTLER_ENTRY_PERF_REPORT := $(OUT_DIR)/rv32im_armwrestler_entry_perf_report
 ARMWRESTLER_ENTRY_PERF_BASELINE_TEXT := $(OUT_DIR)/rv32im_armwrestler_entry_perf_baseline.text
 ARMWRESTLER_ENTRY_PERF_OPTIMIZED_TEXT := $(OUT_DIR)/rv32im_armwrestler_entry_perf_optimized.text
 ARMWRESTLER_ENTRY_PERF_TRACE_FIFO := $(OUT_DIR)/rv32im_armwrestler_entry_perf_trace.fifo
+ARMWRESTLER_STATE_HELPER_PERF_BASELINE_LOG := $(OUT_DIR)/rv32im_armwrestler_state_helper_perf_baseline.log
+ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED_LOG := $(OUT_DIR)/rv32im_armwrestler_state_helper_perf_optimized.log
+ARMWRESTLER_STATE_HELPER_PERF_BASELINE_COUNTS := $(OUT_DIR)/rv32im_armwrestler_state_helper_perf_baseline_counts.log
+ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED_COUNTS := $(OUT_DIR)/rv32im_armwrestler_state_helper_perf_optimized_counts.log
+ARMWRESTLER_STATE_HELPER_PERF_BASELINE_REPEAT_LOG := $(OUT_DIR)/rv32im_armwrestler_state_helper_perf_baseline_repeat.log
+ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED_REPEAT_LOG := $(OUT_DIR)/rv32im_armwrestler_state_helper_perf_optimized_repeat.log
+ARMWRESTLER_STATE_HELPER_PERF_BASELINE_REPEAT_COUNTS := $(OUT_DIR)/rv32im_armwrestler_state_helper_perf_baseline_repeat_counts.log
+ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED_REPEAT_COUNTS := $(OUT_DIR)/rv32im_armwrestler_state_helper_perf_optimized_repeat_counts.log
+ARMWRESTLER_STATE_HELPER_PERF_REPORT := $(OUT_DIR)/rv32im_armwrestler_state_helper_perf_report.log
+ARMWRESTLER_STATE_HELPER_PERF_BASELINE_TEXT := $(OUT_DIR)/rv32im_armwrestler_state_helper_perf_baseline.text
+ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED_TEXT := $(OUT_DIR)/rv32im_armwrestler_state_helper_perf_optimized.text
+ARMWRESTLER_STATE_HELPER_PERF_TRACE_FIFO := $(OUT_DIR)/rv32im_armwrestler_state_helper_perf_trace.fifo
 RUNTIME_LOG := $(OUT_DIR)/rv32im_runtime.log
 PERF_LOG := $(OUT_DIR)/rv32im_perf.log
 PERF_REPEAT_LOG := $(OUT_DIR)/rv32im_perf_repeat.log
@@ -116,7 +130,7 @@ PERF_BENCHMARK_ID := rv32im-perf-m0-v2
 PERF_EXPECTED_CLANG_VERSION ?= 19.1.7
 PERF_EXPECTED_QEMU_VERSION ?= 10.0.8
 PERF_EXPECTED_MANIFEST_SHA256 := e8235f6e050faf0ee2d500fa94c32744a91270bd6edb977fd82d59ba7b58c457
-PERF_EXPECTED_ENVIRONMENT_SHA256 := 2b4186bc2b665bf8338532f7fc5c6bde787e7b3edaa9d8ac0384a5c1019bc7e1
+PERF_EXPECTED_ENVIRONMENT_SHA256 := 1a9d0ad17106f7fcc0dc1ff0ab17daa9c4ddec223bf2acd9e8b14ed01ac5cf1d
 PERF_BUILD_CONFIG := clang-rv32im-ilp32-o2-freestanding-v1
 BACKEND_COMPARE_MANIFEST := rv32im_backend_compare_manifest.txt
 BACKEND_COMPARE_ENVIRONMENT := rv32im_backend_compare_environment.txt
@@ -129,7 +143,7 @@ BACKEND_COMPARE_EXPECTED_RV_QEMU_VERSION ?= 10.0.8
 BACKEND_COMPARE_EXPECTED_MIPS_QEMU_VERSION ?= 10.0.8
 BACKEND_COMPARE_EXPECTED_MANIFEST_SHA256 := 2acb74603e7392cb07a14991d5e04e426435933327ebe34929730fa95d5e36b4
 BACKEND_COMPARE_EXPECTED_ENVIRONMENT_SHA256 := b67f1516178fa87885bae48078b41cbada84091b078159508bb89c4f6d0513c6
-BACKEND_COMPARE_EXPECTED_SOURCE_SHA256 := 6b50ae0433a8c8cff5fec4d2daa9cb54d5d31cb72395728f66e0ca6167c4ee18
+BACKEND_COMPARE_EXPECTED_SOURCE_SHA256 := 0dbaabd1666ca5623cbf7f71b619ed8ef41c8a3c0d58f7f83ef4f3d3eae271d4
 GBA_MEMORY_DIFF_EXPECTED_MANIFEST_SHA256 := 0434fcf5ab795b904714339f99b80043acbd2b718a65bcac4df1051f05632b65
 BACKEND_COMPARE_MEMORY_MIN_REDUCTION_PERCENT ?= 33
 BACKEND_COMPARE_MEMORY_COLD_RAW_MAX ?= 38900
@@ -156,6 +170,14 @@ ARMWRESTLER_ENTRY_PERF_BENCHMARK_ID := rv32im-armwrestler-entry-setup-v1
 ARMWRESTLER_ENTRY_PERF_COLD_PER_TEST_REGRESSION_MAX_PERCENT_X100 ?= 0
 ARMWRESTLER_ENTRY_PERF_COLD_AGGREGATE_REGRESSION_MAX_PERCENT_X100 ?= 0
 ARMWRESTLER_ENTRY_PERF_WARM_MIN_REDUCTION_PERCENT_X100 ?= 1
+ARMWRESTLER_STATE_HELPER_PERF_BASELINE_SPEC := rv32im_armwrestler_state_helper_perf_baseline.txt
+ARMWRESTLER_STATE_HELPER_PERF_BENCHMARK_ID := rv32im-armwrestler-state-helper-v1
+ARMWRESTLER_STATE_HELPER_PERF_COLD_PER_TEST_REGRESSION_MAX_PERCENT_X100 ?= 0
+ARMWRESTLER_STATE_HELPER_PERF_COLD_AGGREGATE_REGRESSION_MAX_PERCENT_X100 ?= 0
+ARMWRESTLER_STATE_HELPER_PERF_WARM_MIN_REDUCTION_PERCENT_X100 ?= 0
+ARMWRESTLER_STATE_HELPER_PERF_WARM_MIN_REDUCTION_INSNS ?= 256
+ARMWRESTLER_STATE_HELPER_PERF_ARM_WARM_MIN_REDUCTION_INSNS ?= 160
+ARMWRESTLER_STATE_HELPER_PERF_THUMB_WARM_MIN_REDUCTION_INSNS ?= 96
 ARMWRESTLER_ARM0_CODE_BYTES_MAX ?= 14180
 ARMWRESTLER_ARM1_CODE_BYTES_MAX ?= 13296
 ARMWRESTLER_ARM2_CODE_BYTES_MAX ?= 22068
@@ -171,19 +193,19 @@ PERF_MAPPED_ALU_BASELINE_WARM_EXEC_INSNS := 169889
 PERF_MAPPED_ALU_BASELINE_BYTES := 3760
 PERF_MAPPED_ALU_MIN_IMPROVEMENT_PERCENT ?= 25
 PERF_MAPPED_ALU_COLD_EXEC_INSNS_MAX ?= 72808
-PERF_MAPPED_ALU_WARM_EXEC_INSNS_MAX ?= 73633
+PERF_MAPPED_ALU_WARM_EXEC_INSNS_MAX ?= 68641
 PERF_MAPPED_ALU_BYTES_MAX ?= 1120
-PERF_MEMORY_READ_COLD_EXEC_INSNS_MAX ?= 26129
-PERF_MEMORY_READ_WARM_EXEC_INSNS_MAX ?= 193441
+PERF_MEMORY_READ_COLD_EXEC_INSNS_MAX ?= 26000
+PERF_MEMORY_READ_WARM_EXEC_INSNS_MAX ?= 190945
 PERF_MEMORY_READ_BYTES_MAX ?= 1684
-PERF_BRANCH_CHAIN_COLD_EXEC_INSNS_MAX ?= 26830
-PERF_BRANCH_CHAIN_WARM_EXEC_INSNS_MAX ?= 71457
+PERF_BRANCH_CHAIN_COLD_EXEC_INSNS_MAX ?= 26653
+PERF_BRANCH_CHAIN_WARM_EXEC_INSNS_MAX ?= 66465
 PERF_BRANCH_CHAIN_BYTES_MAX ?= 3276
-PERF_SCHEDULER_COLD_EXEC_INSNS_MAX ?= 1679
-PERF_SCHEDULER_WARM_EXEC_INSNS_MAX ?= 632865
+PERF_SCHEDULER_COLD_EXEC_INSNS_MAX ?= 1595
+PERF_SCHEDULER_WARM_EXEC_INSNS_MAX ?= 552993
 PERF_SCHEDULER_BYTES_MAX ?= 56
-PERF_MIXED_COLD_EXEC_INSNS_MAX ?= 22668
-PERF_MIXED_WARM_EXEC_INSNS_MAX ?= 68385
+PERF_MIXED_COLD_EXEC_INSNS_MAX ?= 22503
+PERF_MIXED_WARM_EXEC_INSNS_MAX ?= 65889
 PERF_MIXED_BYTES_MAX ?= 844
 CODEGEN_BIN := $(OUT_DIR)/rv32im_codegen.bin
 CODEGEN_REF_ELF := $(OUT_DIR)/rv32im_codegen_ref.elf
@@ -257,7 +279,7 @@ HOST_CXX ?= c++
 LLVM_OBJCOPY ?= llvm-objcopy
 LLVM_NM ?= llvm-nm
 
-all: $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_STORE_PERF_BASELINE) $(ARMWRESTLER_STORE_PERF_OPTIMIZED) $(ARMWRESTLER_ENTRY_PERF_BASELINE) $(ARMWRESTLER_ENTRY_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(FRONTEND_CONTROL_JIT) $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CACHE_JIT) $(BACKEND_COMPARE_RV32) $(BACKEND_COMPARE_MIPS) $(GBA_MEMORY_DIFF_RV32) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP)
+all: $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_STORE_PERF_BASELINE) $(ARMWRESTLER_STORE_PERF_OPTIMIZED) $(ARMWRESTLER_ENTRY_PERF_BASELINE) $(ARMWRESTLER_ENTRY_PERF_OPTIMIZED) $(ARMWRESTLER_STATE_HELPER_PERF_BASELINE) $(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(FRONTEND_CONTROL_JIT) $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CACHE_JIT) $(BACKEND_COMPARE_RV32) $(BACKEND_COMPARE_MIPS) $(GBA_MEMORY_DIFF_RV32) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP)
 
 $(HARNESS): rv32im_harness.c $(ROOT)/riscv/riscv_runtime.c \
 		$(ROOT)/riscv/riscv_emit.h $(ROOT)/riscv/riscv_codegen.h \
@@ -298,6 +320,7 @@ $(PERF_BASELINE_TEST): rv32im_perf.c $(ROOT)/riscv/riscv_runtime.c \
 		-DRISCV_RUNTIME_DISABLE_MAPPED_ALU_FASTPATH \
 		-DRISCV_RUNTIME_DISABLE_READ_HELPER_OPT \
 		-DRISCV_RUNTIME_DISABLE_ENTRY_SETUP_OPT \
+		-DRISCV_RUNTIME_DISABLE_STATE_HELPER_OPT \
 		-DRV32IM_PERF_BASELINE_PROFILE \
 		-I$(ROOT) -I$(ROOT)/riscv \
 		-o $@ rv32im_perf.c $(ROOT)/riscv/riscv_runtime.c
@@ -336,6 +359,7 @@ $(ARMWRESTLER_PERF_BASELINE): rv32im_armwrestler.c rv32im_frontend_shim.h \
 		-DRISCV_RUNTIME_DISABLE_ENTRY_SETUP_OPT \
 		-DARMWRESTLER_PERF_DISABLE_MAPPED_ALU_FASTPATH=0 \
 		-DARMWRESTLER_PERF_DISABLE_FAST_RAM_READS=1 \
+		-DARMWRESTLER_PERF_DISABLE_STATE_HELPER_OPT=1 \
 		-I. -I$(ROOT) -I$(ROOT)/riscv \
 		-include rv32im_frontend_shim.h \
 		-o $@ rv32im_armwrestler.c $(ROOT)/cpu_threaded.c \
@@ -352,6 +376,7 @@ $(ARMWRESTLER_PERF_OPTIMIZED): rv32im_armwrestler.c rv32im_frontend_shim.h \
 		-DRISCV_RUNTIME_DISABLE_ENTRY_SETUP_OPT \
 		-DARMWRESTLER_PERF_DISABLE_MAPPED_ALU_FASTPATH=0 \
 		-DARMWRESTLER_PERF_DISABLE_FAST_RAM_READS=0 \
+		-DARMWRESTLER_PERF_DISABLE_STATE_HELPER_OPT=1 \
 		-I. -I$(ROOT) -I$(ROOT)/riscv \
 		-include rv32im_frontend_shim.h \
 		-o $@ rv32im_armwrestler.c $(ROOT)/cpu_threaded.c \
@@ -372,6 +397,7 @@ $(ARMWRESTLER_STORE_PERF_BASELINE): rv32im_armwrestler.c \
 		-DARMWRESTLER_PERF_DISABLE_MAPPED_ALU_FASTPATH=0 \
 		-DARMWRESTLER_PERF_DISABLE_FAST_RAM_READS=0 \
 		-DARMWRESTLER_PERF_DISABLE_FAST_RAM_STORES=1 \
+		-DARMWRESTLER_PERF_DISABLE_STATE_HELPER_OPT=1 \
 		-I. -I$(ROOT) -I$(ROOT)/riscv \
 		-include rv32im_frontend_shim.h \
 		-o $@ rv32im_armwrestler.c $(ROOT)/cpu_threaded.c \
@@ -392,6 +418,7 @@ $(ARMWRESTLER_STORE_PERF_OPTIMIZED): rv32im_armwrestler.c \
 		-DARMWRESTLER_PERF_DISABLE_MAPPED_ALU_FASTPATH=0 \
 		-DARMWRESTLER_PERF_DISABLE_FAST_RAM_READS=0 \
 		-DARMWRESTLER_PERF_DISABLE_FAST_RAM_STORES=0 \
+		-DARMWRESTLER_PERF_DISABLE_STATE_HELPER_OPT=1 \
 		-I. -I$(ROOT) -I$(ROOT)/riscv \
 		-include rv32im_frontend_shim.h \
 		-o $@ rv32im_armwrestler.c $(ROOT)/cpu_threaded.c \
@@ -412,6 +439,7 @@ $(ARMWRESTLER_ENTRY_PERF_BASELINE): rv32im_armwrestler.c \
 		-DARMWRESTLER_PERF_DISABLE_FAST_RAM_READS=0 \
 		-DARMWRESTLER_PERF_DISABLE_FAST_RAM_STORES=0 \
 		-DARMWRESTLER_PERF_DISABLE_ENTRY_SETUP_OPT=1 \
+		-DARMWRESTLER_PERF_DISABLE_STATE_HELPER_OPT=1 \
 		-I. -I$(ROOT) -I$(ROOT)/riscv \
 		-include rv32im_frontend_shim.h \
 		-o $@ rv32im_armwrestler.c $(ROOT)/cpu_threaded.c \
@@ -432,6 +460,49 @@ $(ARMWRESTLER_ENTRY_PERF_OPTIMIZED): rv32im_armwrestler.c \
 		-DARMWRESTLER_PERF_DISABLE_FAST_RAM_READS=0 \
 		-DARMWRESTLER_PERF_DISABLE_FAST_RAM_STORES=0 \
 		-DARMWRESTLER_PERF_DISABLE_ENTRY_SETUP_OPT=0 \
+		-DARMWRESTLER_PERF_DISABLE_STATE_HELPER_OPT=1 \
+		-I. -I$(ROOT) -I$(ROOT)/riscv \
+		-include rv32im_frontend_shim.h \
+		-o $@ rv32im_armwrestler.c $(ROOT)/cpu_threaded.c \
+		$(ROOT)/riscv/riscv_runtime.c
+
+$(ARMWRESTLER_STATE_HELPER_PERF_BASELINE): rv32im_armwrestler.c \
+		rv32im_frontend_shim.h $(ROOT)/cpu_threaded.c \
+		$(ROOT)/riscv/riscv_runtime.c $(ROOT)/riscv/riscv_emit.h \
+		$(ROOT)/riscv/riscv_codegen.h \
+		$(ROOT)/riscv/riscv_runtime_test_shim.h
+	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) \
+		-DRISCV_RUNTIME_STANDALONE_TEST -DHAVE_DYNAREC -DRISCV_ARCH \
+		-DMMAP_JIT_CACHE -DRISCV_RUNTIME_PERF_PROFILE_SWITCH \
+		-DRISCV_RUNTIME_ENABLE_FAST_RAM_READS \
+		-DRISCV_RUNTIME_ENABLE_FAST_RAM_STORES \
+		-DARMWRESTLER_PERF_STATE_HELPER_AB \
+		-DARMWRESTLER_PERF_DISABLE_MAPPED_ALU_FASTPATH=0 \
+		-DARMWRESTLER_PERF_DISABLE_FAST_RAM_READS=0 \
+		-DARMWRESTLER_PERF_DISABLE_FAST_RAM_STORES=0 \
+		-DARMWRESTLER_PERF_DISABLE_ENTRY_SETUP_OPT=0 \
+		-DARMWRESTLER_PERF_DISABLE_STATE_HELPER_OPT=1 \
+		-I. -I$(ROOT) -I$(ROOT)/riscv \
+		-include rv32im_frontend_shim.h \
+		-o $@ rv32im_armwrestler.c $(ROOT)/cpu_threaded.c \
+		$(ROOT)/riscv/riscv_runtime.c
+
+$(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED): rv32im_armwrestler.c \
+		rv32im_frontend_shim.h $(ROOT)/cpu_threaded.c \
+		$(ROOT)/riscv/riscv_runtime.c $(ROOT)/riscv/riscv_emit.h \
+		$(ROOT)/riscv/riscv_codegen.h \
+		$(ROOT)/riscv/riscv_runtime_test_shim.h
+	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) \
+		-DRISCV_RUNTIME_STANDALONE_TEST -DHAVE_DYNAREC -DRISCV_ARCH \
+		-DMMAP_JIT_CACHE -DRISCV_RUNTIME_PERF_PROFILE_SWITCH \
+		-DRISCV_RUNTIME_ENABLE_FAST_RAM_READS \
+		-DRISCV_RUNTIME_ENABLE_FAST_RAM_STORES \
+		-DARMWRESTLER_PERF_STATE_HELPER_AB \
+		-DARMWRESTLER_PERF_DISABLE_MAPPED_ALU_FASTPATH=0 \
+		-DARMWRESTLER_PERF_DISABLE_FAST_RAM_READS=0 \
+		-DARMWRESTLER_PERF_DISABLE_FAST_RAM_STORES=0 \
+		-DARMWRESTLER_PERF_DISABLE_ENTRY_SETUP_OPT=0 \
+		-DARMWRESTLER_PERF_DISABLE_STATE_HELPER_OPT=0 \
 		-I. -I$(ROOT) -I$(ROOT)/riscv \
 		-include rv32im_frontend_shim.h \
 		-o $@ rv32im_armwrestler.c $(ROOT)/cpu_threaded.c \
@@ -841,10 +912,14 @@ armwrestler-perf: perf-env-check $(ARMWRESTLER_PERF_BASELINE) \
 		-v optimized_fast_ram_stores_enabled=na \
 		-v baseline_entry_setup_optimized=na \
 		-v optimized_entry_setup_optimized=na \
+		-v baseline_state_helpers_enabled=0 \
+		-v optimized_state_helpers_enabled=0 \
 		-v code_size_policy=decrease \
 		-v cold_per_test_regression_max_x100=$(ARMWRESTLER_PERF_COLD_PER_TEST_REGRESSION_MAX_PERCENT_X100) \
 		-v cold_aggregate_regression_max_x100=$(ARMWRESTLER_PERF_COLD_AGGREGATE_REGRESSION_MAX_PERCENT_X100) \
 		-v warm_min_reduction_x100=$(ARMWRESTLER_PERF_WARM_MIN_REDUCTION_PERCENT_X100) \
+		-v warm_min_reduction_insns=0 -v arm_warm_min_reduction_insns=0 \
+		-v thumb_warm_min_reduction_insns=0 \
 		-f rv32im_armwrestler_perf_check.awk \
 		$(ARMWRESTLER_PERF_BASELINE_SPEC) \
 		$(ARMWRESTLER_PERF_BASELINE_COUNTS) \
@@ -927,10 +1002,14 @@ armwrestler-store-perf: perf-env-check $(ARMWRESTLER_STORE_PERF_BASELINE) \
 		-v optimized_fast_ram_stores_enabled=1 \
 		-v baseline_entry_setup_optimized=na \
 		-v optimized_entry_setup_optimized=na \
+		-v baseline_state_helpers_enabled=0 \
+		-v optimized_state_helpers_enabled=0 \
 		-v code_size_policy=decrease \
 		-v cold_per_test_regression_max_x100=$(ARMWRESTLER_STORE_PERF_COLD_PER_TEST_REGRESSION_MAX_PERCENT_X100) \
 		-v cold_aggregate_regression_max_x100=$(ARMWRESTLER_STORE_PERF_COLD_AGGREGATE_REGRESSION_MAX_PERCENT_X100) \
 		-v warm_min_reduction_x100=$(ARMWRESTLER_STORE_PERF_WARM_MIN_REDUCTION_PERCENT_X100) \
+		-v warm_min_reduction_insns=0 -v arm_warm_min_reduction_insns=0 \
+		-v thumb_warm_min_reduction_insns=0 \
 		-f rv32im_armwrestler_perf_check.awk \
 		$(ARMWRESTLER_STORE_PERF_BASELINE_SPEC) \
 		$(ARMWRESTLER_STORE_PERF_BASELINE_COUNTS) \
@@ -1016,10 +1095,14 @@ armwrestler-entry-perf: perf-env-check $(ARMWRESTLER_ENTRY_PERF_BASELINE) \
 		-v optimized_fast_ram_stores_enabled=1 \
 		-v baseline_entry_setup_optimized=0 \
 		-v optimized_entry_setup_optimized=1 \
+		-v baseline_state_helpers_enabled=0 \
+		-v optimized_state_helpers_enabled=0 \
 		-v code_size_policy=equal \
 		-v cold_per_test_regression_max_x100=$(ARMWRESTLER_ENTRY_PERF_COLD_PER_TEST_REGRESSION_MAX_PERCENT_X100) \
 		-v cold_aggregate_regression_max_x100=$(ARMWRESTLER_ENTRY_PERF_COLD_AGGREGATE_REGRESSION_MAX_PERCENT_X100) \
 		-v warm_min_reduction_x100=$(ARMWRESTLER_ENTRY_PERF_WARM_MIN_REDUCTION_PERCENT_X100) \
+		-v warm_min_reduction_insns=0 -v arm_warm_min_reduction_insns=0 \
+		-v thumb_warm_min_reduction_insns=0 \
 		-f rv32im_armwrestler_perf_check.awk \
 		$(ARMWRESTLER_ENTRY_PERF_BASELINE_SPEC) \
 		$(ARMWRESTLER_ENTRY_PERF_BASELINE_COUNTS) \
@@ -1036,8 +1119,106 @@ armwrestler-entry-perf: perf-env-check $(ARMWRESTLER_ENTRY_PERF_BASELINE) \
 	grep -q 'observed_results=79 failure_mask=0x00000000 fallbacks=0 fallback_events=0 execute_arm_calls=0' \
 		$(ARMWRESTLER_ENTRY_PERF_REPORT)
 
+armwrestler-state-helper-perf: perf-env-check \
+		$(ARMWRESTLER_STATE_HELPER_PERF_BASELINE) \
+		$(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED) \
+		$(ARMWRESTLER_STATE_HELPER_PERF_BASELINE_SPEC) \
+		rv32im_armwrestler_trace_run.sh rv32im_armwrestler_perf_check.awk \
+		rv32im_qemu_trace_count.awk | $(OUT_DIR)
+	@rom_sha=`sha256sum $(ARMWRESTLER_ROM) | awk '{ print $$1 }'`; \
+	if test "$$rom_sha" != "$(ARMWRESTLER_PERF_EXPECTED_ROM_SHA256)"; then \
+		echo "result=FAIL command=armwrestler-state-helper-perf rom_sha256=$$rom_sha expected_rom_sha256=$(ARMWRESTLER_PERF_EXPECTED_ROM_SHA256) reason=rom_changed"; \
+		exit 1; \
+	fi
+	$(LLVM_OBJCOPY) --dump-section .text=$(ARMWRESTLER_STATE_HELPER_PERF_BASELINE_TEXT) \
+		$(ARMWRESTLER_STATE_HELPER_PERF_BASELINE)
+	$(LLVM_OBJCOPY) --dump-section .text=$(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED_TEXT) \
+		$(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED)
+	cmp $(ARMWRESTLER_STATE_HELPER_PERF_BASELINE_TEXT) \
+		$(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED_TEXT)
+	sh rv32im_armwrestler_trace_run.sh $(QEMU_RISCV32) $(LLVM_NM) \
+		rv32im_qemu_trace_count.awk ./$(ARMWRESTLER_STATE_HELPER_PERF_BASELINE) \
+		$(ARMWRESTLER_STATE_HELPER_PERF_BASELINE_COUNTS) \
+		$(ARMWRESTLER_STATE_HELPER_PERF_BASELINE_LOG) \
+		$(ARMWRESTLER_STATE_HELPER_PERF_TRACE_FIFO) \
+		$(ARMWRESTLER_PERF_TIMEOUT_SECONDS)
+	sh rv32im_armwrestler_trace_run.sh $(QEMU_RISCV32) $(LLVM_NM) \
+		rv32im_qemu_trace_count.awk ./$(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED) \
+		$(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED_COUNTS) \
+		$(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED_LOG) \
+		$(ARMWRESTLER_STATE_HELPER_PERF_TRACE_FIFO) \
+		$(ARMWRESTLER_PERF_TIMEOUT_SECONDS)
+	sh rv32im_armwrestler_trace_run.sh $(QEMU_RISCV32) $(LLVM_NM) \
+		rv32im_qemu_trace_count.awk ./$(ARMWRESTLER_STATE_HELPER_PERF_BASELINE) \
+		$(ARMWRESTLER_STATE_HELPER_PERF_BASELINE_REPEAT_COUNTS) \
+		$(ARMWRESTLER_STATE_HELPER_PERF_BASELINE_REPEAT_LOG) \
+		$(ARMWRESTLER_STATE_HELPER_PERF_TRACE_FIFO) \
+		$(ARMWRESTLER_PERF_TIMEOUT_SECONDS)
+	sh rv32im_armwrestler_trace_run.sh $(QEMU_RISCV32) $(LLVM_NM) \
+		rv32im_qemu_trace_count.awk ./$(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED) \
+		$(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED_REPEAT_COUNTS) \
+		$(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED_REPEAT_LOG) \
+		$(ARMWRESTLER_STATE_HELPER_PERF_TRACE_FIFO) \
+		$(ARMWRESTLER_PERF_TIMEOUT_SECONDS)
+	cmp $(ARMWRESTLER_STATE_HELPER_PERF_BASELINE_COUNTS) \
+		$(ARMWRESTLER_STATE_HELPER_PERF_BASELINE_REPEAT_COUNTS)
+	cmp $(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED_COUNTS) \
+		$(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED_REPEAT_COUNTS)
+	cmp $(ARMWRESTLER_STATE_HELPER_PERF_BASELINE_LOG) \
+		$(ARMWRESTLER_STATE_HELPER_PERF_BASELINE_REPEAT_LOG)
+	cmp $(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED_LOG) \
+		$(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED_REPEAT_LOG)
+	@text_sha=`sha256sum $(ARMWRESTLER_STATE_HELPER_PERF_BASELINE_TEXT) | awk '{ print $$1 }'`; \
+	environment_sha=`sha256sum $(PERF_ENVIRONMENT_MANIFEST) | awk '{ print $$1 }'`; \
+	clang_version=`$(CLANG) --version | sed -n '1s/.* version \([0-9][0-9.]*\).*/\1/p'`; \
+	qemu_version=`$(QEMU_RISCV32) --version | sed -n '1s/.* version \([0-9][0-9.]*\).*/\1/p'`; \
+	awk -v spec_file=$(ARMWRESTLER_STATE_HELPER_PERF_BASELINE_SPEC) \
+		-v baseline_counts_file=$(ARMWRESTLER_STATE_HELPER_PERF_BASELINE_COUNTS) \
+		-v optimized_counts_file=$(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED_COUNTS) \
+		-v baseline_log_file=$(ARMWRESTLER_STATE_HELPER_PERF_BASELINE_LOG) \
+		-v optimized_log_file=$(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED_LOG) \
+		-v benchmark_id=$(ARMWRESTLER_STATE_HELPER_PERF_BENCHMARK_ID) \
+		-v rom_sha=$(ARMWRESTLER_PERF_EXPECTED_ROM_SHA256) \
+		-v clang_version="$$clang_version" -v qemu_version="$$qemu_version" \
+		-v build_config=$(PERF_BUILD_CONFIG) \
+		-v environment_sha="$$environment_sha" -v text_sha="$$text_sha" \
+		-v isolated_optimization=state_helpers \
+		-v jit_profile=state_helper_ab \
+		-v baseline_mapped_alu_enabled=1 \
+		-v baseline_fast_ram_reads_enabled=1 \
+		-v optimized_fast_ram_reads_enabled=1 \
+		-v baseline_fast_ram_stores_enabled=1 \
+		-v optimized_fast_ram_stores_enabled=1 \
+		-v baseline_entry_setup_optimized=1 \
+		-v optimized_entry_setup_optimized=1 \
+		-v baseline_state_helpers_enabled=0 \
+		-v optimized_state_helpers_enabled=1 \
+		-v code_size_policy=equal \
+		-v cold_per_test_regression_max_x100=$(ARMWRESTLER_STATE_HELPER_PERF_COLD_PER_TEST_REGRESSION_MAX_PERCENT_X100) \
+		-v cold_aggregate_regression_max_x100=$(ARMWRESTLER_STATE_HELPER_PERF_COLD_AGGREGATE_REGRESSION_MAX_PERCENT_X100) \
+		-v warm_min_reduction_x100=$(ARMWRESTLER_STATE_HELPER_PERF_WARM_MIN_REDUCTION_PERCENT_X100) \
+		-v warm_min_reduction_insns=$(ARMWRESTLER_STATE_HELPER_PERF_WARM_MIN_REDUCTION_INSNS) \
+		-v arm_warm_min_reduction_insns=$(ARMWRESTLER_STATE_HELPER_PERF_ARM_WARM_MIN_REDUCTION_INSNS) \
+		-v thumb_warm_min_reduction_insns=$(ARMWRESTLER_STATE_HELPER_PERF_THUMB_WARM_MIN_REDUCTION_INSNS) \
+		-f rv32im_armwrestler_perf_check.awk \
+		$(ARMWRESTLER_STATE_HELPER_PERF_BASELINE_SPEC) \
+		$(ARMWRESTLER_STATE_HELPER_PERF_BASELINE_COUNTS) \
+		$(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED_COUNTS) \
+		$(ARMWRESTLER_STATE_HELPER_PERF_BASELINE_LOG) \
+		$(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED_LOG) | \
+		tee $(ARMWRESTLER_STATE_HELPER_PERF_REPORT)
+	grep -q 'result=PASS command=armwrestler-perf test=all phase=summary' \
+		$(ARMWRESTLER_STATE_HELPER_PERF_REPORT)
+	grep -q 'isolated_optimization=state_helpers' \
+		$(ARMWRESTLER_STATE_HELPER_PERF_REPORT)
+	grep -q 'baseline_state_helpers_enabled=0 optimized_state_helpers_enabled=1' \
+		$(ARMWRESTLER_STATE_HELPER_PERF_REPORT)
+	grep -q 'observed_results=79 failure_mask=0x00000000 fallbacks=0 fallback_events=0 execute_arm_calls=0' \
+		$(ARMWRESTLER_STATE_HELPER_PERF_REPORT)
+
 armwrestler: armwrestler-interp armwrestler-jit armwrestler-perf \
-		armwrestler-store-perf armwrestler-entry-perf gba-memory-diff
+		armwrestler-store-perf armwrestler-entry-perf \
+		armwrestler-state-helper-perf gba-memory-diff
 	grep -q 'observed_results=79 failure_mask=0x00000000' $(ARMWRESTLER_INTERP_LOG)
 	grep -q 'observed_results=79 failure_mask=0x00000000' $(ARMWRESTLER_LOG)
 	grep -q 'native_blocks=[1-9][0-9]*' $(ARMWRESTLER_LOG)
@@ -1364,7 +1545,7 @@ perf: perf-env-check $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP) | $
 test: codegen abi exec runtime perf frontend frontend-control frontend-cache backend-compare gba-memory-diff core-build rejects compare mixed smoke
 
 clean:
-	rm -f $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_STORE_PERF_BASELINE) $(ARMWRESTLER_STORE_PERF_OPTIMIZED) $(ARMWRESTLER_ENTRY_PERF_BASELINE) $(ARMWRESTLER_ENTRY_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(FRONTEND_CONTROL_JIT) $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CACHE_JIT) $(BACKEND_COMPARE_RV32) $(BACKEND_COMPARE_MIPS) $(GBA_MEMORY_DIFF_RV32) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP)
+	rm -f $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_STORE_PERF_BASELINE) $(ARMWRESTLER_STORE_PERF_OPTIMIZED) $(ARMWRESTLER_ENTRY_PERF_BASELINE) $(ARMWRESTLER_ENTRY_PERF_OPTIMIZED) $(ARMWRESTLER_STATE_HELPER_PERF_BASELINE) $(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(FRONTEND_CONTROL_JIT) $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CACHE_JIT) $(BACKEND_COMPARE_RV32) $(BACKEND_COMPARE_MIPS) $(GBA_MEMORY_DIFF_RV32) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP)
 	rm -rf $(OUT_DIR)
 
-.PHONY: all codegen abi exec runtime perf perf-env-check frontend frontend-control frontend-cache backend-compare backend-compare-env-check gba-memory-diff core-build smoke compare mixed rejects armwrestler-jit armwrestler-interp armwrestler-perf armwrestler-store-perf armwrestler-entry-perf armwrestler armwrestler-report test clean
+.PHONY: all codegen abi exec runtime perf perf-env-check frontend frontend-control frontend-cache backend-compare backend-compare-env-check gba-memory-diff core-build smoke compare mixed rejects armwrestler-jit armwrestler-interp armwrestler-perf armwrestler-store-perf armwrestler-entry-perf armwrestler-state-helper-perf armwrestler armwrestler-report test clean

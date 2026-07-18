@@ -317,7 +317,8 @@ static void fill_initial_regs(u32 *values, const perf_program *program)
 {
   u32 i;
 
-  for (i = 0; i < REG_MAX; i++)
+  /* Only the architectural/dynarec prefix is guest reset state. */
+  for (i = 0; i < REG_USERDEF; i++)
     values[i] = 0;
   for (i = 0; i < REG_PC; i++)
     values[i] = (0x01020304u * (i + 1u)) ^ (0x11111111u * i);
@@ -986,7 +987,7 @@ static void reset_mapped_alu_case_state(u32 pc)
 {
   u32 i;
 
-  for (i = 0; i < REG_MAX; i++)
+  for (i = 0; i < REG_USERDEF; i++)
     reg[i] = 0;
   rv32im_mapped_alu_initial_regs(&reg[0]);
   reg[REG_PC] = pc;

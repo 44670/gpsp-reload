@@ -43,6 +43,7 @@ function capture_result(profile, test, prefix) {
   result_fast_ram_reads_enabled[prefix] = field("fast_ram_reads_enabled")
   result_fast_ram_stores_enabled[prefix] = field("fast_ram_stores_enabled")
   result_entry_setup_optimized[prefix] = field("entry_setup_optimized")
+  result_state_helpers_enabled[prefix] = field("state_helpers_enabled")
   result_harness[prefix] = field("harness_mode")
 }
 
@@ -79,6 +80,7 @@ FILENAME == spec_file && /^benchmark_id=/ {
   spec_baseline_fast_ram_reads = field("baseline_fast_ram_reads_enabled")
   spec_baseline_fast_ram_stores = field("baseline_fast_ram_stores_enabled")
   spec_baseline_entry_setup = field("baseline_entry_setup_optimized")
+  spec_baseline_state_helpers = field("baseline_state_helpers_enabled")
   spec_code_size_policy = field("code_size_policy")
   next
 }
@@ -145,6 +147,7 @@ FILENAME == spec_file && /^summary=baseline/ {
   aggregate_fast_ram_reads_enabled[profile] = field("fast_ram_reads_enabled")
   aggregate_fast_ram_stores_enabled[profile] = field("fast_ram_stores_enabled")
   aggregate_entry_setup_optimized[profile] = field("entry_setup_optimized")
+  aggregate_state_helpers_enabled[profile] = field("state_helpers_enabled")
   aggregate_harness[profile] = field("harness_mode")
   next
 }
@@ -166,6 +169,7 @@ END {
       spec_baseline_fast_ram_reads != baseline_fast_ram_reads_enabled ||
       spec_baseline_fast_ram_stores != baseline_fast_ram_stores_enabled ||
       spec_baseline_entry_setup != baseline_entry_setup_optimized ||
+      spec_baseline_state_helpers != baseline_state_helpers_enabled ||
       spec_code_size_policy != code_size_policy)
     fail("frozen baseline did not isolate the selected optimization")
 
@@ -206,15 +210,20 @@ END {
         baseline_fast_ram_stores_enabled : optimized_fast_ram_stores_enabled
       expected_entry_setup = profile == "baseline" ? \
         baseline_entry_setup_optimized : optimized_entry_setup_optimized
+      expected_state_helpers = profile == "baseline" ? \
+        baseline_state_helpers_enabled : optimized_state_helpers_enabled
       if (expected_fast_ram_stores == "na")
         expected_fast_ram_stores = ""
       if (expected_entry_setup == "na")
         expected_entry_setup = ""
+      if (expected_state_helpers == "na")
+        expected_state_helpers = ""
       if (result_jit_profile[prefix] != jit_profile ||
           result_mapped_alu_enabled[prefix] != baseline_mapped_alu_enabled ||
           result_fast_ram_reads_enabled[prefix] != expected_fast_ram_reads ||
           result_fast_ram_stores_enabled[prefix] != expected_fast_ram_stores ||
           result_entry_setup_optimized[prefix] != expected_entry_setup ||
+          result_state_helpers_enabled[prefix] != expected_state_helpers ||
           result_harness[prefix] != "armwrestler_frontend_jit_only")
         fail(prefix " did not run the isolated selector profile")
     }
@@ -297,10 +306,14 @@ END {
       baseline_fast_ram_stores_enabled : optimized_fast_ram_stores_enabled
     expected_entry_setup = profile == "baseline" ? \
       baseline_entry_setup_optimized : optimized_entry_setup_optimized
+    expected_state_helpers = profile == "baseline" ? \
+      baseline_state_helpers_enabled : optimized_state_helpers_enabled
     if (expected_fast_ram_stores == "na")
       expected_fast_ram_stores = ""
     if (expected_entry_setup == "na")
       expected_entry_setup = ""
+    if (expected_state_helpers == "na")
+      expected_state_helpers = ""
     if (aggregate_seen[profile] != 1 || aggregate_result[profile] != "PASS" ||
         aggregate_expected[profile] != "79" ||
         aggregate_observed[profile] != "79" ||
@@ -316,6 +329,7 @@ END {
         aggregate_fast_ram_reads_enabled[profile] != expected_fast_ram_reads ||
         aggregate_fast_ram_stores_enabled[profile] != expected_fast_ram_stores ||
         aggregate_entry_setup_optimized[profile] != expected_entry_setup ||
+        aggregate_state_helpers_enabled[profile] != expected_state_helpers ||
         aggregate_harness[profile] != "armwrestler_frontend_jit_only")
       fail(profile " aggregate native/correctness contract changed")
   }
@@ -349,9 +363,17 @@ END {
   if ((totals["baseline:all:warm"] - totals["optimized:all:warm"]) * \
         10000 < totals["baseline:all:warm"] * warm_min_reduction_x100)
     fail("aggregate warm improvement was below the required reduction")
+  if (totals["baseline:all:warm"] - totals["optimized:all:warm"] < \
+      warm_min_reduction_insns)
+    fail("aggregate warm instruction reduction was below the absolute gate")
   if (totals["optimized:arm:warm"] > totals["baseline:arm:warm"] ||
       totals["optimized:thumb:warm"] > totals["baseline:thumb:warm"])
     fail("ARM or Thumb aggregate warm execution regressed")
+  if (totals["baseline:arm:warm"] - totals["optimized:arm:warm"] < \
+      arm_warm_min_reduction_insns ||
+      totals["baseline:thumb:warm"] - totals["optimized:thumb:warm"] < \
+      thumb_warm_min_reduction_insns)
+    fail("ARM or Thumb warm instruction reduction missed its absolute gate")
   require_equal("optimized", "all", "blocks_emitted",
                 aggregate_blocks["optimized"], aggregate_blocks["baseline"])
   require_equal("optimized", "all", "native blocks",
@@ -407,6 +429,9 @@ END {
       " cold_aggregate_regression_max_percent_x100=" \
         cold_aggregate_regression_max_x100 \
       " warm_min_reduction_percent_x100=" warm_min_reduction_x100 \
+      " warm_min_reduction_insns=" warm_min_reduction_insns \
+      " arm_warm_min_reduction_insns=" arm_warm_min_reduction_insns \
+      " thumb_warm_min_reduction_insns=" thumb_warm_min_reduction_insns \
       " isolated_optimization=" isolated_optimization \
       " mapped_alu_fastpath_enabled=" baseline_mapped_alu_enabled \
       " baseline_fast_ram_reads_enabled=" baseline_fast_ram_reads_enabled \
@@ -415,6 +440,8 @@ END {
       " optimized_fast_ram_stores_enabled=" optimized_fast_ram_stores_enabled \
       " baseline_entry_setup_optimized=" baseline_entry_setup_optimized \
       " optimized_entry_setup_optimized=" optimized_entry_setup_optimized \
+      " baseline_state_helpers_enabled=" baseline_state_helpers_enabled \
+      " optimized_state_helpers_enabled=" optimized_state_helpers_enabled \
       " code_size_policy=" code_size_policy \
       " repeatability=byte_exact" \
       " environment_manifest_sha256=" environment_sha \

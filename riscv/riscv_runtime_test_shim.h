@@ -36,6 +36,7 @@ typedef enum
   CPU_MODE = 17,
   CPU_HALT_STATE = 18,
   REG_BUS_VALUE = 19,
+  REG_USERDEF = 32,
   REG_MAX = 64
 } riscv_test_reg_numbers;
 

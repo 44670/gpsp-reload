@@ -721,7 +721,7 @@ static void clear_cpu_and_memory(void)
 {
   u32 i;
 
-  memset(reg, 0, sizeof(u32) * REG_MAX);
+  memset(reg, 0, sizeof(u32) * REG_USERDEF);
   memset(spsr, 0, sizeof(u32) * 6u);
   memset(reg_mode, 0, sizeof(u32) * 7u * 7u);
   memset(ewram, 0, 1024u * 256u * 2u);

@@ -434,6 +434,8 @@ typedef unsigned int usize;
   (MAPPED_HELPER_MOV_CYCLES + STORE_BASE_CYCLES + 1u)
 #define MAPPED_HELPER_STORE_ADDR (STORE_BASE_ADDR + 0x28u)
 #define MAPPED_HELPER_R1_VALUE 0x0000006du
+#define RV32_HELPER_STATE_SLOTS 21u
+#define RV32_HELPER_STORE32_STATE_OFFSET ((REG_USERDEF + 1u) * 4u)
 #define MAPPED_MOV_R1_0X6D 0xe3a0106du
 #define MAPPED_STR_R1_R3_0X28 0xe5831028u
 #define MAPPED_NZCV_START_PC 0x08001260u
@@ -2072,7 +2074,8 @@ static void reset_runtime_observations(u32 pc)
 {
   unsigned i;
 
-  for (i = 0; i < REG_MAX; i++)
+  /* Preserve backend-owned REG_USERDEF storage across guest resets. */
+  for (i = 0; i < REG_USERDEF; i++)
     reg[i] = 0;
   for (i = 0; i < 6; i++)
     spsr[i] = 0;
@@ -2518,6 +2521,21 @@ static u32 build_mapped_helper_block(u8 *code)
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
+}
+
+static u32 count_instruction_word(const u8 *code, u32 code_bytes, u32 word)
+{
+  const u32 *words = (const u32 *)code;
+  u32 count = 0;
+  u32 i;
+
+  for (i = 0; i < code_bytes / 4u; i++)
+  {
+    if (words[i] == word)
+      count++;
+  }
+
+  return count;
 }
 
 static u32 build_mapped_nzcv_block(u8 *code)
@@ -13577,6 +13595,9 @@ void _start(void)
   u32 data_code_bytes;
   u32 mapped_gpr_code_bytes;
   u32 mapped_helper_code_bytes;
+  u32 helper_state_slots;
+  u32 state_helper_loads;
+  u32 helper_index;
   u32 mapped_nzcv_code_bytes;
   u32 chain_second_code_bytes;
   u32 cycle_update_code_bytes;
@@ -13745,6 +13766,18 @@ void _start(void)
 
   run_init_emitter_contract_case();
 
+  helper_state_slots = 0;
+  for (helper_index = 0;
+       helper_index < RV32_HELPER_STATE_SLOTS;
+       helper_index++)
+  {
+    if (reg[REG_USERDEF + helper_index] != 0)
+      helper_state_slots++;
+  }
+  if (helper_state_slots != RV32_HELPER_STATE_SLOTS)
+    fail_u32("helper_state", "initialized_slots", helper_state_slots,
+             RV32_HELPER_STATE_SLOTS);
+
   data_code_bytes = build_data_block(code);
   run_first_emit_stats_case();
   run_first_execute_stats_case();
@@ -13752,6 +13785,13 @@ void _start(void)
     build_mapped_gpr_block(code + MAPPED_GPR_BLOCK_OFFSET);
   mapped_helper_code_bytes =
     build_mapped_helper_block(code + MAPPED_HELPER_BLOCK_OFFSET);
+  state_helper_loads = count_instruction_word(
+    code + MAPPED_HELPER_BLOCK_OFFSET, mapped_helper_code_bytes,
+    ((RV32_HELPER_STORE32_STATE_OFFSET & 0xfffu) << 20) |
+    ((u32)riscv_reg_s0 << 15) | (2u << 12) |
+    ((u32)riscv_reg_t0 << 7) | 0x03u);
+  if (state_helper_loads != 1u)
+    fail_u32("helper_state", "store32_load_sites", state_helper_loads, 1u);
   mapped_nzcv_code_bytes =
     build_mapped_nzcv_block(code + MAPPED_NZCV_BLOCK_OFFSET);
   run_mapped_gpr_case();
@@ -14740,6 +14780,10 @@ void _start(void)
   put_u32_dec(mapped_gpr_code_bytes);
   put_raw(" mapped_helper_code_bytes=");
   put_u32_dec(mapped_helper_code_bytes);
+  put_raw(" helper_state_slots=");
+  put_u32_dec(helper_state_slots);
+  put_raw(" state_helper_loads=");
+  put_u32_dec(state_helper_loads);
   put_raw(" mapped_nzcv_code_bytes=");
   put_u32_dec(mapped_nzcv_code_bytes);
   put_raw(" chain_second_code_bytes=");
