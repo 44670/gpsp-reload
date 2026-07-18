@@ -3,7 +3,9 @@
 This ESP-IDF app runs the gpSP ARM interpreter and sends its raw 240x160
 RGB565 framebuffer to the Korvo-1 800x480 RGB panel. The direct driver scales
 the image exactly 3x, keeps 40-pixel black side bars, and draws measured FPS at
-the top-left of the GBA image. It uses no LVGL, board BSP, M5 library, or
+the top-left of the scaled GBA image. The resize loop substitutes the 48x9
+native OSD region as it emits RGB565 pixels, so the emulator-owned GBA
+framebuffer is never modified. It uses no LVGL, board BSP, M5 library, or
 managed component.
 
 The default LCD path uses no PSRAM for scanout and has no 800x480 framebuffer.
@@ -16,6 +18,11 @@ the two bounce buffers. The refill callback and scaler are IRAM-safe. The older
 double-framebuffer path remains available for comparison with
 `-DESP32S31_LCD_MODE=framebuffer` and can select `cpu`, `sram_gdma`, `ppa`, or
 `auto` through `-DESP32S31_SCALER=...`.
+
+The firmware is compile-time locked to one HP core with
+`CONFIG_FREERTOS_UNICORE=y`; a build fails if
+`CONFIG_FREERTOS_NUMBER_OF_CORES` is not one. The active core runs at the
+configured 320 MHz, and dynamic power management is disabled.
 
 `ESP32S31_LCD_BOUNCE_SOURCE_ROWS` controls the bounce strip height and must
 divide 160 exactly. Ten rows is the tested balanced default. Sixteen rows was

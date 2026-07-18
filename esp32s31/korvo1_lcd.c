@@ -92,7 +92,9 @@ typedef struct {
   uint8_t back_index;
   uint8_t consecutive_timeouts;
   uint16_t fps_x10;
-  bool fps_valid;
+  esp32s31_rgb565_fps_osd_t fps_osd[2];
+  volatile uint8_t fps_osd_index;
+  volatile bool fps_valid;
   bool pending;
   bool ready;
 } korvo1_lcd_state_t;
@@ -154,10 +156,17 @@ static bool IRAM_ATTR lcd_on_bounce_empty(
     const unsigned source_y = output_y / ESP32S31_SCALE_FACTOR;
     const uint16_t *source = state->render_buffer +
         (size_t)source_y * ESP32S31_GBA_WIDTH;
-    if (!esp32s31_rgb565_scale3x_rows(
+    const esp32s31_rgb565_fps_osd_t *osd = NULL;
+    if (__atomic_load_n(&state->fps_valid, __ATOMIC_ACQUIRE))
+    {
+      const uint8_t osd_index =
+          __atomic_load_n(&state->fps_osd_index, __ATOMIC_ACQUIRE) & 1u;
+      osd = &state->fps_osd[osd_index];
+    }
+    if (!esp32s31_rgb565_scale3x_rows_osd(
             bounce_buffer, ESP32S31_LCD_WIDTH * sizeof(uint16_t), source,
-            LCD_BOUNCE_SOURCE_ROWS,
-            ESP32S31_GBA_WIDTH * sizeof(uint16_t)))
+            source_y, LCD_BOUNCE_SOURCE_ROWS,
+            ESP32S31_GBA_WIDTH * sizeof(uint16_t), osd))
       memset(bounce_buffer, 0, (size_t)length_bytes);
     state->bounce_expected_pos_px =
         (position + LCD_BOUNCE_PIXELS) % LCD_FRAME_PIXELS;
@@ -550,14 +559,6 @@ bool esp32s31_korvo1_lcd_present_rgb565(const void *pixels,
   }
   s_lcd.stats.last_scale_us = 0;
 
-  if (s_lcd.fps_valid)
-  {
-    const uint32_t profile_overlay = gpsp_profile_begin();
-    (void)esp32s31_rgb565_draw_fps_gba(
-        s_lcd.render_buffer, source_row_bytes, s_lcd.fps_x10);
-    gpsp_profile_end(GPSP_PROFILE_LCD_OVERLAY, profile_overlay);
-  }
-
   /* The core immediately reuses this buffer. LCD tearing is intentional. */
   s_lcd.stats.submitted_frames++;
   return true;
@@ -566,14 +567,6 @@ bool esp32s31_korvo1_lcd_present_rgb565(const void *pixels,
   {
     s_lcd.stats.dropped_frames++;
     return false;
-  }
-
-  if (s_lcd.fps_valid)
-  {
-    const uint32_t profile_overlay = gpsp_profile_begin();
-    (void)esp32s31_rgb565_draw_fps_gba(
-        (void *)pixels, pitch, s_lcd.fps_x10);
-    gpsp_profile_end(GPSP_PROFILE_LCD_OVERLAY, profile_overlay);
   }
 
   uint16_t *back = s_lcd.framebuffers[s_lcd.back_index];
@@ -597,6 +590,15 @@ bool esp32s31_korvo1_lcd_present_rgb565(const void *pixels,
   {
     s_lcd.stats.dropped_frames++;
     return false;
+  }
+
+  /* The comparison framebuffer path overlays only its LCD destination. */
+  if (__atomic_load_n(&s_lcd.fps_valid, __ATOMIC_ACQUIRE))
+  {
+    const uint32_t profile_overlay = gpsp_profile_begin();
+    (void)esp32s31_rgb565_draw_fps(
+        back, ESP32S31_LCD_WIDTH * sizeof(uint16_t), s_lcd.fps_x10);
+    gpsp_profile_end(GPSP_PROFILE_LCD_OVERLAY, profile_overlay);
   }
 
   /* The old completion must not satisfy the wait for this submission. */
@@ -651,8 +653,15 @@ void esp32s31_korvo1_lcd_set_fps_x10(unsigned fps_x10)
 {
   if (fps_x10 > 999u)
     fps_x10 = 999u;
+
+  const uint8_t current =
+      __atomic_load_n(&s_lcd.fps_osd_index, __ATOMIC_RELAXED) & 1u;
+  const uint8_t next = current ^ 1u;
+  if (!esp32s31_rgb565_prepare_fps_osd(&s_lcd.fps_osd[next], fps_x10))
+    return;
   s_lcd.fps_x10 = (uint16_t)fps_x10;
-  s_lcd.fps_valid = true;
+  __atomic_store_n(&s_lcd.fps_osd_index, next, __ATOMIC_RELEASE);
+  __atomic_store_n(&s_lcd.fps_valid, true, __ATOMIC_RELEASE);
 }
 
 void esp32s31_korvo1_lcd_get_stats(esp32s31_lcd_stats_t *out)

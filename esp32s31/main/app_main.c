@@ -23,6 +23,10 @@
 #include "korvo1_touch.h"
 #include "rgb565_scale3x.h"
 
+#if CONFIG_FREERTOS_NUMBER_OF_CORES != 1
+#error "ESP32-S31 gpSP firmware requires CONFIG_FREERTOS_UNICORE=y"
+#endif
+
 #define GAMEPAK_PARTITION "gamepak"
 #define GAMEPAK_PAGE_BYTES 0x8000u
 #define FPS_WINDOW_US INT64_C(1000000)
@@ -207,11 +211,7 @@ static uint32_t hash_current_frame(void)
   for (unsigned y = 0; y < ESP32S31_GBA_HEIGHT; y++)
   {
     const uint8_t *row = pixels + (size_t)y * row_bytes;
-    const size_t first_byte = y < ESP32S31_GBA_FPS_OSD_HEIGHT
-                                  ? ESP32S31_GBA_FPS_OSD_WIDTH *
-                                        sizeof(uint16_t)
-                                  : 0u;
-    for (size_t x = first_byte; x < row_bytes; x++)
+    for (size_t x = 0; x < row_bytes; x++)
     {
       hash ^= row[x];
       hash *= UINT32_C(16777619);
@@ -476,7 +476,14 @@ static void stay_available_after_failure(const char *stage)
 
 void app_main(void)
 {
-  ESP_LOGI(TAG, "ESP32-S31 Korvo-1 gpSP interpreter boot");
+  ESP_LOGI(TAG,
+           "ESP32-S31 Korvo-1 gpSP interpreter boot; cpu=%dMHz cores=%d",
+           CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+           CONFIG_FREERTOS_NUMBER_OF_CORES);
+  printf("result=PASS command=runtime_config cpu_mhz=%d cores=%d "
+         "unicore=1\n",
+         CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+         CONFIG_FREERTOS_NUMBER_OF_CORES);
 
   g_lcd_ready = esp32s31_korvo1_lcd_init();
   printf("result=%s command=lcd_init ready=%u\n",

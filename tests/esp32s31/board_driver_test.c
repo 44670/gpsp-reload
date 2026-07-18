@@ -165,48 +165,95 @@ static void test_fps_overlay(void)
   free(allocation);
 }
 
-static void test_gba_fps_overlay(void)
+static void test_fused_fps_overlay(void)
 {
-  const size_t pitch_pixels = SOURCE_PITCH_PIXELS;
-  const size_t frame_bytes =
-      pitch_pixels * ESP32S31_GBA_HEIGHT * sizeof(uint16_t);
-  uint8_t *allocation = malloc(frame_bytes + GUARD_BYTES * 2u);
-  assert(allocation != NULL);
-  memset(allocation, 0xa5, frame_bytes + GUARD_BYTES * 2u);
-  uint16_t *frame = (uint16_t *)(allocation + GUARD_BYTES);
+  const size_t source_bytes =
+      SOURCE_PITCH_PIXELS * ESP32S31_GBA_HEIGHT * sizeof(uint16_t);
+  const size_t output_bytes =
+      OUTPUT_PITCH_PIXELS * ESP32S31_LCD_HEIGHT * sizeof(uint16_t);
+  uint8_t *source_allocation = malloc(source_bytes + GUARD_BYTES * 2u);
+  uint8_t *output_allocation = malloc(output_bytes + GUARD_BYTES * 2u);
+  assert(source_allocation != NULL && output_allocation != NULL);
+  memset(source_allocation, 0xa5, source_bytes + GUARD_BYTES * 2u);
+  memset(output_allocation, 0x5a, output_bytes + GUARD_BYTES * 2u);
+  uint16_t *source = (uint16_t *)(source_allocation + GUARD_BYTES);
+  uint16_t *output = (uint16_t *)(output_allocation + GUARD_BYTES);
   for (unsigned y = 0; y < ESP32S31_GBA_HEIGHT; y++)
   {
-    for (unsigned x = 0; x < pitch_pixels; x++)
-      frame[y * pitch_pixels + x] = 0x1234u;
+    for (unsigned x = 0; x < SOURCE_PITCH_PIXELS; x++)
+      source[y * SOURCE_PITCH_PIXELS + x] = 0x1234u;
   }
 
-  assert(esp32s31_rgb565_draw_fps_gba(
-      frame, pitch_pixels * sizeof(uint16_t), 597u));
+  esp32s31_rgb565_fps_osd_t osd;
+  assert(!esp32s31_rgb565_prepare_fps_osd(NULL, 597u));
+  assert(esp32s31_rgb565_prepare_fps_osd(&osd, 597u));
+  assert(esp32s31_rgb565_clear_output(
+      output, OUTPUT_PITCH_PIXELS * sizeof(uint16_t)));
+
+  /* Exercise the same global-row contract used by independent bounce strips. */
+  assert(esp32s31_rgb565_scale3x_rows_osd(
+      output, OUTPUT_PITCH_PIXELS * sizeof(uint16_t), source,
+      0u, 4u, SOURCE_PITCH_PIXELS * sizeof(uint16_t), &osd));
+  assert(esp32s31_rgb565_scale3x_rows_osd(
+      output + 4u * ESP32S31_SCALE_FACTOR * OUTPUT_PITCH_PIXELS,
+      OUTPUT_PITCH_PIXELS * sizeof(uint16_t),
+      source + 4u * SOURCE_PITCH_PIXELS,
+      4u, ESP32S31_GBA_HEIGHT - 4u,
+      SOURCE_PITCH_PIXELS * sizeof(uint16_t), &osd));
+
   unsigned white_pixels = 0;
   unsigned black_pixels = 0;
-  for (unsigned y = 0; y < 9u; y++)
+  for (unsigned y = 0; y < ESP32S31_GBA_FPS_OSD_HEIGHT; y++)
   {
-    for (unsigned x = 0; x < 48u; x++)
+    for (unsigned x = 0; x < ESP32S31_GBA_FPS_OSD_WIDTH; x++)
     {
-      const uint16_t pixel = frame[y * pitch_pixels + x];
-      assert(pixel == 0u || pixel == 0xffffu);
-      white_pixels += pixel == 0xffffu;
-      black_pixels += pixel == 0u;
+      const uint16_t expected =
+          (osd.white_rows[y][x / 32u] &
+           (UINT32_C(1) << (x % 32u))) != 0u
+              ? UINT16_C(0xffff)
+              : UINT16_C(0x0000);
+      white_pixels += expected == 0xffffu;
+      black_pixels += expected == 0u;
+      for (unsigned duplicate_y = 0; duplicate_y < 3u; duplicate_y++)
+      {
+        const uint16_t *row = output +
+            (y * 3u + duplicate_y) * OUTPUT_PITCH_PIXELS;
+        for (unsigned duplicate_x = 0; duplicate_x < 3u; duplicate_x++)
+          assert(row[ESP32S31_LCD_BAR_WIDTH + x * 3u + duplicate_x] ==
+                 expected);
+      }
     }
-    assert(frame[y * pitch_pixels + 48u] == 0x1234u);
+    assert(output[(y * 3u) * OUTPUT_PITCH_PIXELS +
+                  ESP32S31_LCD_BAR_WIDTH +
+                  ESP32S31_GBA_FPS_OSD_WIDTH * 3u] == 0x1234u);
   }
   assert(white_pixels > 40u);
   assert(black_pixels > white_pixels);
-  assert(frame[9u * pitch_pixels] == 0x1234u);
+  assert(output[(ESP32S31_GBA_FPS_OSD_HEIGHT * 3u) *
+                    OUTPUT_PITCH_PIXELS +
+                ESP32S31_LCD_BAR_WIDTH] == 0x1234u);
+
+  /* Fused composition must leave the emulator-owned source untouched. */
+  for (unsigned y = 0; y < ESP32S31_GBA_HEIGHT; y++)
+  {
+    for (unsigned x = 0; x < SOURCE_PITCH_PIXELS; x++)
+      assert(source[y * SOURCE_PITCH_PIXELS + x] == 0x1234u);
+  }
 
   for (unsigned i = 0; i < GUARD_BYTES; i++)
   {
-    assert(allocation[i] == 0xa5u);
-    assert(allocation[GUARD_BYTES + frame_bytes + i] == 0xa5u);
+    assert(source_allocation[i] == 0xa5u);
+    assert(source_allocation[GUARD_BYTES + source_bytes + i] == 0xa5u);
+    assert(output_allocation[i] == 0x5au);
+    assert(output_allocation[GUARD_BYTES + output_bytes + i] == 0x5au);
   }
-  assert(!esp32s31_rgb565_draw_fps_gba(
-      frame, ESP32S31_GBA_WIDTH * sizeof(uint16_t) - 1u, 600u));
-  free(allocation);
+  assert(!esp32s31_rgb565_scale3x_rows_osd(
+      output, OUTPUT_PITCH_PIXELS * sizeof(uint16_t), source,
+      ESP32S31_GBA_HEIGHT - 1u, 2u,
+      SOURCE_PITCH_PIXELS * sizeof(uint16_t), &osd));
+
+  free(output_allocation);
+  free(source_allocation);
 }
 
 static void finish_gt1151_checksum(uint8_t *report, size_t size)
@@ -258,7 +305,7 @@ int main(void)
 {
   test_scaler();
   test_fps_overlay();
-  test_gba_fps_overlay();
+  test_fused_fps_overlay();
   test_gt1151_decoder();
   puts("result=PASS command=esp32s31_board_driver_host_test");
   return 0;
