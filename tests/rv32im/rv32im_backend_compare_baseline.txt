@@ -1,0 +1,10 @@
+baseline=rv32im-mips-frontend-corrected-v1 benchmark_id=rv32im-mips-frontend-v1
+environment=locked clang_version=19.1.7 rv32_qemu_version=10.0.8 mips_qemu_version=10.0.8 build_config=clang-rv32im-mips32r2-o2-freestanding-v1
+workload_manifest_sha256=d8d245d7e40de679b09982e8ff387255c1b8cd06a27920381086f296c9223df8
+environment_manifest_sha256=b67f1516178fa87885bae48078b41cbada84091b078159508bb89c4f6d0513c6
+benchmark_source_sha256=419ee7e120f83f6df27b086bfef7e2c5c35f786c9f05cac0486f99dcc50ad26a
+measurement=qemu-user-exec-trace counter_source=qemu_exec_trace counter_semantics=qemu_tb_instruction_sum trace_options=in_asm,exec,nochain counter_adjustment=none
+workload=mapped_alu phase=cold guest_insns=65 guest_cycles=406 update_calls=1 state_hash=0x1c4f01b5 memory_hash=0x35e25b05 scheduler_hash=0x3e801244 rv32_qemu_trace_raw=33473 mips_qemu_trace_raw=11601 rv32_generated_bytes=544 mips_generated_bytes=356
+workload=mapped_alu phase=warm guest_insns=4160 guest_cycles=25984 update_calls=64 state_hash=0x40e392e5 memory_hash=0x35e25b05 scheduler_hash=0x4389a925 rv32_qemu_trace_raw=31682 mips_qemu_trace_raw=17219 rv32_generated_bytes=544 mips_generated_bytes=356
+workload=memory_read phase=cold guest_insns=49 guest_cycles=390 update_calls=1 state_hash=0x4cbd9a74 memory_hash=0x35e25b05 scheduler_hash=0x3e801244 rv32_qemu_trace_raw=37933 mips_qemu_trace_raw=11177 rv32_generated_bytes=2648 mips_generated_bytes=836
+workload=memory_read phase=warm guest_insns=3136 guest_cycles=24960 update_calls=64 state_hash=0x4cbd9a74 memory_hash=0x35e25b05 scheduler_hash=0x4389a925 rv32_qemu_trace_raw=151362 mips_qemu_trace_raw=58691 rv32_generated_bytes=2648 mips_generated_bytes=836

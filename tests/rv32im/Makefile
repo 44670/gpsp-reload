@@ -2,6 +2,7 @@ ROOT := ../..
 
 CLANG ?= clang
 QEMU_RISCV32 ?= qemu-riscv32
+QEMU_MIPSEL ?= qemu-mipsel
 
 HARNESS := rv32im_harness
 CODEGEN := rv32im_codegen
@@ -12,6 +13,8 @@ ARMWRESTLER_INTERP := rv32im_armwrestler_interp
 FRONTEND_CONTROL_JIT := rv32im_frontend_control_jit
 FRONTEND_CONTROL_INTERP := rv32im_frontend_control_interp
 FRONTEND_CACHE_JIT := rv32im_frontend_cache_jit
+BACKEND_COMPARE_RV32 := rv32im_backend_compare
+BACKEND_COMPARE_MIPS := mips_backend_compare
 ABI_TEST := rv32im_abi_test
 EXEC_TEST := rv32im_exec_test
 RUNTIME_TEST := rv32im_runtime_test
@@ -33,6 +36,18 @@ FRONTEND_CONTROL_JIT_LOG := $(OUT_DIR)/rv32im_frontend_control_jit.log
 FRONTEND_CONTROL_INTERP_LOG := $(OUT_DIR)/rv32im_frontend_control_interp.log
 FRONTEND_CONTROL_COMPARE_LOG := $(OUT_DIR)/rv32im_frontend_control_compare.log
 FRONTEND_CACHE_JIT_LOG := $(OUT_DIR)/rv32im_frontend_cache_jit.log
+BACKEND_COMPARE_RV32_LOG := $(OUT_DIR)/rv32im_backend_compare.log
+BACKEND_COMPARE_MIPS_LOG := $(OUT_DIR)/mips_backend_compare.log
+BACKEND_COMPARE_RV32_COUNTS := $(OUT_DIR)/rv32im_backend_compare_counts.log
+BACKEND_COMPARE_MIPS_COUNTS := $(OUT_DIR)/mips_backend_compare_counts.log
+BACKEND_COMPARE_RV32_REPEAT_LOG := $(OUT_DIR)/rv32im_backend_compare_repeat.log
+BACKEND_COMPARE_MIPS_REPEAT_LOG := $(OUT_DIR)/mips_backend_compare_repeat.log
+BACKEND_COMPARE_RV32_REPEAT_COUNTS := $(OUT_DIR)/rv32im_backend_compare_repeat_counts.log
+BACKEND_COMPARE_MIPS_REPEAT_COUNTS := $(OUT_DIR)/mips_backend_compare_repeat_counts.log
+BACKEND_COMPARE_RV32_FIFO := $(OUT_DIR)/rv32im_backend_compare_trace.fifo
+BACKEND_COMPARE_MIPS_FIFO := $(OUT_DIR)/mips_backend_compare_trace.fifo
+BACKEND_COMPARE_REPORT := $(OUT_DIR)/rv32im_mips_backend_compare_report.log
+BACKEND_COMPARE_ENV_LOG := $(OUT_DIR)/rv32im_mips_backend_compare_env.log
 ARMWRESTLER_PERF_BASELINE_LOG := $(OUT_DIR)/rv32im_armwrestler_perf_baseline.log
 ARMWRESTLER_PERF_OPTIMIZED_LOG := $(OUT_DIR)/rv32im_armwrestler_perf_optimized.log
 ARMWRESTLER_PERF_BASELINE_COUNTS := $(OUT_DIR)/rv32im_armwrestler_perf_baseline_counts.log
@@ -67,6 +82,22 @@ PERF_EXPECTED_QEMU_VERSION ?= 10.0.8
 PERF_EXPECTED_MANIFEST_SHA256 := e8235f6e050faf0ee2d500fa94c32744a91270bd6edb977fd82d59ba7b58c457
 PERF_EXPECTED_ENVIRONMENT_SHA256 := 7f372d08dfd234a3a774dbb5d3d430241c1c4044497c8726e3fe9f9f661e762b
 PERF_BUILD_CONFIG := clang-rv32im-ilp32-o2-freestanding-v1
+BACKEND_COMPARE_MANIFEST := rv32im_backend_compare_manifest.txt
+BACKEND_COMPARE_ENVIRONMENT := rv32im_backend_compare_environment.txt
+BACKEND_COMPARE_BASELINE_SPEC := rv32im_backend_compare_baseline.txt
+BACKEND_COMPARE_BENCHMARK_ID := rv32im-mips-frontend-v1
+BACKEND_COMPARE_BASELINE_ID := rv32im-mips-frontend-corrected-v1
+BACKEND_COMPARE_BUILD_CONFIG := clang-rv32im-mips32r2-o2-freestanding-v1
+BACKEND_COMPARE_EXPECTED_CLANG_VERSION ?= 19.1.7
+BACKEND_COMPARE_EXPECTED_RV_QEMU_VERSION ?= 10.0.8
+BACKEND_COMPARE_EXPECTED_MIPS_QEMU_VERSION ?= 10.0.8
+BACKEND_COMPARE_EXPECTED_MANIFEST_SHA256 := d8d245d7e40de679b09982e8ff387255c1b8cd06a27920381086f296c9223df8
+BACKEND_COMPARE_EXPECTED_ENVIRONMENT_SHA256 := b67f1516178fa87885bae48078b41cbada84091b078159508bb89c4f6d0513c6
+BACKEND_COMPARE_EXPECTED_SOURCE_SHA256 := 419ee7e120f83f6df27b086bfef7e2c5c35f786c9f05cac0486f99dcc50ad26a
+BACKEND_COMPARE_MEMORY_MIN_REDUCTION_PERCENT ?= 0
+BACKEND_COMPARE_MEMORY_COLD_RAW_MAX ?= 42000
+BACKEND_COMPARE_MEMORY_BYTES_MAX ?= 3200
+BACKEND_COMPARE_TIMEOUT_SECONDS := 30
 ARMWRESTLER_ROM := /home/john/ref/armwrestler-gba-fixed/armwrestler-gba-fixed.gba
 ARMWRESTLER_PERF_BASELINE_SPEC := rv32im_armwrestler_perf_baseline.txt
 ARMWRESTLER_PERF_BENCHMARK_ID := rv32im-armwrestler-perf-v1
@@ -126,6 +157,36 @@ RV32_LDFLAGS := \
 	-static \
 	-Wl,-e,_start
 
+MIPS_TARGET_FLAGS := \
+	--target=mipsel-linux-gnu \
+	-march=mips32r2 \
+	-mabi=32 \
+	-EL \
+	-G0 \
+	-fno-pic \
+	-mno-abicalls
+
+MIPS_CFLAGS := \
+	$(MIPS_TARGET_FLAGS) \
+	-std=c99 \
+	-O2 \
+	-g \
+	-Wall \
+	-Wextra \
+	-ffreestanding \
+	-fno-builtin \
+	-fno-stack-protector \
+	-fno-unwind-tables \
+	-fno-asynchronous-unwind-tables
+
+MIPS_LDFLAGS := \
+	$(MIPS_TARGET_FLAGS) \
+	-fuse-ld=lld \
+	-nostdlib \
+	-static \
+	-Wl,-e,_start \
+	-Wl,--build-id=none
+
 FRONTEND_WARNFLAGS := \
 	-Wno-old-style-declaration \
 	-Wno-unused-variable \
@@ -139,7 +200,7 @@ HOST_CXX ?= c++
 LLVM_OBJCOPY ?= llvm-objcopy
 LLVM_NM ?= llvm-nm
 
-all: $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(FRONTEND_CONTROL_JIT) $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CACHE_JIT) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP)
+all: $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(FRONTEND_CONTROL_JIT) $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CACHE_JIT) $(BACKEND_COMPARE_RV32) $(BACKEND_COMPARE_MIPS) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP)
 
 $(HARNESS): rv32im_harness.c $(ROOT)/riscv/riscv_runtime.c \
 		$(ROOT)/riscv/riscv_emit.h $(ROOT)/riscv/riscv_codegen.h \
@@ -271,6 +332,44 @@ $(FRONTEND_CACHE_JIT): rv32im_armwrestler.c rv32im_frontend_shim.h \
 		-include rv32im_frontend_shim.h \
 		-o $@ rv32im_armwrestler.c $(ROOT)/cpu_threaded.c \
 		$(ROOT)/riscv/riscv_runtime.c
+
+$(BACKEND_COMPARE_RV32): rv32im_backend_compare.c \
+		backend_compare_frontend_shim.h $(ROOT)/cpu_threaded.c \
+		$(ROOT)/riscv/riscv_runtime.c $(ROOT)/riscv/riscv_emit.h \
+		$(ROOT)/riscv/riscv_codegen.h \
+		$(ROOT)/riscv/riscv_runtime_test_shim.h
+	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) -Wl,--build-id=none \
+		-DRISCV_RUNTIME_STANDALONE_TEST -DHAVE_DYNAREC -DRISCV_ARCH \
+		-DMMAP_JIT_CACHE -DBACKEND_COMPARE_RV32IM \
+		-I. -I$(ROOT) -I$(ROOT)/riscv \
+		-include backend_compare_frontend_shim.h \
+		-o $@ rv32im_backend_compare.c $(ROOT)/cpu_threaded.c \
+		$(ROOT)/riscv/riscv_runtime.c
+
+$(OUT_DIR)/mips_backend_compare_main.o: rv32im_backend_compare.c \
+		backend_compare_frontend_shim.h \
+		$(ROOT)/riscv/riscv_runtime_test_shim.h | $(OUT_DIR)
+	$(CLANG) $(MIPS_CFLAGS) -DHAVE_DYNAREC -DMIPS_ARCH \
+		-DBACKEND_COMPARE_MIPS -I. -I$(ROOT) \
+		-include backend_compare_frontend_shim.h -c $< -o $@
+
+$(OUT_DIR)/mips_backend_compare_frontend.o: $(ROOT)/cpu_threaded.c \
+		backend_compare_frontend_shim.h $(ROOT)/mips/mips_emit.h \
+		$(ROOT)/riscv/riscv_runtime_test_shim.h | $(OUT_DIR)
+	$(CLANG) $(MIPS_CFLAGS) \
+		-Wno-unused-variable -Wno-unused-label \
+		-Wno-unused-but-set-variable -Wno-sign-compare \
+		-Wno-implicit-fallthrough -DHAVE_DYNAREC -DMIPS_ARCH \
+		-DBACKEND_COMPARE_MIPS -I. -I$(ROOT) \
+		-include backend_compare_frontend_shim.h -c $< -o $@
+
+$(OUT_DIR)/mips_backend_compare_stub.o: $(ROOT)/mips/mips_stub.S | $(OUT_DIR)
+	$(CLANG) $(MIPS_TARGET_FLAGS) -ffreestanding -I$(ROOT) -c $< -o $@
+
+$(BACKEND_COMPARE_MIPS): $(OUT_DIR)/mips_backend_compare_main.o \
+		$(OUT_DIR)/mips_backend_compare_frontend.o \
+		$(OUT_DIR)/mips_backend_compare_stub.o
+	$(CLANG) $(MIPS_LDFLAGS) -o $@ $^
 
 $(OUT_DIR):
 	mkdir -p $@
@@ -638,6 +737,93 @@ runtime: $(RUNTIME_TEST) | $(OUT_DIR)
 	$(QEMU_RISCV32) ./$(RUNTIME_TEST) | tee $(RUNTIME_LOG)
 	awk -f rv32im_runtime_size.awk $(RUNTIME_LOG)
 
+backend-compare-env-check: $(BACKEND_COMPARE_MANIFEST) \
+		$(BACKEND_COMPARE_ENVIRONMENT) rv32im_backend_compare.c \
+		backend_compare_frontend_shim.h | $(OUT_DIR)
+	@clang_version=`$(CLANG) --version | sed -n '1s/.* version \([0-9][0-9.]*\).*/\1/p'`; \
+	rv_qemu_version=`$(QEMU_RISCV32) --version | sed -n '1s/.* version \([0-9][0-9.]*\).*/\1/p'`; \
+	mips_qemu_version=`$(QEMU_MIPSEL) --version | sed -n '1s/.* version \([0-9][0-9.]*\).*/\1/p'`; \
+	manifest_sha=`sha256sum $(BACKEND_COMPARE_MANIFEST) | awk '{ print $$1 }'`; \
+	environment_sha=`sha256sum $(BACKEND_COMPARE_ENVIRONMENT) | awk '{ print $$1 }'`; \
+	source_sha=`sha256sum rv32im_backend_compare.c \
+		backend_compare_frontend_shim.h | sha256sum | awk '{ print $$1 }'`; \
+	if test "$$clang_version" != "$(BACKEND_COMPARE_EXPECTED_CLANG_VERSION)"; then \
+		echo "result=FAIL command=backend-compare-env clang_version=$$clang_version expected_clang_version=$(BACKEND_COMPARE_EXPECTED_CLANG_VERSION) reason=clang_version_mismatch"; \
+		exit 1; \
+	fi; \
+	if test "$$rv_qemu_version" != "$(BACKEND_COMPARE_EXPECTED_RV_QEMU_VERSION)"; then \
+		echo "result=FAIL command=backend-compare-env rv32_qemu_version=$$rv_qemu_version expected_rv32_qemu_version=$(BACKEND_COMPARE_EXPECTED_RV_QEMU_VERSION) reason=rv32_qemu_version_mismatch"; \
+		exit 1; \
+	fi; \
+	if test "$$mips_qemu_version" != "$(BACKEND_COMPARE_EXPECTED_MIPS_QEMU_VERSION)"; then \
+		echo "result=FAIL command=backend-compare-env mips_qemu_version=$$mips_qemu_version expected_mips_qemu_version=$(BACKEND_COMPARE_EXPECTED_MIPS_QEMU_VERSION) reason=mips_qemu_version_mismatch"; \
+		exit 1; \
+	fi; \
+	if test "$$manifest_sha" != "$(BACKEND_COMPARE_EXPECTED_MANIFEST_SHA256)"; then \
+		echo "result=FAIL command=backend-compare-env workload_manifest_sha256=$$manifest_sha expected_workload_manifest_sha256=$(BACKEND_COMPARE_EXPECTED_MANIFEST_SHA256) reason=workload_manifest_changed"; \
+		exit 1; \
+	fi; \
+	if test "$$environment_sha" != "$(BACKEND_COMPARE_EXPECTED_ENVIRONMENT_SHA256)"; then \
+		echo "result=FAIL command=backend-compare-env environment_manifest_sha256=$$environment_sha expected_environment_manifest_sha256=$(BACKEND_COMPARE_EXPECTED_ENVIRONMENT_SHA256) reason=environment_manifest_changed"; \
+		exit 1; \
+	fi; \
+	if test "$$source_sha" != "$(BACKEND_COMPARE_EXPECTED_SOURCE_SHA256)"; then \
+		echo "result=FAIL command=backend-compare-env benchmark_source_sha256=$$source_sha expected_benchmark_source_sha256=$(BACKEND_COMPARE_EXPECTED_SOURCE_SHA256) reason=benchmark_source_changed"; \
+		exit 1; \
+	fi; \
+	echo "result=PASS command=backend-compare-env benchmark_id=$(BACKEND_COMPARE_BENCHMARK_ID) clang_version=$$clang_version rv32_qemu_version=$$rv_qemu_version mips_qemu_version=$$mips_qemu_version rv32_isa=rv32im mips_isa=mips32r2 optimization=O2 workload_manifest_sha256=$$manifest_sha environment_manifest_sha256=$$environment_sha benchmark_source_sha256=$$source_sha reason=environment_locked" | tee $(BACKEND_COMPARE_ENV_LOG)
+
+backend-compare: backend-compare-env-check $(BACKEND_COMPARE_RV32) \
+		$(BACKEND_COMPARE_MIPS) $(BACKEND_COMPARE_BASELINE_SPEC) \
+		backend_compare_trace_run.sh rv32im_backend_compare_check.awk \
+		rv32im_qemu_trace_count.awk | $(OUT_DIR)
+	sh backend_compare_trace_run.sh $(QEMU_RISCV32) $(LLVM_NM) \
+		rv32im_qemu_trace_count.awk ./$(BACKEND_COMPARE_RV32) \
+		$(BACKEND_COMPARE_RV32_COUNTS) $(BACKEND_COMPARE_RV32_LOG) \
+		$(BACKEND_COMPARE_RV32_FIFO) $(BACKEND_COMPARE_TIMEOUT_SECONDS)
+	sh backend_compare_trace_run.sh $(QEMU_MIPSEL) $(LLVM_NM) \
+		rv32im_qemu_trace_count.awk ./$(BACKEND_COMPARE_MIPS) \
+		$(BACKEND_COMPARE_MIPS_COUNTS) $(BACKEND_COMPARE_MIPS_LOG) \
+		$(BACKEND_COMPARE_MIPS_FIFO) $(BACKEND_COMPARE_TIMEOUT_SECONDS)
+	sh backend_compare_trace_run.sh $(QEMU_RISCV32) $(LLVM_NM) \
+		rv32im_qemu_trace_count.awk ./$(BACKEND_COMPARE_RV32) \
+		$(BACKEND_COMPARE_RV32_REPEAT_COUNTS) \
+		$(BACKEND_COMPARE_RV32_REPEAT_LOG) $(BACKEND_COMPARE_RV32_FIFO) \
+		$(BACKEND_COMPARE_TIMEOUT_SECONDS)
+	sh backend_compare_trace_run.sh $(QEMU_MIPSEL) $(LLVM_NM) \
+		rv32im_qemu_trace_count.awk ./$(BACKEND_COMPARE_MIPS) \
+		$(BACKEND_COMPARE_MIPS_REPEAT_COUNTS) \
+		$(BACKEND_COMPARE_MIPS_REPEAT_LOG) $(BACKEND_COMPARE_MIPS_FIFO) \
+		$(BACKEND_COMPARE_TIMEOUT_SECONDS)
+	cmp $(BACKEND_COMPARE_RV32_COUNTS) $(BACKEND_COMPARE_RV32_REPEAT_COUNTS)
+	cmp $(BACKEND_COMPARE_RV32_LOG) $(BACKEND_COMPARE_RV32_REPEAT_LOG)
+	cmp $(BACKEND_COMPARE_MIPS_COUNTS) $(BACKEND_COMPARE_MIPS_REPEAT_COUNTS)
+	cmp $(BACKEND_COMPARE_MIPS_LOG) $(BACKEND_COMPARE_MIPS_REPEAT_LOG)
+	awk -v spec_file=$(BACKEND_COMPARE_BASELINE_SPEC) \
+		-v rv_counts_file=$(BACKEND_COMPARE_RV32_COUNTS) \
+		-v rv_log_file=$(BACKEND_COMPARE_RV32_LOG) \
+		-v mips_counts_file=$(BACKEND_COMPARE_MIPS_COUNTS) \
+		-v mips_log_file=$(BACKEND_COMPARE_MIPS_LOG) \
+		-v baseline_id=$(BACKEND_COMPARE_BASELINE_ID) \
+		-v benchmark_id=$(BACKEND_COMPARE_BENCHMARK_ID) \
+		-v build_config=$(BACKEND_COMPARE_BUILD_CONFIG) \
+		-v clang_version=$(BACKEND_COMPARE_EXPECTED_CLANG_VERSION) \
+		-v rv_qemu_version=$(BACKEND_COMPARE_EXPECTED_RV_QEMU_VERSION) \
+		-v mips_qemu_version=$(BACKEND_COMPARE_EXPECTED_MIPS_QEMU_VERSION) \
+		-v manifest_sha=$(BACKEND_COMPARE_EXPECTED_MANIFEST_SHA256) \
+		-v environment_sha=$(BACKEND_COMPARE_EXPECTED_ENVIRONMENT_SHA256) \
+		-v source_sha=$(BACKEND_COMPARE_EXPECTED_SOURCE_SHA256) \
+		-v memory_min_reduction=$(BACKEND_COMPARE_MEMORY_MIN_REDUCTION_PERCENT) \
+		-v memory_cold_raw_max=$(BACKEND_COMPARE_MEMORY_COLD_RAW_MAX) \
+		-v memory_bytes_max=$(BACKEND_COMPARE_MEMORY_BYTES_MAX) \
+		-f rv32im_backend_compare_check.awk \
+		$(BACKEND_COMPARE_BASELINE_SPEC) \
+		$(BACKEND_COMPARE_RV32_COUNTS) $(BACKEND_COMPARE_RV32_LOG) \
+		$(BACKEND_COMPARE_MIPS_COUNTS) $(BACKEND_COMPARE_MIPS_LOG) | \
+		tee $(BACKEND_COMPARE_REPORT)
+	grep -q 'result=PASS command=backend-compare workload=all phases=4' \
+		$(BACKEND_COMPARE_REPORT)
+
 perf-env-check: $(PERF_WORKLOAD_MANIFEST) $(PERF_ENVIRONMENT_MANIFEST) | $(OUT_DIR)
 	@clang_version=`$(CLANG) --version | sed -n '1s/.* version \([0-9][0-9.]*\).*/\1/p'`; \
 	qemu_version=`$(QEMU_RISCV32) --version | sed -n '1s/.* version \([0-9][0-9.]*\).*/\1/p'`; \
@@ -736,10 +922,10 @@ perf: perf-env-check $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP) | $
 	awk -f rv32im_mapped_alu_parity.awk \
 		$(MAPPED_ALU_INTERP_LOG) $(MAPPED_ALU_JIT_LOG)
 
-test: codegen abi exec runtime perf frontend frontend-control frontend-cache core-build rejects compare mixed smoke
+test: codegen abi exec runtime perf frontend frontend-control frontend-cache backend-compare core-build rejects compare mixed smoke
 
 clean:
-	rm -f $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(FRONTEND_CONTROL_JIT) $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CACHE_JIT) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP)
+	rm -f $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(FRONTEND_CONTROL_JIT) $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CACHE_JIT) $(BACKEND_COMPARE_RV32) $(BACKEND_COMPARE_MIPS) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP)
 	rm -rf $(OUT_DIR)
 
-.PHONY: all codegen abi exec runtime perf perf-env-check frontend frontend-control frontend-cache core-build smoke compare mixed rejects armwrestler-jit armwrestler-interp armwrestler-perf armwrestler armwrestler-report test clean
+.PHONY: all codegen abi exec runtime perf perf-env-check frontend frontend-control frontend-cache backend-compare backend-compare-env-check core-build smoke compare mixed rejects armwrestler-jit armwrestler-interp armwrestler-perf armwrestler armwrestler-report test clean

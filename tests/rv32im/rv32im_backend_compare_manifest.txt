@@ -1,0 +1,8 @@
+benchmark_id=rv32im-mips-frontend-v1
+frontend=cpu_threaded.c guest_mode=arm start_pc=0x08010000 rom_waitstate_seq_cycles=6 run_cycle_budget=0x00007fff terminal=arm_b_self idle_loop_exit=1 scheduler_return_per_run=1
+measurement=cold iterations=1 scope=cache_flush,lookup,translate,cache_sync,first_native_execute,scheduler_update,return
+measurement=warm iterations=64 scope=cached_lookup,native_execute,scheduler_update,return state_reset_before_window=1 cache_flush_before_window=0
+counter_source=qemu_exec_trace qemu_trace_options=in_asm,exec,nochain counter_semantics=qemu_tb_instruction_sum marker_windows=4 counter_adjustment=none
+workload=mapped_alu words_per_run=65 guest_insns_per_run=65 guest_cycles_per_run=406 operations_per_group=add,eor,sub,orr,and,mov,mul,add groups=8 terminal_words=1 warm_guest_insns=4160 warm_guest_cycles=25984
+workload=memory_read words_per_run=49 guest_insns_per_run=49 guest_cycles_per_run=390 load_groups=16 loads_per_group=ldr,ldrb,ldrh base=0x02000000 offsets=0..63 terminal_words=1 warm_guest_insns=3136 warm_guest_cycles=24960
+correctness=state_hash,memory_hash,scheduler_hash,update_calls,update_cycles,execute_arm_calls required_execute_arm_calls=0
