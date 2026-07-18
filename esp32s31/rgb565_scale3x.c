@@ -57,7 +57,8 @@ static const uint8_t *fps_glyph(char character)
 }
 
 static void draw_fps_glyph(uint16_t *output, size_t output_pitch_pixels,
-                           unsigned x, unsigned y, char character)
+                           unsigned x, unsigned y, unsigned scale,
+                           char character)
 {
   const uint8_t *glyph = fps_glyph(character);
   if (glyph == NULL)
@@ -70,18 +71,32 @@ static void draw_fps_glyph(uint16_t *output, size_t output_pitch_pixels,
       if ((glyph[glyph_y] & (1u << (FPS_GLYPH_WIDTH - glyph_x - 1u))) == 0u)
         continue;
 
-      for (unsigned duplicate_y = 0; duplicate_y < FPS_GLYPH_SCALE;
+      for (unsigned duplicate_y = 0; duplicate_y < scale;
            duplicate_y++)
       {
         uint16_t *row = output +
-            (y + glyph_y * FPS_GLYPH_SCALE + duplicate_y) *
+            (y + glyph_y * scale + duplicate_y) *
                 output_pitch_pixels;
-        for (unsigned duplicate_x = 0; duplicate_x < FPS_GLYPH_SCALE;
+        for (unsigned duplicate_x = 0; duplicate_x < scale;
              duplicate_x++)
-          row[x + glyph_x * FPS_GLYPH_SCALE + duplicate_x] = 0xffffu;
+          row[x + glyph_x * scale + duplicate_x] = 0xffffu;
       }
     }
   }
+}
+
+static void format_fps_text(char text[FPS_TEXT_LENGTH], unsigned fps_x10)
+{
+  if (fps_x10 > 999u)
+    fps_x10 = 999u;
+
+  const unsigned whole = fps_x10 / 10u;
+  const char formatted[FPS_TEXT_LENGTH] = {
+      'F', 'P', 'S', ' ',
+      whole >= 10u ? (char)('0' + whole / 10u) : ' ',
+      (char)('0' + whole % 10u), '.', (char)('0' + fps_x10 % 10u),
+  };
+  memcpy(text, formatted, sizeof(formatted));
 }
 
 bool esp32s31_rgb565_clear_output(void *output, size_t output_pitch)
@@ -175,15 +190,8 @@ bool esp32s31_rgb565_draw_fps(void *output, size_t output_pitch,
       output_pitch < ESP32S31_LCD_WIDTH * sizeof(uint16_t))
     return false;
 
-  if (fps_x10 > 999u)
-    fps_x10 = 999u;
-
-  const unsigned whole = fps_x10 / 10u;
-  const char text[FPS_TEXT_LENGTH] = {
-      'F', 'P', 'S', ' ',
-      whole >= 10u ? (char)('0' + whole / 10u) : ' ',
-      (char)('0' + whole % 10u), '.', (char)('0' + fps_x10 % 10u),
-  };
+  char text[FPS_TEXT_LENGTH];
+  format_fps_text(text, fps_x10);
   uint16_t *pixels = (uint16_t *)output;
   const size_t pitch_pixels = output_pitch / sizeof(uint16_t);
 
@@ -198,7 +206,33 @@ bool esp32s31_rgb565_draw_fps(void *output, size_t output_pitch,
   {
     draw_fps_glyph(pixels, pitch_pixels,
                    FPS_TEXT_X + i * FPS_GLYPH_ADVANCE * FPS_GLYPH_SCALE,
-                   FPS_TEXT_Y, text[i]);
+                   FPS_TEXT_Y, FPS_GLYPH_SCALE, text[i]);
+  }
+  return true;
+}
+
+bool esp32s31_rgb565_draw_fps_gba(void *output, size_t output_pitch,
+                                 unsigned fps_x10)
+{
+  if (output == NULL ||
+      output_pitch < ESP32S31_GBA_WIDTH * sizeof(uint16_t))
+    return false;
+
+  char text[FPS_TEXT_LENGTH];
+  format_fps_text(text, fps_x10);
+  uint16_t *pixels = (uint16_t *)output;
+  const size_t pitch_pixels = output_pitch / sizeof(uint16_t);
+  const unsigned background_width = FPS_TEXT_LENGTH * FPS_GLYPH_ADVANCE;
+  const unsigned background_height = FPS_GLYPH_HEIGHT + 2u;
+
+  for (unsigned y = 0; y < background_height; y++)
+    memset(pixels + y * pitch_pixels, 0,
+           background_width * sizeof(uint16_t));
+
+  for (unsigned i = 0; i < FPS_TEXT_LENGTH; i++)
+  {
+    draw_fps_glyph(pixels, pitch_pixels,
+                   1u + i * FPS_GLYPH_ADVANCE, 1u, 1u, text[i]);
   }
   return true;
 }

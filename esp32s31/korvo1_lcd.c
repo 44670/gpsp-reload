@@ -29,23 +29,51 @@
 #define ESP32S31_KORVO1_LCD_USE_GPIO38_DISP 0
 #endif
 
+#ifndef ESP32S31_LCD_BOUNCE_MODE
+#define ESP32S31_LCD_BOUNCE_MODE 0
+#endif
+
 #define LCD_FRAME_WAIT_MS 50u
 #define LCD_MAX_CONSECUTIVE_TIMEOUTS 3u
 #define LCD_FRAME_BYTES \
   (ESP32S31_LCD_WIDTH * ESP32S31_LCD_HEIGHT * sizeof(uint16_t))
+#define GBA_FRAME_STORAGE_BYTES \
+  (ESP32S31_GBA_WIDTH * (ESP32S31_GBA_HEIGHT + 1u) * sizeof(uint16_t))
+#define LCD_SOURCE_FRAME_COUNT 3u
+#define LCD_BOUNCE_SOURCE_ROWS 8u
+#define LCD_BOUNCE_OUTPUT_ROWS \
+  (LCD_BOUNCE_SOURCE_ROWS * ESP32S31_SCALE_FACTOR)
+#define LCD_BOUNCE_PIXELS \
+  (ESP32S31_LCD_WIDTH * LCD_BOUNCE_OUTPUT_ROWS)
+#define LCD_BOUNCE_BYTES (LCD_BOUNCE_PIXELS * sizeof(uint16_t))
+#define LCD_FRAME_PIXELS \
+  (ESP32S31_LCD_WIDTH * ESP32S31_LCD_HEIGHT)
 
 static const char *TAG = "korvo1_lcd";
 
 typedef struct {
   esp_lcd_panel_handle_t panel;
   uint16_t *framebuffers[2];
+  uint16_t *source_frames[LCD_SOURCE_FRAME_COUNT];
   TaskHandle_t owner_task;
+  portMUX_TYPE source_lock;
   volatile uint32_t vsync_count;
   volatile uint32_t completed_frames;
+  volatile uint32_t source_swaps;
+  volatile uint32_t bounce_callbacks;
+  volatile uint32_t bounce_discontinuities;
+  volatile uint32_t bounce_fill_frame_us;
+  volatile uint32_t bounce_fill_last_us;
+  volatile uint32_t bounce_fill_max_us;
+  volatile uint32_t bounce_expected_pos_px;
   esp32s31_lcd_stats_t stats;
   uint32_t pending_completion;
   uint8_t front_index;
   uint8_t back_index;
+  volatile uint8_t source_active_index;
+  volatile uint8_t source_pending_index;
+  uint8_t source_render_index;
+  volatile bool source_pending;
   uint8_t consecutive_timeouts;
   uint16_t fps_x10;
   bool fps_valid;
@@ -86,6 +114,80 @@ static bool IRAM_ATTR lcd_on_frame_complete(
   return lcd_notify_owner_from_isr(state);
 }
 
+#if ESP32S31_LCD_BOUNCE_MODE
+static bool IRAM_ATTR lcd_on_bounce_empty(
+    esp_lcd_panel_handle_t panel, void *bounce_buffer, int position_pixels,
+    int length_bytes, void *user_ctx)
+{
+  (void)panel;
+  korvo1_lcd_state_t *state = (korvo1_lcd_state_t *)user_ctx;
+  const int64_t fill_start = esp_timer_get_time();
+  bool source_switched = false;
+
+  if (position_pixels == 0)
+  {
+    portENTER_CRITICAL_SAFE(&state->source_lock);
+    if (state->source_pending)
+    {
+      state->source_active_index = state->source_pending_index;
+      state->source_pending = false;
+      state->source_swaps++;
+      source_switched = true;
+    }
+    portEXIT_CRITICAL_SAFE(&state->source_lock);
+  }
+
+  const uint32_t position = position_pixels >= 0 ?
+      (uint32_t)position_pixels : UINT32_MAX;
+  const bool valid_chunk = bounce_buffer != NULL &&
+      length_bytes == (int)LCD_BOUNCE_BYTES &&
+      position < LCD_FRAME_PIXELS &&
+      position % LCD_BOUNCE_PIXELS == 0u;
+  if (position != state->bounce_expected_pos_px)
+    state->bounce_discontinuities++;
+
+  if (valid_chunk)
+  {
+    const unsigned output_y = position / ESP32S31_LCD_WIDTH;
+    const unsigned source_y = output_y / ESP32S31_SCALE_FACTOR;
+    const uint16_t *source =
+        state->source_frames[state->source_active_index] +
+        (size_t)source_y * ESP32S31_GBA_WIDTH;
+    if (!esp32s31_rgb565_scale3x_rows(
+            bounce_buffer, ESP32S31_LCD_WIDTH * sizeof(uint16_t), source,
+            LCD_BOUNCE_SOURCE_ROWS,
+            ESP32S31_GBA_WIDTH * sizeof(uint16_t)))
+      memset(bounce_buffer, 0, (size_t)length_bytes);
+    state->bounce_expected_pos_px =
+        (position + LCD_BOUNCE_PIXELS) % LCD_FRAME_PIXELS;
+  }
+  else if (bounce_buffer != NULL && length_bytes > 0)
+  {
+    memset(bounce_buffer, 0, (size_t)length_bytes);
+    state->bounce_discontinuities++;
+    state->bounce_expected_pos_px = 0;
+  }
+
+  const uint32_t fill_us =
+      (uint32_t)(esp_timer_get_time() - fill_start);
+  state->bounce_callbacks++;
+  if (fill_us > state->bounce_fill_max_us)
+    state->bounce_fill_max_us = fill_us;
+  const uint32_t frame_fill_us = state->bounce_fill_frame_us + fill_us;
+  if (valid_chunk && position + LCD_BOUNCE_PIXELS == LCD_FRAME_PIXELS)
+  {
+    state->bounce_fill_last_us = frame_fill_us;
+    state->bounce_fill_frame_us = 0;
+  }
+  else
+  {
+    state->bounce_fill_frame_us = frame_fill_us;
+  }
+
+  return source_switched ? lcd_notify_owner_from_isr(state) : false;
+}
+#endif
+
 static bool wait_for_counter_change(volatile uint32_t *counter,
                                     uint32_t initial_value,
                                     TickType_t timeout_ticks)
@@ -106,6 +208,7 @@ static bool wait_for_counter_change(volatile uint32_t *counter,
   return true;
 }
 
+#if !ESP32S31_LCD_BOUNCE_MODE
 static void fill_startup_pattern(uint16_t *framebuffer)
 {
   static const uint16_t colors[] = {
@@ -134,6 +237,7 @@ static void fill_startup_pattern(uint16_t *framebuffer)
         0xffffu;
   }
 }
+#endif
 
 static esp_lcd_rgb_panel_config_t lcd_panel_config(void)
 {
@@ -141,8 +245,13 @@ static esp_lcd_rgb_panel_config_t lcd_panel_config(void)
       .clk_src = LCD_CLK_SRC_DEFAULT,
       .data_width = 16,
       .in_color_format = LCD_COLOR_FMT_RGB565,
+#if ESP32S31_LCD_BOUNCE_MODE
+      .num_fbs = 0,
+      .bounce_buffer_size_px = LCD_BOUNCE_PIXELS,
+#else
       .num_fbs = 2,
       .bounce_buffer_size_px = 0,
+#endif
       .dma_burst_size = 128,
       .hsync_gpio_num = KORVO1_LCD_HSYNC,
       .vsync_gpio_num = KORVO1_LCD_VSYNC,
@@ -164,7 +273,11 @@ static esp_lcd_rgb_panel_config_t lcd_panel_config(void)
           KORVO1_LCD_DATA14, KORVO1_LCD_DATA15,
       },
       .flags = {
+#if ESP32S31_LCD_BOUNCE_MODE
+          .no_fb = true,
+#else
           .fb_in_psram = true,
+#endif
       },
   };
 
@@ -198,6 +311,35 @@ static esp_lcd_rgb_panel_config_t lcd_panel_config(void)
   return config;
 }
 
+static void free_source_frames(void)
+{
+  for (size_t i = 0; i < LCD_SOURCE_FRAME_COUNT; i++)
+  {
+    free(s_lcd.source_frames[i]);
+    s_lcd.source_frames[i] = NULL;
+  }
+}
+
+#if ESP32S31_LCD_BOUNCE_MODE
+static bool allocate_source_frames(void)
+{
+  for (size_t i = 0; i < LCD_SOURCE_FRAME_COUNT; i++)
+  {
+    s_lcd.source_frames[i] = heap_caps_aligned_calloc(
+        64, 1, GBA_FRAME_STORAGE_BYTES,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (s_lcd.source_frames[i] == NULL)
+    {
+      ESP_LOGE(TAG, "cannot allocate %u-byte source frame %u",
+               (unsigned)GBA_FRAME_STORAGE_BYTES, (unsigned)i);
+      free_source_frames();
+      return false;
+    }
+  }
+  return true;
+}
+#endif
+
 static bool lcd_fail(const char *operation, esp_err_t error)
 {
   ESP_LOGE(TAG, "%s failed: %s", operation, esp_err_to_name(error));
@@ -208,6 +350,7 @@ static bool lcd_fail(const char *operation, esp_err_t error)
     esp_lcd_panel_del(s_lcd.panel);
     s_lcd.panel = NULL;
   }
+  free_source_frames();
   ESP_LOGW(TAG, "LCD unavailable; continuing with UART/headless operation");
   return false;
 }
@@ -222,6 +365,7 @@ bool esp32s31_korvo1_lcd_init(void)
   return false;
 #else
   memset(&s_lcd, 0, sizeof(s_lcd));
+  s_lcd.source_lock = (portMUX_TYPE)portMUX_INITIALIZER_UNLOCKED;
   s_lcd.owner_task = xTaskGetCurrentTaskHandle();
 
   if (!esp_psram_is_initialized())
@@ -232,11 +376,25 @@ bool esp32s31_korvo1_lcd_init(void)
   }
 
   ESP_LOGI(TAG,
-           "PSRAM size=%u free=%u largest=%u; framebuffers=%u bytes",
+           "PSRAM size=%u free=%u largest=%u; scanout=%s storage=%u bytes",
            (unsigned)esp_psram_get_size(),
            (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM),
-           (unsigned)(LCD_FRAME_BYTES * 2u));
+#if ESP32S31_LCD_BOUNCE_MODE
+           "bounce",
+           (unsigned)(GBA_FRAME_STORAGE_BYTES * LCD_SOURCE_FRAME_COUNT));
+#else
+           "framebuffer", (unsigned)(LCD_FRAME_BYTES * 2u));
+#endif
+
+#if ESP32S31_LCD_BOUNCE_MODE
+  if (!allocate_source_frames())
+    return lcd_fail("allocate source snapshots", ESP_ERR_NO_MEM);
+  ESP_LOGI(TAG,
+           "no-fb bounce: source_frames=%ux%u bytes bounce=2x%u bytes",
+           LCD_SOURCE_FRAME_COUNT, (unsigned)GBA_FRAME_STORAGE_BYTES,
+           (unsigned)LCD_BOUNCE_BYTES);
+#endif
 
   esp_lcd_rgb_panel_config_t panel_config = lcd_panel_config();
   ESP_LOGI(TAG,
@@ -254,6 +412,7 @@ bool esp32s31_korvo1_lcd_init(void)
   if (error != ESP_OK)
     return lcd_fail("create RGB panel", error);
 
+#if !ESP32S31_LCD_BOUNCE_MODE
   error = esp_lcd_rgb_panel_get_frame_buffer(
       s_lcd.panel, 2, (void **)&s_lcd.framebuffers[0],
       (void **)&s_lcd.framebuffers[1]);
@@ -274,9 +433,13 @@ bool esp32s31_korvo1_lcd_init(void)
     if (error != ESP_OK)
       return lcd_fail("sync initial RGB framebuffer", error);
   }
+#endif
 
   const esp_lcd_rgb_panel_event_callbacks_t callbacks = {
       .on_vsync = lcd_on_vsync,
+#if ESP32S31_LCD_BOUNCE_MODE
+      .on_bounce_empty = lcd_on_bounce_empty,
+#endif
       .on_frame_buf_complete = lcd_on_frame_complete,
   };
   error = esp_lcd_rgb_panel_register_event_callbacks(
@@ -301,10 +464,19 @@ bool esp32s31_korvo1_lcd_init(void)
                                pdMS_TO_TICKS(LCD_FRAME_WAIT_MS)))
     return lcd_fail("wait for initial VSYNC", ESP_ERR_TIMEOUT);
 
+#if !ESP32S31_LCD_BOUNCE_MODE
   s_lcd.front_index = 0;
   s_lcd.back_index = 1;
+#else
+  s_lcd.source_render_index = 1;
+#endif
   s_lcd.ready = true;
-  ESP_LOGI(TAG, "Korvo-1 RGB LCD ready; VSYNC and DMA are active");
+  ESP_LOGI(TAG, "Korvo-1 RGB LCD ready; mode=%s VSYNC and DMA active",
+#if ESP32S31_LCD_BOUNCE_MODE
+           "bounce");
+#else
+           "framebuffer");
+#endif
   return true;
 #endif
 }
@@ -322,7 +494,11 @@ static bool finish_pending_frame(void)
   const uint32_t profile_wait = gpsp_profile_begin();
   const int64_t wait_start = esp_timer_get_time();
   const bool completed = wait_for_counter_change(
+#if ESP32S31_LCD_BOUNCE_MODE
+      &s_lcd.source_swaps, s_lcd.pending_completion,
+#else
       &s_lcd.completed_frames, s_lcd.pending_completion,
+#endif
       pdMS_TO_TICKS(LCD_FRAME_WAIT_MS));
   const uint32_t wait_us = (uint32_t)(esp_timer_get_time() - wait_start);
   gpsp_profile_end(GPSP_PROFILE_LCD_WAIT, profile_wait);
@@ -343,9 +519,11 @@ static bool finish_pending_frame(void)
     return false;
   }
 
+#if !ESP32S31_LCD_BOUNCE_MODE
   const uint8_t old_front = s_lcd.front_index;
   s_lcd.front_index = s_lcd.back_index;
   s_lcd.back_index = old_front;
+#endif
   s_lcd.pending = false;
   s_lcd.consecutive_timeouts = 0;
   return true;
@@ -368,6 +546,86 @@ bool esp32s31_korvo1_lcd_present_rgb565(const void *pixels,
   {
     s_lcd.stats.dropped_frames++;
     return false;
+  }
+
+#if ESP32S31_LCD_BOUNCE_MODE
+  uint8_t active_index;
+  portENTER_CRITICAL(&s_lcd.source_lock);
+  active_index = s_lcd.source_active_index;
+  portEXIT_CRITICAL(&s_lcd.source_lock);
+  uint8_t rendered_index = UINT8_MAX;
+  for (uint8_t i = 0; i < LCD_SOURCE_FRAME_COUNT; i++)
+  {
+    if (pixels == s_lcd.source_frames[i])
+    {
+      rendered_index = i;
+      break;
+    }
+  }
+
+  const size_t source_row_bytes =
+      ESP32S31_GBA_WIDTH * sizeof(uint16_t);
+  const uint32_t profile_scale = gpsp_profile_begin();
+  const int64_t scale_start = esp_timer_get_time();
+  if (rendered_index == UINT8_MAX || rendered_index == active_index ||
+      pitch != source_row_bytes)
+  {
+    rendered_index = s_lcd.source_render_index;
+    uint16_t *destination = s_lcd.source_frames[rendered_index];
+    const uint8_t *source = (const uint8_t *)pixels;
+    for (unsigned y = 0; y < ESP32S31_GBA_HEIGHT; y++)
+      memcpy(destination + (size_t)y * ESP32S31_GBA_WIDTH,
+             source + (size_t)y * pitch, source_row_bytes);
+  }
+  uint16_t *rendered = s_lcd.source_frames[rendered_index];
+  const uint32_t scale_us =
+      (uint32_t)(esp_timer_get_time() - scale_start);
+  gpsp_profile_end(GPSP_PROFILE_LCD_SCALE, profile_scale);
+  s_lcd.stats.last_scale_us = scale_us;
+  if (scale_us > s_lcd.stats.max_scale_us)
+    s_lcd.stats.max_scale_us = scale_us;
+
+  if (s_lcd.fps_valid)
+  {
+    const uint32_t profile_overlay = gpsp_profile_begin();
+    (void)esp32s31_rgb565_draw_fps_gba(
+        rendered, source_row_bytes, s_lcd.fps_x10);
+    gpsp_profile_end(GPSP_PROFILE_LCD_OVERLAY, profile_overlay);
+  }
+
+  uint8_t next_render_index = UINT8_MAX;
+  for (uint8_t i = 0; i < LCD_SOURCE_FRAME_COUNT; i++)
+  {
+    if (i != active_index && i != rendered_index)
+    {
+      next_render_index = i;
+      break;
+    }
+  }
+  if (next_render_index == UINT8_MAX)
+  {
+    s_lcd.stats.dropped_frames++;
+    return false;
+  }
+
+  /* Publish the rendered buffer, then give gpSP the third, free buffer. */
+  (void)ulTaskNotifyTake(pdTRUE, 0);
+  s_lcd.pending = true;
+  portENTER_CRITICAL(&s_lcd.source_lock);
+  s_lcd.pending_completion = s_lcd.source_swaps;
+  s_lcd.source_pending_index = rendered_index;
+  s_lcd.source_render_index = next_render_index;
+  s_lcd.source_pending = true;
+  portEXIT_CRITICAL(&s_lcd.source_lock);
+  s_lcd.stats.submitted_frames++;
+  return true;
+#else
+  if (s_lcd.fps_valid)
+  {
+    const uint32_t profile_overlay = gpsp_profile_begin();
+    (void)esp32s31_rgb565_draw_fps_gba(
+        (void *)pixels, pitch, s_lcd.fps_x10);
+    gpsp_profile_end(GPSP_PROFILE_LCD_OVERLAY, profile_overlay);
   }
 
   uint16_t *back = s_lcd.framebuffers[s_lcd.back_index];
@@ -393,14 +651,6 @@ bool esp32s31_korvo1_lcd_present_rgb565(const void *pixels,
     return false;
   }
 
-  if (s_lcd.fps_valid)
-  {
-    const uint32_t profile_overlay = gpsp_profile_begin();
-    (void)esp32s31_rgb565_draw_fps(
-        back, ESP32S31_LCD_WIDTH * sizeof(uint16_t), s_lcd.fps_x10);
-    gpsp_profile_end(GPSP_PROFILE_LCD_OVERLAY, profile_overlay);
-  }
-
   /* The old completion must not satisfy the wait for this submission. */
   (void)ulTaskNotifyTake(pdTRUE, 0);
   s_lcd.pending_completion = s_lcd.completed_frames;
@@ -419,11 +669,25 @@ bool esp32s31_korvo1_lcd_present_rgb565(const void *pixels,
   s_lcd.pending = true;
   s_lcd.stats.submitted_frames++;
   return true;
+#endif
+}
+
+uint16_t *esp32s31_korvo1_lcd_render_buffer(void)
+{
+#if ESP32S31_LCD_BOUNCE_MODE
+  if (s_lcd.source_frames[s_lcd.source_render_index] != NULL)
+    return s_lcd.source_frames[s_lcd.source_render_index];
+#endif
+  return NULL;
 }
 
 const char *esp32s31_korvo1_lcd_scaler_name(void)
 {
+#if ESP32S31_LCD_BOUNCE_MODE
+  return "lcd_bounce";
+#else
   return esp32s31_korvo1_scaler_name();
+#endif
 }
 
 void esp32s31_korvo1_lcd_set_fps_x10(unsigned fps_x10)
@@ -439,6 +703,17 @@ void esp32s31_korvo1_lcd_get_stats(esp32s31_lcd_stats_t *out)
   if (out == NULL)
     return;
   *out = s_lcd.stats;
+#if ESP32S31_LCD_BOUNCE_MODE
+  out->completed_frames = s_lcd.source_swaps;
+#else
   out->completed_frames = s_lcd.completed_frames;
+#endif
   out->vsync_count = s_lcd.vsync_count;
+#if ESP32S31_LCD_BOUNCE_MODE
+  out->last_scale_prepare_us = s_lcd.bounce_fill_last_us;
+  out->last_scale_transfer_us = 0;
+  out->bounce_callbacks = s_lcd.bounce_callbacks;
+  out->bounce_discontinuities = s_lcd.bounce_discontinuities;
+  out->bounce_fill_max_us = s_lcd.bounce_fill_max_us;
+#endif
 }

@@ -31,6 +31,9 @@
 static const char *TAG = "gpsp-esp32s31";
 static const char *g_base_dir = ".";
 
+/* gpSP software render target; bounce scanout rotates platform-owned buffers. */
+extern uint16_t *gba_screen_pixels;
+
 static const void *g_rom_data;
 static size_t g_rom_size;
 static size_t g_rom_partition_size;
@@ -199,7 +202,15 @@ static void video_cb(const void *data, unsigned width, unsigned height,
   g_video_frames++;
   update_fps();
   if (g_lcd_ready)
-    (void)esp32s31_korvo1_lcd_present_rgb565(data, width, height, pitch);
+  {
+    if (esp32s31_korvo1_lcd_present_rgb565(
+            data, width, height, pitch))
+    {
+      uint16_t *next = esp32s31_korvo1_lcd_render_buffer();
+      if (next != NULL)
+        gba_screen_pixels = next;
+    }
+  }
 }
 
 static void audio_cb(int16_t left, int16_t right)
@@ -379,6 +390,9 @@ static void print_status(void)
          " lcd_timeouts=%" PRIu32 " lcd_vsync=%" PRIu32
          " scaler=%s scale_us=%" PRIu32 " scale_max_us=%" PRIu32
          " scale_prepare_us=%" PRIu32 " scale_transfer_us=%" PRIu32
+         " bounce_callbacks=%" PRIu32
+         " bounce_discontinuities=%" PRIu32
+         " bounce_fill_max_us=%" PRIu32
          " wait_us=%" PRIu32 " wait_max_us=%" PRIu32
          " touch_ready=%u touch_reports=%" PRIu32
          " touch_i2c_errors=%" PRIu32 " touch_crc_errors=%" PRIu32
@@ -389,6 +403,8 @@ static void print_status(void)
          lcd.vsync_count, esp32s31_korvo1_lcd_scaler_name(),
          lcd.last_scale_us, lcd.max_scale_us,
          lcd.last_scale_prepare_us, lcd.last_scale_transfer_us,
+         lcd.bounce_callbacks, lcd.bounce_discontinuities,
+         lcd.bounce_fill_max_us,
          lcd.last_wait_us, lcd.max_wait_us,
          (unsigned)esp32s31_korvo1_touch_ready(), touch.reports,
          touch.i2c_errors, touch.checksum_errors,
@@ -433,6 +449,10 @@ void app_main(void)
   retro_set_audio_sample_batch(audio_batch_cb);
   retro_set_input_poll(input_poll_cb);
   retro_set_input_state(input_state_cb);
+  uint16_t *initial_render_buffer =
+      esp32s31_korvo1_lcd_render_buffer();
+  if (initial_render_buffer != NULL)
+    gba_screen_pixels = initial_render_buffer;
   retro_init();
 
   if (!retro_load_game(&game_info))

@@ -165,6 +165,50 @@ static void test_fps_overlay(void)
   free(allocation);
 }
 
+static void test_gba_fps_overlay(void)
+{
+  const size_t pitch_pixels = SOURCE_PITCH_PIXELS;
+  const size_t frame_bytes =
+      pitch_pixels * ESP32S31_GBA_HEIGHT * sizeof(uint16_t);
+  uint8_t *allocation = malloc(frame_bytes + GUARD_BYTES * 2u);
+  assert(allocation != NULL);
+  memset(allocation, 0xa5, frame_bytes + GUARD_BYTES * 2u);
+  uint16_t *frame = (uint16_t *)(allocation + GUARD_BYTES);
+  for (unsigned y = 0; y < ESP32S31_GBA_HEIGHT; y++)
+  {
+    for (unsigned x = 0; x < pitch_pixels; x++)
+      frame[y * pitch_pixels + x] = 0x1234u;
+  }
+
+  assert(esp32s31_rgb565_draw_fps_gba(
+      frame, pitch_pixels * sizeof(uint16_t), 597u));
+  unsigned white_pixels = 0;
+  unsigned black_pixels = 0;
+  for (unsigned y = 0; y < 9u; y++)
+  {
+    for (unsigned x = 0; x < 48u; x++)
+    {
+      const uint16_t pixel = frame[y * pitch_pixels + x];
+      assert(pixel == 0u || pixel == 0xffffu);
+      white_pixels += pixel == 0xffffu;
+      black_pixels += pixel == 0u;
+    }
+    assert(frame[y * pitch_pixels + 48u] == 0x1234u);
+  }
+  assert(white_pixels > 40u);
+  assert(black_pixels > white_pixels);
+  assert(frame[9u * pitch_pixels] == 0x1234u);
+
+  for (unsigned i = 0; i < GUARD_BYTES; i++)
+  {
+    assert(allocation[i] == 0xa5u);
+    assert(allocation[GUARD_BYTES + frame_bytes + i] == 0xa5u);
+  }
+  assert(!esp32s31_rgb565_draw_fps_gba(
+      frame, ESP32S31_GBA_WIDTH * sizeof(uint16_t) - 1u, 600u));
+  free(allocation);
+}
+
 static void finish_gt1151_checksum(uint8_t *report, size_t size)
 {
   uint8_t sum = 0;
@@ -214,6 +258,7 @@ int main(void)
 {
   test_scaler();
   test_fps_overlay();
+  test_gba_fps_overlay();
   test_gt1151_decoder();
   puts("result=PASS command=esp32s31_board_driver_host_test");
   return 0;

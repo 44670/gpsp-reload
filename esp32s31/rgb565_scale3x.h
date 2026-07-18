@@ -27,8 +27,11 @@ bool esp32s31_rgb565_scale3x_rows(void *output, size_t output_pitch,
                                  const void *input, unsigned source_rows,
                                  size_t input_pitch);
 
-/* Draw a small "FPS 59.7" overlay at the top-left of the GBA image. */
+/* Legacy helper for drawing directly into an 800x480 LCD framebuffer. */
 bool esp32s31_rgb565_draw_fps(void *output, size_t output_pitch,
                              unsigned fps_x10);
+/* Draw the OSD into the native 240x160 GBA image before scaling. */
+bool esp32s31_rgb565_draw_fps_gba(void *output, size_t output_pitch,
+                                 unsigned fps_x10);
 
 #endif

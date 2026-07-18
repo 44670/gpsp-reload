@@ -6,6 +6,14 @@ the image exactly 3x, keeps 40-pixel black side bars, and draws measured FPS at
 the top-left of the GBA image. It uses no LVGL, board BSP, M5 library, or
 managed component.
 
+The default LCD path has no 800x480 framebuffer. gpSP rotates three native
+240x161 PSRAM render buffers, while the RGB DMA driver rotates two 24-line
+internal-SRAM bounce buffers. Its refill callback expands eight GBA rows at a
+time directly into the next LCD DMA block. The older double-framebuffer path
+remains available for comparison with
+`-DESP32S31_LCD_MODE=framebuffer` and can select `cpu`, `sram_gdma`, `ppa`, or
+`auto` through `-DESP32S31_SCALER=...`.
+
 The ROM lives in the `gamepak` SPI-flash partition as raw `.gba` bytes. There
 is no wrapper, metadata header, manifest, or sidecar partition. Since the
 firmware and ROM share the board's 16 MiB flash, the partition accepts at most
@@ -47,7 +55,7 @@ Run the host-side scaler, FPS overlay, and GT1151 report tests with:
 make -C tests/esp32s31
 ```
 
-The raw display/touch smoke milestone was hardware-tested on 2026-07-18 with
-the factory timing, 16 MiB octal PSRAM at 250 MHz, and 16 MiB QIO flash at
-80 MHz. The gpSP interpreter integration requires its own ROM run and timing
-measurement before it is considered hardware-validated.
+The raw display/touch and no-framebuffer gpSP paths were hardware-tested on
+2026-07-18 with the factory timing, 16 MiB octal PSRAM at 250 MHz, and 16 MiB
+QIO flash at 80 MHz. The bounce path completed more than 92,000 measured DMA
+refills without a position discontinuity, dropped frame, or LCD timeout.
