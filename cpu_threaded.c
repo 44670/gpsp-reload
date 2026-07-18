@@ -3455,25 +3455,6 @@ bool translate_block_arm(u32 pc, bool ram_region)
      TRANSLATION_CACHE_LIMIT_THRESHOLD;
   }
 
-#if defined(RISCV_ARCH)
-  if (!ram_region &&
-      ROM_TRANSLATION_CACHE_SIZE > RISCV_BRANCH_PATCH_SHORT_CACHE_BYTES)
-  {
-    u8 *riscv_short_branch_limit =
-      rom_translation_cache + RISCV_BRANCH_PATCH_SHORT_CACHE_BYTES;
-    if (translation_cache_limit > riscv_short_branch_limit)
-      translation_cache_limit = riscv_short_branch_limit;
-  }
-  if (ram_region &&
-      RAM_TRANSLATION_CACHE_SIZE > RISCV_BRANCH_PATCH_SHORT_CACHE_BYTES)
-  {
-    u8 *riscv_short_branch_limit =
-      ram_translation_cache + RISCV_BRANCH_PATCH_SHORT_CACHE_BYTES;
-    if (translation_cache_limit > riscv_short_branch_limit)
-      translation_cache_limit = riscv_short_branch_limit;
-  }
-#endif
-
   if(translation_ptr > translation_cache_limit) {
     if (ram_region)
       flush_translation_cache_ram();
@@ -3691,25 +3672,6 @@ bool translate_block_thumb(u32 pc, bool ram_region)
     translation_cache_limit = &rom_translation_cache[
        ROM_TRANSLATION_CACHE_SIZE - TRANSLATION_CACHE_LIMIT_THRESHOLD];
   }
-
-#if defined(RISCV_ARCH)
-  if (!ram_region &&
-      ROM_TRANSLATION_CACHE_SIZE > RISCV_BRANCH_PATCH_SHORT_CACHE_BYTES)
-  {
-    u8 *riscv_short_branch_limit =
-      rom_translation_cache + RISCV_BRANCH_PATCH_SHORT_CACHE_BYTES;
-    if (translation_cache_limit > riscv_short_branch_limit)
-      translation_cache_limit = riscv_short_branch_limit;
-  }
-  if (ram_region &&
-      RAM_TRANSLATION_CACHE_SIZE > RISCV_BRANCH_PATCH_SHORT_CACHE_BYTES)
-  {
-    u8 *riscv_short_branch_limit =
-      ram_translation_cache + RISCV_BRANCH_PATCH_SHORT_CACHE_BYTES;
-    if (translation_cache_limit > riscv_short_branch_limit)
-      translation_cache_limit = riscv_short_branch_limit;
-  }
-#endif
 
   if(translation_ptr > translation_cache_limit) {
     if (ram_region)

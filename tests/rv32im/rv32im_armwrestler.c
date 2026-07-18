@@ -58,6 +58,18 @@ typedef unsigned int usize;
 #define RUN_CHUNKS 64u
 #define ARMWRESTLER_TOP_BLOCKS 8u
 
+#if defined(RV32IM_FRONTEND_CACHE_ONLY)
+#define FRONTEND_CACHE_PC 0x08010000u
+#define FRONTEND_CACHE_BLOCK_WORDS 1024u
+#define FRONTEND_CACHE_BLOCK_BYTES (FRONTEND_CACHE_BLOCK_WORDS * 4u)
+#define FRONTEND_CACHE_BLOCKS 96u
+#define FRONTEND_CACHE_MIN_SPAN_BYTES (1024u * 1024u)
+#define FRONTEND_CACHE_SOURCE_PC \
+  (FRONTEND_CACHE_PC + FRONTEND_CACHE_BLOCKS * FRONTEND_CACHE_BLOCK_BYTES)
+#define FRONTEND_CACHE_CHAIN_CYCLES \
+  (6u + FRONTEND_CACHE_BLOCK_WORDS * 6u)
+#endif
+
 #if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
 #if defined(ARMWRESTLER_PERF_BASELINE_PROFILE)
 __attribute__((section(".data")))
@@ -1293,11 +1305,179 @@ static int run_frontend_control_cases(void)
 }
 #endif
 
+#if defined(RV32IM_FRONTEND_CACHE_ONLY)
+static void install_frontend_cache_fixture(void)
+{
+  u32 block;
+  u32 word;
+
+  memset(g_rom, 0, sizeof(g_rom));
+  g_rom_size = sizeof(g_rom);
+  store32(g_rom, 8u, 0xeafffffeu);
+  for (block = 0; block < FRONTEND_CACHE_BLOCKS; block++)
+  {
+    u32 block_offset = FRONTEND_CACHE_PC - ROM_BASE +
+                       block * FRONTEND_CACHE_BLOCK_BYTES;
+    for (word = 0; word < FRONTEND_CACHE_BLOCK_WORDS; word++)
+      store32(g_rom, block_offset + word * 4u, 0x12800001u);
+  }
+}
+
+static u32 frontend_cache_arm_branch(u32 source_pc, u32 target_pc)
+{
+  s32 offset = (s32)target_pc - (s32)source_pc - 8;
+
+  return 0xea000000u | (((u32)(offset >> 2)) & 0x00ffffffu);
+}
+
+static int run_frontend_cache_span(void)
+{
+  riscv_runtime_stats stats;
+  u8 *first_entry = 0;
+  u8 *entry;
+  u32 start_offset;
+  u32 previous_offset;
+  u32 end_offset;
+  u32 generated_bytes;
+  u32 chain_distance;
+  u32 cache_resets = 0;
+  u32 missing_entries = 0;
+  u32 block;
+  int first_entry_stable;
+  int far_chain_executed;
+  int passed;
+
+  install_frontend_cache_fixture();
+  clear_runtime_memory();
+  init_memory_map();
+  init_cpu_state();
+  idle_loop_target_pc = 0xffffffffu;
+  g_execute_arm_calls = 0;
+  g_fallback_count = 0;
+  reset_dynarec_for_armwrestler();
+  init_emitter(false);
+  start_offset = (u32)(rom_translation_ptr - rom_translation_cache);
+  previous_offset = start_offset;
+
+  for (block = 0; block < FRONTEND_CACHE_BLOCKS; block++)
+  {
+    entry = block_lookup_address_arm(
+      FRONTEND_CACHE_PC + block * FRONTEND_CACHE_BLOCK_BYTES);
+    if (!entry)
+    {
+      missing_entries++;
+      break;
+    }
+    if (!first_entry)
+      first_entry = entry;
+    end_offset = (u32)(rom_translation_ptr - rom_translation_cache);
+    if (end_offset <= previous_offset)
+      cache_resets++;
+    previous_offset = end_offset;
+  }
+
+  end_offset = (u32)(rom_translation_ptr - rom_translation_cache);
+  generated_bytes = end_offset - start_offset;
+  entry = block_lookup_address_arm(FRONTEND_CACHE_PC);
+  first_entry_stable = entry && entry == first_entry;
+
+  store32(g_rom, FRONTEND_CACHE_SOURCE_PC - ROM_BASE,
+          frontend_cache_arm_branch(FRONTEND_CACHE_SOURCE_PC,
+                                    FRONTEND_CACHE_PC));
+  entry = block_lookup_address_arm(FRONTEND_CACHE_SOURCE_PC);
+  chain_distance = entry && first_entry ?
+    (u32)(entry - first_entry) : 0u;
+
+  init_cpu_state();
+  reg[REG_PC] = FRONTEND_CACHE_SOURCE_PC;
+  g_update_calls = 0;
+  g_update_last_cycles = (s32)0x7fffffffu;
+  g_trace_count = 0;
+  g_trace_first_pc = 0;
+  g_trace_last_pc = 0;
+  g_trace_hash = 2166136261u;
+  execute_arm_translate_internal(FRONTEND_CACHE_CHAIN_CYCLES, &reg[0]);
+  riscv_get_runtime_stats(&stats);
+  /* Direct chaining reaches the old target without entering the scheduler at
+     the source, so runtime block evidence names only the terminal target. */
+  far_chain_executed = entry &&
+    chain_distance > FRONTEND_CACHE_MIN_SPAN_BYTES &&
+    g_update_calls == 1u && g_update_last_cycles <= 0 &&
+    g_trace_count == 1u && g_trace_first_pc == FRONTEND_CACHE_PC &&
+    g_trace_last_pc == FRONTEND_CACHE_PC &&
+    reg[0] == FRONTEND_CACHE_BLOCK_WORDS &&
+    reg[REG_PC] == FRONTEND_CACHE_PC + FRONTEND_CACHE_BLOCK_BYTES &&
+    stats.blocks_executed == 1u;
+
+  passed = missing_entries == 0u && cache_resets == 0u &&
+           first_entry_stable &&
+           generated_bytes > FRONTEND_CACHE_MIN_SPAN_BYTES &&
+           end_offset < ROM_TRANSLATION_CACHE_SIZE -
+                        TRANSLATION_CACHE_LIMIT_THRESHOLD &&
+           stats.blocks_emitted >= FRONTEND_CACHE_BLOCKS + 1u &&
+           stats.interpreter_fallbacks == 0u &&
+           g_execute_arm_calls == 0u && g_fallback_count == 0u &&
+           far_chain_executed;
+
+  put_raw("result=");
+  put_raw(passed ? "PASS" : "FAIL");
+  put_raw(" command=frontend-cache-span backend=rv32im blocks=");
+  put_u32_dec(FRONTEND_CACHE_BLOCKS);
+  put_raw(" default_cache_bytes=");
+  put_u32_dec(ROM_TRANSLATION_CACHE_SIZE);
+  put_raw(" start_offset=");
+  put_u32_dec(start_offset);
+  put_raw(" end_offset=");
+  put_u32_dec(end_offset);
+  put_raw(" generated_bytes=");
+  put_u32_dec(generated_bytes);
+  put_raw(" cache_resets=");
+  put_u32_dec(cache_resets);
+  put_raw(" first_entry_stable=");
+  put_u32_dec(first_entry_stable ? 1u : 0u);
+  put_raw(" missing_entries=");
+  put_u32_dec(missing_entries);
+  put_raw(" emitted_blocks=");
+  put_u32_dec(stats.blocks_emitted);
+  put_raw(" chain_distance=");
+  put_u32_dec(chain_distance);
+  put_raw(" far_chain_executed=");
+  put_u32_dec(far_chain_executed ? 1u : 0u);
+  put_raw(" native_blocks=");
+  put_u32_dec(stats.blocks_executed);
+  put_raw(" chain_r0=");
+  put_u32_dec(reg[0]);
+  put_raw(" chain_pc=");
+  put_u32_hex(reg[REG_PC]);
+  put_raw(" update_calls=");
+  put_u32_dec(g_update_calls);
+  put_raw(" update_cycles=");
+  put_u32_hex((u32)g_update_last_cycles);
+  put_raw(" trace_count=");
+  put_u32_dec(g_trace_count);
+  put_raw(" trace_first_pc=");
+  put_u32_hex(g_trace_first_pc);
+  put_raw(" trace_last_pc=");
+  put_u32_hex(g_trace_last_pc);
+  put_raw(" fallbacks=");
+  put_u32_dec(stats.interpreter_fallbacks);
+  put_raw(" harness_mode=cpu_threaded_frontend reason=");
+  put_raw(passed ? "default_rom_cache_span_preserved" :
+                   "default_rom_cache_span_churned");
+  put_raw("\n");
+  return passed;
+}
+#endif
+
 void _start(void)
 {
   u32 i;
 
-#if defined(RV32IM_FRONTEND_CONTROL_ONLY)
+#if defined(RV32IM_FRONTEND_CACHE_ONLY)
+  (void)i;
+  init_dynarec_for_armwrestler();
+  sys_exit(run_frontend_cache_span() ? 0 : 1);
+#elif defined(RV32IM_FRONTEND_CONTROL_ONLY)
   (void)i;
   sys_exit(run_frontend_control_cases() ? 0 : 1);
 #else

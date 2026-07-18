@@ -18,7 +18,6 @@
 #define block_prologue_size RISCV_BLOCK_META_BYTES
 #define RISCV_BRANCH_PATCH_BYTES 8
 #define RISCV_BRANCH_PATCH_SHORT_BYTES 4
-#define RISCV_BRANCH_PATCH_SHORT_CACHE_BYTES (1024 * 1024 - 4096)
 
 typedef struct riscv_jit_block_meta
 {
@@ -497,21 +496,11 @@ void riscv_thumb_const_update(u32 opcode,
   ((block_exits[block_exit_position].branch_target >= block_start_pc) &&      \
    (block_exits[block_exit_position].branch_target < block_end_pc))
 
-#define riscv_branch_target_uses_ram()                                        \
-  ((((block_exits[block_exit_position].branch_target) >> 24) == 0x02u) ||    \
-   (((block_exits[block_exit_position].branch_target) >> 24) == 0x03u))
-
-#define riscv_branch_target_uses_rom()                                        \
-  ((((block_exits[block_exit_position].branch_target) >> 24) == 0x00u) ||    \
-   ((((block_exits[block_exit_position].branch_target) >> 24) >= 0x08u) &&   \
-    (((block_exits[block_exit_position].branch_target) >> 24) <= 0x0du)))
-
-#define riscv_branch_patch_same_cache()                                       \
-  (ram_region ? riscv_branch_target_uses_ram() :                              \
-                riscv_branch_target_uses_rom())
-
+/* Internal targets are bounded by HOST_MAX_BLOCK_SIZE and fit a JAL patch.
+ * External targets can occupy any point in the full ROM/RAM cache, so they
+ * reserve the AUIPC/JALR form instead of constraining cache capacity. */
 #define riscv_branch_patch_short()                                            \
-  (riscv_branch_patch_internal() || riscv_branch_patch_same_cache())
+  riscv_branch_patch_internal()
 
 #define riscv_block_kind_arm false
 #define riscv_block_kind_thumb true
