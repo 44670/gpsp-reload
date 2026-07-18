@@ -17,6 +17,7 @@
 #include "freertos/task.h"
 #include "gpsp_profile.h"
 #include "korvo1_pins.h"
+#include "korvo1_scaler.h"
 #include "rgb565_scale3x.h"
 #include "sdkconfig.h"
 
@@ -259,6 +260,9 @@ bool esp32s31_korvo1_lcd_init(void)
   if (error != ESP_OK)
     return lcd_fail("get RGB framebuffers", error);
 
+  if (!esp32s31_korvo1_scaler_init())
+    ESP_LOGW(TAG, "requested scaler unavailable; using CPU fallback");
+
   /* Initialize both buffers before DMA starts, so no uninitialized scanout. */
   fill_startup_pattern(s_lcd.framebuffers[0]);
   memcpy(s_lcd.framebuffers[1], s_lcd.framebuffers[0], LCD_FRAME_BYTES);
@@ -369,14 +373,19 @@ bool esp32s31_korvo1_lcd_present_rgb565(const void *pixels,
   uint16_t *back = s_lcd.framebuffers[s_lcd.back_index];
   const uint32_t profile_scale = gpsp_profile_begin();
   const int64_t scale_start = esp_timer_get_time();
-  const bool scaled = esp32s31_rgb565_scale3x(
+  const bool scaled = esp32s31_korvo1_scaler_scale(
       back, ESP32S31_LCD_WIDTH * sizeof(uint16_t), pixels, width, height,
       pitch);
   const uint32_t scale_us =
       (uint32_t)(esp_timer_get_time() - scale_start);
   gpsp_profile_end(GPSP_PROFILE_LCD_SCALE, profile_scale);
   s_lcd.stats.last_scale_us = scale_us;
-  if (scale_us > s_lcd.stats.max_scale_us)
+  esp32s31_scaler_stats_t scaler_stats = {0};
+  esp32s31_korvo1_scaler_get_stats(&scaler_stats);
+  s_lcd.stats.last_scale_prepare_us = scaler_stats.prepare_us;
+  s_lcd.stats.last_scale_transfer_us = scaler_stats.transfer_us;
+  if (!scaler_stats.benchmarked_call &&
+      scale_us > s_lcd.stats.max_scale_us)
     s_lcd.stats.max_scale_us = scale_us;
   if (!scaled)
   {
@@ -410,6 +419,11 @@ bool esp32s31_korvo1_lcd_present_rgb565(const void *pixels,
   s_lcd.pending = true;
   s_lcd.stats.submitted_frames++;
   return true;
+}
+
+const char *esp32s31_korvo1_lcd_scaler_name(void)
+{
+  return esp32s31_korvo1_scaler_name();
 }
 
 void esp32s31_korvo1_lcd_set_fps_x10(unsigned fps_x10)

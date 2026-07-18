@@ -23,6 +23,9 @@ bool esp32s31_rgb565_clear_output(void *output, size_t output_pitch);
 bool esp32s31_rgb565_scale3x(void *output, size_t output_pitch,
                             const void *input, unsigned width,
                             unsigned height, size_t input_pitch);
+bool esp32s31_rgb565_scale3x_rows(void *output, size_t output_pitch,
+                                 const void *input, unsigned source_rows,
+                                 size_t input_pitch);
 
 /* Draw a small "FPS 59.7" overlay at the top-left of the GBA image. */
 bool esp32s31_rgb565_draw_fps(void *output, size_t output_pitch,

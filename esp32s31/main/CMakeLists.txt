@@ -31,6 +31,7 @@ set(GPSP_SOURCES
     "${GPSP_COMMON}/time/rtime.c"
     "${GPSP_COMMON}/vfs/vfs_implementation.c"
     "${GPSP_ROOT}/esp32s31/korvo1_lcd.c"
+    "${GPSP_ROOT}/esp32s31/korvo1_scaler.c"
     "${GPSP_ROOT}/esp32s31/korvo1_touch.c"
     "${GPSP_ROOT}/esp32s31/rgb565_scale3x.c"
     "${GPSP_ROOT}/esp32s31/gt1151_protocol.c"
@@ -55,6 +56,8 @@ idf_component_register(
       esp_partition
       esp_driver_gpio
       esp_driver_i2c
+      esp_driver_dma
+      esp_driver_ppa
       esp_lcd
       esp_mm
       esp_psram
@@ -75,6 +78,7 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     SMALL_TRANSLATION_CACHE
     ROM_BUFFER_SIZE=1
     GPSP_ESP32S31_PROFILE=$<BOOL:${GPSP_ESP32S31_PROFILE}>
+    ESP32S31_SCALER_MODE=${ESP32S31_SCALER_MODE}
     ESP32S31_KORVO1_LCD_COMPAT_18MHZ=$<BOOL:${KORVO1_LCD_COMPAT_18MHZ}>
     ESP32S31_KORVO1_LCD_USE_GPIO38_DISP=$<BOOL:${KORVO1_LCD_GPIO38_DISP}>
 )

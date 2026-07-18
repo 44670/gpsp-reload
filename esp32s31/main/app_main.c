@@ -377,7 +377,8 @@ static void print_status(void)
          " lcd_ready=%u lcd_submitted=%" PRIu32
          " lcd_completed=%" PRIu32 " lcd_dropped=%" PRIu32
          " lcd_timeouts=%" PRIu32 " lcd_vsync=%" PRIu32
-         " scale_us=%" PRIu32 " scale_max_us=%" PRIu32
+         " scaler=%s scale_us=%" PRIu32 " scale_max_us=%" PRIu32
+         " scale_prepare_us=%" PRIu32 " scale_transfer_us=%" PRIu32
          " wait_us=%" PRIu32 " wait_max_us=%" PRIu32
          " touch_ready=%u touch_reports=%" PRIu32
          " touch_i2c_errors=%" PRIu32 " touch_crc_errors=%" PRIu32
@@ -385,7 +386,9 @@ static void print_status(void)
          g_emulated_frames, g_video_frames, g_fps_x10, g_frame_hash,
          (unsigned)esp32s31_korvo1_lcd_ready(), lcd.submitted_frames,
          lcd.completed_frames, lcd.dropped_frames, lcd.wait_timeouts,
-         lcd.vsync_count, lcd.last_scale_us, lcd.max_scale_us,
+         lcd.vsync_count, esp32s31_korvo1_lcd_scaler_name(),
+         lcd.last_scale_us, lcd.max_scale_us,
+         lcd.last_scale_prepare_us, lcd.last_scale_transfer_us,
          lcd.last_wait_us, lcd.max_wait_us,
          (unsigned)esp32s31_korvo1_touch_ready(), touch.reports,
          touch.i2c_errors, touch.checksum_errors,

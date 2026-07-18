@@ -99,12 +99,12 @@ bool esp32s31_rgb565_clear_output(void *output, size_t output_pitch)
   return true;
 }
 
-bool esp32s31_rgb565_scale3x(void *output, size_t output_pitch,
-                            const void *input, unsigned width,
-                            unsigned height, size_t input_pitch)
+bool esp32s31_rgb565_scale3x_rows(void *output, size_t output_pitch,
+                                 const void *input, unsigned source_rows,
+                                 size_t input_pitch)
 {
-  if (output == NULL || input == NULL || width != ESP32S31_GBA_WIDTH ||
-      height != ESP32S31_GBA_HEIGHT ||
+  if (output == NULL || input == NULL || source_rows == 0u ||
+      source_rows > ESP32S31_GBA_HEIGHT ||
       output_pitch < ESP32S31_LCD_WIDTH * sizeof(uint16_t) ||
       input_pitch < ESP32S31_GBA_WIDTH * sizeof(uint16_t))
     return false;
@@ -115,7 +115,7 @@ bool esp32s31_rgb565_scale3x(void *output, size_t output_pitch,
       ESP32S31_GBA_WIDTH * ESP32S31_SCALE_FACTOR * sizeof(uint16_t);
   const size_t active_offset = ESP32S31_LCD_BAR_WIDTH * sizeof(uint16_t);
 
-  for (unsigned source_y = 0; source_y < ESP32S31_GBA_HEIGHT; source_y++)
+  for (unsigned source_y = 0; source_y < source_rows; source_y++)
   {
     const uint16_t *source = (const uint16_t *)source_row;
     uint16_t *scaled = (uint16_t *)(destination_row + active_offset);
@@ -156,6 +156,16 @@ bool esp32s31_rgb565_scale3x(void *output, size_t output_pitch,
     destination_row += output_pitch * ESP32S31_SCALE_FACTOR;
   }
   return true;
+}
+
+bool esp32s31_rgb565_scale3x(void *output, size_t output_pitch,
+                            const void *input, unsigned width,
+                            unsigned height, size_t input_pitch)
+{
+  if (width != ESP32S31_GBA_WIDTH || height != ESP32S31_GBA_HEIGHT)
+    return false;
+  return esp32s31_rgb565_scale3x_rows(
+      output, output_pitch, input, height, input_pitch);
 }
 
 bool esp32s31_rgb565_draw_fps(void *output, size_t output_pitch,
