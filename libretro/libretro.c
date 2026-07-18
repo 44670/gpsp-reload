@@ -112,6 +112,7 @@ u32 translation_gate_targets = 0;
 
 static u16 *gba_screen_pixels_prev = NULL;
 static u16 *gba_processed_pixels   = NULL;
+static bool gba_screen_pixels_owned = false;
 
 static void (*video_post_process)(void) = NULL;
 static bool post_process_cc  = false;
@@ -660,13 +661,17 @@ void retro_init(void)
    init_sound();
 
    if(!gba_screen_pixels)
+   {
 #if defined(GPSP_ESP32S3_STATIC_BUFFERS)
       gba_screen_pixels = esp32s3_static_screen_pixels();
 #elif defined(_3DS)
       gba_screen_pixels = (uint16_t*)linearMemAlign(GBA_SCREEN_BUFFER_SIZE, 128);
+      gba_screen_pixels_owned = true;
 #else
       gba_screen_pixels = (uint16_t*)malloc(GBA_SCREEN_BUFFER_SIZE);
+      gba_screen_pixels_owned = true;
 #endif
+   }
 
    libretro_supports_bitmasks = false;
    if (environ_cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL))
@@ -736,11 +741,13 @@ void retro_deinit(void)
 #if defined(GPSP_ESP32S3_STATIC_BUFFERS)
    /* Static PSRAM buffers persist for the process lifetime. */
 #elif defined(_3DS)
-   linearFree(gba_screen_pixels);
+   if (gba_screen_pixels_owned)
+      linearFree(gba_screen_pixels);
    if (gba_processed_pixels)
       linearFree(gba_processed_pixels);
 #else
-   free(gba_screen_pixels);
+   if (gba_screen_pixels_owned)
+      free(gba_screen_pixels);
    if (gba_processed_pixels)
       free(gba_processed_pixels);
 #endif
@@ -750,6 +757,7 @@ void retro_deinit(void)
 #endif
 
    gba_screen_pixels      = NULL;
+   gba_screen_pixels_owned = false;
    gba_processed_pixels   = NULL;
    gba_screen_pixels_prev = NULL;
    video_post_process     = NULL;
@@ -1132,7 +1140,7 @@ static void set_memory_descriptors(void)
 {
    const uint64_t mem = RETRO_MEMORY_SYSTEM_RAM;
    struct retro_memory_descriptor desc[2] = {
-      { mem, iwram, 0x00000 + 0x8000, 0x3000000, 0, 0,  0x8000, NULL },
+      { mem, GPSP_IWRAM_DATA, 0x00000, 0x3000000, 0, 0,  0x8000, NULL },
       { mem, ewram, 0x00000,          0x2000000, 0, 0, 0x40000, NULL },
    };
    struct retro_memory_map retromap = {

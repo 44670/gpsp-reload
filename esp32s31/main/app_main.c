@@ -31,7 +31,7 @@
 static const char *TAG = "gpsp-esp32s31";
 static const char *g_base_dir = ".";
 
-/* gpSP software render target; bounce scanout rotates platform-owned buffers. */
+/* gpSP software render target; bounce scanout reads it concurrently. */
 extern uint16_t *gba_screen_pixels;
 
 static const void *g_rom_data;
@@ -42,7 +42,7 @@ static esp_partition_mmap_handle_t g_rom_mmap_handle;
 static bool g_lcd_ready;
 static uint32_t g_emulated_frames;
 static uint32_t g_video_frames;
-static uint32_t g_frame_hash = UINT32_C(2166136261);
+static uint32_t g_frame_hash;
 static uint32_t g_fps_x10;
 static uint32_t g_fps_window_frames;
 static int64_t g_fps_window_start;
@@ -51,7 +51,9 @@ static unsigned g_touch_error_logs;
 static unsigned g_video_error_logs;
 #if GPSP_ESP32S31_PROFILE
 static uint32_t g_profile_last_frames;
+#if GPSP_ESP32S31_PC_PROFILE
 static bool g_profile_sampler_started;
+#endif
 #endif
 
 static const char *lookup_variable(const char *key)
@@ -185,32 +187,37 @@ static void video_cb(const void *data, unsigned width, unsigned height,
     return;
   }
 
-  const uint8_t *pixels = (const uint8_t *)data;
-  const size_t row_bytes = ESP32S31_GBA_WIDTH * sizeof(uint16_t);
-  const uint32_t profile_hash = gpsp_profile_begin();
-  for (unsigned y = 0; y < ESP32S31_GBA_HEIGHT; y++)
-  {
-    const uint8_t *row = pixels + (size_t)y * pitch;
-    for (size_t x = 0; x < row_bytes; x++)
-    {
-      g_frame_hash ^= row[x];
-      g_frame_hash *= UINT32_C(16777619);
-    }
-  }
-  gpsp_profile_end(GPSP_PROFILE_FRAME_HASH, profile_hash);
-
   g_video_frames++;
   update_fps();
   if (g_lcd_ready)
   {
-    if (esp32s31_korvo1_lcd_present_rgb565(
-            data, width, height, pitch))
+    (void)esp32s31_korvo1_lcd_present_rgb565(
+        data, width, height, pitch);
+  }
+}
+
+static uint32_t hash_current_frame(void)
+{
+  if (gba_screen_pixels == NULL)
+    return 0u;
+
+  const uint8_t *pixels = (const uint8_t *)gba_screen_pixels;
+  const size_t row_bytes = ESP32S31_GBA_WIDTH * sizeof(uint16_t);
+  uint32_t hash = UINT32_C(2166136261);
+  for (unsigned y = 0; y < ESP32S31_GBA_HEIGHT; y++)
+  {
+    const uint8_t *row = pixels + (size_t)y * row_bytes;
+    const size_t first_byte = y < ESP32S31_GBA_FPS_OSD_HEIGHT
+                                  ? ESP32S31_GBA_FPS_OSD_WIDTH *
+                                        sizeof(uint16_t)
+                                  : 0u;
+    for (size_t x = first_byte; x < row_bytes; x++)
     {
-      uint16_t *next = esp32s31_korvo1_lcd_render_buffer();
-      if (next != NULL)
-        gba_screen_pixels = next;
+      hash ^= row[x];
+      hash *= UINT32_C(16777619);
     }
   }
+  return hash;
 }
 
 static void audio_cb(int16_t left, int16_t right)
@@ -377,6 +384,10 @@ static bool map_gamepak_partition(struct retro_game_info *info)
 
 static void print_status(void)
 {
+  const uint32_t profile_hash = gpsp_profile_begin();
+  g_frame_hash = hash_current_frame();
+  gpsp_profile_end(GPSP_PROFILE_FRAME_HASH, profile_hash);
+
   esp32s31_lcd_stats_t lcd = {0};
   esp32s31_touch_stats_t touch = {0};
   esp32s31_korvo1_lcd_get_stats(&lcd);
@@ -388,7 +399,17 @@ static void print_status(void)
          " lcd_ready=%u lcd_submitted=%" PRIu32
          " lcd_completed=%" PRIu32 " lcd_dropped=%" PRIu32
          " lcd_timeouts=%" PRIu32 " lcd_vsync=%" PRIu32
-         " scaler=%s scale_us=%" PRIu32 " scale_max_us=%" PRIu32
+         " scaler=%s render_mem=%s ewram_mem=psram ewram_bytes=262144"
+         " iwram_mem=%s iwram_bytes=32768"
+         " vram_mem=%s vram_bytes=98304"
+         " arm_code_mem=%s"
+         " video_hot_code_mem=%s"
+         " read_map_mem=%s"
+         " sound_mem=%s sound_bytes=%u"
+         " obj_links_mem=%s obj_links_bytes=20480"
+         " hot_helpers_mem=%s"
+         " bounce_rows=%u"
+         " scale_us=%" PRIu32 " scale_max_us=%" PRIu32
          " scale_prepare_us=%" PRIu32 " scale_transfer_us=%" PRIu32
          " bounce_callbacks=%" PRIu32
          " bounce_discontinuities=%" PRIu32
@@ -396,11 +417,23 @@ static void print_status(void)
          " wait_us=%" PRIu32 " wait_max_us=%" PRIu32
          " touch_ready=%u touch_reports=%" PRIu32
          " touch_i2c_errors=%" PRIu32 " touch_crc_errors=%" PRIu32
-         " internal_free=%u psram_free=%u stack_words=%u\n",
+         " internal_free=%u internal_largest=%u"
+         " psram_free=%u psram_largest=%u stack_words=%u\n",
          g_emulated_frames, g_video_frames, g_fps_x10, g_frame_hash,
          (unsigned)esp32s31_korvo1_lcd_ready(), lcd.submitted_frames,
          lcd.completed_frames, lcd.dropped_frames, lcd.wait_timeouts,
          lcd.vsync_count, esp32s31_korvo1_lcd_scaler_name(),
+         esp32s31_korvo1_lcd_render_memory_name(),
+         ESP32S31_IWRAM_INTERNAL ? "sram" : "psram",
+         ESP32S31_VRAM_INTERNAL ? "sram" : "psram",
+         ESP32S31_EXECUTE_ARM_INTERNAL ? "sram" : "psram",
+         ESP32S31_VIDEO_HOT_INTERNAL ? "sram" : "psram",
+         ESP32S31_MEMORY_MAP_INTERNAL ? "sram" : "psram",
+         ESP32S31_SOUND_BUFFER_INTERNAL ? "sram" : "psram",
+         (unsigned)ESP32S31_SOUND_BUFFER_BYTES,
+         ESP32S31_OBJ_LIST_INTERNAL ? "sram" : "psram",
+         ESP32S31_HOT_HELPERS_INTERNAL ? "sram" : "psram",
+         esp32s31_korvo1_lcd_bounce_source_rows(),
          lcd.last_scale_us, lcd.max_scale_us,
          lcd.last_scale_prepare_us, lcd.last_scale_transfer_us,
          lcd.bounce_callbacks, lcd.bounce_discontinuities,
@@ -410,8 +443,12 @@ static void print_status(void)
          touch.i2c_errors, touch.checksum_errors,
          (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL |
                                            MALLOC_CAP_8BIT),
+         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL |
+                                                    MALLOC_CAP_8BIT),
          (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM |
                                            MALLOC_CAP_8BIT),
+         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM |
+                                                    MALLOC_CAP_8BIT),
          (unsigned)uxTaskGetStackHighWaterMark(NULL));
   fflush(stdout);
 }
@@ -483,9 +520,11 @@ void app_main(void)
           g_emulated_frames - g_profile_last_frames;
       g_profile_last_frames = g_emulated_frames;
       gpsp_profile_print_window(profile_frames);
+#if GPSP_ESP32S31_PC_PROFILE
       (void)gpsp_profile_sampler_dump_if_ready();
       if (!g_profile_sampler_started)
         g_profile_sampler_started = gpsp_profile_sampler_start();
+#endif
 #endif
       next_status = now + STATUS_PERIOD_US;
     }

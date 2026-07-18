@@ -45,7 +45,8 @@ static const char *const s_counter_names[GPSP_PROFILE_COUNTER_COUNT] = {
 
 static esp_timer_handle_t s_pc_timer;
 static volatile uint32_t s_pc_sample_count;
-static uint32_t s_pc_samples[GPSP_PROFILE_PC_SAMPLES];
+/* Keep profiling storage out of the 500 KB HP SRAM being benchmarked. */
+static RTC_NOINIT_ATTR uint32_t s_pc_samples[GPSP_PROFILE_PC_SAMPLES];
 static bool s_pc_dumped;
 
 static void IRAM_ATTR profile_pc_timer_cb(void *arg)

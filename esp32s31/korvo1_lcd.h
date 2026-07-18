@@ -28,8 +28,10 @@ bool esp32s31_korvo1_lcd_present_rgb565(const void *pixels,
                                         unsigned width,
                                         unsigned height,
                                         size_t pitch);
-/* Non-NULL only in no-framebuffer mode; gpSP renders its next frame here. */
+/* Non-NULL only in no-framebuffer mode; gpSP and LCD share this buffer. */
 uint16_t *esp32s31_korvo1_lcd_render_buffer(void);
+const char *esp32s31_korvo1_lcd_render_memory_name(void);
+unsigned esp32s31_korvo1_lcd_bounce_source_rows(void);
 void esp32s31_korvo1_lcd_set_fps_x10(unsigned fps_x10);
 void esp32s31_korvo1_lcd_get_stats(esp32s31_lcd_stats_t *out);
 const char *esp32s31_korvo1_lcd_scaler_name(void);

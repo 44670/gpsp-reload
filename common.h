@@ -93,6 +93,12 @@
   #define GPSP_EXT_RAM_BSS
 #endif
 
+#if ESP32S31_HOT_HELPERS_INTERNAL
+  #define GPSP_HOT_CODE IRAM_ATTR
+#else
+  #define GPSP_HOT_CODE
+#endif
+
 #if defined(GPSP_ESP32S31_PROFILE)
   #include "gpsp_profile.h"
   #define GPSP_PROFILE_START(name) \

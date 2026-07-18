@@ -1412,7 +1412,7 @@ cpu_alert_type check_interrupt() {
 
 // Checks for pending IRQs and raises them. This changes the CPU mode
 // which means that it must be called with a valid CPU state.
-u32 check_and_raise_interrupts()
+u32 GPSP_HOT_CODE check_and_raise_interrupts()
 {
   // Check any IRQ flag pending, IME and CPSR-IRQ enabled
   if (cpu_has_interrupt())
@@ -1442,7 +1442,7 @@ u32 check_and_raise_interrupts()
 // It simply updates IF register and returns whether the IRQ needs
 // to be raised (that is, IE/IME/CPSR enable the IRQ).
 // Safe to call via dynarec without proper registers saved.
-cpu_alert_type flag_interrupt(irq_type irq_raised)
+cpu_alert_type GPSP_HOT_CODE flag_interrupt(irq_type irq_raised)
 {
   // Flag interrupt
   write_ioreg(REG_IF, read_ioreg(REG_IF) | irq_raised);
@@ -1458,17 +1458,35 @@ u32 reg[64];
 u32 spsr[6];
 u32 reg_mode[7][7];
 
+#if ESP32S31_MEMORY_MAP_INTERNAL
+u8 *memory_map_read[8 * 1024];
+#else
 GPSP_EXT_RAM_BSS u8 *memory_map_read[8 * 1024];
+#endif
 u16 oam_ram[512];
 u16 palette_ram[512];
 u16 palette_ram_converted[512];
-GPSP_EXT_RAM_BSS u8 ewram[1024 * 256 * 2] __attribute__((aligned(4)));
-GPSP_EXT_RAM_BSS u8 iwram[1024 * 32 * 2] __attribute__((aligned(4)));
+GPSP_EXT_RAM_BSS u8 ewram[GPSP_EWRAM_STORAGE_BYTES]
+    __attribute__((aligned(4)));
+#if GPSP_IWRAM_DATA_ONLY && ESP32S31_IWRAM_INTERNAL
+u8 iwram[GPSP_IWRAM_STORAGE_BYTES] __attribute__((aligned(4)));
+#else
+GPSP_EXT_RAM_BSS u8 iwram[GPSP_IWRAM_STORAGE_BYTES]
+    __attribute__((aligned(4)));
+#endif
+#if defined(ESP32S31_VRAM_INTERNAL) && !ESP32S31_VRAM_INTERNAL
+GPSP_EXT_RAM_BSS u8 vram[1024 * 96] __attribute__((aligned(4)));
+#else
 u8 vram[1024 * 96];
+#endif
 u16 io_registers[512];
 #endif
 
+#if ESP32S31_EXECUTE_ARM_INTERNAL
+void IRAM_ATTR execute_arm(u32 cycles)
+#else
 void execute_arm(u32 cycles)
+#endif
 {
   u32 opcode;
   u32 condition;
@@ -3594,6 +3612,9 @@ void init_cpu(void)
 
   reg[CPU_HALT_STATE] = CPU_ACTIVE;
   reg[REG_SLEEP_CYCLES] = 0;
+  // Video's derived per-scanline OBJ ordering is not part of CPU reset state.
+  // Force it to be rebuilt before the first visible scanline.
+  reg[OAM_UPDATED] = 1;
 
   if (selected_boot_mode == boot_game) {
     reg[REG_SP] = 0x03007F00;

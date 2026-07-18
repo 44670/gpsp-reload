@@ -117,7 +117,7 @@ void init_main(void)
   cpu_backend_reset();
 }
 
-u32 function_cc update_gba(int remaining_cycles)
+u32 GPSP_HOT_CODE function_cc update_gba(int remaining_cycles)
 {
   u32 changed_pc = 0;
   u32 frame_complete = 0;

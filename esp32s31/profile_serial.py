@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
 import serial
 
@@ -44,6 +45,9 @@ def main() -> int:
     parser.add_argument("--elf", type=Path, default=Path("build/gpsp_esp32s31.elf"))
     parser.add_argument("--addr2line", default="riscv32-esp-elf-addr2line")
     parser.add_argument("--top", type=int, default=30)
+    parser.add_argument("--timeout", type=float, default=20.0)
+    parser.add_argument("--reset", action="store_true")
+    parser.add_argument("--raw", action="store_true")
     args = parser.parse_args()
 
     if not args.elf.is_file():
@@ -53,18 +57,35 @@ def main() -> int:
         parser.error(f"addr2line not found: {args.addr2line}")
 
     samples: list[int] = []
+    deadline = time.monotonic() + args.timeout
     with serial.Serial(args.port, args.baud, timeout=2) as uart:
-        while True:
+        if args.reset:
+            uart.dtr = False
+            uart.rts = False
+            uart.reset_input_buffer()
+            uart.rts = True
+            time.sleep(0.1)
+            uart.rts = False
+
+        while time.monotonic() < deadline:
             raw = uart.readline()
             if not raw:
                 continue
             line = raw.decode("utf-8", errors="replace").rstrip()
-            print(line, flush=True)
+            if args.raw:
+                print(line, flush=True)
             match = PC_LINE.search(line)
             if match:
                 samples.extend(int(value, 16) for value in match.group(1).split(","))
             if "command=gpsp_profile_pc_done" in line:
                 break
+
+    if not samples or len(samples) != 4096:
+        print(
+            "result=FAIL command=gpsp_profile_symbols "
+            f"samples={len(samples)} reason=sample_timeout"
+        )
+        return 1
 
     symbols = symbolize(args.elf, samples, addr2line)
     function_counts = Counter(symbols[address][0] for address in samples)

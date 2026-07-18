@@ -577,6 +577,62 @@ static void render_scanline_text(u32 layer,
   }
 }
 
+#if ESP32S31_VIDEO_HOT_INTERNAL
+// Keep only the two common direct-RGB565 tile paths in HP SRAM. Moving every
+// video template would consume most of the remaining internal memory.
+template<>
+void IRAM_ATTR render_scanline_text<u16, FULLCOLOR, true>(
+ u32 layer, u32 start, u32 end, void *scanline, const u16 *paltbl)
+{
+  u32 bg_control = read_ioreg(REG_BGxCNT(layer));
+  bool is8bpp = (bg_control & 0x80) != 0;
+  const u32 mosamount = read_ioreg(REG_MOSAIC) & 0xFF;
+  bool has_mosaic = (bg_control & 0x40) && (mosamount != 0);
+
+  if (has_mosaic) {
+    if (is8bpp)
+      render_scanline_text_mosaic<u16, FULLCOLOR, true, true>(
+        layer, start, end, scanline, paltbl);
+    else
+      render_scanline_text_mosaic<u16, FULLCOLOR, true, false>(
+        layer, start, end, scanline, paltbl);
+  } else {
+    if (is8bpp)
+      render_scanline_text_fast<u16, FULLCOLOR, true, true>(
+        layer, start, end, scanline, paltbl);
+    else
+      render_scanline_text_fast<u16, FULLCOLOR, true, false>(
+        layer, start, end, scanline, paltbl);
+  }
+}
+
+template<>
+void IRAM_ATTR render_scanline_text<u16, FULLCOLOR, false>(
+ u32 layer, u32 start, u32 end, void *scanline, const u16 *paltbl)
+{
+  u32 bg_control = read_ioreg(REG_BGxCNT(layer));
+  bool is8bpp = (bg_control & 0x80) != 0;
+  const u32 mosamount = read_ioreg(REG_MOSAIC) & 0xFF;
+  bool has_mosaic = (bg_control & 0x40) && (mosamount != 0);
+
+  if (has_mosaic) {
+    if (is8bpp)
+      render_scanline_text_mosaic<u16, FULLCOLOR, false, true>(
+        layer, start, end, scanline, paltbl);
+    else
+      render_scanline_text_mosaic<u16, FULLCOLOR, false, false>(
+        layer, start, end, scanline, paltbl);
+  } else {
+    if (is8bpp)
+      render_scanline_text_fast<u16, FULLCOLOR, false, true>(
+        layer, start, end, scanline, paltbl);
+    else
+      render_scanline_text_fast<u16, FULLCOLOR, false, false>(
+        layer, start, end, scanline, paltbl);
+  }
+}
+#endif
+
 static inline u8 lookup_pix_8bpp(
   u32 px, u32 py, const u8 *tile_base, const u8 *map_base, u32 map_size
 ) {
@@ -957,8 +1013,18 @@ static const u8 obj_dim_table[3][4][2] = {
   { {8, 16}, {8, 32}, {16, 32}, {32, 64} }
 };
 
+#if GPSP_OBJ_PRIORITY_LINKED
+#if ESP32S31_OBJ_LIST_INTERNAL
+static u8 obj_priority_next[160][128];
+#else
+GPSP_EXT_RAM_BSS static u8 obj_priority_next[160][128];
+#endif
+static u8 obj_priority_head[5][160];
+#define OBJ_PRIORITY_END UINT8_MAX
+#else
 GPSP_EXT_RAM_BSS static u8 obj_priority_list[5][160][128];
 static u8 obj_priority_count[5][160];
+#endif
 static u8 obj_alpha_count[160];
 
 typedef struct {
@@ -1422,14 +1488,22 @@ void render_scanline_objs(
 ) {
   stype *scanline = (stype*)raw_ptr;
   s32 vcount = read_ioreg(REG_VCOUNT);
+  // Render all the visible objects for this priority (back to front)
+#if GPSP_OBJ_PRIORITY_LINKED
+  for (u32 objn = obj_priority_head[priority][vcount];
+       objn != OBJ_PRIORITY_END;
+       objn = obj_priority_next[vcount][objn]) {
+#else
   s32 objn;
   u32 objcnt = obj_priority_count[priority][vcount];
   u8 *objlist = obj_priority_list[priority][vcount];
-
-  // Render all the visible objects for this priority (back to front)
   for (objn = objcnt-1; objn >= 0; objn--) {
     // Objects in the list are pre-filtered and sorted in the appropriate order
     u32 objoff = objlist[objn];
+#endif
+#if GPSP_OBJ_PRIORITY_LINKED
+    u32 objoff = objn;
+#endif
     const t_oam *oamentry = &((t_oam*)oam_ram)[objoff];
 
     u16 obj_attr0 = eswap16(oamentry->attr0);
@@ -1509,7 +1583,7 @@ void render_scanline_objs(
 // into a sorted list by priority for the current row.
 // Invisible objects are discarded. ST-objects are flagged. Cycle counting is
 // performed to discard excessive objects (to match HW capabilities).
-static void order_obj(u32 video_mode)
+static void GPSP_HOT_CODE order_obj(u32 video_mode)
 {
   u32 obj_num;
   u32 row;
@@ -1521,7 +1595,11 @@ static void order_obj(u32 video_mode)
                          hblank_free  ? REND_CYC_REDUCED :
                                         REND_CYC_SCANLINE;
 
+#if GPSP_OBJ_PRIORITY_LINKED
+  memset(obj_priority_head, OBJ_PRIORITY_END, sizeof(obj_priority_head));
+#else
   memset(obj_priority_count, 0, sizeof(obj_priority_count));
+#endif
   memset(obj_alpha_count, 0, sizeof(obj_alpha_count));
   memset(rend_cycles, 0, sizeof(rend_cycles));
 
@@ -1584,9 +1662,15 @@ static void order_obj(u32 video_mode)
           for(row = starty; row < endy; row++)
           {
             if (rend_cycles[row] < max_rend_cycles) {
+#if GPSP_OBJ_PRIORITY_LINKED
+              obj_priority_next[row][obj_num] =
+                  obj_priority_head[obj_priority][row];
+              obj_priority_head[obj_priority][row] = obj_num;
+#else
               u32 cur_cnt = obj_priority_count[obj_priority][row];
               obj_priority_list[obj_priority][row][cur_cnt] = obj_num;
               obj_priority_count[obj_priority][row] = cur_cnt + 1;
+#endif
               rend_cycles[row] += cyccnt;
               // Mark the row as having semi-transparent objects
               obj_alpha_count[row] = 1;
@@ -1601,9 +1685,15 @@ static void order_obj(u32 video_mode)
           for(row = starty; row < endy; row++)
           {
             if (rend_cycles[row] < max_rend_cycles) {
+#if GPSP_OBJ_PRIORITY_LINKED
+              obj_priority_next[row][obj_num] =
+                  obj_priority_head[obj_priority][row];
+              obj_priority_head[obj_priority][row] = obj_num;
+#else
               u32 cur_cnt = obj_priority_count[obj_priority][row];
               obj_priority_list[obj_priority][row][cur_cnt] = obj_num;
               obj_priority_count[obj_priority][row] = cur_cnt + 1;
+#endif
               rend_cycles[row] += cyccnt;
             }
           }
@@ -1628,7 +1718,11 @@ static void order_layers(u32 layer_flags, u32 vcnt)
 
   for(priority = 3; priority >= 0; priority--)
   {
+#if GPSP_OBJ_PRIORITY_LINKED
+    bool anyobj = obj_priority_head[priority][vcnt] != OBJ_PRIORITY_END;
+#else
     bool anyobj = obj_priority_count[priority][vcnt] > 0;
+#endif
     s32 lnum;
 
     for(lnum = 3; lnum >= 0; lnum--)
@@ -2335,4 +2429,3 @@ void update_scanline(void)
     }
   }
 }
-

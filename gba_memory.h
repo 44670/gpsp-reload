@@ -263,9 +263,34 @@ extern u16 palette_ram_converted[512];
 extern u16 io_registers[512];
 extern u8 vram[1024 * 96];
 extern u8 bios_rom[1024 * 16];
-// Double buffer used for SMC detection
-extern u8 ewram[1024 * 256 * 2];
-extern u8 iwram[1024 * 32 * 2];
+// Double buffers are used for dynarec self-modifying-code detection. An
+// interpreter-only platform can omit the shadow half of either work RAM.
+#ifndef GPSP_EWRAM_DATA_ONLY
+#define GPSP_EWRAM_DATA_ONLY 0
+#endif
+#if GPSP_EWRAM_DATA_ONLY
+#define GPSP_EWRAM_STORAGE_BYTES (1024 * 256)
+#define GPSP_EWRAM_HAS_SMC_MIRROR 0
+#else
+#define GPSP_EWRAM_STORAGE_BYTES (1024 * 256 * 2)
+#define GPSP_EWRAM_HAS_SMC_MIRROR 1
+#endif
+extern u8 ewram[GPSP_EWRAM_STORAGE_BYTES];
+
+#ifndef GPSP_IWRAM_DATA_ONLY
+#define GPSP_IWRAM_DATA_ONLY 0
+#endif
+#if GPSP_IWRAM_DATA_ONLY
+#define GPSP_IWRAM_DATA_OFFSET 0
+#define GPSP_IWRAM_STORAGE_BYTES (1024 * 32)
+#define GPSP_IWRAM_HAS_SMC_MIRROR 0
+#else
+#define GPSP_IWRAM_DATA_OFFSET (1024 * 32)
+#define GPSP_IWRAM_STORAGE_BYTES (1024 * 32 * 2)
+#define GPSP_IWRAM_HAS_SMC_MIRROR 1
+#endif
+extern u8 iwram[GPSP_IWRAM_STORAGE_BYTES];
+#define GPSP_IWRAM_DATA (iwram + GPSP_IWRAM_DATA_OFFSET)
 
 extern u8 *memory_map_read[8 * 1024];
 

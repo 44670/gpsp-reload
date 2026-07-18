@@ -20,7 +20,15 @@
 #ifndef SOUND_H
 #define SOUND_H
 
-#define BUFFER_SIZE        (1 << 16)
+#ifndef GPSP_SOUND_BUFFER_BITS
+#define GPSP_SOUND_BUFFER_BITS 16
+#endif
+
+#if GPSP_SOUND_BUFFER_BITS < 12 || GPSP_SOUND_BUFFER_BITS > 16
+#error "GPSP_SOUND_BUFFER_BITS must be between 12 and 16"
+#endif
+
+#define BUFFER_SIZE        (1 << GPSP_SOUND_BUFFER_BITS)
 #define BUFFER_SIZE_MASK   (BUFFER_SIZE - 1)
 
 #define GBA_SOUND_FREQUENCY   (64 * 1024)

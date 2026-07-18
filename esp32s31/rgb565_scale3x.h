@@ -11,6 +11,8 @@
 #define ESP32S31_LCD_HEIGHT 480u
 #define ESP32S31_SCALE_FACTOR 3u
 #define ESP32S31_LCD_BAR_WIDTH 40u
+#define ESP32S31_GBA_FPS_OSD_WIDTH 48u
+#define ESP32S31_GBA_FPS_OSD_HEIGHT 9u
 
 /* Clear an entire 800x480 RGB565 output buffer to black. */
 bool esp32s31_rgb565_clear_output(void *output, size_t output_pitch);

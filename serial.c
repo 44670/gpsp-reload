@@ -189,7 +189,7 @@ u32 serial_next_event() {
 }
 
 // Account for consumed cycles and return if a serial IRQ should be raised.
-bool update_serial(unsigned cycles) {
+bool GPSP_HOT_CODE update_serial(unsigned cycles) {
   // Might wanna check if the connected device has some update (IRQ).
   switch (serial_mode) {
   case SERIAL_MODE_RFU:
@@ -237,4 +237,3 @@ bool update_serial(unsigned cycles) {
 
   return false;
 }
-

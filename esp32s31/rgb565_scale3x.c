@@ -2,6 +2,13 @@
 
 #include <string.h>
 
+#ifdef ESP_PLATFORM
+#include "esp_attr.h"
+#define ESP32S31_IRAM_ATTR IRAM_ATTR
+#else
+#define ESP32S31_IRAM_ATTR
+#endif
+
 #define FPS_GLYPH_WIDTH 5u
 #define FPS_GLYPH_HEIGHT 7u
 #define FPS_GLYPH_ADVANCE 6u
@@ -114,9 +121,9 @@ bool esp32s31_rgb565_clear_output(void *output, size_t output_pitch)
   return true;
 }
 
-bool esp32s31_rgb565_scale3x_rows(void *output, size_t output_pitch,
-                                 const void *input, unsigned source_rows,
-                                 size_t input_pitch)
+bool ESP32S31_IRAM_ATTR esp32s31_rgb565_scale3x_rows(
+    void *output, size_t output_pitch, const void *input,
+    unsigned source_rows, size_t input_pitch)
 {
   if (output == NULL || input == NULL || source_rows == 0u ||
       source_rows > ESP32S31_GBA_HEIGHT ||
@@ -222,8 +229,8 @@ bool esp32s31_rgb565_draw_fps_gba(void *output, size_t output_pitch,
   format_fps_text(text, fps_x10);
   uint16_t *pixels = (uint16_t *)output;
   const size_t pitch_pixels = output_pitch / sizeof(uint16_t);
-  const unsigned background_width = FPS_TEXT_LENGTH * FPS_GLYPH_ADVANCE;
-  const unsigned background_height = FPS_GLYPH_HEIGHT + 2u;
+  const unsigned background_width = ESP32S31_GBA_FPS_OSD_WIDTH;
+  const unsigned background_height = ESP32S31_GBA_FPS_OSD_HEIGHT;
 
   for (unsigned y = 0; y < background_height; y++)
     memset(pixels + y * pitch_pixels, 0,

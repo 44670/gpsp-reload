@@ -26,7 +26,11 @@ gbc_sound_struct gbc_sound_channel[4];
 const u32 sound_frequency = GBA_SOUND_FREQUENCY;
 
 u32 sound_on;
+#if ESP32S31_SOUND_BUFFER_INTERNAL
+static s16 sound_buffer[BUFFER_SIZE];
+#else
 static GPSP_EXT_RAM_BSS s16 sound_buffer[BUFFER_SIZE];
+#endif
 static u32 sound_buffer_base;
 
 static fixed16_16 gbc_sound_tick_step;
@@ -51,7 +55,7 @@ void sound_timer_queue32(u32 channel, u32 value)
 }
 
 
-unsigned sound_timer(fixed8_24 frequency_step, u32 channel)
+unsigned GPSP_HOT_CODE sound_timer(fixed8_24 frequency_step, u32 channel)
 {
   int ret = 0;
   u32 sample_status = DIRECT_SOUND_INACTIVE;
