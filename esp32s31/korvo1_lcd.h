@@ -28,7 +28,7 @@ bool esp32s31_korvo1_lcd_present_rgb565(const void *pixels,
                                         unsigned width,
                                         unsigned height,
                                         size_t pitch);
-/* Non-NULL only in no-framebuffer mode; gpSP and LCD share this buffer. */
+/* gpSP's shared RGB565 render target, independent of LCD scanout mode. */
 uint16_t *esp32s31_korvo1_lcd_render_buffer(void);
 const char *esp32s31_korvo1_lcd_render_memory_name(void);
 unsigned esp32s31_korvo1_lcd_bounce_source_rows(void);

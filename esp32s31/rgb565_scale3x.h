@@ -50,7 +50,7 @@ bool esp32s31_rgb565_scale3x_rows_osd(
 bool esp32s31_rgb565_prepare_fps_osd(
     esp32s31_rgb565_fps_osd_t *osd, unsigned fps_x10);
 
-/* Legacy helper for drawing directly into an 800x480 LCD framebuffer. */
+/* Draw the FPS OSD into an already-scaled 800x480 LCD framebuffer. */
 bool esp32s31_rgb565_draw_fps(void *output, size_t output_pitch,
                              unsigned fps_x10);
 

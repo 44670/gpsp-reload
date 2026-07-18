@@ -8,7 +8,7 @@ set(GPSP_ESP32S31_PROFILE "0" CACHE BOOL
     "Enable detailed gpSP phase profiling")
 set(GPSP_ESP32S31_PC_PROFILE "0" CACHE BOOL
     "Enable the 1 kHz interrupted-PC sampler during phase profiling")
-set(ESP32S31_LCD_MODE "bounce" CACHE STRING
+set(ESP32S31_LCD_MODE "framebuffer" CACHE STRING
     "LCD scanout: framebuffer or bounce")
 set_property(CACHE ESP32S31_LCD_MODE PROPERTY STRINGS
     framebuffer bounce)
@@ -60,7 +60,7 @@ set(ESP32S31_HOT_HELPERS_MEMORY "psram" CACHE STRING
     "Profile-selected interpreter helper code placement: sram or psram")
 set_property(CACHE ESP32S31_HOT_HELPERS_MEMORY PROPERTY STRINGS
     sram psram)
-set(ESP32S31_SCALER "sram_gdma" CACHE STRING
+set(ESP32S31_SCALER "cpu" CACHE STRING
     "RGB565 scaler: auto, cpu, sram_gdma, or ppa")
 set_property(CACHE ESP32S31_SCALER PROPERTY STRINGS
     auto cpu sram_gdma ppa)
