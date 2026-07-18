@@ -23,6 +23,7 @@ bool esp32s31_korvo1_lcd_present_rgb565(const void *pixels,
                                         unsigned width,
                                         unsigned height,
                                         size_t pitch);
+void esp32s31_korvo1_lcd_set_fps_x10(unsigned fps_x10);
 void esp32s31_korvo1_lcd_get_stats(esp32s31_lcd_stats_t *out);
 
 #endif

@@ -45,6 +45,8 @@ typedef struct {
   uint8_t front_index;
   uint8_t back_index;
   uint8_t consecutive_timeouts;
+  uint16_t fps_x10;
+  bool fps_valid;
   bool pending;
   bool ready;
 } korvo1_lcd_state_t;
@@ -377,6 +379,10 @@ bool esp32s31_korvo1_lcd_present_rgb565(const void *pixels,
     return false;
   }
 
+  if (s_lcd.fps_valid)
+    (void)esp32s31_rgb565_draw_fps(
+        back, ESP32S31_LCD_WIDTH * sizeof(uint16_t), s_lcd.fps_x10);
+
   /* The old completion must not satisfy the wait for this submission. */
   (void)ulTaskNotifyTake(pdTRUE, 0);
   s_lcd.pending_completion = s_lcd.completed_frames;
@@ -392,7 +398,15 @@ bool esp32s31_korvo1_lcd_present_rgb565(const void *pixels,
 
   s_lcd.pending = true;
   s_lcd.stats.submitted_frames++;
-  return finish_pending_frame();
+  return true;
+}
+
+void esp32s31_korvo1_lcd_set_fps_x10(unsigned fps_x10)
+{
+  if (fps_x10 > 999u)
+    fps_x10 = 999u;
+  s_lcd.fps_x10 = (uint16_t)fps_x10;
+  s_lcd.fps_valid = true;
 }
 
 void esp32s31_korvo1_lcd_get_stats(esp32s31_lcd_stats_t *out)

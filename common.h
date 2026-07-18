@@ -86,7 +86,7 @@
     (((value & 0x1F) << 11) | ((value & 0x03E0) << 1) | ((value >> 10) & 0x1F))
 #endif
 
-#if defined(XTENSA_ARCH) && defined(ESP_PLATFORM)
+#if defined(ESP_PLATFORM)
   #include "esp_attr.h"
   #define GPSP_EXT_RAM_BSS EXT_RAM_BSS_ATTR
 #else

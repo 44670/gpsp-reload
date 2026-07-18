@@ -110,6 +110,61 @@ static void test_scaler(void)
   free(source_allocation);
 }
 
+static void test_fps_overlay(void)
+{
+  const size_t output_bytes =
+      OUTPUT_PITCH_PIXELS * ESP32S31_LCD_HEIGHT * sizeof(uint16_t);
+  uint8_t *allocation = malloc(output_bytes + GUARD_BYTES * 2u);
+  assert(allocation != NULL);
+  memset(allocation, 0xa5, output_bytes + GUARD_BYTES * 2u);
+
+  uint16_t *output = (uint16_t *)(allocation + GUARD_BYTES);
+  for (unsigned y = 0; y < ESP32S31_LCD_HEIGHT; y++)
+  {
+    uint16_t *row = output + y * OUTPUT_PITCH_PIXELS;
+    for (unsigned x = 0; x < OUTPUT_PITCH_PIXELS; x++)
+      row[x] = 0x1234u;
+  }
+
+  assert(esp32s31_rgb565_draw_fps(
+      output, OUTPUT_PITCH_PIXELS * sizeof(uint16_t), 597u));
+
+  unsigned white_pixels = 0;
+  unsigned black_pixels = 0;
+  for (unsigned y = 2; y < 20u; y++)
+  {
+    const uint16_t *row = output + y * OUTPUT_PITCH_PIXELS;
+    for (unsigned x = ESP32S31_LCD_BAR_WIDTH + 2u;
+         x < ESP32S31_LCD_BAR_WIDTH + 98u; x++)
+    {
+      assert(row[x] == 0u || row[x] == 0xffffu);
+      white_pixels += row[x] == 0xffffu;
+      black_pixels += row[x] == 0u;
+    }
+  }
+  assert(white_pixels > 200u);
+  assert(black_pixels > white_pixels);
+  assert(output[0] == 0x1234u);
+  assert(output[1u * OUTPUT_PITCH_PIXELS + ESP32S31_LCD_BAR_WIDTH + 2u] ==
+         0x1234u);
+  assert(output[20u * OUTPUT_PITCH_PIXELS + ESP32S31_LCD_BAR_WIDTH + 2u] ==
+         0x1234u);
+  assert(output[2u * OUTPUT_PITCH_PIXELS + ESP32S31_LCD_BAR_WIDTH + 1u] ==
+         0x1234u);
+  assert(output[2u * OUTPUT_PITCH_PIXELS + ESP32S31_LCD_BAR_WIDTH + 98u] ==
+         0x1234u);
+
+  for (unsigned i = 0; i < GUARD_BYTES; i++)
+  {
+    assert(allocation[i] == 0xa5u);
+    assert(allocation[GUARD_BYTES + output_bytes + i] == 0xa5u);
+  }
+
+  assert(!esp32s31_rgb565_draw_fps(
+      output, ESP32S31_LCD_WIDTH * sizeof(uint16_t) - 1u, 600u));
+  free(allocation);
+}
+
 static void finish_gt1151_checksum(uint8_t *report, size_t size)
 {
   uint8_t sum = 0;
@@ -158,6 +213,7 @@ static void test_gt1151_decoder(void)
 int main(void)
 {
   test_scaler();
+  test_fps_overlay();
   test_gt1151_decoder();
   puts("result=PASS command=esp32s31_board_driver_host_test");
   return 0;
