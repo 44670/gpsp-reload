@@ -12,7 +12,7 @@ set(ESP32S31_LCD_MODE "bounce" CACHE STRING
     "LCD scanout: framebuffer or bounce")
 set_property(CACHE ESP32S31_LCD_MODE PROPERTY STRINGS
     framebuffer bounce)
-set(ESP32S31_LCD_BOUNCE_SOURCE_ROWS "8" CACHE STRING
+set(ESP32S31_LCD_BOUNCE_SOURCE_ROWS "10" CACHE STRING
     "GBA source rows expanded per RGB bounce-buffer refill")
 set(ESP32S31_LCD_RENDER_MEMORY "sram" CACHE STRING
     "Native GBA render-buffer placement: sram or psram")
@@ -21,6 +21,14 @@ set_property(CACHE ESP32S31_LCD_RENDER_MEMORY PROPERTY STRINGS
 set(ESP32S31_IWRAM_MEMORY "sram" CACHE STRING
     "GBA 32 KiB IWRAM placement: sram or psram")
 set_property(CACHE ESP32S31_IWRAM_MEMORY PROPERTY STRINGS
+    sram psram)
+set(ESP32S31_BIOS_MEMORY "psram" CACHE STRING
+    "Writable GBA 16 KiB BIOS placement: sram or psram")
+set_property(CACHE ESP32S31_BIOS_MEMORY PROPERTY STRINGS
+    sram psram)
+set(ESP32S31_COLD_STATE_MEMORY "psram" CACHE STRING
+    "Paging, cheat, and disabled-link state placement: sram or psram")
+set_property(CACHE ESP32S31_COLD_STATE_MEMORY PROPERTY STRINGS
     sram psram)
 set(ESP32S31_VRAM_MEMORY "psram" CACHE STRING
     "GBA 96 KiB VRAM placement: sram or psram")
@@ -38,11 +46,11 @@ set(ESP32S31_MEMORY_MAP_MEMORY "psram" CACHE STRING
     "32 KiB interpreter read-map placement: sram or psram")
 set_property(CACHE ESP32S31_MEMORY_MAP_MEMORY PROPERTY STRINGS
     sram psram)
-set(ESP32S31_SOUND_BUFFER_MEMORY "psram" CACHE STRING
+set(ESP32S31_SOUND_BUFFER_MEMORY "sram" CACHE STRING
     "gpSP mixer ring-buffer placement: sram or psram")
 set_property(CACHE ESP32S31_SOUND_BUFFER_MEMORY PROPERTY STRINGS
     sram psram)
-set(ESP32S31_SOUND_BUFFER_BITS "13" CACHE STRING
+set(ESP32S31_SOUND_BUFFER_BITS "12" CACHE STRING
     "log2 of int16 samples in the gpSP mixer ring (12 through 16)")
 set(ESP32S31_OBJ_LIST_MEMORY "psram" CACHE STRING
     "Compacted per-scanline OBJ link placement: sram or psram")
@@ -100,6 +108,24 @@ elseif(ESP32S31_IWRAM_MEMORY STREQUAL "psram")
 else()
     message(FATAL_ERROR
         "ESP32S31_IWRAM_MEMORY must be sram or psram")
+endif()
+
+if(ESP32S31_BIOS_MEMORY STREQUAL "sram")
+    set(ESP32S31_BIOS_INTERNAL 1)
+elseif(ESP32S31_BIOS_MEMORY STREQUAL "psram")
+    set(ESP32S31_BIOS_INTERNAL 0)
+else()
+    message(FATAL_ERROR
+        "ESP32S31_BIOS_MEMORY must be sram or psram")
+endif()
+
+if(ESP32S31_COLD_STATE_MEMORY STREQUAL "sram")
+    set(ESP32S31_COLD_STATE_INTERNAL 1)
+elseif(ESP32S31_COLD_STATE_MEMORY STREQUAL "psram")
+    set(ESP32S31_COLD_STATE_INTERNAL 0)
+else()
+    message(FATAL_ERROR
+        "ESP32S31_COLD_STATE_MEMORY must be sram or psram")
 endif()
 
 if(ESP32S31_VRAM_MEMORY STREQUAL "sram")

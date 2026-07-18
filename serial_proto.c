@@ -59,7 +59,7 @@ int ismemzero(const void *ptr, size_t bytes) {
   return 1;
 }
 
-static union {
+GPSP_COLD_STATE_BSS static union {
   struct {
     struct {
       u16 data[MAX_QPACK][8];
@@ -720,5 +720,3 @@ void serialaw_net_receive(const void* buf, size_t len, uint16_t client_id) {
     }
   }
 }
-
-

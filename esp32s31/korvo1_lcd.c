@@ -34,7 +34,7 @@
 #endif
 
 #ifndef ESP32S31_LCD_BOUNCE_SOURCE_ROWS
-#define ESP32S31_LCD_BOUNCE_SOURCE_ROWS 8u
+#define ESP32S31_LCD_BOUNCE_SOURCE_ROWS 10u
 #endif
 
 #ifndef ESP32S31_LCD_RENDER_INTERNAL
@@ -364,11 +364,18 @@ bool esp32s31_korvo1_lcd_init(void)
 
 #if ESP32S31_LCD_BOUNCE_MODE
   ESP_LOGI(TAG,
-           "internal SRAM before LCD: free=%u largest=%u; "
+           "internal SRAM before LCD: free=%u largest=%u "
+           "dma_free=%u dma_largest=%u; "
            "render=%s/%u bytes bounce=2x%u bytes",
            (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL |
                                              MALLOC_CAP_8BIT),
            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL |
+                                                      MALLOC_CAP_8BIT),
+           (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL |
+                                             MALLOC_CAP_DMA |
+                                             MALLOC_CAP_8BIT),
+           (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL |
+                                                      MALLOC_CAP_DMA |
                                                       MALLOC_CAP_8BIT),
            ESP32S31_LCD_RENDER_INTERNAL ? "sram" : "psram",
            (unsigned)GBA_FRAME_STORAGE_BYTES, (unsigned)LCD_BOUNCE_BYTES);

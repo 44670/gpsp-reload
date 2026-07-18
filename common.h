@@ -93,6 +93,23 @@
   #define GPSP_EXT_RAM_BSS
 #endif
 
+#ifndef ESP32S31_BIOS_INTERNAL
+  #define ESP32S31_BIOS_INTERNAL 1
+#endif
+
+#ifndef ESP32S31_COLD_STATE_INTERNAL
+  #define ESP32S31_COLD_STATE_INTERNAL 1
+#endif
+
+/* Large state used only by cartridge paging, cheats, or disabled link modes.
+ * Other targets keep their existing placement; the ESP32-S31 port can move
+ * this state without moving the hot GBA memory arrays. */
+#if ESP32S31_COLD_STATE_INTERNAL
+  #define GPSP_COLD_STATE_BSS
+#else
+  #define GPSP_COLD_STATE_BSS GPSP_EXT_RAM_BSS
+#endif
+
 #if ESP32S31_HOT_HELPERS_INTERNAL
   #define GPSP_HOT_CODE IRAM_ATTR
 #else

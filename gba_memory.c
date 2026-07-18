@@ -345,7 +345,11 @@ const u32 def_seq_cycles[16][2] =
 };
 
 
+#if ESP32S31_BIOS_INTERNAL
 u8 bios_rom[1024 * 16];
+#else
+GPSP_EXT_RAM_BSS u8 bios_rom[1024 * 16];
+#endif
 
 // Up to 128kb, store SRAM, flash ROM, or EEPROM here.
 GPSP_EXT_RAM_BSS u8 gamepak_backup[1024 * 128];
@@ -368,7 +372,7 @@ GPSP_EXT_RAM_BSS static u8 xtensa_gamepak_buffer_fallback[1024 * 1024];
 #endif
 
 // LRU queue with the loaded blocks and what they map to
-struct {
+GPSP_COLD_STATE_BSS struct {
   u16 next_lru;             /* Index in the struct to the next LRU entry */
   s16 phy_rom;              /* ROM page number (-1 means not mapped) */
 } gamepak_blk_queue[1024];

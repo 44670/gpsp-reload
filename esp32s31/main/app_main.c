@@ -401,6 +401,8 @@ static void print_status(void)
          " lcd_timeouts=%" PRIu32 " lcd_vsync=%" PRIu32
          " scaler=%s render_mem=%s ewram_mem=psram ewram_bytes=262144"
          " iwram_mem=%s iwram_bytes=32768"
+         " bios_mem=%s bios_bytes=16384"
+         " cold_state_mem=%s"
          " vram_mem=%s vram_bytes=98304"
          " arm_code_mem=%s"
          " video_hot_code_mem=%s"
@@ -418,13 +420,16 @@ static void print_status(void)
          " touch_ready=%u touch_reports=%" PRIu32
          " touch_i2c_errors=%" PRIu32 " touch_crc_errors=%" PRIu32
          " internal_free=%u internal_largest=%u"
-         " psram_free=%u psram_largest=%u stack_words=%u\n",
+         " dma_free=%u dma_largest=%u"
+         " psram_free=%u psram_largest=%u stack_free_bytes=%u\n",
          g_emulated_frames, g_video_frames, g_fps_x10, g_frame_hash,
          (unsigned)esp32s31_korvo1_lcd_ready(), lcd.submitted_frames,
          lcd.completed_frames, lcd.dropped_frames, lcd.wait_timeouts,
          lcd.vsync_count, esp32s31_korvo1_lcd_scaler_name(),
          esp32s31_korvo1_lcd_render_memory_name(),
          ESP32S31_IWRAM_INTERNAL ? "sram" : "psram",
+         ESP32S31_BIOS_INTERNAL ? "sram" : "psram",
+         ESP32S31_COLD_STATE_INTERNAL ? "sram" : "psram",
          ESP32S31_VRAM_INTERNAL ? "sram" : "psram",
          ESP32S31_EXECUTE_ARM_INTERNAL ? "sram" : "psram",
          ESP32S31_VIDEO_HOT_INTERNAL ? "sram" : "psram",
@@ -444,6 +449,12 @@ static void print_status(void)
          (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL |
                                            MALLOC_CAP_8BIT),
          (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL |
+                                                    MALLOC_CAP_8BIT),
+         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL |
+                                           MALLOC_CAP_DMA |
+                                           MALLOC_CAP_8BIT),
+         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL |
+                                                    MALLOC_CAP_DMA |
                                                     MALLOC_CAP_8BIT),
          (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM |
                                            MALLOC_CAP_8BIT),

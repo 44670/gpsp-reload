@@ -29,7 +29,7 @@ typedef struct
   unsigned cheat_count;
 } cheat_type;
 
-cheat_type cheats[MAX_CHEATS];
+GPSP_COLD_STATE_BSS cheat_type cheats[MAX_CHEATS];
 u32 max_cheat = 0;
 u32 cheat_master_hook = 0xffffffff;
 
@@ -261,5 +261,4 @@ cheat_error cheat_parse(unsigned index, const char *code)
    /* TODO parse other types here */
    return CheatErrorNotSupported;
 }
-
 

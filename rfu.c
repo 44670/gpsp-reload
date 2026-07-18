@@ -117,17 +117,17 @@ static inline u32 leupack32(const u8 *ptr) {
 
 static u32 rfu_prev_data;
 static u32 rfu_comstate, rfu_cnt, rfu_state;
-static u32 rfu_buf[255];
+GPSP_COLD_STATE_BSS static u32 rfu_buf[255];
 static u8 rfu_cmd, rfu_plen;
 static u32 rfu_timeout_cycles, rfu_resp_timeout;
 static u8 rfu_timeout, rfu_rtx_max;
 
-static struct {
+GPSP_COLD_STATE_BSS static struct {
   u32 buf[23];
   u8 blen;
 } rfu_tx_buf;
 
-static struct {
+GPSP_COLD_STATE_BSS static struct {
   u16 devid;         // Device ID assigned to the host
   u8 tx_ttl;         // Internal counter for broadcast transmission
   u32 bdata[6];      // Data to broadcast other devices
@@ -142,7 +142,7 @@ static struct {
   } clients[4];      // Connected clients IDs (zero means empty slot).
 } rfu_host;
 
-static struct {
+GPSP_COLD_STATE_BSS static struct {
   u16 devid;         // Device ID assigned to the client (by the host?)
   u16 clnum;         // Client number (0 to 3)
   u16 host_id;       // Client ID for the host device.
@@ -161,7 +161,7 @@ typedef struct {
 } t_client_broadcast;
 
 // The table is indexed by client_id
-static t_client_broadcast rfu_peer_bcst[MAX_RFU_PEERS];
+GPSP_COLD_STATE_BSS static t_client_broadcast rfu_peer_bcst[MAX_RFU_PEERS];
 
 // Constants used for the network protocol.
 
@@ -933,4 +933,3 @@ bool rfu_update(unsigned cycles) {
 
   return false;
 }
-

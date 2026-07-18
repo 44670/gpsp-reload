@@ -10,7 +10,9 @@
 #include "../common.h"
 #include "../cpu_backend.h"
 #include "../memmap.h"
+#if !defined(GPSP_FIXED_CORE_OPTIONS) || !GPSP_FIXED_CORE_OPTIONS
 #include "libretro_core_options.h"
+#endif
 
 #include "../gba_memory.h"
 #include "../gba_cc_lut.h"
@@ -808,7 +810,9 @@ void retro_set_environment(retro_environment_t cb)
    if (environ_cb(RETRO_ENVIRONMENT_GET_VFS_INTERFACE, &vfs_iface_info))
       filestream_vfs_init(&vfs_iface_info);
 
+#if !defined(GPSP_FIXED_CORE_OPTIONS) || !GPSP_FIXED_CORE_OPTIONS
    libretro_set_core_options(environ_cb);
+#endif
 }
 
 void retro_set_video_refresh(retro_video_refresh_t cb)
