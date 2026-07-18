@@ -46,6 +46,7 @@ extern u32 rom_cache_watermark;
 
 static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta);
 void riscv_jit_run_block_tail(void);
+void riscv_jit_indirect_lookup_tail(void);
 static u32 function_cc riscv_thumb_execute(u32 opcode, u32 pc);
 static void function_cc riscv_thumb_execute_bl_pair(u32 first_opcode,
                                                     u32 second_opcode,
@@ -53,6 +54,49 @@ static void function_cc riscv_thumb_execute_bl_pair(u32 first_opcode,
 static u32 function_cc riscv_store_u8_pc(u32 address, u32 value, u32 pc);
 static u32 function_cc riscv_store_u16_pc(u32 address, u32 value, u32 pc);
 static u32 function_cc riscv_store_u32_pc(u32 address, u32 value, u32 pc);
+
+enum
+{
+  RISCV_INDIRECT_LOOKUP_CACHE_BITS = 8,
+  RISCV_INDIRECT_LOOKUP_CACHE_SIZE =
+    1u << RISCV_INDIRECT_LOOKUP_CACHE_BITS,
+  RISCV_INDIRECT_LOOKUP_CACHE_MASK =
+    RISCV_INDIRECT_LOOKUP_CACHE_SIZE - 1u
+};
+
+typedef struct riscv_indirect_lookup_cache_entry
+{
+  u32 key;
+  u32 entry;
+  u32 generation;
+  u32 reserved;
+} riscv_indirect_lookup_cache_entry;
+
+typedef struct riscv_indirect_lookup_cache_state
+{
+  u32 generation;
+  u32 reserved[3];
+  riscv_indirect_lookup_cache_entry entries[RISCV_INDIRECT_LOOKUP_CACHE_SIZE];
+} riscv_indirect_lookup_cache_state;
+
+typedef char riscv_indirect_cache_entry_size_must_be_16[
+  sizeof(riscv_indirect_lookup_cache_entry) == 16 ? 1 : -1];
+typedef char riscv_indirect_cache_entry_pointer_offset_must_be_4[
+  offsetof(riscv_indirect_lookup_cache_entry, entry) == 4 ? 1 : -1];
+typedef char riscv_indirect_cache_entry_generation_offset_must_be_8[
+  offsetof(riscv_indirect_lookup_cache_entry, generation) == 8 ? 1 : -1];
+typedef char riscv_indirect_cache_entries_offset_must_be_16[
+  offsetof(riscv_indirect_lookup_cache_state, entries) == 16 ? 1 : -1];
+
+/* The generated tail reads this table directly. Keep its header and entries
+ * power-of-two sized so the RV32 fast path needs only shifts and loads. */
+__attribute__((used, aligned(16)))
+static riscv_indirect_lookup_cache_state riscv_indirect_lookup_cache;
+static cpu_alert_type riscv_cpu_alert;
+
+#if defined(RISCV_RUNTIME_INDIRECT_LOOKUP_PROFILE_SWITCH)
+extern volatile u32 riscv_runtime_perf_disable_indirect_lookup_cache;
+#endif
 
 enum
 {
@@ -127,6 +171,11 @@ enum
 #if defined(RISCV_RUNTIME_VALIDATED_ENTRY_PROFILE_SWITCH) && \
     !defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
 #error "validated-entry A/B requires RISCV_RUNTIME_PERF_PROFILE_SWITCH"
+#endif
+
+#if defined(RISCV_RUNTIME_INDIRECT_LOOKUP_PROFILE_SWITCH) && \
+    !defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
+#error "indirect-lookup A/B requires RISCV_RUNTIME_PERF_PROFILE_SWITCH"
 #endif
 
 /* Blocks may tail-jump into each other, so one outer JIT frame owns saved regs. */
@@ -296,6 +345,80 @@ __asm__(
   "  lw t0, 92(sp)\n"
   "  jalr zero, t0, 0\n"
   ".size riscv_jit_run_block_tail, .-riscv_jit_run_block_tail\n");
+#if !defined(RISCV_RUNTIME_DISABLE_INDIRECT_LOOKUP_CACHE) || \
+    defined(RISCV_RUNTIME_INDIRECT_LOOKUP_PROFILE_SWITCH)
+__asm__(
+  ".text\n"
+  ".align 2\n"
+  ".globl riscv_jit_indirect_lookup_tail\n"
+  ".type riscv_jit_indirect_lookup_tail, @function\n"
+  "riscv_jit_indirect_lookup_tail:\n"
+  "  lw t4, 100(sp)\n"
+  "  lw t5, 96(sp)\n"
+  "  sw t4, 0(t5)\n"
+#if defined(RISCV_RUNTIME_INDIRECT_LOOKUP_PROFILE_SWITCH)
+  "  lla t0, riscv_runtime_perf_disable_indirect_lookup_cache\n"
+  "  lw t0, 0(t0)\n"
+  "  bnez t0, .Lriscv_jit_tail_slow\n"
+#endif
+  /* Cycle exhaustion must take the scheduler path before any cached jump. */
+  "  bge zero, t4, .Lriscv_jit_tail_slow\n"
+#if defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
+  "  lla t0, riscv_control_indirect_cache_attempts\n"
+  "  lw t1, 0(t0)\n"
+  "  addi t1, t1, 1\n"
+  "  sw t1, 0(t0)\n"
+#endif
+
+  /* key=(aligned PC)|thumb. ARM and Thumb entries sharing an address must not
+   * alias, and ARM targets must receive the dispatcher's word alignment. */
+  "  lw t0, 64(s0)\n"
+  "  srli t0, t0, 5\n"
+  "  andi t0, t0, 1\n"
+  "  slli t1, t0, 1\n"
+  "  addi t1, t1, -4\n"
+  "  lw t2, 60(s0)\n"
+  "  and t2, t2, t1\n"
+  "  or t2, t2, t0\n"
+
+  "  srli t1, t2, 1\n"
+  "  andi t1, t1, 255\n"
+  "  slli t1, t1, 4\n"
+  "  lla t3, riscv_indirect_lookup_cache\n"
+  "  lw t0, 0(t3)\n"
+  "  addi t3, t3, 16\n"
+  "  add t3, t3, t1\n"
+  "  lw t1, 8(t3)\n"
+  "  bne t1, t0, .Lriscv_jit_tail_slow\n"
+  "  lw t1, 0(t3)\n"
+  "  bne t1, t2, .Lriscv_jit_tail_slow\n"
+  "  lw t6, 4(t3)\n"
+  "  beqz t6, .Lriscv_jit_tail_slow\n"
+
+  /* A hit may bypass the C dispatcher only when it has no scheduler-visible
+   * work: no alert, halt, or learned idle-loop target. */
+  "  lla t0, riscv_cpu_alert\n"
+  "  lbu t0, 0(t0)\n"
+  "  bnez t0, .Lriscv_jit_tail_slow\n"
+  "  lw t0, 72(s0)\n"
+  "  bnez t0, .Lriscv_jit_tail_slow\n"
+  "  lla t0, idle_loop_target_pc\n"
+  "  lw t0, 0(t0)\n"
+  "  lw t1, 60(s0)\n"
+  "  beq t1, t0, .Lriscv_jit_tail_slow\n"
+#if defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
+  "  lla t0, riscv_control_indirect_cache_hits\n"
+  "  lw t1, 0(t0)\n"
+  "  addi t1, t1, 1\n"
+  "  sw t1, 0(t0)\n"
+#endif
+  "  jalr zero, t6, 0\n"
+  ".Lriscv_jit_tail_slow:\n"
+  "  lw ra, 88(sp)\n"
+  "  lw t0, 92(sp)\n"
+  "  jalr zero, t0, 0\n"
+  ".size riscv_jit_indirect_lookup_tail, .-riscv_jit_indirect_lookup_tail\n");
+#endif
 #else
 #if defined(RISCV_RUNTIME_VALIDATED_ENTRY_PROFILE_SWITCH)
 static u8 *riscv_enter_jit(u8 *entry_data, void *reg_base, void *run_block,
@@ -338,6 +461,10 @@ static u8 *riscv_enter_jit(u8 *entry_data, void *reg_base, void *run_block,
 void riscv_jit_run_block_tail(void)
 {
 }
+
+void riscv_jit_indirect_lookup_tail(void)
+{
+}
 #endif
 
 static s32 riscv_cycles_remaining;
@@ -353,7 +480,6 @@ static u32 riscv_native_load_insns;
 static u32 riscv_native_store_insns;
 static u32 riscv_native_psr_insns;
 static u32 riscv_thumb_helper_insns;
-static cpu_alert_type riscv_cpu_alert;
 #if defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
 static u32 riscv_control_dispatcher_entries;
 static u32 riscv_control_direct_chain_attempts;
@@ -361,6 +487,10 @@ static u32 riscv_control_direct_chain_hits;
 static u32 riscv_control_cycle_exits;
 static u32 riscv_control_indirect_lookup_hits;
 static u32 riscv_control_indirect_lookup_misses;
+/* Referenced by the hand-written RV32 tail above, so these need stable
+ * assembler-visible names rather than compiler-local aliases. */
+u32 riscv_control_indirect_cache_attempts;
+u32 riscv_control_indirect_cache_hits;
 static u32 riscv_control_fallthrough_lookup_hits;
 static u32 riscv_control_fallthrough_lookup_misses;
 static u32 riscv_control_scheduler_updates;
@@ -551,12 +681,21 @@ static void riscv_emit_control_counter_increment(u8 **ptr, u32 *counter)
 }
 #endif
 
-static void riscv_emit_jit_run_block_tail_jump(u8 **ptr)
+static void riscv_emit_jit_run_block_tail_jump(
+  u8 **ptr, const riscv_jit_block_meta *meta)
 {
   u8 *translation_ptr;
+  uintptr_t tail = (uintptr_t)riscv_jit_run_block_tail;
 
-  riscv_emit_li(ptr, riscv_reg_t0,
-                (u32)(uintptr_t)riscv_jit_run_block_tail);
+#if !defined(RISCV_RUNTIME_DISABLE_INDIRECT_LOOKUP_CACHE) || \
+    defined(RISCV_RUNTIME_INDIRECT_LOOKUP_PROFILE_SWITCH)
+  if (meta && (meta->flags & RISCV_BLOCK_PC_WRITTEN))
+    tail = (uintptr_t)riscv_jit_indirect_lookup_tail;
+#else
+  (void)meta;
+#endif
+
+  riscv_emit_li(ptr, riscv_reg_t0, (u32)tail);
   translation_ptr = *ptr;
   riscv_emit_jalr(riscv_reg_zero, riscv_reg_t0, 0);
   *ptr = translation_ptr;
@@ -4112,8 +4251,51 @@ static u8 *riscv_lookup_or_fallback(riscv_control_lookup_kind kind)
   else
     RISCV_CONTROL_COUNT(riscv_control_fallthrough_lookup_hits);
 
+#if !defined(RISCV_RUNTIME_DISABLE_INDIRECT_LOOKUP_CACHE) || \
+    defined(RISCV_RUNTIME_INDIRECT_LOOKUP_PROFILE_SWITCH)
+  if (kind == RISCV_CONTROL_LOOKUP_INDIRECT)
+  {
+    u32 key = pc | (thumb ? 1u : 0u);
+    u32 index = (key >> 1) & RISCV_INDIRECT_LOOKUP_CACHE_MASK;
+    riscv_indirect_lookup_cache_entry *cached =
+      &riscv_indirect_lookup_cache.entries[index];
+
+    cached->key = key;
+    cached->generation = riscv_indirect_lookup_cache.generation;
+    cached->entry = (u32)(uintptr_t)entry;
+  }
+#endif
+
   return entry;
 }
+
+void riscv_invalidate_indirect_lookup_cache(void)
+{
+#if !defined(RISCV_RUNTIME_DISABLE_INDIRECT_LOOKUP_CACHE) || \
+    defined(RISCV_RUNTIME_INDIRECT_LOOKUP_PROFILE_SWITCH)
+  u32 generation = riscv_indirect_lookup_cache.generation + 1u;
+
+  /* A generation avoids an O(cache-size) clear in cold translation windows.
+   * The wrap path is practically unreachable but preserves correctness. */
+  if (generation == 0u)
+  {
+    u32 i;
+
+    for (i = 0; i < RISCV_INDIRECT_LOOKUP_CACHE_SIZE; i++)
+      riscv_indirect_lookup_cache.entries[i].entry = 0u;
+    generation = 1u;
+  }
+  riscv_indirect_lookup_cache.generation = generation;
+#endif
+}
+
+#if defined(RISCV_RUNTIME_STANDALONE_TEST) && \
+    defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
+void riscv_set_cpu_alert_for_test(cpu_alert_type alert)
+{
+  riscv_cpu_alert = alert;
+}
+#endif
 
 static void function_cc riscv_execute_swi_arm(u32 pc)
 {
@@ -5223,7 +5405,7 @@ static void riscv_emit_helper_call_no_flush(u8 **ptr,
   riscv_perf_terminal_call_sites++;
 #endif
   riscv_emit_li(ptr, riscv_reg_a0, (u32)(uintptr_t)meta);
-  riscv_emit_jit_run_block_tail_jump(ptr);
+  riscv_emit_jit_run_block_tail_jump(ptr, meta);
 }
 
 static void riscv_emit_helper_call(u8 **ptr, const riscv_jit_block_meta *meta)
@@ -11103,6 +11285,8 @@ void init_emitter(bool must_swap)
 {
   (void)must_swap;
 
+  riscv_invalidate_indirect_lookup_cache();
+
   /* Helper addresses are stable between emitter resets.  The entry-setup
    * selector controls whether the stack-source table is rebuilt per entry;
    * the state-helper selector installs the independent REG_USERDEF vector. */
@@ -11134,6 +11318,8 @@ void init_emitter(bool must_swap)
   riscv_control_cycle_exits = 0;
   riscv_control_indirect_lookup_hits = 0;
   riscv_control_indirect_lookup_misses = 0;
+  riscv_control_indirect_cache_attempts = 0;
+  riscv_control_indirect_cache_hits = 0;
   riscv_control_fallthrough_lookup_hits = 0;
   riscv_control_fallthrough_lookup_misses = 0;
   riscv_control_scheduler_updates = 0;
@@ -11179,6 +11365,9 @@ void riscv_get_runtime_stats(riscv_runtime_stats *stats)
     riscv_control_indirect_lookup_hits;
   stats->control_indirect_lookup_misses =
     riscv_control_indirect_lookup_misses;
+  stats->control_indirect_cache_attempts =
+    riscv_control_indirect_cache_attempts;
+  stats->control_indirect_cache_hits = riscv_control_indirect_cache_hits;
   stats->control_fallthrough_lookup_hits =
     riscv_control_fallthrough_lookup_hits;
   stats->control_fallthrough_lookup_misses =

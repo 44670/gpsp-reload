@@ -30,6 +30,7 @@ RUNTIME_TEST := rv32im_runtime_test
 PERF_TEST := rv32im_perf
 PERF_BASELINE_TEST := rv32im_perf_baseline
 CONTROL_FLOW_TEST := rv32im_control_flow
+LOOKUP_CONTROL_FLOW_TEST := rv32im_lookup_control_flow
 MAPPED_ALU_INTERP := rv32im_mapped_alu_interp
 OUT_DIR := out
 SMOKE_PNG := $(OUT_DIR)/rv32im_harness.png
@@ -140,6 +141,9 @@ PERF_ENV_LOG := $(OUT_DIR)/rv32im_perf_env.log
 CONTROL_FLOW_LOG := $(OUT_DIR)/rv32im_control_flow.log
 CONTROL_FLOW_REPEAT_LOG := $(OUT_DIR)/rv32im_control_flow_repeat.log
 CONTROL_FLOW_REPORT := $(OUT_DIR)/rv32im_control_flow_report.log
+LOOKUP_CONTROL_FLOW_LOG := $(OUT_DIR)/rv32im_lookup_control_flow.log
+LOOKUP_CONTROL_FLOW_REPEAT_LOG := $(OUT_DIR)/rv32im_lookup_control_flow_repeat.log
+LOOKUP_CONTROL_FLOW_REPORT := $(OUT_DIR)/rv32im_lookup_control_flow_report.log
 MAPPED_ALU_INTERP_LOG := $(OUT_DIR)/rv32im_mapped_alu_interp.log
 MAPPED_ALU_JIT_LOG := $(OUT_DIR)/rv32im_mapped_alu_jit.log
 PERF_WORKLOAD_MANIFEST := rv32im_perf_manifest.txt
@@ -308,7 +312,7 @@ HOST_CXX ?= c++
 LLVM_OBJCOPY ?= llvm-objcopy
 LLVM_NM ?= llvm-nm
 
-all: $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_STORE_PERF_BASELINE) $(ARMWRESTLER_STORE_PERF_OPTIMIZED) $(ARMWRESTLER_ENTRY_PERF_BASELINE) $(ARMWRESTLER_ENTRY_PERF_OPTIMIZED) $(ARMWRESTLER_STATE_HELPER_PERF_BASELINE) $(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED) $(ARMWRESTLER_VALIDATED_ENTRY_PERF_BASELINE) $(ARMWRESTLER_VALIDATED_ENTRY_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(FRONTEND_CONTROL_JIT) $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CACHE_JIT) $(BACKEND_COMPARE_RV32) $(BACKEND_COMPARE_MIPS) $(GBA_MEMORY_DIFF_RV32) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(CONTROL_FLOW_TEST) $(MAPPED_ALU_INTERP)
+all: $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_STORE_PERF_BASELINE) $(ARMWRESTLER_STORE_PERF_OPTIMIZED) $(ARMWRESTLER_ENTRY_PERF_BASELINE) $(ARMWRESTLER_ENTRY_PERF_OPTIMIZED) $(ARMWRESTLER_STATE_HELPER_PERF_BASELINE) $(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED) $(ARMWRESTLER_VALIDATED_ENTRY_PERF_BASELINE) $(ARMWRESTLER_VALIDATED_ENTRY_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(FRONTEND_CONTROL_JIT) $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CACHE_JIT) $(BACKEND_COMPARE_RV32) $(BACKEND_COMPARE_MIPS) $(GBA_MEMORY_DIFF_RV32) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(CONTROL_FLOW_TEST) $(LOOKUP_CONTROL_FLOW_TEST) $(MAPPED_ALU_INTERP)
 
 $(HARNESS): rv32im_harness.c $(ROOT)/riscv/riscv_runtime.c \
 		$(ROOT)/riscv/riscv_emit.h $(ROOT)/riscv/riscv_codegen.h \
@@ -351,11 +355,22 @@ $(PERF_BASELINE_TEST): rv32im_perf.c $(ROOT)/riscv/riscv_runtime.c \
 		-DRISCV_RUNTIME_DISABLE_ENTRY_SETUP_OPT \
 		-DRISCV_RUNTIME_DISABLE_STATE_HELPER_OPT \
 		-DRISCV_RUNTIME_DISABLE_VALIDATED_ENTRY_OPT \
+		-DRISCV_RUNTIME_DISABLE_INDIRECT_LOOKUP_CACHE \
 		-DRV32IM_PERF_BASELINE_PROFILE \
 		-I$(ROOT) -I$(ROOT)/riscv \
 		-o $@ rv32im_perf.c $(ROOT)/riscv/riscv_runtime.c
 
 $(CONTROL_FLOW_TEST): rv32im_perf.c $(ROOT)/riscv/riscv_runtime.c \
+		$(ROOT)/riscv/riscv_emit.h $(ROOT)/riscv/riscv_codegen.h \
+		$(ROOT)/riscv/riscv_runtime_test_shim.h rv32im_mapped_alu_cases.h
+	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) \
+		-DRISCV_RUNTIME_STANDALONE_TEST -DRISCV_RUNTIME_PERF_COUNTERS \
+		-DRISCV_RUNTIME_CONTROL_FLOW_COUNTERS \
+		-DRISCV_RUNTIME_DISABLE_INDIRECT_LOOKUP_CACHE \
+		-I$(ROOT) -I$(ROOT)/riscv \
+		-o $@ rv32im_perf.c $(ROOT)/riscv/riscv_runtime.c
+
+$(LOOKUP_CONTROL_FLOW_TEST): rv32im_perf.c $(ROOT)/riscv/riscv_runtime.c \
 		$(ROOT)/riscv/riscv_emit.h $(ROOT)/riscv/riscv_codegen.h \
 		$(ROOT)/riscv/riscv_runtime_test_shim.h rv32im_mapped_alu_cases.h
 	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) \
@@ -1690,6 +1705,22 @@ control-flow: $(CONTROL_FLOW_TEST) rv32im_control_flow_check.awk | $(OUT_DIR)
 		$(CONTROL_FLOW_REPORT)
 	cat $(CONTROL_FLOW_REPORT)
 
+lookup-control-flow: $(LOOKUP_CONTROL_FLOW_TEST) \
+		rv32im_lookup_control_flow_check.awk | $(OUT_DIR)
+	$(QEMU_RISCV32) ./$(LOOKUP_CONTROL_FLOW_TEST) > $(LOOKUP_CONTROL_FLOW_LOG)
+	$(QEMU_RISCV32) ./$(LOOKUP_CONTROL_FLOW_TEST) > \
+		$(LOOKUP_CONTROL_FLOW_REPEAT_LOG)
+	@sed -E 's/ rdinstret_csr_raw=[^ ]+//g; s/ rdinstret_csr_overhead=[^ ]+//g; s/ rdinstret_csr_net=[^ ]+//g' \
+		$(LOOKUP_CONTROL_FLOW_LOG) > $(LOOKUP_CONTROL_FLOW_LOG).normalized
+	@sed -E 's/ rdinstret_csr_raw=[^ ]+//g; s/ rdinstret_csr_overhead=[^ ]+//g; s/ rdinstret_csr_net=[^ ]+//g' \
+		$(LOOKUP_CONTROL_FLOW_REPEAT_LOG) > \
+		$(LOOKUP_CONTROL_FLOW_REPEAT_LOG).normalized
+	cmp $(LOOKUP_CONTROL_FLOW_LOG).normalized \
+		$(LOOKUP_CONTROL_FLOW_REPEAT_LOG).normalized
+	awk -f rv32im_lookup_control_flow_check.awk \
+		$(LOOKUP_CONTROL_FLOW_LOG) > $(LOOKUP_CONTROL_FLOW_REPORT)
+	cat $(LOOKUP_CONTROL_FLOW_REPORT)
+
 perf: perf-env-check $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP) | $(OUT_DIR)
 	@begin_pc=`$(LLVM_NM) -n $(PERF_TEST) | awk '$$3 == "rv32im_perf_measure_begin" { print $$1 }'`; \
 	end_pc=`$(LLVM_NM) -n $(PERF_TEST) | awk '$$3 == "rv32im_perf_measure_end" { print $$1 }'`; \
@@ -1772,10 +1803,10 @@ perf: perf-env-check $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP) | $
 	awk -f rv32im_mapped_alu_parity.awk \
 		$(MAPPED_ALU_INTERP_LOG) $(MAPPED_ALU_JIT_LOG)
 
-test: codegen abi exec runtime control-flow perf frontend frontend-control frontend-cache backend-compare gba-memory-diff core-build rejects compare mixed smoke
+test: codegen abi exec runtime control-flow lookup-control-flow perf frontend frontend-control frontend-cache backend-compare gba-memory-diff core-build rejects compare mixed smoke
 
 clean:
-	rm -f $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_STORE_PERF_BASELINE) $(ARMWRESTLER_STORE_PERF_OPTIMIZED) $(ARMWRESTLER_ENTRY_PERF_BASELINE) $(ARMWRESTLER_ENTRY_PERF_OPTIMIZED) $(ARMWRESTLER_STATE_HELPER_PERF_BASELINE) $(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED) $(ARMWRESTLER_VALIDATED_ENTRY_PERF_BASELINE) $(ARMWRESTLER_VALIDATED_ENTRY_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(FRONTEND_CONTROL_JIT) $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CACHE_JIT) $(BACKEND_COMPARE_RV32) $(BACKEND_COMPARE_MIPS) $(GBA_MEMORY_DIFF_RV32) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(CONTROL_FLOW_TEST) $(MAPPED_ALU_INTERP)
+	rm -f $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_STORE_PERF_BASELINE) $(ARMWRESTLER_STORE_PERF_OPTIMIZED) $(ARMWRESTLER_ENTRY_PERF_BASELINE) $(ARMWRESTLER_ENTRY_PERF_OPTIMIZED) $(ARMWRESTLER_STATE_HELPER_PERF_BASELINE) $(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED) $(ARMWRESTLER_VALIDATED_ENTRY_PERF_BASELINE) $(ARMWRESTLER_VALIDATED_ENTRY_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(FRONTEND_CONTROL_JIT) $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CACHE_JIT) $(BACKEND_COMPARE_RV32) $(BACKEND_COMPARE_MIPS) $(GBA_MEMORY_DIFF_RV32) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(CONTROL_FLOW_TEST) $(LOOKUP_CONTROL_FLOW_TEST) $(MAPPED_ALU_INTERP)
 	rm -rf $(OUT_DIR)
 
-.PHONY: all codegen abi exec runtime control-flow perf perf-env-check frontend frontend-control frontend-cache backend-compare backend-compare-env-check gba-memory-diff core-build smoke compare mixed rejects armwrestler-jit armwrestler-interp armwrestler-perf armwrestler-store-perf armwrestler-entry-perf armwrestler-state-helper-perf armwrestler-validated-entry-perf armwrestler armwrestler-report test clean
+.PHONY: all codegen abi exec runtime control-flow lookup-control-flow perf perf-env-check frontend frontend-control frontend-cache backend-compare backend-compare-env-check gba-memory-diff core-build smoke compare mixed rejects armwrestler-jit armwrestler-interp armwrestler-perf armwrestler-store-perf armwrestler-entry-perf armwrestler-state-helper-perf armwrestler-validated-entry-perf armwrestler armwrestler-report test clean

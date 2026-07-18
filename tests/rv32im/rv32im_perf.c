@@ -98,6 +98,8 @@ typedef struct perf_observation
   u32 control_cycle_exits;
   u32 control_indirect_lookup_hits;
   u32 control_indirect_lookup_misses;
+  u32 control_indirect_cache_attempts;
+  u32 control_indirect_cache_hits;
   u32 control_fallthrough_lookup_hits;
   u32 control_fallthrough_lookup_misses;
   u32 control_scheduler_updates;
@@ -128,6 +130,9 @@ static u32 g_scheduler_hash;
 static u32 g_trace_hash;
 static s32 g_last_update_cycles;
 static u32 g_last_update_pc;
+#if defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
+static cpu_alert_type g_initial_lookup_alert;
+#endif
 static u32 g_rdinstret_csr_overhead;
 static volatile u32 g_control_sink;
 
@@ -324,6 +329,9 @@ static void reset_observation_counters(void)
   g_trace_hash = PERF_HASH_INIT;
   g_last_update_cycles = 0;
   g_last_update_pc = 0;
+#if defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
+  g_initial_lookup_alert = CPU_ALERT_NONE;
+#endif
 }
 
 static void fill_initial_regs(u32 *values, const perf_program *program)
@@ -1226,6 +1234,12 @@ static void capture_observation(perf_observation *observation,
   observation->control_indirect_lookup_misses =
     after.control_indirect_lookup_misses -
       before->control_indirect_lookup_misses;
+  observation->control_indirect_cache_attempts =
+    after.control_indirect_cache_attempts -
+      before->control_indirect_cache_attempts;
+  observation->control_indirect_cache_hits =
+    after.control_indirect_cache_hits -
+      before->control_indirect_cache_hits;
   observation->control_fallthrough_lookup_hits =
     after.control_fallthrough_lookup_hits -
       before->control_fallthrough_lookup_hits;
@@ -1242,6 +1256,8 @@ static void capture_observation(perf_observation *observation,
   observation->control_cycle_exits = 0;
   observation->control_indirect_lookup_hits = 0;
   observation->control_indirect_lookup_misses = 0;
+  observation->control_indirect_cache_attempts = 0;
+  observation->control_indirect_cache_hits = 0;
   observation->control_fallthrough_lookup_hits = 0;
   observation->control_fallthrough_lookup_misses = 0;
   observation->control_scheduler_updates = 0;
@@ -1249,12 +1265,17 @@ static void capture_observation(perf_observation *observation,
 }
 
 static void reference_run(const perf_program *program, u32 iterations,
+                          bool indirect_cache_warm,
                           perf_observation *expected)
 {
   u32 values[REG_MAX];
   u32 memory_hash = PERF_HASH_INIT;
   u32 scheduler_hash = PERF_HASH_INIT;
   u32 trace_hash = PERF_HASH_INIT;
+
+#if !defined(RISCV_RUNTIME_HAS_INDIRECT_LOOKUP_CACHE)
+  (void)indirect_cache_warm;
+#endif
   u32 read8 = 0;
   u32 read16 = 0;
   u32 read32 = 0;
@@ -1292,7 +1313,10 @@ static void reference_run(const perf_program *program, u32 iterations,
         values[REG_LR] = target_pc;
         values[REG_PC] = target_pc;
         values[REG_CPSR] &= ~0x20u;
-        trace_hash = fnv_u32(trace_hash, target_pc);
+#if defined(RISCV_RUNTIME_HAS_INDIRECT_LOOKUP_CACHE)
+        if (!indirect_cache_warm)
+#endif
+          trace_hash = fnv_u32(trace_hash, target_pc);
       }
       reference_alu(values, 3000u);
     }
@@ -1318,7 +1342,12 @@ static void reference_run(const perf_program *program, u32 iterations,
 
   expected->lookup_calls = iterations *
     (program->kind == PERF_WORKLOAD_INDIRECT_LOOKUP ?
-      PERF_INDIRECT_BLOCKS : 1u);
+#if defined(RISCV_RUNTIME_HAS_INDIRECT_LOOKUP_CACHE)
+      (indirect_cache_warm ? 1u : PERF_INDIRECT_BLOCKS) :
+#else
+      PERF_INDIRECT_BLOCKS :
+#endif
+      1u);
   expected->terminal_calls = expected->lookup_calls;
   expected->update_calls = iterations;
   expected->read8_calls = read8;
@@ -1342,7 +1371,20 @@ static void reference_run(const perf_program *program, u32 iterations,
   expected->control_cycle_exits = iterations;
   expected->control_indirect_lookup_hits =
     program->kind == PERF_WORKLOAD_INDIRECT_LOOKUP ?
+#if defined(RISCV_RUNTIME_HAS_INDIRECT_LOOKUP_CACHE)
+      (indirect_cache_warm ? 0u :
+        (PERF_INDIRECT_BLOCKS - 1u) * iterations) : 0;
+  expected->control_indirect_cache_attempts =
+    program->kind == PERF_WORKLOAD_INDIRECT_LOOKUP ?
       (PERF_INDIRECT_BLOCKS - 1u) * iterations : 0;
+  expected->control_indirect_cache_hits =
+    program->kind == PERF_WORKLOAD_INDIRECT_LOOKUP && indirect_cache_warm ?
+      (PERF_INDIRECT_BLOCKS - 1u) * iterations : 0;
+#else
+      (PERF_INDIRECT_BLOCKS - 1u) * iterations : 0;
+  expected->control_indirect_cache_attempts = 0;
+  expected->control_indirect_cache_hits = 0;
+#endif
   expected->control_indirect_lookup_misses = 0;
   expected->control_fallthrough_lookup_hits = 0;
   expected->control_fallthrough_lookup_misses = 0;
@@ -1354,6 +1396,8 @@ static void reference_run(const perf_program *program, u32 iterations,
   expected->control_cycle_exits = 0;
   expected->control_indirect_lookup_hits = 0;
   expected->control_indirect_lookup_misses = 0;
+  expected->control_indirect_cache_attempts = 0;
+  expected->control_indirect_cache_hits = 0;
   expected->control_fallthrough_lookup_hits = 0;
   expected->control_fallthrough_lookup_misses = 0;
   expected->control_scheduler_updates = 0;
@@ -1389,6 +1433,10 @@ static int observations_equal(const perf_observation *actual,
       expected->control_indirect_lookup_hits &&
     actual->control_indirect_lookup_misses ==
       expected->control_indirect_lookup_misses &&
+    actual->control_indirect_cache_attempts ==
+      expected->control_indirect_cache_attempts &&
+    actual->control_indirect_cache_hits ==
+      expected->control_indirect_cache_hits &&
     actual->control_fallthrough_lookup_hits ==
       expected->control_fallthrough_lookup_hits &&
     actual->control_fallthrough_lookup_misses ==
@@ -1472,6 +1520,10 @@ static void print_perf_result(const char *result, const char *phase,
   put_u32_dec(observation->control_indirect_lookup_hits);
   put_raw(" indirect_lookup_misses=");
   put_u32_dec(observation->control_indirect_lookup_misses);
+  put_raw(" indirect_cache_attempts=");
+  put_u32_dec(observation->control_indirect_cache_attempts);
+  put_raw(" indirect_cache_hits=");
+  put_u32_dec(observation->control_indirect_cache_hits);
   put_raw(" fallthrough_lookup_hits=");
   put_u32_dec(observation->control_fallthrough_lookup_hits);
   put_raw(" fallthrough_lookup_misses=");
@@ -1546,7 +1598,7 @@ static int measure_phase(const char *phase, u32 iterations,
   rv32im_perf_measure_end();
   raw_instret = end_instret - start_instret;
   capture_observation(&actual, &control_before);
-  reference_run(&g_program, iterations, &expected);
+  reference_run(&g_program, iterations, phase[0] == 'w', &expected);
   equal = observations_equal(&actual, &expected);
   print_perf_result(equal ? "PASS" : "FAIL", phase,
                     equal ? "state_equal" : "state_or_counter_mismatch",
@@ -1682,6 +1734,155 @@ static int run_workload(perf_workload_kind kind)
 }
 
 #if defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
+#if defined(RISCV_RUNTIME_HAS_INDIRECT_LOOKUP_CACHE)
+static int verify_indirect_lookup_scheduler_guards(void)
+{
+  static const char *const names[] = {"halt_state", "idle_loop", "cpu_alert"};
+  const char *reason = "unknown";
+  u32 case_index;
+
+  if (!build_program(PERF_WORKLOAD_INDIRECT_LOOKUP, &reason))
+  {
+    put_raw("result=FAIL command=rv32im-lookup-control-flow ");
+    put_raw("case=scheduler_guards backend=rv32im reason=");
+    put_raw(reason);
+    put_chr('\n');
+    return 0;
+  }
+
+  /* Populate every transition, then prove each scheduler-visible condition
+   * rejects the otherwise-hot first cached edge. */
+  reset_guest_state(&g_program);
+  reset_observation_counters();
+  run_program(&g_program, 1u);
+
+  for (case_index = 0; case_index < ARRAY_SIZE(names); case_index++)
+  {
+    riscv_runtime_stats before;
+    riscv_runtime_stats after;
+    u32 dispatcher_entries;
+    u32 cache_attempts;
+    u32 cache_hits;
+    u32 scheduler_updates;
+    int passed;
+
+    reset_guest_state(&g_program);
+    if (case_index == 0u)
+      reg[CPU_HALT_STATE] = CPU_HALT;
+    else if (case_index == 1u)
+      idle_loop_target_pc = PERF_INDIRECT_START_PC + 8u;
+    reset_observation_counters();
+    if (case_index == 2u)
+      g_initial_lookup_alert = CPU_ALERT_HALT;
+    riscv_get_runtime_stats(&before);
+    execute_arm_translate_internal(g_program.guest_cycles_per_run, &reg[0]);
+    riscv_get_runtime_stats(&after);
+
+    dispatcher_entries = after.control_dispatcher_entries -
+      before.control_dispatcher_entries;
+    cache_attempts = after.control_indirect_cache_attempts -
+      before.control_indirect_cache_attempts;
+    cache_hits = after.control_indirect_cache_hits -
+      before.control_indirect_cache_hits;
+    scheduler_updates = after.control_scheduler_updates -
+      before.control_scheduler_updates;
+    passed = dispatcher_entries == 1u && cache_attempts == 1u &&
+      cache_hits == 0u && scheduler_updates == 1u &&
+      g_lookup_calls == 1u && g_terminal_calls == 1u &&
+      g_update_calls == 1u && g_fallbacks == 0u &&
+      g_execute_arm_calls == 0u &&
+      reg[REG_PC] == PERF_INDIRECT_START_PC + 8u &&
+      (case_index != 1u || g_last_update_cycles == 0);
+
+    put_raw("result=");
+    put_raw(passed ? "PASS" : "FAIL");
+    put_raw(" command=rv32im-lookup-control-flow case=");
+    put_raw(names[case_index]);
+    put_raw(" backend=rv32im cache_attempts=");
+    put_u32_dec(cache_attempts);
+    put_raw(" cache_hits=");
+    put_u32_dec(cache_hits);
+    put_raw(" dispatcher_entries=");
+    put_u32_dec(dispatcher_entries);
+    put_raw(" scheduler_updates=");
+    put_u32_dec(scheduler_updates);
+    put_raw(" lookups=");
+    put_u32_dec(g_lookup_calls);
+    put_raw(" terminal_calls=");
+    put_u32_dec(g_terminal_calls);
+    put_raw(" update_calls=");
+    put_u32_dec(g_update_calls);
+    put_raw(" update_cycles=");
+    put_u32_hex((u32)g_last_update_cycles);
+    put_raw(" pc=");
+    put_u32_hex(reg[REG_PC]);
+    put_raw(" reason=");
+    put_raw(passed ? "cached_edge_deferred_to_scheduler" :
+                     "scheduler_guard_bypass_mismatch");
+    put_chr('\n');
+    if (!passed)
+      return 0;
+  }
+  return 1;
+}
+
+static int verify_indirect_lookup_cache_invalidation(void)
+{
+  const char *reason = "unknown";
+  perf_observation actual;
+  perf_observation expected;
+  riscv_runtime_stats before;
+  int passed;
+
+  if (!build_program(PERF_WORKLOAD_INDIRECT_LOOKUP, &reason))
+  {
+    put_raw("result=FAIL command=rv32im-lookup-control-flow ");
+    put_raw("case=generation_invalidation backend=rv32im reason=");
+    put_raw(reason);
+    put_chr('\n');
+    return 0;
+  }
+
+  reset_guest_state(&g_program);
+  reset_observation_counters();
+  run_program(&g_program, 1u);
+
+  riscv_invalidate_indirect_lookup_cache();
+  reset_guest_state(&g_program);
+  reset_observation_counters();
+  riscv_get_runtime_stats(&before);
+  run_program(&g_program, 1u);
+  capture_observation(&actual, &before);
+  reference_run(&g_program, 1u, false, &expected);
+
+  passed = observations_equal(&actual, &expected) &&
+    actual.control_indirect_cache_attempts ==
+      PERF_INDIRECT_BLOCKS - 1u &&
+    actual.control_indirect_cache_hits == 0u &&
+    actual.control_dispatcher_entries == PERF_INDIRECT_BLOCKS &&
+    actual.lookup_calls == PERF_INDIRECT_BLOCKS;
+
+  put_raw("result=");
+  put_raw(passed ? "PASS" : "FAIL");
+  put_raw(" command=rv32im-lookup-control-flow ");
+  put_raw("case=generation_invalidation backend=rv32im cache_attempts=");
+  put_u32_dec(actual.control_indirect_cache_attempts);
+  put_raw(" cache_hits=");
+  put_u32_dec(actual.control_indirect_cache_hits);
+  put_raw(" dispatcher_entries=");
+  put_u32_dec(actual.control_dispatcher_entries);
+  put_raw(" lookups=");
+  put_u32_dec(actual.lookup_calls);
+  put_raw(" state_hash=");
+  put_u32_hex(actual.state_hash);
+  put_raw(" reason=");
+  put_raw(passed ? "generation_rejected_stale_entries" :
+                   "generation_invalidation_mismatch");
+  put_chr('\n');
+  return passed;
+}
+#endif
+
 static int verify_indirect_lookup_miss_counter(void)
 {
   const char *reason = "unknown";
@@ -1693,6 +1894,8 @@ static int verify_indirect_lookup_miss_counter(void)
   u32 cycle_exits;
   u32 indirect_lookup_hits;
   u32 indirect_lookup_misses;
+  u32 indirect_cache_attempts;
+  u32 indirect_cache_hits;
   u32 fallthrough_lookup_hits;
   u32 fallthrough_lookup_misses;
   u32 scheduler_updates;
@@ -1727,6 +1930,10 @@ static int verify_indirect_lookup_miss_counter(void)
     before.control_indirect_lookup_hits;
   indirect_lookup_misses = after.control_indirect_lookup_misses -
     before.control_indirect_lookup_misses;
+  indirect_cache_attempts = after.control_indirect_cache_attempts -
+    before.control_indirect_cache_attempts;
+  indirect_cache_hits = after.control_indirect_cache_hits -
+    before.control_indirect_cache_hits;
   fallthrough_lookup_hits = after.control_fallthrough_lookup_hits -
     before.control_fallthrough_lookup_hits;
   fallthrough_lookup_misses = after.control_fallthrough_lookup_misses -
@@ -1737,6 +1944,11 @@ static int verify_indirect_lookup_miss_counter(void)
   passed = dispatcher_entries == 1u && direct_chain_attempts == 0u &&
     direct_chain_hits == 0u && cycle_exits == 0u &&
     indirect_lookup_hits == 0u && indirect_lookup_misses == 1u &&
+#if defined(RISCV_RUNTIME_HAS_INDIRECT_LOOKUP_CACHE)
+    indirect_cache_attempts == 1u && indirect_cache_hits == 0u &&
+#else
+    indirect_cache_attempts == 0u && indirect_cache_hits == 0u &&
+#endif
     fallthrough_lookup_hits == 0u && fallthrough_lookup_misses == 0u &&
     scheduler_updates == 0u && g_lookup_calls == 2u &&
     g_terminal_calls == 1u && g_update_calls == 0u &&
@@ -1760,6 +1972,10 @@ static int verify_indirect_lookup_miss_counter(void)
   put_u32_dec(indirect_lookup_hits);
   put_raw(" indirect_lookup_misses=");
   put_u32_dec(indirect_lookup_misses);
+  put_raw(" indirect_cache_attempts=");
+  put_u32_dec(indirect_cache_attempts);
+  put_raw(" indirect_cache_hits=");
+  put_u32_dec(indirect_cache_hits);
   put_raw(" fallthrough_lookup_hits=");
   put_u32_dec(fallthrough_lookup_hits);
   put_raw(" fallthrough_lookup_misses=");
@@ -1876,6 +2092,13 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
   u32 i;
 
   g_lookup_calls++;
+#if defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
+  if (g_initial_lookup_alert != CPU_ALERT_NONE)
+  {
+    riscv_set_cpu_alert_for_test(g_initial_lookup_alert);
+    g_initial_lookup_alert = CPU_ALERT_NONE;
+  }
+#endif
   g_trace_hash = fnv_u32(g_trace_hash, pc);
   for (i = 0; i < g_program.entry_count; i++)
   {
@@ -2002,6 +2225,10 @@ void _start(void)
       !run_workload(PERF_WORKLOAD_SCHEDULER) ||
       !run_workload(PERF_WORKLOAD_MIXED)
 #if defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
+#if defined(RISCV_RUNTIME_HAS_INDIRECT_LOOKUP_CACHE)
+      || !verify_indirect_lookup_scheduler_guards()
+      || !verify_indirect_lookup_cache_invalidation()
+#endif
       || !verify_indirect_lookup_miss_counter()
 #endif
       )

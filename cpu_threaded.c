@@ -3884,6 +3884,9 @@ void flush_translation_cache_ram(void)
   ewram_code_min = ~0U;
   ewram_code_max =  0U;
   ram_block_tag = INITIAL_TOP_TAG;
+#if defined(RISCV_RUNTIME_HAS_INDIRECT_LOOKUP_CACHE)
+  riscv_invalidate_indirect_lookup_cache();
+#endif
 #if defined(XTENSA_ARCH)
   xtensa_jit_flush_ram_cache();
 #endif
@@ -3896,6 +3899,9 @@ void flush_translation_cache_rom(void)
   rom_translation_ptr      = &rom_translation_cache[rom_cache_watermark];
 
   memset(rom_branch_hash, 0, sizeof(rom_branch_hash));
+#if defined(RISCV_RUNTIME_HAS_INDIRECT_LOOKUP_CACHE)
+  riscv_invalidate_indirect_lookup_cache();
+#endif
 #if defined(XTENSA_ARCH)
   xtensa_jit_flush_rom_cache();
 #endif
@@ -3915,6 +3921,9 @@ void init_dynarec_caches(void)
   ewram_code_max = 0x40000;
   iwram_code_min = 0;
   iwram_code_max = 0x8000;
+#if defined(RISCV_RUNTIME_HAS_INDIRECT_LOOKUP_CACHE)
+  riscv_invalidate_indirect_lookup_cache();
+#endif
 }
 
 void flush_dynarec_caches(void)

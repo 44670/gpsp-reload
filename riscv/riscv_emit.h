@@ -19,6 +19,11 @@
 #define RISCV_BRANCH_PATCH_BYTES 8
 #define RISCV_BRANCH_PATCH_SHORT_BYTES 4
 
+#if !defined(RISCV_RUNTIME_DISABLE_INDIRECT_LOOKUP_CACHE) || \
+    defined(RISCV_RUNTIME_INDIRECT_LOOKUP_PROFILE_SWITCH)
+#define RISCV_RUNTIME_HAS_INDIRECT_LOOKUP_CACHE 1
+#endif
+
 typedef struct riscv_jit_block_meta
 {
   u32 start_pc;
@@ -69,6 +74,8 @@ typedef struct riscv_runtime_stats
   u32 control_cycle_exits;
   u32 control_indirect_lookup_hits;
   u32 control_indirect_lookup_misses;
+  u32 control_indirect_cache_attempts;
+  u32 control_indirect_cache_hits;
   u32 control_fallthrough_lookup_hits;
   u32 control_fallthrough_lookup_misses;
   u32 control_scheduler_updates;
@@ -404,6 +411,11 @@ bool riscv_emit_cycle_update(u8 **translation_ptr,
 u32 execute_arm_translate(u32 cycles);
 u32 execute_arm_translate_internal(u32 cycles, void *regptr);
 void init_emitter(bool must_swap);
+void riscv_invalidate_indirect_lookup_cache(void);
+#if defined(RISCV_RUNTIME_STANDALONE_TEST) && \
+    defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
+void riscv_set_cpu_alert_for_test(cpu_alert_type alert);
+#endif
 void riscv_get_runtime_stats(riscv_runtime_stats *stats);
 void riscv_note_runtime_block_emit(u32 start_pc, u32 end_pc, u32 thumb,
                                    u32 code_bytes);

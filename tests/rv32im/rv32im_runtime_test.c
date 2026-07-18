@@ -2074,6 +2074,11 @@ static void reset_runtime_observations(u32 pc)
 {
   unsigned i;
 
+  /* Each case installs a new synthetic lookup universe without going through
+   * cpu_threaded.c's ROM/RAM flush functions. Model that lifecycle boundary
+   * explicitly so cached entries can never name a prior case's code. */
+  riscv_invalidate_indirect_lookup_cache();
+
   /* Preserve backend-owned REG_USERDEF storage across guest resets. */
   for (i = 0; i < REG_USERDEF; i++)
     reg[i] = 0;
