@@ -15,6 +15,7 @@ FRONTEND_CONTROL_INTERP := rv32im_frontend_control_interp
 FRONTEND_CACHE_JIT := rv32im_frontend_cache_jit
 BACKEND_COMPARE_RV32 := rv32im_backend_compare
 BACKEND_COMPARE_MIPS := mips_backend_compare
+GBA_MEMORY_DIFF_RV32 := rv32im_gba_memory_diff
 ABI_TEST := rv32im_abi_test
 EXEC_TEST := rv32im_exec_test
 RUNTIME_TEST := rv32im_runtime_test
@@ -48,6 +49,9 @@ BACKEND_COMPARE_RV32_FIFO := $(OUT_DIR)/rv32im_backend_compare_trace.fifo
 BACKEND_COMPARE_MIPS_FIFO := $(OUT_DIR)/mips_backend_compare_trace.fifo
 BACKEND_COMPARE_REPORT := $(OUT_DIR)/rv32im_mips_backend_compare_report.log
 BACKEND_COMPARE_ENV_LOG := $(OUT_DIR)/rv32im_mips_backend_compare_env.log
+GBA_MEMORY_DIFF_LOG := $(OUT_DIR)/rv32im_gba_memory_diff.log
+GBA_MEMORY_DIFF_REPEAT_LOG := $(OUT_DIR)/rv32im_gba_memory_diff_repeat.log
+GBA_MEMORY_DIFF_MANIFEST := rv32im_gba_memory_diff_manifest.txt
 ARMWRESTLER_PERF_BASELINE_LOG := $(OUT_DIR)/rv32im_armwrestler_perf_baseline.log
 ARMWRESTLER_PERF_OPTIMIZED_LOG := $(OUT_DIR)/rv32im_armwrestler_perf_optimized.log
 ARMWRESTLER_PERF_BASELINE_COUNTS := $(OUT_DIR)/rv32im_armwrestler_perf_baseline_counts.log
@@ -97,7 +101,8 @@ BACKEND_COMPARE_EXPECTED_RV_QEMU_VERSION ?= 10.0.8
 BACKEND_COMPARE_EXPECTED_MIPS_QEMU_VERSION ?= 10.0.8
 BACKEND_COMPARE_EXPECTED_MANIFEST_SHA256 := d8d245d7e40de679b09982e8ff387255c1b8cd06a27920381086f296c9223df8
 BACKEND_COMPARE_EXPECTED_ENVIRONMENT_SHA256 := b67f1516178fa87885bae48078b41cbada84091b078159508bb89c4f6d0513c6
-BACKEND_COMPARE_EXPECTED_SOURCE_SHA256 := 2e77932cc17d3b1943a38adb5b0c559ebd71d8e60cac9e6c0bc05d22f6bc1c6b
+BACKEND_COMPARE_EXPECTED_SOURCE_SHA256 := 367fd734c64acc11329766319c1f0117a7318292feca82763e5fb5269b22e1b8
+GBA_MEMORY_DIFF_EXPECTED_MANIFEST_SHA256 := d2d108c26e6e8c1aa01b6fc8f46cc56da80d03d2553941b3efc25fb6d961ad4e
 BACKEND_COMPARE_MEMORY_MIN_REDUCTION_PERCENT ?= 30
 BACKEND_COMPARE_MEMORY_COLD_RAW_MAX ?= 38500
 BACKEND_COMPARE_MEMORY_BYTES_MAX ?= 1900
@@ -207,7 +212,7 @@ HOST_CXX ?= c++
 LLVM_OBJCOPY ?= llvm-objcopy
 LLVM_NM ?= llvm-nm
 
-all: $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(FRONTEND_CONTROL_JIT) $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CACHE_JIT) $(BACKEND_COMPARE_RV32) $(BACKEND_COMPARE_MIPS) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP)
+all: $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(FRONTEND_CONTROL_JIT) $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CACHE_JIT) $(BACKEND_COMPARE_RV32) $(BACKEND_COMPARE_MIPS) $(GBA_MEMORY_DIFF_RV32) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP)
 
 $(HARNESS): rv32im_harness.c $(ROOT)/riscv/riscv_runtime.c \
 		$(ROOT)/riscv/riscv_emit.h $(ROOT)/riscv/riscv_codegen.h \
@@ -359,6 +364,48 @@ $(BACKEND_COMPARE_RV32): rv32im_backend_compare.c \
 		-include backend_compare_frontend_shim.h \
 		-o $@ rv32im_backend_compare.c $(ROOT)/cpu_threaded.c \
 		$(ROOT)/riscv/riscv_runtime.c
+
+$(OUT_DIR)/gba_memory_rv32_diff.o: $(ROOT)/gba_memory.c \
+		$(ROOT)/gba_memory.h $(ROOT)/common.h | $(OUT_DIR)
+	# Only production read sections survive --gc-sections.  Host headers supply
+	# declarations because this workspace has no RV32 libc sysroot; the float
+	# alias avoids an x86 glibc-only typedef that retained code never uses.
+	$(CLANG) --target=riscv32-linux-gnu --sysroot=/ \
+		-isystem /usr/include -isystem /usr/include/riscv64-linux-gnu \
+		-march=rv32im -mabi=ilp32 -std=c99 -O2 -ffreestanding \
+		-ffunction-sections -fdata-sections -fno-builtin \
+		'-D__float128=long double' \
+		-DHAVE_STRINGS_H -DHAVE_STDINT_H -DHAVE_INTTYPES_H \
+		-Dwrite_memory8=gba_memory_unused_write_memory8 \
+		-Dwrite_memory16=gba_memory_unused_write_memory16 \
+		-Dwrite_memory32=gba_memory_unused_write_memory32 \
+		-Dwrite_io_register8=gba_memory_unused_write_io_register8 \
+		-Dwrite_io_register16=gba_memory_unused_write_io_register16 \
+		-Dwrite_io_register32=gba_memory_unused_write_io_register32 \
+		-Dwrite_backup=gba_memory_unused_write_backup \
+		-Dwrite_eeprom=gba_memory_unused_write_eeprom \
+		-Dwrite_gpio=gba_memory_unused_write_gpio \
+		-Dload_gamepak_page=gba_memory_real_load_gamepak_page \
+		-I$(ROOT) -I$(ROOT)/libretro \
+		-I$(ROOT)/libretro/libretro-common/include -c $< -o $@
+
+$(GBA_MEMORY_DIFF_RV32): rv32im_backend_compare.c \
+		backend_compare_frontend_shim.h $(OUT_DIR)/gba_memory_rv32_diff.o \
+		$(ROOT)/riscv/riscv_runtime.c $(ROOT)/riscv/riscv_emit.h \
+		$(ROOT)/riscv/riscv_codegen.h \
+		$(ROOT)/riscv/riscv_runtime_test_shim.h
+	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) -ffunction-sections \
+		-fdata-sections -Wl,--gc-sections -Wl,--build-id=none \
+		-Wl,--wrap=gba_memory_real_load_gamepak_page \
+		-Wno-unused-function -Wno-unused-variable \
+		-DRISCV_RUNTIME_STANDALONE_TEST -DHAVE_DYNAREC -DRISCV_ARCH \
+		-DMMAP_JIT_CACHE -DBACKEND_COMPARE_RV32IM \
+		-DBACKEND_COMPARE_REAL_GBA_MEMORY \
+		-DRISCV_RUNTIME_ENABLE_FAST_RAM_READS \
+		-I. -I$(ROOT) -I$(ROOT)/riscv \
+		-include backend_compare_frontend_shim.h \
+		-o $@ rv32im_backend_compare.c $(ROOT)/riscv/riscv_runtime.c \
+		$(OUT_DIR)/gba_memory_rv32_diff.o
 
 $(OUT_DIR)/mips_backend_compare_main.o: rv32im_backend_compare.c \
 		backend_compare_frontend_shim.h \
@@ -664,7 +711,7 @@ armwrestler-perf: perf-env-check $(ARMWRESTLER_PERF_BASELINE) \
 	grep -q 'observed_results=79 failure_mask=0x00000000 fallbacks=0 fallback_events=0 execute_arm_calls=0' \
 		$(ARMWRESTLER_PERF_REPORT)
 
-armwrestler: armwrestler-interp armwrestler-jit armwrestler-perf
+armwrestler: armwrestler-interp armwrestler-jit armwrestler-perf gba-memory-diff
 	grep -q 'observed_results=79 failure_mask=0x00000000' $(ARMWRESTLER_INTERP_LOG)
 	grep -q 'observed_results=79 failure_mask=0x00000000' $(ARMWRESTLER_LOG)
 	grep -q 'native_blocks=[1-9][0-9]*' $(ARMWRESTLER_LOG)
@@ -834,7 +881,7 @@ backend-compare: backend-compare-env-check $(BACKEND_COMPARE_RV32) \
 	cmp $(BACKEND_COMPARE_RV32_LOG) $(BACKEND_COMPARE_RV32_REPEAT_LOG)
 	cmp $(BACKEND_COMPARE_MIPS_COUNTS) $(BACKEND_COMPARE_MIPS_REPEAT_COUNTS)
 	cmp $(BACKEND_COMPARE_MIPS_LOG) $(BACKEND_COMPARE_MIPS_REPEAT_LOG)
-	grep -Fq 'result=PASS command=backend-compare-fast-ram backend=rv32im cases=75 regions=ewram,iwram,slow-path widths=u8,s8,u16,s16,u32 alignment=0,1,2,3 mirroring=1 boundaries=0x01ffffff,0x04000000 pc_visibility=1 reference=gba_memory.c reason=fast_ram_reads_match_memory_contract' $(BACKEND_COMPARE_RV32_LOG)
+	grep -Fq 'result=PASS command=backend-compare-fast-ram backend=rv32im cases=75 regions=ewram,iwram,slow-path widths=u8,s8,u16,s16,u32 alignment=0,1,2,3 mirroring=1 boundaries=0x01ffffff,0x04000000 pc_visibility=1 reference=fixture_memory_model reason=fast_ram_reads_match_memory_contract' $(BACKEND_COMPARE_RV32_LOG)
 	awk -v spec_file=$(BACKEND_COMPARE_BASELINE_SPEC) \
 		-v rv_counts_file=$(BACKEND_COMPARE_RV32_COUNTS) \
 		-v rv_log_file=$(BACKEND_COMPARE_RV32_LOG) \
@@ -859,6 +906,24 @@ backend-compare: backend-compare-env-check $(BACKEND_COMPARE_RV32) \
 		tee $(BACKEND_COMPARE_REPORT)
 	grep -q 'result=PASS command=backend-compare workload=all phases=4' \
 		$(BACKEND_COMPARE_REPORT)
+
+gba-memory-diff: $(GBA_MEMORY_DIFF_RV32) $(GBA_MEMORY_DIFF_MANIFEST) | $(OUT_DIR)
+	$(QEMU_RISCV32) ./$(GBA_MEMORY_DIFF_RV32) | tee $(GBA_MEMORY_DIFF_LOG)
+	$(QEMU_RISCV32) ./$(GBA_MEMORY_DIFF_RV32) > $(GBA_MEMORY_DIFF_REPEAT_LOG)
+	cmp $(GBA_MEMORY_DIFF_LOG) $(GBA_MEMORY_DIFF_REPEAT_LOG)
+	grep -Fq 'result=PASS command=backend-compare-fast-ram backend=rv32im cases=75 regions=ewram,iwram,slow-path widths=u8,s8,u16,s16,u32 alignment=0,1,2,3 mirroring=1 boundaries=0x01ffffff,0x04000000 pc_visibility=1 reference=linked_gba_memory.c reason=fast_ram_reads_match_memory_contract' $(GBA_MEMORY_DIFF_LOG)
+	grep -Fq 'result=PASS command=gba-memory-diff backend=rv32im cases=75 source=gba_memory.c fast_path=riscv_fast_read harness_mode=qemu_user_real_memory reason=linked_real_memory_equal' $(GBA_MEMORY_DIFF_LOG)
+	$(LLVM_NM) $(GBA_MEMORY_DIFF_RV32) | grep -Eq ' [Tt] read_memory(8|16|32)$$'
+	@manifest_sha=`sha256sum $(GBA_MEMORY_DIFF_MANIFEST) | awk '{ print $$1 }'`; \
+	if test "$$manifest_sha" != "$(GBA_MEMORY_DIFF_EXPECTED_MANIFEST_SHA256)"; then \
+		echo "result=FAIL command=gba-memory-diff-env manifest_sha256=$$manifest_sha expected_manifest_sha256=$(GBA_MEMORY_DIFF_EXPECTED_MANIFEST_SHA256) reason=manifest_changed"; \
+		exit 1; \
+	fi; \
+	source_sha=`sha256sum $(ROOT)/gba_memory.c | awk '{ print $$1 }'`; \
+	runtime_sha=`sha256sum $(ROOT)/riscv/riscv_runtime.c | awk '{ print $$1 }'`; \
+	binary_sha=`sha256sum $(GBA_MEMORY_DIFF_RV32) | awk '{ print $$1 }'`; \
+	echo "result=PASS command=gba-memory-diff-env manifest_sha256=$$manifest_sha gba_memory_sha256=$$source_sha riscv_runtime_sha256=$$runtime_sha binary_sha256=$$binary_sha reason=source_identity_recorded" | tee -a $(GBA_MEMORY_DIFF_LOG)
+	grep -Eq '^result=PASS command=gba-memory-diff-env manifest_sha256=[0-9a-f]{64} gba_memory_sha256=[0-9a-f]{64} riscv_runtime_sha256=[0-9a-f]{64} binary_sha256=[0-9a-f]{64} reason=source_identity_recorded$$' $(GBA_MEMORY_DIFF_LOG)
 
 perf-env-check: $(PERF_WORKLOAD_MANIFEST) $(PERF_ENVIRONMENT_MANIFEST) | $(OUT_DIR)
 	@clang_version=`$(CLANG) --version | sed -n '1s/.* version \([0-9][0-9.]*\).*/\1/p'`; \
@@ -958,10 +1023,10 @@ perf: perf-env-check $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP) | $
 	awk -f rv32im_mapped_alu_parity.awk \
 		$(MAPPED_ALU_INTERP_LOG) $(MAPPED_ALU_JIT_LOG)
 
-test: codegen abi exec runtime perf frontend frontend-control frontend-cache backend-compare core-build rejects compare mixed smoke
+test: codegen abi exec runtime perf frontend frontend-control frontend-cache backend-compare gba-memory-diff core-build rejects compare mixed smoke
 
 clean:
-	rm -f $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(FRONTEND_CONTROL_JIT) $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CACHE_JIT) $(BACKEND_COMPARE_RV32) $(BACKEND_COMPARE_MIPS) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP)
+	rm -f $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(FRONTEND_CONTROL_JIT) $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CACHE_JIT) $(BACKEND_COMPARE_RV32) $(BACKEND_COMPARE_MIPS) $(GBA_MEMORY_DIFF_RV32) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP)
 	rm -rf $(OUT_DIR)
 
-.PHONY: all codegen abi exec runtime perf perf-env-check frontend frontend-control frontend-cache backend-compare backend-compare-env-check core-build smoke compare mixed rejects armwrestler-jit armwrestler-interp armwrestler-perf armwrestler armwrestler-report test clean
+.PHONY: all codegen abi exec runtime perf perf-env-check frontend frontend-control frontend-cache backend-compare backend-compare-env-check gba-memory-diff core-build smoke compare mixed rejects armwrestler-jit armwrestler-interp armwrestler-perf armwrestler armwrestler-report test clean

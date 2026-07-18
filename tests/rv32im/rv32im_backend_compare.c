@@ -59,15 +59,16 @@ u16 oam_ram[512];
 u16 io_registers[512];
 #endif
 
-u8 bios_rom[1024 * 16];
 u32 idle_loop_target_pc = 0xffffffffu;
 u32 translation_gate_targets;
 u32 translation_gate_target_pc[MAX_TRANSLATION_GATES];
-u32 gamepak_sticky_bit[1024 / 32];
 u32 cheat_master_hook = 0xffffffffu;
 u32 flush_ram_count;
 void *stdout;
 
+#if !defined(BACKEND_COMPARE_REAL_GBA_MEMORY)
+u8 bios_rom[1024 * 16];
+u32 gamepak_sticky_bit[1024 / 32];
 const u32 def_seq_cycles[16][2] =
 {
   { 1, 1 }, { 1, 1 }, { 3, 6 }, { 1, 1 },
@@ -75,6 +76,9 @@ const u32 def_seq_cycles[16][2] =
   { 3, 6 }, { 3, 6 }, { 5, 9 }, { 5, 9 },
   { 9, 17 }, { 9, 17 }, { 1, 1 }, { 1, 1 },
 };
+#else
+extern u32 gamepak_size;
+#endif
 
 const u8 bit_count[256] =
 {
@@ -397,7 +401,11 @@ static void init_memory_map(void)
   }
 }
 
+#if defined(BACKEND_COMPARE_REAL_GBA_MEMORY)
+u8 *__wrap_gba_memory_real_load_gamepak_page(u32 physical_index)
+#else
 u8 *load_gamepak_page(u32 physical_index)
+#endif
 {
   u32 offset = physical_index * ROM_PAGE_BYTES;
 
@@ -432,6 +440,7 @@ static u8 *address_ptr(u32 address)
   }
 }
 
+#if !defined(BACKEND_COMPARE_REAL_GBA_MEMORY)
 u32 function_cc read_memory8(u32 address)
 {
   return *address_ptr(address);
@@ -461,6 +470,7 @@ u32 function_cc read_memory32(u32 address)
   return ror32(load32(address_ptr(address & ~3u), 0),
                (address & 3u) * 8u);
 }
+#endif
 
 cpu_alert_type function_cc write_memory8(u32 address, u8 value)
 {
@@ -495,6 +505,7 @@ cpu_alert_type function_cc write_io_register32(u32 address, u32 value)
   return write_memory32(0x04000000u | (address & 0x3ffu), value);
 }
 
+#if !defined(BACKEND_COMPARE_REAL_GBA_MEMORY)
 u8 read_backup(u32 address)
 {
   (void)address;
@@ -511,6 +522,7 @@ u32 function_cc read_eeprom(void)
 {
   return 1u;
 }
+#endif
 
 void function_cc write_eeprom(u32 address, u32 value)
 {
@@ -865,7 +877,11 @@ static int verify_fast_ram_reads(void)
   put_raw(" regions=ewram,iwram,slow-path widths=u8,s8,u16,s16,u32 ");
   put_raw("alignment=0,1,2,3 mirroring=1 ");
   put_raw("boundaries=0x01ffffff,0x04000000 pc_visibility=1 ");
-  put_raw("reference=gba_memory.c ");
+#if defined(BACKEND_COMPARE_REAL_GBA_MEMORY)
+  put_raw("reference=linked_gba_memory.c ");
+#else
+  put_raw("reference=fixture_memory_model ");
+#endif
   put_raw("reason=fast_ram_reads_match_memory_contract\n");
   return 1;
 }
@@ -881,6 +897,19 @@ void _start(void)
 
   install_base_rom();
   init_memory_map();
+#if defined(BACKEND_COMPARE_REAL_GBA_MEMORY)
+  gamepak_size = sizeof(g_rom);
+  g_execute_arm_calls = 0;
+  passed = verify_fast_ram_reads();
+  put_raw("result=");
+  put_raw(passed ? "PASS" : "FAIL");
+  put_raw(" command=gba-memory-diff backend=rv32im cases=75 "
+          "source=gba_memory.c fast_path=riscv_fast_read "
+          "harness_mode=qemu_user_real_memory reason=");
+  put_raw(passed ? "linked_real_memory_equal" : "linked_real_memory_mismatch");
+  put_raw("\n");
+  sys_exit(passed ? 0 : 1);
+#else
   init_backend();
   g_execute_arm_calls = 0;
 #if defined(BACKEND_COMPARE_RV32IM)
@@ -918,4 +947,5 @@ void _start(void)
                    "real_frontend_workloads_failed");
   put_raw("\n");
   sys_exit(passed ? 0 : 1);
+#endif
 }
