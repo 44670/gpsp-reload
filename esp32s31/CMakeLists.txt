@@ -4,6 +4,8 @@ set(KORVO1_LCD_COMPAT_18MHZ "0" CACHE BOOL
     "Use the older 18 MHz Korvo-1 RGB timing profile")
 set(KORVO1_LCD_GPIO38_DISP "0" CACHE BOOL
     "Experimentally drive GPIO38 as the RGB DISP signal")
+set(GPSP_ESP32S31_PROFILE "0" CACHE BOOL
+    "Enable detailed gpSP phase and interrupted-PC profiling")
 
 # Keep generated configuration inside esp32s31/build/.
 if(NOT SDKCONFIG)

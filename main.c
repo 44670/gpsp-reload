@@ -52,6 +52,7 @@ void rand_seed(u32 data) {
 static unsigned update_timers(irq_type *irq_raised, unsigned completed_cycles)
 {
    unsigned i, ret = 0;
+   GPSP_PROFILE_START(profile_update_timers);
    for (i = 0; i < 4; i++)
    {
       if(timer[i].status == TIMER_INACTIVE)
@@ -88,6 +89,7 @@ static unsigned update_timers(irq_type *irq_raised, unsigned completed_cycles)
 
       timer[i].count += (timer[i].reload << timer[i].prescale);
    }
+   GPSP_PROFILE_STOP(GPSP_PROFILE_UPDATE_TIMERS, profile_update_timers);
    return ret;
 }
 
@@ -121,6 +123,7 @@ u32 function_cc update_gba(int remaining_cycles)
   u32 frame_complete = 0;
   irq_type irq_raised = IRQ_NONE;
   int dma_cycles;
+  GPSP_PROFILE_START(profile_update_gba);
   trace_update_gba(remaining_cycles);
 
   remaining_cycles = MAX(remaining_cycles, -64);
@@ -138,7 +141,10 @@ u32 function_cc update_gba(int remaining_cycles)
     // Timers can trigger DMA (usually sound) and consume cycles
     dma_cycles = update_timers(&irq_raised, completed_cycles);
     // Check for serial port IRQs as well.
-    if (update_serial(completed_cycles))
+    GPSP_PROFILE_START(profile_update_serial);
+    const bool serial_irq = update_serial(completed_cycles);
+    GPSP_PROFILE_STOP(GPSP_PROFILE_UPDATE_SERIAL, profile_update_serial);
+    if (serial_irq)
       irq_raised |= IRQ_SERIAL;
 
     // Video count tracks the video cycles remaining until the next event
@@ -166,7 +172,10 @@ u32 function_cc update_gba(int remaining_cycles)
           if(reg[OAM_UPDATED])
             oam_update_count++;
 
+          GPSP_PROFILE_START(profile_update_scanline);
           update_scanline();
+          GPSP_PROFILE_STOP(GPSP_PROFILE_UPDATE_SCANLINE,
+                            profile_update_scanline);
 
           // Trigger the HBlank DMAs if enabled
           for (i = 0; i < 4; i++)
@@ -294,7 +303,10 @@ u32 function_cc update_gba(int remaining_cycles)
   dma_cycles = MIN(64, dma_cycles);
   dma_cycles = MIN(execute_cycles, dma_cycles);
 
-  return (execute_cycles - dma_cycles) | changed_pc | frame_complete;
+  const u32 result =
+      (execute_cycles - dma_cycles) | changed_pc | frame_complete;
+  GPSP_PROFILE_STOP(GPSP_PROFILE_UPDATE_GBA, profile_update_gba);
+  return result;
 }
 
 void reset_gba(void)
@@ -419,4 +431,3 @@ unsigned main_write_savestate(u8* dst)
 
   return (unsigned int)(dst - startp);
 }
-

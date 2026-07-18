@@ -15,6 +15,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "gpsp_profile.h"
 
 #include <libretro.h>
 
@@ -45,6 +46,10 @@ static int64_t g_fps_window_start;
 static uint16_t g_joypad_mask;
 static unsigned g_touch_error_logs;
 static unsigned g_video_error_logs;
+#if GPSP_ESP32S31_PROFILE
+static uint32_t g_profile_last_frames;
+static bool g_profile_sampler_started;
+#endif
 
 static const char *lookup_variable(const char *key)
 {
@@ -179,6 +184,7 @@ static void video_cb(const void *data, unsigned width, unsigned height,
 
   const uint8_t *pixels = (const uint8_t *)data;
   const size_t row_bytes = ESP32S31_GBA_WIDTH * sizeof(uint16_t);
+  const uint32_t profile_hash = gpsp_profile_begin();
   for (unsigned y = 0; y < ESP32S31_GBA_HEIGHT; y++)
   {
     const uint8_t *row = pixels + (size_t)y * pitch;
@@ -188,6 +194,7 @@ static void video_cb(const void *data, unsigned width, unsigned height,
       g_frame_hash *= UINT32_C(16777619);
     }
   }
+  gpsp_profile_end(GPSP_PROFILE_FRAME_HASH, profile_hash);
 
   g_video_frames++;
   update_fps();
@@ -215,8 +222,10 @@ static void input_poll_cb(void)
 
   esp32s31_touch_point_t points[ESP32S31_GT1151_MAX_POINTS];
   size_t point_count = 0;
+  const uint32_t profile_touch = gpsp_profile_begin();
   const esp_err_t error = esp32s31_korvo1_touch_read(
       points, ESP32S31_GT1151_MAX_POINTS, &point_count);
+  gpsp_profile_end(GPSP_PROFILE_TOUCH_POLL, profile_touch);
   if (error != ESP_OK)
   {
     if (g_touch_error_logs < 3u)
@@ -432,6 +441,10 @@ void app_main(void)
          (unsigned)touch_ready);
   fflush(stdout);
 
+#if GPSP_ESP32S31_PROFILE
+  gpsp_profile_reset();
+  g_profile_last_frames = g_emulated_frames;
+#endif
   int64_t next_status = esp_timer_get_time() + STATUS_PERIOD_US;
   for (;;)
   {
@@ -442,9 +455,20 @@ void app_main(void)
     if (now >= next_status)
     {
       print_status();
+#if GPSP_ESP32S31_PROFILE
+      const uint32_t profile_frames =
+          g_emulated_frames - g_profile_last_frames;
+      g_profile_last_frames = g_emulated_frames;
+      gpsp_profile_print_window(profile_frames);
+      (void)gpsp_profile_sampler_dump_if_ready();
+      if (!g_profile_sampler_started)
+        g_profile_sampler_started = gpsp_profile_sampler_start();
+#endif
       next_status = now + STATUS_PERIOD_US;
     }
 
+    const uint32_t profile_delay = gpsp_profile_begin();
     vTaskDelay(1);
+    gpsp_profile_end(GPSP_PROFILE_FRAME_DELAY, profile_delay);
   }
 }

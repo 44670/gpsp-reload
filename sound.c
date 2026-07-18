@@ -398,6 +398,7 @@ u32 gbc_sound_master_volume;
 
 void render_gbc_sound()
 {
+  GPSP_PROFILE_START(profile_gbc_sound);
   u32 i, i2;
   gbc_sound_struct *gs = gbc_sound_channel;
   fixed16_16 sample_index, frequency_step;
@@ -412,7 +413,10 @@ void render_gbc_sound()
   fixed16_16 buffer_ticks = float_to_fp16_16((float)(tick_delta) *
                                              sound_frequency / GBC_BASE_RATE);
   if (!tick_delta)
+  {
+    GPSP_PROFILE_STOP(GPSP_PROFILE_GBC_SOUND, profile_gbc_sound);
     return;
+  }
 
   gbc_update_count++;
   gbc_sound_partial_ticks += fp16_16_fractional_part(buffer_ticks);
@@ -501,6 +505,7 @@ void render_gbc_sound()
   gbc_sound_last_cpu_ticks = cpu_ticks;
   gbc_sound_buffer_index =
    (gbc_sound_buffer_index + (buffer_ticks * 2)) % BUFFER_SIZE;
+  GPSP_PROFILE_STOP(GPSP_PROFILE_GBC_SOUND, profile_gbc_sound);
 }
 
 // Special thanks to blarrg for the LSFR frequency used in Meridian, as posted

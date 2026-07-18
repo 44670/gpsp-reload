@@ -401,7 +401,9 @@ static void audio_run(void)
       audio_samples_accumulator -= 1.0f;
    }
 
+   GPSP_PROFILE_START(profile_audio_drain);
    samples_produced = sound_read_samples(audio_sample_buffer, samples_to_read);
+   GPSP_PROFILE_STOP(GPSP_PROFILE_AUDIO_DRAIN, profile_audio_drain);
 
    /* Workaround for a RetroArch audio driver
     * limitation: a maximum of 1024 frames
@@ -1267,8 +1269,12 @@ void retro_run(void)
 {
    bool updated = false;
 
+   GPSP_PROFILE_START(profile_retro_run);
+   GPSP_PROFILE_START(profile_input);
+
    input_poll_cb();
    update_input();
+   GPSP_PROFILE_STOP(GPSP_PROFILE_INPUT, profile_input);
 
    rumble_frame_reset();
 
@@ -1343,7 +1349,9 @@ void retro_run(void)
    }
 
    /* This runs just a frame */
+   GPSP_PROFILE_START(profile_cpu_backend);
    cpu_backend_execute(execute_cycles);
+   GPSP_PROFILE_STOP(GPSP_PROFILE_CPU_BACKEND, profile_cpu_backend);
 
    if (rumble_cb) {
      // TODO: Add some user-option to select a rumble policy
@@ -1352,8 +1360,13 @@ void retro_run(void)
      rumble_cb(0, RETRO_RUMBLE_STRONG, MIN(strength, 0xffff) / 2);
    }
 
+   GPSP_PROFILE_START(profile_audio_run);
    audio_run();
+   GPSP_PROFILE_STOP(GPSP_PROFILE_AUDIO_RUN, profile_audio_run);
+
+   GPSP_PROFILE_START(profile_video_run);
    video_run();
+   GPSP_PROFILE_STOP(GPSP_PROFILE_VIDEO_RUN, profile_video_run);
 
    switch (serial_mode) {
    case SERIAL_MODE_RFU:
@@ -1366,6 +1379,8 @@ void retro_run(void)
 
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated)
       check_variables(false);
+
+   GPSP_PROFILE_STOP(GPSP_PROFILE_RETRO_RUN, profile_retro_run);
 }
 
 unsigned retro_api_version(void)

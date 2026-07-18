@@ -2096,6 +2096,7 @@ static cpu_alert_type dma_transfer_copy(
 
 cpu_alert_type dma_transfer(unsigned dma_chan, int *usedcycles)
 {
+  GPSP_PROFILE_START(profile_dma);
   dma_transfer_type *dmach = &dma[dma_chan];
   u32 src_ptr = 0x0FFFFFFF & dmach->source_address & (
                    dmach->length_type == DMA_16BIT ? ~1U : ~3U);
@@ -2156,6 +2157,7 @@ cpu_alert_type dma_transfer(unsigned dma_chan, int *usedcycles)
        def_seq_cycles[src_ptr >> 24][tfsizes - 1] +
        def_seq_cycles[dst_ptr >> 24][tfsizes - 1]);
 
+  GPSP_PROFILE_STOP(GPSP_PROFILE_DMA, profile_dma);
   return ret;
 }
 
@@ -2231,6 +2233,8 @@ u8 *load_gamepak_page(u32 physical_index)
   if(physical_index >= (gamepak_size >> 15))
     return &gamepak_buffers[0][0];
 
+  GPSP_PROFILE_START(profile_gamepak_page);
+
   u32 entry = evict_gamepak_page();
   u32 block_idx = entry / 32;
   u32 block_off = entry % 32;
@@ -2257,6 +2261,7 @@ u8 *load_gamepak_page(u32 physical_index)
   if (physical_index == 0)
     update_gpio_romregs();
 
+  GPSP_PROFILE_STOP(GPSP_PROFILE_GAMEPAK_PAGE, profile_gamepak_page);
   return swap_location;
 }
 

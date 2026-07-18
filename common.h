@@ -93,6 +93,17 @@
   #define GPSP_EXT_RAM_BSS
 #endif
 
+#if defined(GPSP_ESP32S31_PROFILE)
+  #include "gpsp_profile.h"
+  #define GPSP_PROFILE_START(name) \
+    const uint32_t name = gpsp_profile_begin()
+  #define GPSP_PROFILE_STOP(counter, name) \
+    gpsp_profile_end((counter), (name))
+#else
+  #define GPSP_PROFILE_START(name) ((void)0)
+  #define GPSP_PROFILE_STOP(counter, name) ((void)0)
+#endif
+
 #define GBA_SCREEN_WIDTH  (240)
 #define GBA_SCREEN_HEIGHT (160)
 #define GBA_SCREEN_PITCH  (240)

@@ -15,6 +15,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "gpsp_profile.h"
 #include "korvo1_pins.h"
 #include "rgb565_scale3x.h"
 #include "sdkconfig.h"
@@ -314,11 +315,13 @@ static bool finish_pending_frame(void)
   if (!s_lcd.pending)
     return true;
 
+  const uint32_t profile_wait = gpsp_profile_begin();
   const int64_t wait_start = esp_timer_get_time();
   const bool completed = wait_for_counter_change(
       &s_lcd.completed_frames, s_lcd.pending_completion,
       pdMS_TO_TICKS(LCD_FRAME_WAIT_MS));
   const uint32_t wait_us = (uint32_t)(esp_timer_get_time() - wait_start);
+  gpsp_profile_end(GPSP_PROFILE_LCD_WAIT, profile_wait);
   s_lcd.stats.last_wait_us = wait_us;
   if (wait_us > s_lcd.stats.max_wait_us)
     s_lcd.stats.max_wait_us = wait_us;
@@ -364,12 +367,14 @@ bool esp32s31_korvo1_lcd_present_rgb565(const void *pixels,
   }
 
   uint16_t *back = s_lcd.framebuffers[s_lcd.back_index];
+  const uint32_t profile_scale = gpsp_profile_begin();
   const int64_t scale_start = esp_timer_get_time();
   const bool scaled = esp32s31_rgb565_scale3x(
       back, ESP32S31_LCD_WIDTH * sizeof(uint16_t), pixels, width, height,
       pitch);
   const uint32_t scale_us =
       (uint32_t)(esp_timer_get_time() - scale_start);
+  gpsp_profile_end(GPSP_PROFILE_LCD_SCALE, profile_scale);
   s_lcd.stats.last_scale_us = scale_us;
   if (scale_us > s_lcd.stats.max_scale_us)
     s_lcd.stats.max_scale_us = scale_us;
@@ -380,14 +385,20 @@ bool esp32s31_korvo1_lcd_present_rgb565(const void *pixels,
   }
 
   if (s_lcd.fps_valid)
+  {
+    const uint32_t profile_overlay = gpsp_profile_begin();
     (void)esp32s31_rgb565_draw_fps(
         back, ESP32S31_LCD_WIDTH * sizeof(uint16_t), s_lcd.fps_x10);
+    gpsp_profile_end(GPSP_PROFILE_LCD_OVERLAY, profile_overlay);
+  }
 
   /* The old completion must not satisfy the wait for this submission. */
   (void)ulTaskNotifyTake(pdTRUE, 0);
   s_lcd.pending_completion = s_lcd.completed_frames;
+  const uint32_t profile_submit = gpsp_profile_begin();
   const esp_err_t error = esp_lcd_panel_draw_bitmap(
       s_lcd.panel, 0, 0, ESP32S31_LCD_WIDTH, ESP32S31_LCD_HEIGHT, back);
+  gpsp_profile_end(GPSP_PROFILE_LCD_SUBMIT, profile_submit);
   if (error != ESP_OK)
   {
     ESP_LOGE(TAG, "submit RGB framebuffer failed: %s",
