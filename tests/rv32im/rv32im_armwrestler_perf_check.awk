@@ -39,6 +39,8 @@ function capture_result(profile, test, prefix) {
   result_warm_mask[prefix] = field("warm_failure_mask")
   result_warm_code_added[prefix] = field("warm_code_bytes_added")
   result_jit_profile[prefix] = field("jit_profile")
+  result_mapped_alu_enabled[prefix] = field("mapped_alu_fastpath_enabled")
+  result_fast_ram_enabled[prefix] = field("fast_ram_reads_enabled")
   result_harness[prefix] = field("harness_mode")
 }
 
@@ -70,6 +72,9 @@ FILENAME == spec_file && /^benchmark_id=/ {
   spec_semantics = field("counter_semantics")
   spec_rdinstret_verified = field("rdinstret_csr_verified")
   spec_text_sha = field("text_sha256")
+  spec_optimization = field("isolated_optimization")
+  spec_baseline_mapped_alu = field("baseline_mapped_alu_fastpath_enabled")
+  spec_baseline_fast_ram = field("baseline_fast_ram_reads_enabled")
   next
 }
 
@@ -131,6 +136,8 @@ FILENAME == spec_file && /^summary=baseline/ {
   aggregate_warm_replays[profile] = field("warm_replays")
   aggregate_warm_code_added[profile] = field("warm_code_bytes_added")
   aggregate_jit_profile[profile] = field("jit_profile")
+  aggregate_mapped_alu_enabled[profile] = field("mapped_alu_fastpath_enabled")
+  aggregate_fast_ram_enabled[profile] = field("fast_ram_reads_enabled")
   aggregate_harness[profile] = field("harness_mode")
   next
 }
@@ -147,6 +154,9 @@ END {
       spec_semantics != "qemu_tb_instruction_sum" ||
       spec_rdinstret_verified != "0")
     fail("counter source/semantics were mislabeled")
+  if (spec_optimization != "fast_ram_reads" ||
+      spec_baseline_mapped_alu != "1" || spec_baseline_fast_ram != "0")
+    fail("frozen baseline did not isolate fast RAM reads")
 
   for (ti = 1; ti <= 8; ti++) {
     test = tests[ti]
@@ -179,9 +189,12 @@ END {
           result_warm_mask[prefix] != "0x00000000" ||
           result_warm_code_added[prefix] != "0")
         fail(prefix " warm replay was not a cache-stable equivalent run")
-      if (result_jit_profile[prefix] != "runtime_selected" ||
+      expected_fast_ram = profile == "baseline" ? "0" : "1"
+      if (result_jit_profile[prefix] != "fast_ram_reads_ab" ||
+          result_mapped_alu_enabled[prefix] != "1" ||
+          result_fast_ram_enabled[prefix] != expected_fast_ram ||
           result_harness[prefix] != "armwrestler_frontend_jit_only")
-        fail(prefix " did not run the real frontend profile-switch harness")
+        fail(prefix " did not run the isolated fast-RAM-read profile")
     }
 
     if (count_value["baseline:" cold_window] != spec_cold[test] ||
@@ -266,7 +279,9 @@ END {
         aggregate_interp_calls[profile] != "0" ||
         aggregate_warm_replays[profile] != "8" ||
         aggregate_warm_code_added[profile] != "0" ||
-        aggregate_jit_profile[profile] != "runtime_selected" ||
+        aggregate_jit_profile[profile] != "fast_ram_reads_ab" ||
+        aggregate_mapped_alu_enabled[profile] != "1" ||
+        aggregate_fast_ram_enabled[profile] != (profile == "baseline" ? "0" : "1") ||
         aggregate_harness[profile] != "armwrestler_frontend_jit_only")
       fail(profile " aggregate native/correctness contract changed")
   }
@@ -345,6 +360,9 @@ END {
       " cold_aggregate_regression_max_percent_x100=" \
         cold_aggregate_regression_max_x100 \
       " warm_min_reduction_percent_x100=" warm_min_reduction_x100 \
+      " isolated_optimization=fast_ram_reads mapped_alu_fastpath_enabled=1" \
+      " baseline_fast_ram_reads_enabled=0 optimized_fast_ram_reads_enabled=1" \
+      " repeatability=byte_exact" \
       " environment_manifest_sha256=" environment_sha \
       " text_sha256=" text_sha " reason=real_frontend_ab_verified"
 }

@@ -3309,6 +3309,11 @@ __asm__(
   ".text\n"
   ".align 2\n"
   ".macro riscv_fast_ram_ptr slow\n"
+  /* Bit 27 is clear in both work-RAM regions.  Most dynamic non-RAM reads in
+   * the real frontend target ROM, so reject that half of the GBA map in two
+   * instructions before falling through to the exact region test. */
+  "  slli t1, a0, 4\n"
+  "  bltz t1, \\slow\n"
   "  srli t1, a0, 25\n"
   "  addi t1, t1, -1\n"
   "  bnez t1, \\slow\n"

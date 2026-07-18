@@ -71,18 +71,17 @@ typedef unsigned int usize;
 #endif
 
 #if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
-#if defined(ARMWRESTLER_PERF_BASELINE_PROFILE)
-__attribute__((section(".data")))
-volatile u32 riscv_runtime_perf_disable_mapped_alu_fastpath = 1u;
-__attribute__((section(".data")))
-volatile u32 riscv_runtime_perf_disable_fast_ram_reads = 1u;
-#else
-__attribute__((section(".data")))
-volatile u32 riscv_runtime_perf_disable_mapped_alu_fastpath = 0u;
-__attribute__((section(".data")))
-volatile u32 riscv_runtime_perf_disable_fast_ram_reads = 0u;
+#if !defined(ARMWRESTLER_PERF_DISABLE_MAPPED_ALU_FASTPATH) || \
+    !defined(ARMWRESTLER_PERF_DISABLE_FAST_RAM_READS)
+#error "Armwrestler perf builds must select each optimization independently"
 #endif
-#define ARMWRESTLER_JIT_PROFILE "runtime_selected"
+__attribute__((section(".data")))
+volatile u32 riscv_runtime_perf_disable_mapped_alu_fastpath =
+  ARMWRESTLER_PERF_DISABLE_MAPPED_ALU_FASTPATH;
+__attribute__((section(".data")))
+volatile u32 riscv_runtime_perf_disable_fast_ram_reads =
+  ARMWRESTLER_PERF_DISABLE_FAST_RAM_READS;
+#define ARMWRESTLER_JIT_PROFILE "fast_ram_reads_ab"
 #elif defined(RISCV_RUNTIME_DISABLE_MAPPED_ALU_FASTPATH)
 #define ARMWRESTLER_JIT_PROFILE "mapped_alu_baseline"
 #else
@@ -872,6 +871,12 @@ static void print_summary(const char *result, const char *suite, u32 test_id,
   put_u32_dec(g_last_warm_code_bytes_added);
   put_raw(" jit_profile=");
   put_raw(ARMWRESTLER_JIT_PROFILE);
+#if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
+  put_raw(" mapped_alu_fastpath_enabled=");
+  put_u32_dec(!riscv_runtime_perf_disable_mapped_alu_fastpath);
+  put_raw(" fast_ram_reads_enabled=");
+  put_u32_dec(!riscv_runtime_perf_disable_fast_ram_reads);
+#endif
   put_raw(" harness_mode=armwrestler_frontend_jit_only reason=");
   put_raw(reason);
   put_raw("\n");
@@ -945,6 +950,12 @@ static void print_aggregate_summary(const char *result, const char *reason)
   put_u32_dec(g_warm_code_bytes_added_total);
   put_raw(" jit_profile=");
   put_raw(ARMWRESTLER_JIT_PROFILE);
+#if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
+  put_raw(" mapped_alu_fastpath_enabled=");
+  put_u32_dec(!riscv_runtime_perf_disable_mapped_alu_fastpath);
+  put_raw(" fast_ram_reads_enabled=");
+  put_u32_dec(!riscv_runtime_perf_disable_fast_ram_reads);
+#endif
   put_raw(" harness_mode=armwrestler_frontend_jit_only reason=");
   put_raw(reason);
   put_raw("\n");
