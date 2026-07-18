@@ -21,6 +21,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#if defined(__riscv) && defined(__riscv_xlen) && (__riscv_xlen == 32) && \
+    (!defined(RISCV_RUNTIME_STANDALONE_TEST) || \
+     defined(RISCV_RUNTIME_ENABLE_FAST_RAM_READS))
+#define RISCV_RUNTIME_HAS_FAST_RAM_READS 1
+#endif
+
 typedef u8 *(*riscv_jit_block_fn)(void);
 
 extern u32 rom_cache_watermark;
@@ -486,6 +492,7 @@ static void riscv_emit_mapped_regs_reload_mask(u8 **ptr_ref,
                                                 u32 reload_mask);
 #if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
 extern volatile u32 riscv_runtime_perf_disable_mapped_alu_fastpath;
+extern volatile u32 riscv_runtime_perf_disable_fast_ram_reads;
 #endif
 
 #if !defined(RISCV_RUNTIME_DISABLE_MAPPED_ALU_FASTPATH)
@@ -2572,6 +2579,26 @@ static void riscv_emit_c_call_stack_raw(u8 **ptr, u32 stack_offset)
   *ptr = translation_ptr;
 }
 
+#if defined(RISCV_RUNTIME_HAS_FAST_RAM_READS)
+static void riscv_emit_c_call_address_raw(u8 **ptr, uintptr_t target)
+{
+  u8 *translation_ptr = *ptr;
+  s32 offset = (s32)((u32)target - (u32)(uintptr_t)translation_ptr);
+  int64_t rounded = (int64_t)offset + 0x800;
+  s32 upper = (s32)(rounded >> 12);
+  s32 lower = (s32)((int64_t)offset - (int64_t)upper * 4096);
+
+#if defined(RISCV_RUNTIME_PERF_COUNTERS)
+  riscv_perf_helper_call_sites++;
+#endif
+
+  riscv_emit_auipc(riscv_reg_t0, (u32)upper);
+  riscv_emit_jalr(riscv_reg_ra, riscv_reg_t0, lower);
+
+  *ptr = translation_ptr;
+}
+#endif
+
 static void riscv_emit_c_call_stack(u8 **ptr, u32 stack_offset)
 {
   riscv_emit_mapped_regs_flush_dirty(ptr);
@@ -2582,6 +2609,103 @@ static void riscv_emit_c_call_stack(u8 **ptr, u32 stack_offset)
   riscv_mapped_valid_mask &= ~RISCV_MAPPED_CALLER_SAVED_MASK;
   riscv_mapped_dirty_mask &= ~RISCV_MAPPED_CALLER_SAVED_MASK;
   riscv_emit_mapped_regs_reload_mask(ptr, RISCV_MAPPED_CALLER_SAVED_MASK);
+}
+
+#if defined(RISCV_RUNTIME_DISABLE_READ_HELPER_OPT)
+#define riscv_emit_read_call_stack riscv_emit_c_call_stack
+#elif !defined(RISCV_RUNTIME_HAS_FAST_RAM_READS)
+/* Pure memory reads observe the explicit guest PC and memory subsystem state,
+ * but do not observe or mutate guest r0-r14.  Keep callee-saved mappings live,
+ * spill only dirty caller-saved mappings that the C ABI will clobber, and
+ * lazily reload caller-saved values if a later guest instruction needs them. */
+static void riscv_emit_read_call_stack(u8 **ptr, u32 stack_offset)
+{
+  u8 *translation_ptr = *ptr;
+
+  riscv_emit_sw(riscv_reg_a1, riscv_reg_s0, REG_PC * 4u);
+  *ptr = translation_ptr;
+  riscv_emit_mapped_regs_flush_mask(
+    ptr, riscv_mapped_dirty_mask & RISCV_MAPPED_CALLER_SAVED_MASK);
+  riscv_emit_c_call_stack_raw(ptr, stack_offset);
+#if defined(RISCV_RUNTIME_PERF_COUNTERS)
+  riscv_perf_mapped_invalidate_sites++;
+#endif
+  riscv_mapped_valid_mask &= ~RISCV_MAPPED_CALLER_SAVED_MASK;
+  riscv_mapped_dirty_mask &= ~RISCV_MAPPED_CALLER_SAVED_MASK;
+}
+#endif
+
+#if defined(RISCV_RUNTIME_HAS_FAST_RAM_READS)
+static void riscv_emit_read_call_address(u8 **ptr, uintptr_t target)
+{
+  u8 *translation_ptr = *ptr;
+
+  riscv_emit_sw(riscv_reg_a1, riscv_reg_s0, REG_PC * 4u);
+  *ptr = translation_ptr;
+  riscv_emit_mapped_regs_flush_mask(
+    ptr, riscv_mapped_dirty_mask & RISCV_MAPPED_CALLER_SAVED_MASK);
+  riscv_emit_c_call_address_raw(ptr, target);
+#if defined(RISCV_RUNTIME_PERF_COUNTERS)
+  riscv_perf_mapped_invalidate_sites++;
+#endif
+  riscv_mapped_valid_mask &= ~RISCV_MAPPED_CALLER_SAVED_MASK;
+  riscv_mapped_dirty_mask &= ~RISCV_MAPPED_CALLER_SAVED_MASK;
+}
+#endif
+
+static bool riscv_fast_ram_reads_enabled(void)
+{
+#if defined(RISCV_RUNTIME_HAS_FAST_RAM_READS)
+#if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
+  return !riscv_runtime_perf_disable_fast_ram_reads;
+#else
+  return true;
+#endif
+#else
+  return false;
+#endif
+}
+
+static void riscv_emit_memory_read_call_stack(u8 **ptr, u32 stack_offset)
+{
+#if defined(RISCV_RUNTIME_HAS_FAST_RAM_READS)
+  if (!riscv_fast_ram_reads_enabled())
+  {
+    riscv_emit_c_call_stack(ptr, stack_offset);
+    return;
+  }
+  /* The shared stub avoids the C ABI on EWRAM/IWRAM.  A slow-path tail call
+   * may clobber a3-a7, so retain the pure-read spill/lazy-reload contract at
+   * the call site.  The stub writes the PC only when it actually enters C. */
+  riscv_emit_mapped_regs_flush_mask(
+    ptr, riscv_mapped_dirty_mask & RISCV_MAPPED_CALLER_SAVED_MASK);
+  riscv_emit_c_call_stack_raw(ptr, stack_offset);
+#if defined(RISCV_RUNTIME_PERF_COUNTERS)
+  riscv_perf_mapped_invalidate_sites++;
+#endif
+  riscv_mapped_valid_mask &= ~RISCV_MAPPED_CALLER_SAVED_MASK;
+  riscv_mapped_dirty_mask &= ~RISCV_MAPPED_CALLER_SAVED_MASK;
+#else
+  riscv_emit_read_call_stack(ptr, stack_offset);
+#endif
+}
+
+static void riscv_emit_memory_read_call_stack_known(
+  u8 **ptr, u32 stack_offset, uintptr_t direct_target, bool known_nonram)
+{
+#if defined(RISCV_RUNTIME_HAS_FAST_RAM_READS)
+  if (riscv_fast_ram_reads_enabled() && known_nonram)
+  {
+    /* The frontend proved this site cannot reach EWRAM/IWRAM, so avoid a
+     * guaranteed-failed region dispatch while retaining the complete C path. */
+    riscv_emit_read_call_address(ptr, direct_target);
+    return;
+  }
+#else
+  (void)direct_target;
+  (void)known_nonram;
+#endif
+  riscv_emit_memory_read_call_stack(ptr, stack_offset);
 }
 
 static void riscv_emit_stateful_c_call_stack(u8 **ptr, u32 stack_offset,
@@ -3131,35 +3255,155 @@ static u32 function_cc riscv_store_u32(u32 address, u32 value)
   return alert;
 }
 
-static u32 function_cc riscv_read_u8_pc(u32 address, u32 pc)
+#if defined(RISCV_RUNTIME_DISABLE_READ_HELPER_OPT) || \
+    (defined(RISCV_RUNTIME_HAS_FAST_RAM_READS) && \
+     defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH))
+static u32 function_cc __attribute__((used, noinline))
+riscv_read_u8_pc(u32 address, u32 pc)
 {
   reg[REG_PC] = pc;
   return read_memory8(address);
 }
 
-static u32 function_cc riscv_read_u16_pc(u32 address, u32 pc)
+static u32 function_cc __attribute__((used, noinline))
+riscv_read_u16_pc(u32 address, u32 pc)
 {
   reg[REG_PC] = pc;
   return read_memory16(address);
 }
 
-static u32 function_cc riscv_read_u32_pc(u32 address, u32 pc)
+static u32 function_cc __attribute__((used, noinline))
+riscv_read_u32_pc(u32 address, u32 pc)
 {
   reg[REG_PC] = pc;
   return read_memory32(address);
 }
 
-static u32 function_cc riscv_read_s8_pc(u32 address, u32 pc)
+static u32 function_cc __attribute__((used, noinline))
+riscv_read_s8_pc(u32 address, u32 pc)
 {
   reg[REG_PC] = pc;
   return read_memory8s(address);
 }
 
-static u32 function_cc riscv_read_s16_pc(u32 address, u32 pc)
+static u32 function_cc __attribute__((used, noinline))
+riscv_read_s16_pc(u32 address, u32 pc)
 {
   reg[REG_PC] = pc;
   return read_memory16s(address);
 }
+#endif
+
+#if defined(RISCV_RUNTIME_HAS_FAST_RAM_READS)
+u32 riscv_fast_read_u8(u32 address, u32 pc);
+u32 riscv_fast_read_s8(u32 address, u32 pc);
+u32 riscv_fast_read_u16(u32 address, u32 pc);
+u32 riscv_fast_read_s16(u32 address, u32 pc);
+u32 riscv_fast_read_u32(u32 address, u32 pc);
+
+/* Shared ordinary-RAM read stubs.  Fast EWRAM/IWRAM paths touch only standard
+ * caller-saved scratch registers.  Non-RAM paths materialize the guest PC and
+ * tail-call the complete C memory subsystem; the emitted call site already
+ * spills and invalidates mapped caller-saved guest registers. */
+__asm__(
+  ".text\n"
+  ".align 2\n"
+  ".macro riscv_fast_ram_ptr slow\n"
+  "  srli t1, a0, 25\n"
+  "  addi t1, t1, -1\n"
+  "  bnez t1, \\slow\n"
+  "  slli t0, a0, 7\n"
+  "  bltz t0, .Lfast_iwram_\\@\n"
+  "  slli t0, a0, 14\n"
+  "  srli t0, t0, 14\n"
+  "  lla t1, ewram\n"
+  "  j .Lfast_ram_done_\\@\n"
+  ".Lfast_iwram_\\@:\n"
+  "  slli t0, a0, 17\n"
+  "  srli t0, t0, 17\n"
+  "  lla t1, iwram+32768\n"
+  ".Lfast_ram_done_\\@:\n"
+  "  add t0, t1, t0\n"
+  ".endm\n"
+
+  ".globl riscv_fast_read_u8\n"
+  ".type riscv_fast_read_u8, @function\n"
+  "riscv_fast_read_u8:\n"
+  "  riscv_fast_ram_ptr riscv_fast_read_u8_slow\n"
+  "  lbu a0, 0(t0)\n"
+  "  ret\n"
+  ".size riscv_fast_read_u8, .-riscv_fast_read_u8\n"
+
+  ".globl riscv_fast_read_s8\n"
+  ".type riscv_fast_read_s8, @function\n"
+  "riscv_fast_read_s8:\n"
+  "  riscv_fast_ram_ptr riscv_fast_read_s8_slow\n"
+  "  lb a0, 0(t0)\n"
+  "  ret\n"
+  ".size riscv_fast_read_s8, .-riscv_fast_read_s8\n"
+
+  ".globl riscv_fast_read_u16\n"
+  ".type riscv_fast_read_u16, @function\n"
+  "riscv_fast_read_u16:\n"
+  "  andi t2, a0, 1\n"
+  "  riscv_fast_ram_ptr riscv_fast_read_u16_slow\n"
+  "  sub t0, t0, t2\n"
+  "  lhu a0, 0(t0)\n"
+  "  beqz t2, 1f\n"
+  "  srli t0, a0, 8\n"
+  "  slli a0, a0, 24\n"
+  "  or a0, a0, t0\n"
+  "1:\n"
+  "  ret\n"
+  ".size riscv_fast_read_u16, .-riscv_fast_read_u16\n"
+
+  ".globl riscv_fast_read_s16\n"
+  ".type riscv_fast_read_s16, @function\n"
+  "riscv_fast_read_s16:\n"
+  "  andi t2, a0, 1\n"
+  "  riscv_fast_ram_ptr riscv_fast_read_s16_slow\n"
+  "  beqz t2, 1f\n"
+  "  lb a0, 0(t0)\n"
+  "  ret\n"
+  "1:\n"
+  "  lh a0, 0(t0)\n"
+  "  ret\n"
+  ".size riscv_fast_read_s16, .-riscv_fast_read_s16\n"
+
+  ".globl riscv_fast_read_u32\n"
+  ".type riscv_fast_read_u32, @function\n"
+  "riscv_fast_read_u32:\n"
+  "  andi t2, a0, 3\n"
+  "  riscv_fast_ram_ptr riscv_fast_read_u32_slow\n"
+  "  sub t0, t0, t2\n"
+  "  lw a0, 0(t0)\n"
+  "  beqz t2, 1f\n"
+  "  slli t2, t2, 3\n"
+  "  srl t0, a0, t2\n"
+  "  li t1, 32\n"
+  "  sub t1, t1, t2\n"
+  "  sll a0, a0, t1\n"
+  "  or a0, a0, t0\n"
+  "1:\n"
+  "  ret\n"
+  ".size riscv_fast_read_u32, .-riscv_fast_read_u32\n"
+
+  "riscv_fast_read_u8_slow:\n"
+  "  sw a1, 60(s0)\n"
+  "  tail read_memory8\n"
+  "riscv_fast_read_s8_slow:\n"
+  "  sw a1, 60(s0)\n"
+  "  tail read_memory8s\n"
+  "riscv_fast_read_u16_slow:\n"
+  "  sw a1, 60(s0)\n"
+  "  tail read_memory16\n"
+  "riscv_fast_read_s16_slow:\n"
+  "  sw a1, 60(s0)\n"
+  "  tail read_memory16s\n"
+  "riscv_fast_read_u32_slow:\n"
+  "  sw a1, 60(s0)\n"
+  "  tail read_memory32\n");
+#endif
 
 static u32 function_cc riscv_store_u8_pc(u32 address, u32 value, u32 pc)
 {
@@ -3193,16 +3437,55 @@ static uintptr_t riscv_helper_table[RISCV_HELPER_COUNT];
 
 static void riscv_init_helper_table(void)
 {
+#if defined(RISCV_RUNTIME_HAS_FAST_RAM_READS)
+#if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
+  if (riscv_runtime_perf_disable_fast_ram_reads)
+  {
+    riscv_helper_table[RISCV_HELPER_READ32] = (uintptr_t)riscv_read_u32_pc;
+    riscv_helper_table[RISCV_HELPER_READ8] = (uintptr_t)riscv_read_u8_pc;
+    riscv_helper_table[RISCV_HELPER_READ16] = (uintptr_t)riscv_read_u16_pc;
+    riscv_helper_table[RISCV_HELPER_READ8S] = (uintptr_t)riscv_read_s8_pc;
+    riscv_helper_table[RISCV_HELPER_READ16S] = (uintptr_t)riscv_read_s16_pc;
+  }
+  else
+#endif
+  {
+    riscv_helper_table[RISCV_HELPER_READ32] = (uintptr_t)riscv_fast_read_u32;
+    riscv_helper_table[RISCV_HELPER_READ8] = (uintptr_t)riscv_fast_read_u8;
+    riscv_helper_table[RISCV_HELPER_READ16] = (uintptr_t)riscv_fast_read_u16;
+    riscv_helper_table[RISCV_HELPER_READ8S] = (uintptr_t)riscv_fast_read_s8;
+    riscv_helper_table[RISCV_HELPER_READ16S] = (uintptr_t)riscv_fast_read_s16;
+  }
+#elif defined(RISCV_RUNTIME_DISABLE_READ_HELPER_OPT)
   riscv_helper_table[RISCV_HELPER_READ32] = (uintptr_t)riscv_read_u32_pc;
+#else
+  riscv_helper_table[RISCV_HELPER_READ32] = (uintptr_t)read_memory32;
+#endif
   riscv_helper_table[RISCV_HELPER_STORE32] = (uintptr_t)riscv_store_u32_pc;
+#if !defined(RISCV_RUNTIME_HAS_FAST_RAM_READS) && \
+    defined(RISCV_RUNTIME_DISABLE_READ_HELPER_OPT)
   riscv_helper_table[RISCV_HELPER_READ8] = (uintptr_t)riscv_read_u8_pc;
+#elif !defined(RISCV_RUNTIME_HAS_FAST_RAM_READS)
+  riscv_helper_table[RISCV_HELPER_READ8] = (uintptr_t)read_memory8;
+#endif
   riscv_helper_table[RISCV_HELPER_STORE8] = (uintptr_t)riscv_store_u8_pc;
+#if !defined(RISCV_RUNTIME_HAS_FAST_RAM_READS) && \
+    defined(RISCV_RUNTIME_DISABLE_READ_HELPER_OPT)
   riscv_helper_table[RISCV_HELPER_READ16] = (uintptr_t)riscv_read_u16_pc;
+#elif !defined(RISCV_RUNTIME_HAS_FAST_RAM_READS)
+  riscv_helper_table[RISCV_HELPER_READ16] = (uintptr_t)read_memory16;
+#endif
   riscv_helper_table[RISCV_HELPER_BLOCK_STORE32] = (uintptr_t)riscv_store_u32;
   riscv_helper_table[RISCV_HELPER_BLOCK_READ32] = (uintptr_t)read_memory32;
   riscv_helper_table[RISCV_HELPER_STORE16] = (uintptr_t)riscv_store_u16_pc;
+#if !defined(RISCV_RUNTIME_HAS_FAST_RAM_READS) && \
+    defined(RISCV_RUNTIME_DISABLE_READ_HELPER_OPT)
   riscv_helper_table[RISCV_HELPER_READ8S] = (uintptr_t)riscv_read_s8_pc;
   riscv_helper_table[RISCV_HELPER_READ16S] = (uintptr_t)riscv_read_s16_pc;
+#elif !defined(RISCV_RUNTIME_HAS_FAST_RAM_READS)
+  riscv_helper_table[RISCV_HELPER_READ8S] = (uintptr_t)read_memory8s;
+  riscv_helper_table[RISCV_HELPER_READ16S] = (uintptr_t)read_memory16s;
+#endif
   riscv_helper_table[RISCV_HELPER_EXECUTE_SPSR_RESTORE] =
     (uintptr_t)riscv_execute_spsr_restore;
   riscv_helper_table[RISCV_HELPER_STORE_SPSR] =
@@ -7704,6 +7987,43 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
     (const_register_offset_valid && const_register_offset == 0);
   bool writeback_overwritten_by_load = load && rd == rn;
   bool dead_post_index_writeback = writeback_overwritten_by_load && !pre_index;
+  bool known_nonram = false;
+
+  if (load && riscv_fast_ram_reads_enabled())
+  {
+    u32 const_base_address = 0;
+    u32 const_effective_address = 0;
+    bool const_base_address_valid = riscv_arm_const_reg_value(
+      rn, pc + 8u, const_mask, const_values, &const_base_address);
+    bool const_effective_address_valid = false;
+
+    if (const_base_address_valid)
+    {
+      if (!pre_index)
+      {
+        const_effective_address = const_base_address;
+        const_effective_address_valid = true;
+      }
+      else if (immediate_offset)
+      {
+        const_effective_address = up ? const_base_address + offset :
+                                       const_base_address - offset;
+        const_effective_address_valid = true;
+      }
+      else if (const_register_offset_valid)
+      {
+        const_effective_address = up ?
+          const_base_address + const_register_offset :
+          const_base_address - const_register_offset;
+        const_effective_address_valid = true;
+      }
+    }
+    if (const_effective_address_valid)
+    {
+      u32 region = const_effective_address >> 24;
+      known_nonram = region != 0x02u && region != 0x03u;
+    }
+  }
 
   if (cycles_emitted)
     *cycles_emitted = false;
@@ -7809,9 +8129,18 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
 
     riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_a1, pc);
     if (read_helper_stack_offset)
-      riscv_emit_c_call_stack(&ptr, read_helper_stack_offset);
+    {
+      uintptr_t direct_target = mem_type == 2 ?
+        (uintptr_t)read_memory8s : (uintptr_t)read_memory16s;
+      riscv_emit_memory_read_call_stack_known(
+        &ptr, read_helper_stack_offset, direct_target, known_nonram);
+    }
     else
-      riscv_emit_c_call_stack(&ptr, RISCV_STACK_HELPER_READ16);
+    {
+      riscv_emit_memory_read_call_stack_known(
+        &ptr, RISCV_STACK_HELPER_READ16, (uintptr_t)read_memory16,
+        known_nonram);
+    }
     riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_a0);
     if (rd == REG_PC)
       meta->flags |= RISCV_BLOCK_PC_WRITTEN;
@@ -8032,6 +8361,43 @@ bool riscv_emit_native_arm_access_memory_ex_const(
     (const_register_offset_valid && const_register_offset == 0);
   bool writeback_overwritten_by_load = load && rd == rn;
   bool dead_post_index_writeback = writeback_overwritten_by_load && !pre_index;
+  bool known_nonram = false;
+
+  if (load && riscv_fast_ram_reads_enabled())
+  {
+    u32 const_base_address = 0;
+    u32 const_effective_address = 0;
+    bool const_base_address_valid = riscv_arm_const_reg_value(
+      rn, pc + 8u, const_mask, const_values, &const_base_address);
+    bool const_effective_address_valid = false;
+
+    if (const_base_address_valid)
+    {
+      if (!pre_index)
+      {
+        const_effective_address = const_base_address;
+        const_effective_address_valid = true;
+      }
+      else if (!register_offset)
+      {
+        const_effective_address = up ? const_base_address + offset :
+                                       const_base_address - offset;
+        const_effective_address_valid = true;
+      }
+      else if (const_register_offset_valid)
+      {
+        const_effective_address = up ?
+          const_base_address + const_register_offset :
+          const_base_address - const_register_offset;
+        const_effective_address_valid = true;
+      }
+    }
+    if (const_effective_address_valid)
+    {
+      u32 region = const_effective_address >> 24;
+      known_nonram = region != 0x02u && region != 0x03u;
+    }
+  }
 
   if (cycles_emitted)
     *cycles_emitted = false;
@@ -8134,9 +8500,13 @@ bool riscv_emit_native_arm_access_memory_ex_const(
   {
     riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_a1, pc);
     if (byte)
-      riscv_emit_c_call_stack(&ptr, RISCV_STACK_HELPER_READ8);
+      riscv_emit_memory_read_call_stack_known(
+        &ptr, RISCV_STACK_HELPER_READ8, (uintptr_t)read_memory8,
+        known_nonram);
     else
-      riscv_emit_c_call_stack(&ptr, RISCV_STACK_HELPER_READ32);
+      riscv_emit_memory_read_call_stack_known(
+        &ptr, RISCV_STACK_HELPER_READ32, (uintptr_t)read_memory32,
+        known_nonram);
     riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_a0);
     if (rd == REG_PC)
       meta->flags |= RISCV_BLOCK_PC_WRITTEN;
@@ -9373,6 +9743,7 @@ bool riscv_emit_native_thumb_access_memory(u8 **translation_ptr_ref,
   bool reg_offset = false;
   bool pc_relative = false;
   bool sp_relative = false;
+  bool known_nonram = false;
   u8 *ptr = *translation_ptr_ref;
   u8 *translation_ptr;
 
@@ -9468,6 +9839,11 @@ bool riscv_emit_native_thumb_access_memory(u8 **translation_ptr_ref,
 
   if (pc_relative)
   {
+    if (riscv_fast_ram_reads_enabled())
+    {
+      u32 region = offset >> 24;
+      known_nonram = region != 0x02u && region != 0x03u;
+    }
     riscv_emit_li(&ptr, riscv_reg_a0, offset);
   }
   else
@@ -9495,19 +9871,29 @@ bool riscv_emit_native_thumb_access_memory(u8 **translation_ptr_ref,
     switch (mem_type)
     {
       case 0:
-        riscv_emit_c_call_stack(&ptr, RISCV_STACK_HELPER_READ32);
+        riscv_emit_memory_read_call_stack_known(
+          &ptr, RISCV_STACK_HELPER_READ32, (uintptr_t)read_memory32,
+          known_nonram);
         break;
       case 1:
-        riscv_emit_c_call_stack(&ptr, RISCV_STACK_HELPER_READ16);
+        riscv_emit_memory_read_call_stack_known(
+          &ptr, RISCV_STACK_HELPER_READ16, (uintptr_t)read_memory16,
+          known_nonram);
         break;
       case 2:
-        riscv_emit_c_call_stack(&ptr, RISCV_STACK_HELPER_READ8);
+        riscv_emit_memory_read_call_stack_known(
+          &ptr, RISCV_STACK_HELPER_READ8, (uintptr_t)read_memory8,
+          known_nonram);
         break;
       case 3:
-        riscv_emit_c_call_stack(&ptr, RISCV_STACK_HELPER_READ8S);
+        riscv_emit_memory_read_call_stack_known(
+          &ptr, RISCV_STACK_HELPER_READ8S, (uintptr_t)read_memory8s,
+          known_nonram);
         break;
       default:
-        riscv_emit_c_call_stack(&ptr, RISCV_STACK_HELPER_READ16S);
+        riscv_emit_memory_read_call_stack_known(
+          &ptr, RISCV_STACK_HELPER_READ16S, (uintptr_t)read_memory16s,
+          known_nonram);
         break;
     }
 

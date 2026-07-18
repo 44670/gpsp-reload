@@ -190,12 +190,13 @@ END {
       fail(test " no longer reproduces the frozen baseline")
     if ((result_code["optimized:" test] + 0) > (result_code["baseline:" test] + 0))
       fail(test " generated code size regressed")
-    if (mode == "arm" && (count_value["optimized:" warm_window] + 0) > (count_value["baseline:" warm_window] + 0))
-      fail(test " warm execution regressed")
-    if (mode == "thumb" && (count_value["optimized:" warm_window] != count_value["baseline:" warm_window] || result_code["optimized:" test] != result_code["baseline:" test]))
-      fail(test " changed outside the ARM-only optimization scope")
-    if ((count_value["optimized:" cold_window] + 0) * 100 > (count_value["baseline:" cold_window] + 0) * 101)
-      fail(test " cold translation/execution regressed by more than one percent")
+    if ((count_value["optimized:" warm_window] + 0) >= \
+        (count_value["baseline:" warm_window] + 0))
+      fail(test " did not improve warm execution")
+    if ((count_value["optimized:" cold_window] + 0) * 10000 > \
+        (count_value["baseline:" cold_window] + 0) * \
+          (10000 + cold_per_test_regression_max_x100))
+      fail(test " cold translation/execution exceeded the per-test budget")
 
     require_equal("optimized", test, "blocks_emitted",
                   result_blocks["optimized:" test],
@@ -274,9 +275,21 @@ END {
       totals["baseline:all:cold"] != spec_summary_cold ||
       totals["baseline:all:warm"] != spec_summary_warm)
     fail("aggregate baseline no longer matches the frozen specification")
-  if ((aggregate_arm_code["optimized"] + 0) >= (aggregate_arm_code["baseline"] + 0) ||
-      aggregate_thumb_code["optimized"] != aggregate_thumb_code["baseline"])
-    fail("aggregate code-size result changed or did not improve")
+  if ((aggregate_arm_code["optimized"] + 0) >= \
+        (aggregate_arm_code["baseline"] + 0) ||
+      (aggregate_thumb_code["optimized"] + 0) >= \
+        (aggregate_thumb_code["baseline"] + 0))
+    fail("ARM or Thumb aggregate code size did not improve")
+  if (totals["optimized:all:cold"] * 10000 > \
+      totals["baseline:all:cold"] * \
+        (10000 + cold_aggregate_regression_max_x100))
+    fail("aggregate cold translation/execution exceeded its budget")
+  if ((totals["baseline:all:warm"] - totals["optimized:all:warm"]) * \
+        10000 < totals["baseline:all:warm"] * warm_min_reduction_x100)
+    fail("aggregate warm improvement was below the required reduction")
+  if (totals["optimized:arm:warm"] >= totals["baseline:arm:warm"] ||
+      totals["optimized:thumb:warm"] >= totals["baseline:thumb:warm"])
+    fail("ARM or Thumb aggregate warm execution did not improve")
   require_equal("optimized", "all", "blocks_emitted",
                 aggregate_blocks["optimized"], aggregate_blocks["baseline"])
   require_equal("optimized", "all", "native blocks",
@@ -327,6 +340,11 @@ END {
       " fallback_events=0 execute_arm_calls=0 warm_replays=8" \
       " warm_code_bytes_added=0 counter_source=qemu_exec_trace" \
       " counter_semantics=qemu_tb_instruction_sum rdinstret_csr_verified=0" \
+      " cold_per_test_regression_max_percent_x100=" \
+        cold_per_test_regression_max_x100 \
+      " cold_aggregate_regression_max_percent_x100=" \
+        cold_aggregate_regression_max_x100 \
+      " warm_min_reduction_percent_x100=" warm_min_reduction_x100 \
       " environment_manifest_sha256=" environment_sha \
       " text_sha256=" text_sha " reason=real_frontend_ab_verified"
 }

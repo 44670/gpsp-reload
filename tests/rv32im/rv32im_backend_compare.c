@@ -50,8 +50,8 @@ u32 reg[REG_MAX];
 u32 spsr[6];
 u32 reg_mode[7][7];
 u8 *memory_map_read[8 * 1024];
-u8 ewram[1024 * 256 * 2];
-u8 iwram[1024 * 32 * 2];
+u8 ewram[1024 * 256 * 2] __attribute__((aligned(4)));
+u8 iwram[1024 * 32 * 2] __attribute__((aligned(4)));
 u8 vram[1024 * 96];
 u16 palette_ram[512];
 u16 palette_ram_converted[512];
@@ -451,6 +451,8 @@ u32 function_cc read_memory16(u32 address)
 
 u32 function_cc read_memory16s(u32 address)
 {
+  if (address & 1u)
+    return (u32)(s32)(s8)read_memory8(address);
   return (u32)(s32)(s16)read_memory16(address);
 }
 
@@ -763,6 +765,112 @@ static void init_backend(void)
   init_emitter(false);
 }
 
+#if defined(BACKEND_COMPARE_RV32IM)
+u32 riscv_fast_read_u8(u32 address, u32 pc);
+u32 riscv_fast_read_s8(u32 address, u32 pc);
+u32 riscv_fast_read_u16(u32 address, u32 pc);
+u32 riscv_fast_read_s16(u32 address, u32 pc);
+u32 riscv_fast_read_u32(u32 address, u32 pc);
+u32 backend_compare_call_fast_read(u32 address, u32 pc,
+                                   u32 (*target)(u32, u32));
+
+__asm__(
+  ".text\n"
+  ".align 2\n"
+  ".globl backend_compare_call_fast_read\n"
+  ".type backend_compare_call_fast_read, @function\n"
+  "backend_compare_call_fast_read:\n"
+  "  addi sp, sp, -16\n"
+  "  sw ra, 12(sp)\n"
+  "  sw s0, 8(sp)\n"
+  "  lla s0, reg\n"
+  "  jalr ra, a2, 0\n"
+  "  lw s0, 8(sp)\n"
+  "  lw ra, 12(sp)\n"
+  "  addi sp, sp, 16\n"
+  "  ret\n"
+  ".size backend_compare_call_fast_read, "
+  ".-backend_compare_call_fast_read\n");
+
+static int verify_fast_ram_reads(void)
+{
+  static const u32 addresses[] =
+  {
+    0x02000000u, 0x02000001u, 0x02000002u, 0x02007ffdu,
+    0x0203fffcu, 0x02fc1235u, 0x03000000u, 0x03000002u,
+    0x03000003u, 0x03007ffdu, 0x03ff9235u, 0x01ffffffu,
+    0x04000000u, 0x08000001u, 0x0d000002u,
+  };
+  u32 i;
+  u32 byte_count;
+  u32 cases = 0;
+
+  for (i = 0; i < 0x40000u; i++)
+    ewram[i] = (u8)(i * 37u + (i >> 8) * 11u + 0x53u);
+  for (i = 0; i < 0x8000u; i++)
+    iwram[0x8000u + i] = (u8)(i * 29u + (i >> 7) * 13u + 0xa7u);
+
+#define CHECK_FAST_READ(width_name, fast_fn, reference_fn)                    \
+  do                                                                          \
+  {                                                                           \
+    u32 address = addresses[i];                                               \
+    bool fast_ram = (address >> 25) == 1u;                                    \
+    u32 expected;                                                             \
+    u32 actual;                                                               \
+    reg[REG_PC] = 0x08001234u;                                                \
+    expected = reference_fn(address);                                         \
+    reg[REG_PC] = 0x0800abcdu;                                                \
+    actual = backend_compare_call_fast_read(                                 \
+      address, 0x08001234u, fast_fn);                                        \
+    cases++;                                                                  \
+    if (actual != expected)                                                   \
+    {                                                                         \
+      put_raw("result=FAIL command=backend-compare-fast-ram width="          \
+              width_name " address=");                                      \
+      put_u32_hex(address);                                                   \
+      put_raw(" expected=");                                                \
+      put_u32_hex(expected);                                                   \
+      put_raw(" actual=");                                                  \
+      put_u32_hex(actual);                                                     \
+      put_raw(" reason=fast_ram_value_mismatch\n");                         \
+      return 0;                                                               \
+    }                                                                         \
+    if ((fast_ram && reg[REG_PC] != 0x0800abcdu) ||                           \
+        (!fast_ram && reg[REG_PC] != 0x08001234u))                            \
+    {                                                                         \
+      put_raw("result=FAIL command=backend-compare-fast-ram width="          \
+              width_name " address=");                                      \
+      put_u32_hex(address);                                                   \
+      put_raw(" pc=");                                                      \
+      put_u32_hex(reg[REG_PC]);                                               \
+      put_raw(" reason=fast_ram_pc_visibility_mismatch\n");                 \
+      return 0;                                                               \
+    }                                                                         \
+  } while (0)
+
+  byte_count = (u32)(sizeof(addresses) / sizeof(addresses[0]));
+  for (i = 0; i < byte_count; i++)
+  {
+    CHECK_FAST_READ("u8", riscv_fast_read_u8, read_memory8);
+    CHECK_FAST_READ("s8", riscv_fast_read_s8, read_memory8s);
+    CHECK_FAST_READ("u16", riscv_fast_read_u16, read_memory16);
+    CHECK_FAST_READ("s16", riscv_fast_read_s16, read_memory16s);
+    CHECK_FAST_READ("u32", riscv_fast_read_u32, read_memory32);
+  }
+#undef CHECK_FAST_READ
+
+  put_raw("result=PASS command=backend-compare-fast-ram backend=rv32im ");
+  put_raw("cases=");
+  put_u32_dec(cases);
+  put_raw(" regions=ewram,iwram,slow-path widths=u8,s8,u16,s16,u32 ");
+  put_raw("alignment=0,1,2,3 mirroring=1 ");
+  put_raw("boundaries=0x01ffffff,0x04000000 pc_visibility=1 ");
+  put_raw("reference=gba_memory.c ");
+  put_raw("reason=fast_ram_reads_match_memory_contract\n");
+  return 1;
+}
+#endif
+
 void _start(void)
 {
   int passed;
@@ -775,8 +883,13 @@ void _start(void)
   init_memory_map();
   init_backend();
   g_execute_arm_calls = 0;
-  passed = run_workload("mapped_alu", install_mapped_alu,
-                        MAPPED_ALU_WORDS, MAPPED_ALU_CYCLES);
+#if defined(BACKEND_COMPARE_RV32IM)
+  passed = verify_fast_ram_reads();
+#else
+  passed = 1;
+#endif
+  passed &= run_workload("mapped_alu", install_mapped_alu,
+                         MAPPED_ALU_WORDS, MAPPED_ALU_CYCLES);
   passed &= run_workload("memory_read", install_memory_read,
                          MEMORY_READ_WORDS, MEMORY_READ_CYCLES);
 #if defined(BACKEND_COMPARE_RV32IM)

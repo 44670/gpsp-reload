@@ -74,9 +74,13 @@ typedef unsigned int usize;
 #if defined(ARMWRESTLER_PERF_BASELINE_PROFILE)
 __attribute__((section(".data")))
 volatile u32 riscv_runtime_perf_disable_mapped_alu_fastpath = 1u;
+__attribute__((section(".data")))
+volatile u32 riscv_runtime_perf_disable_fast_ram_reads = 1u;
 #else
 __attribute__((section(".data")))
 volatile u32 riscv_runtime_perf_disable_mapped_alu_fastpath = 0u;
+__attribute__((section(".data")))
+volatile u32 riscv_runtime_perf_disable_fast_ram_reads = 0u;
 #endif
 #define ARMWRESTLER_JIT_PROFILE "runtime_selected"
 #elif defined(RISCV_RUNTIME_DISABLE_MAPPED_ALU_FASTPATH)
@@ -117,8 +121,8 @@ const u32 def_seq_cycles[16][2] =
   { 9, 17 }, { 9, 17 }, { 1, 1 }, { 1, 1 },
 };
 u8 *memory_map_read[8 * 1024];
-u8 ewram[1024 * 256 * 2];
-u8 iwram[1024 * 32 * 2];
+u8 ewram[1024 * 256 * 2] __attribute__((aligned(4)));
+u8 iwram[1024 * 32 * 2] __attribute__((aligned(4)));
 u16 io_registers[512];
 u32 cheat_master_hook = 0xffffffffu;
 u32 flush_ram_count;
@@ -499,6 +503,8 @@ u32 function_cc read_memory16(u32 address)
 
 u32 function_cc read_memory16s(u32 address)
 {
+  if (address & 1u)
+    return (u32)((s8)read_memory8(address));
   return (u32)((s16)read_memory16(address));
 }
 

@@ -175,8 +175,18 @@ collapses/extracts CPSR flags at helper boundaries that observe or mutate CPSR.
 
 The current RV32IM backend maps guest `r0..r4` to `a3..a7`, `r5..r14` to
 `s1..s10`, keeps packed NZCV in `s11`, and reserves `s0` as the CPU-state base.
-Caller-saved mappings are flushed/reloaded around standard C helpers, while
-stateful helpers invalidate or reload the full mapping as required. Therefore:
+Conservative standard-C and stateful helpers still materialize the mappings
+they may observe and invalidate/reload the mappings they may mutate. Ordinary
+reads now use a narrower proven contract:
+
+| Read boundary | State synchronization | RV32 psABI behavior |
+| --- | --- | --- |
+| EWRAM/IWRAM leaf | Spill dirty mapped `a3-a7`; keep `s1-s11` live; do not materialize PC unless the slow tail is taken | Shared stub uses `a0`, `t0-t2`; returns the value in `a0`; emitted code lazily reloads invalidated caller-saved mappings |
+| Dynamic non-RAM slow tail | Same conservative caller-saved spill; store the current guest PC before device/open-bus logic | Tail-call the complete `read_memory*` C helper; standard callee-saved registers remain valid |
+| Frontend-proven non-RAM | Store guest PC, spill dirty caller-saved mappings, keep callee-saved mappings live | PC-relative `auipc`/`jalr` call directly to the standard C helper, skipping only the known-failing RAM test |
+| Store, alerting, or stateful helper | Existing full observation/mutation boundary | Standard psABI call and explicit mapped-state reload/invalidation policy |
+
+Therefore:
 
 - keep helper calls psABI-correct
 - do not keep guest values live across C calls unless the stub saves them
@@ -198,8 +208,11 @@ handlers, palette/OAM special stores, ROM page loading, memory-op patching, and
 SMC checks. I/O writes can return CPU alert bits that force SMC flush, IRQ
 handling, HALT/sleep, or PC lookup.
 
-RV32IM can start with helper-backed memory paths, but the backend must still
-honor:
+RV32IM now has an explicit fast allowlist for EWRAM/IWRAM reads only. Unsigned
+and signed byte/halfword plus word leaf stubs reproduce the memory masks and
+unaligned semantics in `gba_memory.c`; the two backing arrays have explicit
+four-byte alignment for native `lh`/`lw`. Every non-allowlisted read and every
+store remains on the complete helper path. The backend must still honor:
 
 - RAM-code writes triggering `flush_translation_cache_ram()`
 - I/O write alerts routing through the scheduler/lookup logic
@@ -262,6 +275,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 | Unsafe PSR/register combinations | explicit reject | `rejects runtime` pins `MRS r15,CPSR`, `MSR CPSR,r15`, and related non-AL direct-emitter rejection rules. |
 | Word/byte memory without PC writes | native+compare | `compare` covers helper loads/stores, PC-relative memory, register-offset memory, shifted register-offset memory, writeback, source-PC stores, IO observation, and remaining-cycle handoffs. ROM/same-page/aligned ARM `LDR rd, [pc, #imm]` literal-pool loads are direct constants, matching the existing Thumb literal-pool strategy. |
 | Halfword/signed memory without PC writes | native+compare | `compare` covers immediate, PC-relative, register-offset, PC-register-offset, writeback, post-index, signed/unsigned helper loads, stores, and ordering. |
+| Ordinary EWRAM/IWRAM reads | native+compare+ratcheted | Shared RV32 leaf stubs cover `u8/s8/u16/s16/u32`, 18/15-bit mirroring, alignments 0-3, unsigned rotate semantics, and signed odd-halfword byte extension. `backend-compare` directly checks 75 fast/slow-boundary value and PC-visibility cases against the `gba_memory.c` contract; all other regions retain the complete C slow path. |
 | Immediate load-to-PC memory | native+compare | `LDR pc`, `LDRB pc`, `LDRH pc`, `LDRSB pc`, and `LDRSH pc` have boundary, remaining-cycle, and native-target chaining compare coverage. |
 | Register-offset `LDRH pc` | native+compare | Standalone qemu-user and runtime `compare` proofs cover boundary, remaining-cycle, and native-target chaining. |
 | Register-offset `LDRSB pc` / `LDRSH pc` | native+compare | Standalone qemu-user and runtime `compare` proofs cover boundary, remaining-cycle, and native-target chaining. |
@@ -276,9 +290,10 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 | Scheduler exits, update_gba(), frame completion, fallback buckets | native+compare | `run runtime`, `cont runtime`, `sched runtime`, `counters runtime`, and `compare` pin update/refill, PC-change, frame-complete, fallback source breakdown, and snapshot hashes. |
 | Mixed contract chain across semantic boundaries | native+compare | `mixed` runs native data processing, helper-backed load, PC-writing load into a native target, alerting helper-backed store, scheduler refill, and deliberate fallback without resetting state. It pins register, memory, scheduler, trace, instruction-step, memory-event, scheduler-event, fallback-event, shadow-memory, counter, code-byte, and runtime-frame evidence. |
 | Armwrestler ARM Tests 0-4 and Thumbwrestler Tests 0-2 external ROM | interpreter+frontend JIT compare | `make -C tests/rv32im armwrestler` loads `/home/john/ref/armwrestler-gba-fixed/armwrestler-gba-fixed.gba`, patches only each loaded copy for deterministic `TESTNUM`, `VSync`, and `DrawResult` result capture, runs ARM Tests 0-4 and Thumb Tests 0-2 under the host `cpu.cc` interpreter and under `cpu_threaded.c` plus generated RV32IM in `qemu-riscv32`, and requires 79 results, failure mask `0`, native blocks/code bytes/nonzero native counters, ROM trace PCs, `fallbacks=0`, `fallback_events=0`, and `execute_arm_calls=0`. Tests 5-9 are Armwrestler stubs in this ROM. |
-| Armwrestler code-size reporting | regression ratchet | `make -C tests/rv32im armwrestler-report` prints stable `armwrestler_code_size` lines for every ARM/Thumb subtest plus final `arm_total`, `thumb_total`, `arm_max`, and `thumb_max`. After direct mapped-register ALU lowering, the measured totals are ARM `85508` bytes and Thumb `39964` bytes; Makefile ceilings are ARM `85636` and Thumb `39964`, with every per-test ceiling tightened to the current result plus 128 bytes. |
-| Deterministic performance baseline | measured+ratcheted | `make -C tests/rv32im perf` locks Clang 19.1.7, QEMU 10.0.8, RV32IM/ILP32/O2 build flags, and a workload-manifest hash; runs cold/warm `mapped_alu`, `memory_read`, `branch_chain`, `scheduler`, and `mixed` workloads twice; checks exact QEMU-trace RV32 instruction sums plus state/event hashes; and enforces the frozen M0 comparison plus current M1 byte/instruction ceilings. |
+| Armwrestler code-size reporting | regression ratchet | `make -C tests/rv32im armwrestler-report` prints stable `armwrestler_code_size` lines for every ARM/Thumb subtest plus final `arm_total`, `thumb_total`, `arm_max`, and `thumb_max`. With long patched exits, full ROM-cache support, mapped ALU lowering, and the ordinary-read boundary, measured and ratcheted totals are ARM `93312` bytes and Thumb `39388` bytes; every per-test ceiling is pinned to the current deterministic result. |
+| Deterministic performance baseline | measured+ratcheted | `make -C tests/rv32im perf` locks Clang 19.1.7, QEMU 10.0.8, RV32IM/ILP32/O2 build flags, and a workload-manifest hash; runs cold/warm `mapped_alu`, `memory_read`, `branch_chain`, `scheduler`, and `mixed` workloads twice; checks exact QEMU-trace RV32 instruction sums plus state/event hashes; and enforces the frozen M0 comparison plus current byte/instruction ceilings. |
 | Armwrestler dynamic A/B | measured+ratcheted | `make -C tests/rv32im armwrestler-perf` runs cold and cache-stable warm replays for all eight real frontend groups. Baseline and optimized harness `.text` must be byte-identical, the external ROM SHA-256 is frozen, QEMU trace semantics are explicit, warm replays may add no code, and the 79/79/zero-fallback guest contract must remain equal. |
+| Same-work RV32IM/MIPS frontend A/B | measured+ratcheted | `make -C tests/rv32im backend-compare` compiles one source for RV32IM and MIPS32r2, locks the toolchain/source/manifests, repeats both traces, and requires identical guest work and hashes. The ordinary-read optimization reduces RV32 warm `memory_read` from the frozen `151362` to `99074` QEMU-trace instructions while MIPS stays exactly `58691`; generated RV32 bytes fall from `2648` to `1876`, with zero fallback and a 34% minimum RV32 reduction gate. |
 | Thumb instruction lowering | native+ongoing | Thumbwrestler Tests 0-2 currently run through frontend JIT with zero fallbacks. Native lowering covers the Armwrestler Thumb paths, including high-register `ADD`/`MOV` with non-PC destinations, conditional branch taken/skipped cycle handling, direct `B`/`BX`, direct BL/BLH LR/PC updates, BL-pair target derivation from the live link value when it fits RV32IM `addi`, and patchable non-HLE SWI exits. Broader Thumb coverage remains an active MIPS-alignment task. |
 
 The common no-flags/no-PC mapped ARM ALU milestone is complete. Safe unshifted
@@ -318,33 +333,35 @@ The initial warm baseline is:
 | --- | ---: | ---: | ---: | ---: |
 | `mapped_alu` | 32768 | 169889 | 5.18 | 3760 |
 | `memory_read` | 3072 | 222049 | 72.28 | 2536 |
-| `branch_chain` | 8064 | 87585 | 10.86 | 2424 |
+| `branch_chain` | 8064 | 95521 | 11.84 | 3660 |
 | `scheduler` | 2048 | 827425 | 404.01 | 68 |
-| `mixed` | 3904 | 87393 | 22.38 | 1500 |
+| `mixed` | 3904 | 87521 | 22.41 | 1536 |
 
-The M1 result, enforced against that immutable baseline, is:
+The current result, enforced against that immutable baseline, is:
 
 | Workload | Dynamic RV32 instructions | RV32/guest | Generated bytes | Change from M0 |
 | --- | ---: | ---: | ---: | ---: |
-| `mapped_alu` | 85409 | 2.60 | 1120 | instructions -49.72%, bytes -70.21% |
-| `memory_read` | 222049 | 72.28 | 2536 | unchanged |
-| `branch_chain` | 75297 | 9.33 | 2040 | instructions -14.02%, bytes -15.84% |
-| `scheduler` | 821281 | 401.01 | 56 | instructions -0.74%, bytes -17.65% |
-| `mixed` | 79585 | 20.38 | 1012 | instructions -8.93%, bytes -32.53% |
+| `mapped_alu` | 85153 | 2.60 | 1120 | instructions -49.88%, bytes -70.21% |
+| `memory_read` | 199073 | 64.80 | 1684 | instructions -10.35%, bytes -33.60% |
+| `branch_chain` | 82977 | 10.29 | 3276 | instructions -13.13%, bytes -10.49% |
+| `scheduler` | 817185 | 399.02 | 56 | instructions -1.24%, bytes -17.65% |
+| `mixed` | 74017 | 18.96 | 844 | instructions -15.43%, bytes -45.05% |
 
 The parser separately requires at least a 25% warm `mapped_alu` instruction
 reduction, a strict generated-byte reduction, exact encoding coverage, stable
 correctness hashes, zero fallback execution, and the ratcheted current
 instruction/code-size ceilings.
 
-The real frontend A/B gate records a smaller but useful workload-level effect.
-Across ARM Tests 0-4 and Thumb Tests 0-2, the cache-stable warm replay changes
-from 8478795 to 8473477 executed RV32 instructions (-0.06%); ARM-only warm work
-changes from 6544047 to 6538729 (-0.08%), while Thumb is exactly unchanged at
-1934748. ARM cumulative generated code changes from 86084 to 85508 bytes. The
-cold translate-plus-first-execute total changes from 10576828 to 10610051
-(+0.31%), exposing the fast-path matcher's translation cost instead of hiding
-it. Both profiles remain 79/79, add zero code during warm replay, use zero
+The real frontend A/B gate records a smaller but consistent workload-level
+effect. Across ARM Tests 0-4 and Thumb Tests 0-2, the cache-stable warm replay
+changes from 6281624 to 6273973 executed RV32 instructions (-0.12%); ARM-only
+warm work changes from 4346887 to 4342806 (-0.09%), and Thumb changes from
+1934737 to 1931167 (-0.18%). Every individual warm group improves. ARM
+cumulative generated code changes from 96784 to 93312 bytes and Thumb from
+39976 to 39388. The cold translate-plus-first-execute total changes from
+8424884 to 8478718 (+0.64%), exposing the address-classification cost instead
+of hiding it and remaining below the locked 1% aggregate/1.5% per-test
+budgets. Both profiles remain 79/79, add zero code during warm replay, use zero
 fallbacks, and share identical guest trace/counter summaries.
 
 - raw RV32I/M emitter encoding checks against clang/LLVM reference output
@@ -617,9 +634,11 @@ subtarget, and `armwrestler-report` prints the stable per-test and total
 code-size summary used for ARM/Thumb regression thresholds.
 
 The next useful proof should reuse the same contract evidence style while
-reducing code size or expanding native coverage. Current high-value ARM work is
-to keep replacing helper-heavy/state-bloated paths in memory, block transfer,
-PSR, SWI/HLE, and remaining flag-producing cases. ARM CPSR flag liveness must
+reducing code size or expanding native coverage. The ordinary EWRAM/IWRAM read
+boundary is now measured and ratcheted; current high-value ARM work is to add a
+deterministic write workload before touching alerting/SMC stores, then profile
+block transfer, mapped-ROM reads, PSR, SWI/HLE, and remaining flag-producing
+cases. ARM CPSR flag liveness must
 account for guest-visible CPSR reads and writes, not only condition-code
 consumers; the current RV32IM emitter relies on `MRS CPSR` and CPSR flag-field
 `MSR` being modeled before using selective CPSR flag stores. Flags-only
