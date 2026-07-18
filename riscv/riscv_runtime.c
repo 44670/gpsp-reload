@@ -124,9 +124,19 @@ enum
 
 #define RISCV_INVALID_BLOCK_ENTRY ((u8 *)(uintptr_t)~(uintptr_t)0)
 
+#if defined(RISCV_RUNTIME_VALIDATED_ENTRY_PROFILE_SWITCH) && \
+    !defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
+#error "validated-entry A/B requires RISCV_RUNTIME_PERF_PROFILE_SWITCH"
+#endif
+
 /* Blocks may tail-jump into each other, so one outer JIT frame owns saved regs. */
 #if defined(__riscv) && defined(__riscv_xlen) && (__riscv_xlen == 32)
-#if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
+#if defined(RISCV_RUNTIME_VALIDATED_ENTRY_PROFILE_SWITCH)
+u8 *riscv_enter_jit(u8 *entry_data, void *reg_base, void *run_block,
+                    void *thumb_execute, void *thumb_bl_pair,
+                    const void *helper_table, u32 state_helper_calls,
+                    u32 validated_entry_optimized);
+#elif defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
 u8 *riscv_enter_jit(u8 *entry_data, void *reg_base, void *run_block,
                     void *thumb_execute, void *thumb_bl_pair,
                     const void *helper_table, u32 state_helper_calls);
@@ -206,12 +216,30 @@ __asm__(
 #if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
   "3:\n"
 #endif
+#if defined(RISCV_RUNTIME_VALIDATED_ENTRY_PROFILE_SWITCH)
+  /* Generated code owns a7, so preserve the eighth psABI argument before
+   * entering the block loop. */
+  "  sw a7, 104(sp)\n"
+#endif
   "  lw t0, 76(a5)\n"
   "  sw t0, 96(sp)\n"
   "1:\n"
   "  beqz a0, 2f\n"
+#if defined(RISCV_RUNTIME_VALIDATED_ENTRY_PROFILE_SWITCH)
+  "  lw t0, 104(sp)\n"
+  "  bnez t0, 4f\n"
+#endif
+  /* Both lookup paths consume RISCV_INVALID_BLOCK_ENTRY themselves.  The
+   * production loop therefore receives only a valid entry or NULL.  Keep the
+   * old sentinel check only for the byte-identical data-selector A/B. */
+#if defined(RISCV_RUNTIME_DISABLE_VALIDATED_ENTRY_OPT) || \
+    defined(RISCV_RUNTIME_VALIDATED_ENTRY_PROFILE_SWITCH)
   "  addi t0, zero, -1\n"
   "  beq a0, t0, 2f\n"
+#endif
+#if defined(RISCV_RUNTIME_VALIDATED_ENTRY_PROFILE_SWITCH)
+  "4:\n"
+#endif
   "  lw t0, 96(sp)\n"
   "  lw t0, 0(t0)\n"
   "  sw t0, 100(sp)\n"
@@ -269,7 +297,13 @@ __asm__(
   "  jalr zero, t0, 0\n"
   ".size riscv_jit_run_block_tail, .-riscv_jit_run_block_tail\n");
 #else
-#if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
+#if defined(RISCV_RUNTIME_VALIDATED_ENTRY_PROFILE_SWITCH)
+static u8 *riscv_enter_jit(u8 *entry_data, void *reg_base, void *run_block,
+                           void *thumb_execute, void *thumb_bl_pair,
+                           const void *helper_table,
+                           u32 state_helper_calls,
+                           u32 validated_entry_optimized)
+#elif defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
 static u8 *riscv_enter_jit(u8 *entry_data, void *reg_base, void *run_block,
                            void *thumb_execute, void *thumb_bl_pair,
                            const void *helper_table,
@@ -287,6 +321,9 @@ static u8 *riscv_enter_jit(u8 *entry_data, void *reg_base, void *run_block,
   (void)helper_table;
 #if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
   (void)state_helper_calls;
+#endif
+#if defined(RISCV_RUNTIME_VALIDATED_ENTRY_PROFILE_SWITCH)
+  (void)validated_entry_optimized;
 #endif
 
   do
@@ -542,6 +579,9 @@ extern volatile u32 riscv_runtime_perf_disable_fast_ram_reads;
 extern volatile u32 riscv_runtime_perf_disable_fast_ram_stores;
 extern volatile u32 riscv_runtime_perf_disable_entry_setup_opt;
 extern volatile u32 riscv_runtime_perf_disable_state_helper_opt;
+#endif
+#if defined(RISCV_RUNTIME_VALIDATED_ENTRY_PROFILE_SWITCH)
+extern volatile u32 riscv_runtime_perf_disable_validated_entry_opt;
 #endif
 
 #if !defined(RISCV_RUNTIME_DISABLE_MAPPED_ALU_FASTPATH)
@@ -11093,6 +11133,10 @@ u32 execute_arm_translate_internal(u32 cycles, void *regptr)
 #if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
   bool state_helpers = riscv_state_helpers_enabled();
 #endif
+#if defined(RISCV_RUNTIME_VALIDATED_ENTRY_PROFILE_SWITCH)
+  bool validated_entry_optimized =
+    !riscv_runtime_perf_disable_validated_entry_opt;
+#endif
 
   riscv_cycles_remaining = (s32)cycles;
   riscv_cpu_alert = CPU_ALERT_NONE;
@@ -11121,7 +11165,15 @@ u32 execute_arm_translate_internal(u32 cycles, void *regptr)
 
   if (!optimized_entry_setup)
     riscv_init_helper_table();
-#if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
+#if defined(RISCV_RUNTIME_VALIDATED_ENTRY_PROFILE_SWITCH)
+  (void)riscv_enter_jit(entry_data, regptr,
+                        (void *)(uintptr_t)riscv_jit_run_block,
+                        (void *)(uintptr_t)riscv_thumb_execute,
+                        (void *)(uintptr_t)riscv_thumb_execute_bl_pair,
+                        riscv_helper_table,
+                        state_helpers ? 1u : 0u,
+                        validated_entry_optimized ? 1u : 0u);
+#elif defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
   (void)riscv_enter_jit(entry_data, regptr,
                         (void *)(uintptr_t)riscv_jit_run_block,
                         (void *)(uintptr_t)riscv_thumb_execute,

@@ -73,12 +73,14 @@ typedef unsigned int usize;
 #if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
 #if !defined(ARMWRESTLER_PERF_DISABLE_MAPPED_ALU_FASTPATH) || \
     !defined(ARMWRESTLER_PERF_DISABLE_FAST_RAM_READS) || \
-    !defined(ARMWRESTLER_PERF_DISABLE_STATE_HELPER_OPT)
+    !defined(ARMWRESTLER_PERF_DISABLE_STATE_HELPER_OPT) || \
+    !defined(ARMWRESTLER_PERF_DISABLE_VALIDATED_ENTRY_OPT)
 #error "Armwrestler perf builds must select each optimization independently"
 #endif
 #if (defined(ARMWRESTLER_PERF_FAST_STORE_AB) + \
      defined(ARMWRESTLER_PERF_ENTRY_SETUP_AB) + \
-     defined(ARMWRESTLER_PERF_STATE_HELPER_AB)) > 1
+     defined(ARMWRESTLER_PERF_STATE_HELPER_AB) + \
+     defined(ARMWRESTLER_PERF_VALIDATED_ENTRY_AB)) > 1
 #error "Armwrestler perf builds must isolate exactly one optimization"
 #endif
 __attribute__((section(".data")))
@@ -90,6 +92,9 @@ volatile u32 riscv_runtime_perf_disable_fast_ram_reads =
 __attribute__((section(".data")))
 volatile u32 riscv_runtime_perf_disable_state_helper_opt =
   ARMWRESTLER_PERF_DISABLE_STATE_HELPER_OPT;
+__attribute__((section(".data")))
+volatile u32 riscv_runtime_perf_disable_validated_entry_opt =
+  ARMWRESTLER_PERF_DISABLE_VALIDATED_ENTRY_OPT;
 #if defined(RISCV_RUNTIME_ENABLE_FAST_RAM_STORES)
 #if !defined(ARMWRESTLER_PERF_DISABLE_FAST_RAM_STORES)
 #error "Perf builds with fast stores must select the store optimization"
@@ -98,7 +103,18 @@ __attribute__((section(".data")))
 volatile u32 riscv_runtime_perf_disable_fast_ram_stores =
   ARMWRESTLER_PERF_DISABLE_FAST_RAM_STORES;
 #endif
-#if defined(ARMWRESTLER_PERF_STATE_HELPER_AB)
+#if defined(ARMWRESTLER_PERF_VALIDATED_ENTRY_AB)
+#if !defined(RISCV_RUNTIME_VALIDATED_ENTRY_PROFILE_SWITCH)
+#error "Validated-entry A/B builds must enable the runtime selector"
+#endif
+#if !defined(ARMWRESTLER_PERF_DISABLE_ENTRY_SETUP_OPT)
+#error "Validated-entry A/B builds must pin the entry-setup optimization"
+#endif
+__attribute__((section(".data")))
+volatile u32 riscv_runtime_perf_disable_entry_setup_opt =
+  ARMWRESTLER_PERF_DISABLE_ENTRY_SETUP_OPT;
+#define ARMWRESTLER_JIT_PROFILE "validated_entry_ab"
+#elif defined(ARMWRESTLER_PERF_STATE_HELPER_AB)
 #if !defined(ARMWRESTLER_PERF_DISABLE_ENTRY_SETUP_OPT)
 #error "State-helper A/B builds must pin the entry-setup optimization"
 #endif
@@ -193,8 +209,12 @@ static u32 g_last_warm_replays;
 static u32 g_last_warm_observed_results;
 static u32 g_last_warm_failure_mask;
 static u32 g_last_warm_code_bytes_added;
+static u32 g_last_cold_native_blocks;
+static u32 g_last_warm_native_blocks;
 static u32 g_warm_replays_total;
 static u32 g_warm_code_bytes_added_total;
+static u32 g_cold_native_blocks_total;
+static u32 g_warm_native_blocks_total;
 static armwrestler_block_hotspot g_block_hotspots[ARMWRESTLER_TOP_BLOCKS];
 static u32 g_block_hotspot_count;
 
@@ -910,6 +930,10 @@ static void print_summary(const char *result, const char *suite, u32 test_id,
   put_u32_hex(g_last_warm_failure_mask);
   put_raw(" warm_code_bytes_added=");
   put_u32_dec(g_last_warm_code_bytes_added);
+  put_raw(" cold_native_blocks=");
+  put_u32_dec(g_last_cold_native_blocks);
+  put_raw(" warm_native_blocks=");
+  put_u32_dec(g_last_warm_native_blocks);
   put_raw(" jit_profile=");
   put_raw(ARMWRESTLER_JIT_PROFILE);
 #if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
@@ -919,11 +943,14 @@ static void print_summary(const char *result, const char *suite, u32 test_id,
   put_u32_dec(!riscv_runtime_perf_disable_fast_ram_reads);
   put_raw(" state_helpers_enabled=");
   put_u32_dec(!riscv_runtime_perf_disable_state_helper_opt);
+  put_raw(" validated_entry_optimized=");
+  put_u32_dec(!riscv_runtime_perf_disable_validated_entry_opt);
 #if defined(RISCV_RUNTIME_ENABLE_FAST_RAM_STORES)
   put_raw(" fast_ram_stores_enabled=");
   put_u32_dec(!riscv_runtime_perf_disable_fast_ram_stores);
 #endif
 #if defined(ARMWRESTLER_PERF_ENTRY_SETUP_AB) || \
+    defined(ARMWRESTLER_PERF_VALIDATED_ENTRY_AB) || \
     defined(ARMWRESTLER_PERF_STATE_HELPER_AB)
   put_raw(" entry_setup_optimized=");
   put_u32_dec(!riscv_runtime_perf_disable_entry_setup_opt);
@@ -1000,6 +1027,10 @@ static void print_aggregate_summary(const char *result, const char *reason)
   put_u32_dec(g_warm_replays_total);
   put_raw(" warm_code_bytes_added=");
   put_u32_dec(g_warm_code_bytes_added_total);
+  put_raw(" cold_native_blocks=");
+  put_u32_dec(g_cold_native_blocks_total);
+  put_raw(" warm_native_blocks=");
+  put_u32_dec(g_warm_native_blocks_total);
   put_raw(" jit_profile=");
   put_raw(ARMWRESTLER_JIT_PROFILE);
 #if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
@@ -1009,11 +1040,14 @@ static void print_aggregate_summary(const char *result, const char *reason)
   put_u32_dec(!riscv_runtime_perf_disable_fast_ram_reads);
   put_raw(" state_helpers_enabled=");
   put_u32_dec(!riscv_runtime_perf_disable_state_helper_opt);
+  put_raw(" validated_entry_optimized=");
+  put_u32_dec(!riscv_runtime_perf_disable_validated_entry_opt);
 #if defined(RISCV_RUNTIME_ENABLE_FAST_RAM_STORES)
   put_raw(" fast_ram_stores_enabled=");
   put_u32_dec(!riscv_runtime_perf_disable_fast_ram_stores);
 #endif
 #if defined(ARMWRESTLER_PERF_ENTRY_SETUP_AB) || \
+    defined(ARMWRESTLER_PERF_VALIDATED_ENTRY_AB) || \
     defined(ARMWRESTLER_PERF_STATE_HELPER_AB)
   put_raw(" entry_setup_optimized=");
   put_u32_dec(!riscv_runtime_perf_disable_entry_setup_opt);
@@ -1048,6 +1082,8 @@ static int run_armwrestler_test(u32 test_id, u32 expected_results)
   g_last_warm_observed_results = 0;
   g_last_warm_failure_mask = 0;
   g_last_warm_code_bytes_added = 0;
+  g_last_cold_native_blocks = 0;
+  g_last_warm_native_blocks = 0;
 
   riscv_get_runtime_stats(&before);
   before_execute_arm_calls = g_execute_arm_calls;
@@ -1059,6 +1095,9 @@ static int run_armwrestler_test(u32 test_id, u32 expected_results)
   rv32im_armwrestler_measure_end();
 
   riscv_get_runtime_stats(&after);
+  g_last_cold_native_blocks =
+    after.blocks_executed - before.blocks_executed;
+  g_cold_native_blocks_total += g_last_cold_native_blocks;
   after_code_bytes = (u32)(rom_translation_ptr - rom_translation_cache);
   g_arm_code_bytes_total += after_code_bytes;
   g_total_observed_results += result_word(0);
@@ -1107,6 +1146,9 @@ static int run_armwrestler_test(u32 test_id, u32 expected_results)
   rv32im_armwrestler_measure_end();
 
   riscv_get_runtime_stats(&after);
+  g_last_warm_native_blocks =
+    after.blocks_executed - after_cold.blocks_executed;
+  g_warm_native_blocks_total += g_last_warm_native_blocks;
   g_last_warm_replays = 1;
   g_last_warm_observed_results = result_word(0);
   g_last_warm_failure_mask = result_word(4);
@@ -1158,6 +1200,8 @@ static int run_thumbwrestler_test(u32 test_id, u32 expected_results)
   g_last_warm_observed_results = 0;
   g_last_warm_failure_mask = 0;
   g_last_warm_code_bytes_added = 0;
+  g_last_cold_native_blocks = 0;
+  g_last_warm_native_blocks = 0;
 
   riscv_get_runtime_stats(&before);
   before_execute_arm_calls = g_execute_arm_calls;
@@ -1169,6 +1213,9 @@ static int run_thumbwrestler_test(u32 test_id, u32 expected_results)
   rv32im_armwrestler_measure_end();
 
   riscv_get_runtime_stats(&after);
+  g_last_cold_native_blocks =
+    after.blocks_executed - before.blocks_executed;
+  g_cold_native_blocks_total += g_last_cold_native_blocks;
   after_code_bytes = (u32)(rom_translation_ptr - rom_translation_cache);
   g_thumb_code_bytes_total += after_code_bytes;
   g_total_observed_results += result_word(0);
@@ -1218,6 +1265,9 @@ static int run_thumbwrestler_test(u32 test_id, u32 expected_results)
   rv32im_armwrestler_measure_end();
 
   riscv_get_runtime_stats(&after);
+  g_last_warm_native_blocks =
+    after.blocks_executed - after_cold.blocks_executed;
+  g_warm_native_blocks_total += g_last_warm_native_blocks;
   g_last_warm_replays = 1;
   g_last_warm_observed_results = result_word(0);
   g_last_warm_failure_mask = result_word(4);

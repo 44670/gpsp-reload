@@ -38,12 +38,16 @@ function capture_result(profile, test, prefix) {
   result_warm_observed[prefix] = field("warm_observed_results")
   result_warm_mask[prefix] = field("warm_failure_mask")
   result_warm_code_added[prefix] = field("warm_code_bytes_added")
+  result_cold_native_blocks[prefix] = field("cold_native_blocks")
+  result_warm_native_blocks[prefix] = field("warm_native_blocks")
   result_jit_profile[prefix] = field("jit_profile")
   result_mapped_alu_enabled[prefix] = field("mapped_alu_fastpath_enabled")
   result_fast_ram_reads_enabled[prefix] = field("fast_ram_reads_enabled")
   result_fast_ram_stores_enabled[prefix] = field("fast_ram_stores_enabled")
   result_entry_setup_optimized[prefix] = field("entry_setup_optimized")
   result_state_helpers_enabled[prefix] = field("state_helpers_enabled")
+  result_validated_entry_optimized[prefix] = \
+    field("validated_entry_optimized")
   result_harness[prefix] = field("harness_mode")
 }
 
@@ -81,6 +85,8 @@ FILENAME == spec_file && /^benchmark_id=/ {
   spec_baseline_fast_ram_stores = field("baseline_fast_ram_stores_enabled")
   spec_baseline_entry_setup = field("baseline_entry_setup_optimized")
   spec_baseline_state_helpers = field("baseline_state_helpers_enabled")
+  spec_baseline_validated_entry = \
+    field("baseline_validated_entry_optimized")
   spec_code_size_policy = field("code_size_policy")
   next
 }
@@ -142,12 +148,16 @@ FILENAME == spec_file && /^summary=baseline/ {
   aggregate_update_calls[profile] = field("update_calls")
   aggregate_warm_replays[profile] = field("warm_replays")
   aggregate_warm_code_added[profile] = field("warm_code_bytes_added")
+  aggregate_cold_native_blocks[profile] = field("cold_native_blocks")
+  aggregate_warm_native_blocks[profile] = field("warm_native_blocks")
   aggregate_jit_profile[profile] = field("jit_profile")
   aggregate_mapped_alu_enabled[profile] = field("mapped_alu_fastpath_enabled")
   aggregate_fast_ram_reads_enabled[profile] = field("fast_ram_reads_enabled")
   aggregate_fast_ram_stores_enabled[profile] = field("fast_ram_stores_enabled")
   aggregate_entry_setup_optimized[profile] = field("entry_setup_optimized")
   aggregate_state_helpers_enabled[profile] = field("state_helpers_enabled")
+  aggregate_validated_entry_optimized[profile] = \
+    field("validated_entry_optimized")
   aggregate_harness[profile] = field("harness_mode")
   next
 }
@@ -170,6 +180,8 @@ END {
       spec_baseline_fast_ram_stores != baseline_fast_ram_stores_enabled ||
       spec_baseline_entry_setup != baseline_entry_setup_optimized ||
       spec_baseline_state_helpers != baseline_state_helpers_enabled ||
+      spec_baseline_validated_entry != \
+        baseline_validated_entry_optimized ||
       spec_code_size_policy != code_size_policy)
     fail("frozen baseline did not isolate the selected optimization")
 
@@ -212,18 +224,25 @@ END {
         baseline_entry_setup_optimized : optimized_entry_setup_optimized
       expected_state_helpers = profile == "baseline" ? \
         baseline_state_helpers_enabled : optimized_state_helpers_enabled
+      expected_validated_entry = profile == "baseline" ? \
+        baseline_validated_entry_optimized : \
+        optimized_validated_entry_optimized
       if (expected_fast_ram_stores == "na")
         expected_fast_ram_stores = ""
       if (expected_entry_setup == "na")
         expected_entry_setup = ""
       if (expected_state_helpers == "na")
         expected_state_helpers = ""
+      if (expected_validated_entry == "na")
+        expected_validated_entry = ""
       if (result_jit_profile[prefix] != jit_profile ||
           result_mapped_alu_enabled[prefix] != baseline_mapped_alu_enabled ||
           result_fast_ram_reads_enabled[prefix] != expected_fast_ram_reads ||
           result_fast_ram_stores_enabled[prefix] != expected_fast_ram_stores ||
           result_entry_setup_optimized[prefix] != expected_entry_setup ||
           result_state_helpers_enabled[prefix] != expected_state_helpers ||
+          result_validated_entry_optimized[prefix] != \
+            expected_validated_entry ||
           result_harness[prefix] != "armwrestler_frontend_jit_only")
         fail(prefix " did not run the isolated selector profile")
     }
@@ -272,12 +291,25 @@ END {
     require_equal("optimized", test, "guest trace hash",
                   result_trace_hash["optimized:" test],
                   result_trace_hash["baseline:" test])
+    require_equal("optimized", test, "cold native block count",
+                  result_cold_native_blocks["optimized:" test],
+                  result_cold_native_blocks["baseline:" test])
+    require_equal("optimized", test, "warm native block count",
+                  result_warm_native_blocks["optimized:" test],
+                  result_warm_native_blocks["baseline:" test])
 
     for (phase_i = 1; phase_i <= 2; phase_i++) {
       phase = phase_i == 1 ? "cold" : "warm"
       window = phase_i == 1 ? cold_window : warm_window
       baseline = count_value["baseline:" window] + 0
       optimized = count_value["optimized:" window] + 0
+      native_blocks = phase == "cold" ? \
+        result_cold_native_blocks["baseline:" test] + 0 : \
+        result_warm_native_blocks["baseline:" test] + 0
+      if (isolated_optimization == "validated_entry" &&
+          baseline - optimized != native_blocks * 2)
+        fail(test ":" phase \
+             " did not save exactly two checks per validated entry")
       reduction = int((baseline - optimized) * 10000 / baseline)
       direction = optimized < baseline ? "improved" : \
           (optimized > baseline ? "regressed" : "unchanged")
@@ -289,12 +321,14 @@ END {
           " performance_direction=" direction \
           " baseline_generated_bytes=" result_code["baseline:" test] \
           " optimized_generated_bytes=" result_code["optimized:" test] \
+          " validated_entry_dispatches=" native_blocks \
           " counter_source=qemu_exec_trace counter_semantics=qemu_tb_instruction_sum" \
           " rdinstret_csr_verified=0 reason=real_frontend_workload_equal"
       totals["baseline:" mode ":" phase] += baseline
       totals["optimized:" mode ":" phase] += optimized
       totals["baseline:all:" phase] += baseline
       totals["optimized:all:" phase] += optimized
+      native_totals["baseline:" phase] += native_blocks
     }
   }
 
@@ -308,12 +342,17 @@ END {
       baseline_entry_setup_optimized : optimized_entry_setup_optimized
     expected_state_helpers = profile == "baseline" ? \
       baseline_state_helpers_enabled : optimized_state_helpers_enabled
+    expected_validated_entry = profile == "baseline" ? \
+      baseline_validated_entry_optimized : \
+      optimized_validated_entry_optimized
     if (expected_fast_ram_stores == "na")
       expected_fast_ram_stores = ""
     if (expected_entry_setup == "na")
       expected_entry_setup = ""
     if (expected_state_helpers == "na")
       expected_state_helpers = ""
+    if (expected_validated_entry == "na")
+      expected_validated_entry = ""
     if (aggregate_seen[profile] != 1 || aggregate_result[profile] != "PASS" ||
         aggregate_expected[profile] != "79" ||
         aggregate_observed[profile] != "79" ||
@@ -330,8 +369,15 @@ END {
         aggregate_fast_ram_stores_enabled[profile] != expected_fast_ram_stores ||
         aggregate_entry_setup_optimized[profile] != expected_entry_setup ||
         aggregate_state_helpers_enabled[profile] != expected_state_helpers ||
+        aggregate_validated_entry_optimized[profile] != \
+          expected_validated_entry ||
         aggregate_harness[profile] != "armwrestler_frontend_jit_only")
       fail(profile " aggregate native/correctness contract changed")
+    if (aggregate_cold_native_blocks[profile] != \
+          native_totals["baseline:cold"] ||
+        aggregate_warm_native_blocks[profile] != \
+          native_totals["baseline:warm"])
+      fail(profile " aggregate native block attribution changed")
   }
   if (aggregate_arm_code["baseline"] != spec_arm_code ||
       aggregate_thumb_code["baseline"] != spec_thumb_code ||
@@ -442,6 +488,13 @@ END {
       " optimized_entry_setup_optimized=" optimized_entry_setup_optimized \
       " baseline_state_helpers_enabled=" baseline_state_helpers_enabled \
       " optimized_state_helpers_enabled=" optimized_state_helpers_enabled \
+      " baseline_validated_entry_optimized=" \
+        baseline_validated_entry_optimized \
+      " optimized_validated_entry_optimized=" \
+        optimized_validated_entry_optimized \
+      " validated_entry_dispatch_insns_saved=" \
+        (isolated_optimization == "validated_entry" ? \
+          native_totals["baseline:warm"] * 2 : "na") \
       " code_size_policy=" code_size_policy \
       " repeatability=byte_exact" \
       " environment_manifest_sha256=" environment_sha \
