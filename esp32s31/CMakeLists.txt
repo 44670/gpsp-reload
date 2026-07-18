@@ -8,7 +8,7 @@ set(GPSP_ESP32S31_PROFILE "0" CACHE BOOL
     "Enable detailed gpSP phase profiling")
 set(GPSP_ESP32S31_PC_PROFILE "0" CACHE BOOL
     "Enable the 1 kHz interrupted-PC sampler during phase profiling")
-set(ESP32S31_LCD_MODE "framebuffer" CACHE STRING
+set(ESP32S31_LCD_MODE "bounce" CACHE STRING
     "LCD scanout: framebuffer or bounce")
 set_property(CACHE ESP32S31_LCD_MODE PROPERTY STRINGS
     framebuffer bounce)

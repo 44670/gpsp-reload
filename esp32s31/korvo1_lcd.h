@@ -18,6 +18,9 @@ typedef struct {
   uint32_t bounce_callbacks;
   uint32_t bounce_discontinuities;
   uint32_t bounce_fill_max_us;
+  uint32_t last_snapshot_copy_us;
+  uint32_t max_snapshot_copy_us;
+  uint32_t snapshot_copy_interrupts;
   uint32_t last_wait_us;
   uint32_t max_wait_us;
 } esp32s31_lcd_stats_t;

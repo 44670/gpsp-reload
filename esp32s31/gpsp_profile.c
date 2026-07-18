@@ -33,6 +33,7 @@ static const char *const s_counter_names[GPSP_PROFILE_COUNTER_COUNT] = {
     [GPSP_PROFILE_LCD_SCALE] = "lcd_scale",
     [GPSP_PROFILE_LCD_OVERLAY] = "lcd_overlay",
     [GPSP_PROFILE_LCD_SUBMIT] = "lcd_submit",
+    [GPSP_PROFILE_LCD_SNAPSHOT] = "lcd_snapshot",
     [GPSP_PROFILE_UPDATE_GBA] = "update_gba",
     [GPSP_PROFILE_UPDATE_TIMERS] = "update_timers",
     [GPSP_PROFILE_UPDATE_SERIAL] = "update_serial",
@@ -131,7 +132,8 @@ void gpsp_profile_print_window(uint32_t frames)
               snapshot[GPSP_PROFILE_LCD_WAIT].cycles +
               snapshot[GPSP_PROFILE_LCD_SCALE].cycles +
               snapshot[GPSP_PROFILE_LCD_OVERLAY].cycles +
-              snapshot[GPSP_PROFILE_LCD_SUBMIT].cycles;
+              snapshot[GPSP_PROFILE_LCD_SUBMIT].cycles +
+              snapshot[GPSP_PROFILE_LCD_SNAPSHOT].cycles;
   print_part("video_misc",
              subtract_saturating(snapshot[GPSP_PROFILE_VIDEO_RUN].cycles,
                                  accounted),

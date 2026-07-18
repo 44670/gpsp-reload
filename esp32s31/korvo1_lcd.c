@@ -46,6 +46,8 @@
   (ESP32S31_LCD_WIDTH * ESP32S31_LCD_HEIGHT * sizeof(uint16_t))
 #define GBA_FRAME_STORAGE_BYTES \
   (ESP32S31_GBA_WIDTH * (ESP32S31_GBA_HEIGHT + 1u) * sizeof(uint16_t))
+#define GBA_SNAPSHOT_BYTES \
+  (ESP32S31_GBA_WIDTH * ESP32S31_GBA_HEIGHT * sizeof(uint16_t))
 #define LCD_BOUNCE_SOURCE_ROWS ESP32S31_LCD_BOUNCE_SOURCE_ROWS
 #define LCD_BOUNCE_OUTPUT_ROWS \
   (LCD_BOUNCE_SOURCE_ROWS * ESP32S31_SCALE_FACTOR)
@@ -70,10 +72,21 @@ static EXT_RAM_BSS_ATTR uint16_t s_render_buffer_storage[
     GBA_FRAME_STORAGE_BYTES / sizeof(uint16_t)] __attribute__((aligned(128)));
 #endif
 
+#if ESP32S31_LCD_BOUNCE_MODE
+/* One compact, native-resolution frame is the stable PSRAM scan source. */
+static EXT_RAM_BSS_ATTR uint16_t s_snapshot_buffer_storage[
+    GBA_SNAPSHOT_BYTES / sizeof(uint16_t)] __attribute__((aligned(128)));
+#endif
+
 typedef struct {
   esp_lcd_panel_handle_t panel;
   uint16_t *framebuffers[1];
   uint16_t *render_buffer;
+#if ESP32S31_LCD_BOUNCE_MODE
+  uint16_t *snapshot_buffer;
+  volatile bool snapshot_copying;
+  volatile uint32_t snapshot_copy_interrupts;
+#endif
   TaskHandle_t owner_task;
   volatile uint32_t vsync_count;
   volatile uint32_t completed_frames;
@@ -146,7 +159,19 @@ static bool IRAM_ATTR lcd_on_bounce_empty(
   {
     const unsigned output_y = position / ESP32S31_LCD_WIDTH;
     const unsigned source_y = output_y / ESP32S31_SCALE_FACTOR;
-    const uint16_t *source = state->render_buffer +
+    /*
+     * A single snapshot cannot be swapped atomically.  While its CPU copy is
+     * in progress, render_buffer is nevertheless a complete and immutable
+     * frame (present() has not returned to the emulator), so use that SRAM
+     * frame instead of ever sampling a half-written PSRAM snapshot.
+     */
+    const bool snapshot_copying =
+        __atomic_load_n(&state->snapshot_copying, __ATOMIC_ACQUIRE);
+    const uint16_t *frame_source = snapshot_copying ?
+        state->render_buffer : state->snapshot_buffer;
+    if (snapshot_copying)
+      state->snapshot_copy_interrupts++;
+    const uint16_t *source = frame_source +
         (size_t)source_y * ESP32S31_GBA_WIDTH;
     const esp32s31_rgb565_fps_osd_t *osd = NULL;
     if (__atomic_load_n(&state->fps_valid, __ATOMIC_ACQUIRE))
@@ -316,12 +341,19 @@ static esp_lcd_rgb_panel_config_t lcd_panel_config(void)
 static void free_render_buffer(void)
 {
   s_lcd.render_buffer = NULL;
+#if ESP32S31_LCD_BOUNCE_MODE
+  s_lcd.snapshot_buffer = NULL;
+#endif
 }
 
 static bool allocate_render_buffer(void)
 {
   s_lcd.render_buffer = s_render_buffer_storage;
   memset(s_lcd.render_buffer, 0, GBA_FRAME_STORAGE_BYTES);
+#if ESP32S31_LCD_BOUNCE_MODE
+  s_lcd.snapshot_buffer = s_snapshot_buffer_storage;
+  memset(s_lcd.snapshot_buffer, 0, GBA_SNAPSHOT_BYTES);
+#endif
   return true;
 }
 
@@ -352,20 +384,19 @@ bool esp32s31_korvo1_lcd_init(void)
   memset(&s_lcd, 0, sizeof(s_lcd));
   s_lcd.owner_task = xTaskGetCurrentTaskHandle();
 
-#if !ESP32S31_LCD_BOUNCE_MODE || !ESP32S31_LCD_RENDER_INTERNAL
   if (!esp_psram_is_initialized())
   {
     ESP_LOGE(TAG, "PSRAM is not initialized");
     ESP_LOGW(TAG, "LCD unavailable; continuing with UART/headless operation");
     return false;
   }
-#endif
 
 #if ESP32S31_LCD_BOUNCE_MODE
   ESP_LOGI(TAG,
            "internal SRAM before LCD: free=%u largest=%u "
            "dma_free=%u dma_largest=%u; "
-           "render=%s/%u bytes bounce=2x%u bytes",
+           "render=%s/%u bytes snapshot=psram/%u bytes "
+           "bounce=2x%u bytes",
            (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL |
                                              MALLOC_CAP_8BIT),
            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL |
@@ -377,7 +408,8 @@ bool esp32s31_korvo1_lcd_init(void)
                                                       MALLOC_CAP_DMA |
                                                       MALLOC_CAP_8BIT),
            ESP32S31_LCD_RENDER_INTERNAL ? "sram" : "psram",
-           (unsigned)GBA_FRAME_STORAGE_BYTES, (unsigned)LCD_BOUNCE_BYTES);
+           (unsigned)GBA_FRAME_STORAGE_BYTES,
+           (unsigned)GBA_SNAPSHOT_BYTES, (unsigned)LCD_BOUNCE_BYTES);
 #else
   ESP_LOGI(TAG,
            "PSRAM size=%u free=%u largest=%u; scanout=%s storage=%u bytes",
@@ -391,10 +423,12 @@ bool esp32s31_korvo1_lcd_init(void)
     return lcd_fail("initialize render buffer", ESP_ERR_NO_MEM);
 #if ESP32S31_LCD_BOUNCE_MODE
   ESP_LOGI(TAG,
-           "direct video bounce: shared_render=%s/%u bytes "
-           "source_rows=%u bounce=2x%u bytes; tearing allowed",
+           "snapshot video bounce: render=%s/%u bytes "
+           "snapshot=psram/%u bytes source_rows=%u bounce=2x%u bytes; "
+           "single-snapshot tearing allowed",
            ESP32S31_LCD_RENDER_INTERNAL ? "sram" : "psram",
            (unsigned)GBA_FRAME_STORAGE_BYTES,
+           (unsigned)GBA_SNAPSHOT_BYTES,
            (unsigned)LCD_BOUNCE_SOURCE_ROWS, (unsigned)LCD_BOUNCE_BYTES);
 #else
   ESP_LOGI(TAG,
@@ -506,7 +540,28 @@ bool esp32s31_korvo1_lcd_present_rgb565(const void *pixels,
   }
 
 #if ESP32S31_LCD_BOUNCE_MODE
-  s_lcd.stats.last_scale_us = 0;
+  const uint32_t profile_snapshot = gpsp_profile_begin();
+  const int64_t copy_start = esp_timer_get_time();
+
+  /*
+   * The bounce ISR switches to the stable SRAM render frame for the short
+   * copy interval.  After the release store, all later strips use PSRAM.
+   * Both producer and consumer are CPU accesses, so no DMA cache sync is
+   * required for this snapshot.
+   */
+  __atomic_store_n(&s_lcd.snapshot_copying, true, __ATOMIC_RELEASE);
+  memcpy(s_lcd.snapshot_buffer, pixels, GBA_SNAPSHOT_BYTES);
+  __atomic_store_n(&s_lcd.snapshot_copying, false, __ATOMIC_RELEASE);
+
+  const uint32_t copy_us =
+      (uint32_t)(esp_timer_get_time() - copy_start);
+  gpsp_profile_end(GPSP_PROFILE_LCD_SNAPSHOT, profile_snapshot);
+  s_lcd.stats.last_scale_us = copy_us;
+  s_lcd.stats.last_snapshot_copy_us = copy_us;
+  if (copy_us > s_lcd.stats.max_scale_us)
+    s_lcd.stats.max_scale_us = copy_us;
+  if (copy_us > s_lcd.stats.max_snapshot_copy_us)
+    s_lcd.stats.max_snapshot_copy_us = copy_us;
   s_lcd.stats.submitted_frames++;
   return true;
 #else
@@ -579,7 +634,7 @@ unsigned esp32s31_korvo1_lcd_bounce_source_rows(void)
 const char *esp32s31_korvo1_lcd_scaler_name(void)
 {
 #if ESP32S31_LCD_BOUNCE_MODE
-  return "lcd_bounce";
+  return "lcd_snapshot_bounce";
 #else
   return esp32s31_korvo1_scaler_name();
 #endif
@@ -618,5 +673,6 @@ void esp32s31_korvo1_lcd_get_stats(esp32s31_lcd_stats_t *out)
   out->bounce_callbacks = s_lcd.bounce_callbacks;
   out->bounce_discontinuities = s_lcd.bounce_discontinuities;
   out->bounce_fill_max_us = s_lcd.bounce_fill_max_us;
+  out->snapshot_copy_interrupts = s_lcd.snapshot_copy_interrupts;
 #endif
 }

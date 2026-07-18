@@ -2,21 +2,22 @@
 
 This ESP-IDF app runs the gpSP ARM interpreter and sends its raw 240x160
 RGB565 framebuffer to the Korvo-1 800x480 RGB panel. The direct driver scales
-the image exactly 3x, keeps 40-pixel black side bars, and draws measured FPS at
-the top-left of the scaled GBA image. The default path CPU-scales the shared
-240x161 internal-SRAM render target directly into one 800x480 RGB565
-framebuffer in PSRAM. It then draws the FPS OSD into that PSRAM framebuffer and
-publishes the completed CPU writes to LCD DMA. The emulator-owned GBA
-framebuffer is never modified. It uses no LVGL, board BSP, M5 library, or
-managed component.
+the image exactly 3x, keeps 40-pixel black side bars, and fuses measured FPS at
+the top-left of the scaled GBA image. The default path renders into a 240x161
+internal-SRAM target, copies its visible 240x160 area into one 76,800-byte
+PSRAM snapshot, and has the LCD bounce callback scale ten source rows at a time
+into two 48,000-byte internal-SRAM DMA strips. The emulator-owned GBA
+framebuffer is never modified by the OSD. It uses no LVGL, board BSP, M5
+library, or managed component.
 
-LCD GDMA continuously scans that same 768,000-byte PSRAM framebuffer. There is
-no framebuffer switch, frame submission, completion wait, or bounce buffer;
-tearing while the CPU writes the next frame is intentionally accepted. The
-default CPU scaler was faster on hardware than an SRAM-strip/GDMA copy path.
-The old no-framebuffer refill path remains as a comparison option with
-`-DESP32S31_LCD_MODE=bounce`; scaler experiments for the framebuffer path can
-still select `cpu`, `sram_gdma`, `ppa`, or `auto` through
+There is deliberately only one PSRAM snapshot. While its CPU copy is active,
+the bounce ISR reads the completed SRAM render target; after the copy, it reads
+the stable PSRAM snapshot while gpSP renders the next frame. Thus the ISR never
+samples a half-written snapshot. A displayed LCD frame can still change from
+the old frame to the new frame at one strip boundary, which is the accepted
+single-buffer tearing behavior. The former direct 800x480 PSRAM framebuffer
+remains a comparison option with `-DESP32S31_LCD_MODE=framebuffer`; its scaler
+experiments can select `cpu`, `sram_gdma`, `ppa`, or `auto` through
 `-DESP32S31_SCALER=...`.
 
 The firmware is compile-time locked to one HP core with
@@ -24,7 +25,7 @@ The firmware is compile-time locked to one HP core with
 `CONFIG_FREERTOS_NUMBER_OF_CORES` is not one. The active core runs at the
 configured 320 MHz, and dynamic power management is disabled.
 
-When the comparison bounce mode is selected,
+In the default bounce mode,
 `ESP32S31_LCD_BOUNCE_SOURCE_ROWS` controls its strip height and must divide 160
 exactly. Ten rows is the tested balanced setting. Sixteen rows was also stable
 and was about 0.035 ms/frame faster, but its two 76,800-byte buffers leave only
@@ -41,13 +42,13 @@ retention/low-power region and is not RGB-DMA capable.
 
 This distinction matters in diagnostics: `MALLOC_CAP_INTERNAL` includes the LP
 bank, while `MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT` measures
-the HP SRAM usable by DMA clients. The single-framebuffer build links with
-281,450 bytes of DIRAM occupied and 222,294 bytes available. Hardware status
-after full boot, USB gamepad initialization, cartridge mapping, and LCD
-allocation reported 220,515 bytes of internal memory free, 188,507 bytes of
-DMA-capable HP SRAM free, and a 147,456-byte largest DMA block. It also reported
-4,356 bytes unused in the 6,144-byte main-task stack during sustained
-emulation.
+the HP SRAM usable by DMA clients. The snapshot-bounce build links with 281,054
+bytes of DIRAM occupied and 222,690 bytes available before runtime allocations.
+Hardware status after full boot, USB gamepad initialization, cartridge mapping,
+and the two LCD bounce allocations reported 125,143 bytes of internal memory
+free, 93,135 bytes of DMA-capable HP SRAM free, and a 57,344-byte largest DMA
+block. It also reported 4,324 bytes unused in the 6,144-byte main-task stack
+during sustained emulation.
 
 The memory placement is based on repeated hard-reset A/B runs of the same
 Goodboy ADV workload. Approximate changes below are per emulated frame; a
@@ -55,14 +56,15 @@ negative time is faster. Bounce-strip rows in this table are retained as
 historical measurements and are not allocated by the default framebuffer
 path.
 
-| Candidate moved to SRAM | SRAM cost | Measured effect | Default |
+| Candidate placement | Memory cost | Measured effect | Default |
 | --- | ---: | ---: | --- |
 | ARM interpreter loop (`execute_arm`) | 63,172 B | -1.4 to -1.9 ms | SRAM |
 | Shared 240x161 render buffer | 77,280 B | -0.50 to -0.55 ms | SRAM |
 | Common RGB565 tile-renderer paths | 5,376 B | -0.10 to -0.13 ms | SRAM |
-| LCD bounce strips, 2 to 8 source rows | +57,600 B | about -0.27 ms | bounce mode only |
-| LCD bounce strips, 8 to 10 source rows | +19,200 B | about -0.018 ms | bounce mode only |
+| LCD bounce strips, 2 to 8 source rows | +57,600 B | about -0.27 ms | SRAM |
+| LCD bounce strips, 8 to 10 source rows | +19,200 B | about -0.018 ms | SRAM |
 | LCD bounce strips, 10 to 16 source rows | +57,600 B | about -0.035 ms | rejected for headroom |
+| One 240x160 stable snapshot | 76,800 B PSRAM | about +0.46 ms/frame copy | PSRAM |
 | GBA IWRAM data | 32,768 B | -0.03 to -0.08 ms | SRAM |
 | Sound ring, PSRAM to SRAM | 8,192 B final | -0.02 to -0.03 ms at 16 KiB; 8 KiB matched it | SRAM |
 | One promoted ROM instruction page | 32,768 B | +0.16 to +0.30 ms regression | rejected |
@@ -76,10 +78,9 @@ path.
 VRAM-in-SRAM with four-row bounce strips and VRAM-in-PSRAM with eight-row
 strips had effectively the same frame time. The latter leaves about 59 KB more
 free SRAM, so VRAM is not the best place for this SRAM. For the active
-single-framebuffer path, the useful placements are the interpreter loop, hot
-RGB565 renderer, shared render buffer, 8 KiB sound ring, and IWRAM. The rest
-should remain in PSRAM. Bounce capacity enters the ranking only when the
-comparison bounce path is built.
+snapshot-bounce path, the useful placements are the interpreter loop, hot
+RGB565 renderer, shared render buffer, 10-row LCD strips, 8 KiB sound ring, and
+IWRAM. The compact stable snapshot and the rest remain in PSRAM.
 
 The render buffer therefore remains a good SRAM use, but it is not treated as
 mandatory by the build. Moving it to PSRAM loses about 0.5 ms/frame; spending
@@ -102,14 +103,13 @@ stack was reduced from 16 KiB to 6 KiB. These changes recover HP SRAM without
 measurable Goodboy frame-time regressions.
 
 The board's PSRAM is 16 MiB octal x8 at 250 MHz with fixed 18-cycle read
-latency. Static external BSS is 586,792 bytes: 256 KiB EWRAM, 96 KiB VRAM, a
+latency. Static external BSS is 663,712 bytes: 256 KiB EWRAM, 96 KiB VRAM, a
 32 KiB read map, a 16 KiB writable BIOS, about 25 KiB cold state, 20 KiB
-compact OBJ links, and 128 KiB backup storage. The interpreter build omits the
-unused 256 KiB EWRAM and 32 KiB IWRAM dynarec SMC mirrors. The LCD driver
-allocates its one 768,000-byte native framebuffer in PSRAM, and a 1 MiB
-cartridge paging window is also allocated dynamically; app text and read-only
-data use PSRAM XIP. Hardware reported 13,883,320 bytes of PSRAM free after full
-boot, with a 13,631,488-byte largest block.
+compact OBJ links, 128 KiB backup storage, and the 76,800-byte LCD snapshot.
+The interpreter build omits the unused 256 KiB EWRAM and 32 KiB IWRAM dynarec
+SMC mirrors. A 1 MiB cartridge paging window is allocated dynamically; app
+text and read-only data use PSRAM XIP. Hardware reported 14,587,848 bytes of
+PSRAM free after full boot, with a 14,417,920-byte largest block.
 
 A zero-PSRAM build is not feasible without a larger architectural change. GBA
 EWRAM + IWRAM + VRAM already total 384 KiB; adding only the 77,280-byte render
@@ -178,10 +178,11 @@ Set `GPSP_ESP32S31_PC_PROFILE=1` only for interrupted-PC sampling; its 16 KiB
 sample array is placed in LP/RTC SRAM so it does not consume the HP SRAM being
 measured.
 
-The active single-framebuffer display/touch path was hardware-tested on
-2026-07-18 with the factory timing, 16 MiB octal PSRAM at 250 MHz, and 16 MiB
-QIO flash at 80 MHz. A reset benchmark reported a 49.3 FPS measurement window,
-about 7.79 ms/frame for CPU scale, about 0.25 ms/frame for the PSRAM cache
-publish, and zero dropped frames or LCD timeouts. It also confirmed zero bounce
-callbacks. The older bounce path was separately tested over hundreds of
-thousands of DMA refills without a position discontinuity.
+The active one-snapshot display/touch path was hardware-tested on 2026-07-18
+with the factory timing, 16 MiB octal PSRAM at 250 MHz, and 16 MiB QIO flash at
+80 MHz. Three reset windows reported 62.5--66.1 FPS. Copying 76,800 bytes from
+SRAM to PSRAM took about 0.455 ms/frame including ISR preemption; scaling a full
+LCD scan into bounce strips took about 2.15--2.20 ms. The run completed 15,334
+bounce callbacks with zero position discontinuities, dropped frames, or LCD
+timeouts. The ISR selected the SRAM source 419 times during 902 snapshot copies,
+confirming that it avoids reading PSRAM during the partial-copy interval.
