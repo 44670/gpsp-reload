@@ -19,6 +19,8 @@ BEGIN {
   expected["memory_read:warm"] = 1
   expected["branch_chain:cold"] = 1
   expected["branch_chain:warm"] = 1
+  expected["indirect_lookup:cold"] = 1
+  expected["indirect_lookup:warm"] = 1
   expected["scheduler:cold"] = 1
   expected["scheduler:warm"] = 1
   expected["mixed:cold"] = 1
@@ -30,6 +32,8 @@ BEGIN {
   guest_insns["memory_read:warm"] = 3072
   guest_insns["branch_chain:cold"] = 63
   guest_insns["branch_chain:warm"] = 8064
+  guest_insns["indirect_lookup:cold"] = 31
+  guest_insns["indirect_lookup:warm"] = 3968
   guest_insns["scheduler:cold"] = 1
   guest_insns["scheduler:warm"] = 2048
   guest_insns["mixed:cold"] = 61
@@ -41,6 +45,8 @@ BEGIN {
   state_hash["memory_read:warm"] = "0xb9e5c390"
   state_hash["branch_chain:cold"] = "0x7615e4db"
   state_hash["branch_chain:warm"] = "0x1c8bb6b0"
+  state_hash["indirect_lookup:cold"] = "0x9694048b"
+  state_hash["indirect_lookup:warm"] = "0x9694048b"
   state_hash["scheduler:cold"] = "0xee4b6d34"
   state_hash["scheduler:warm"] = "0xee4b6d34"
   state_hash["mixed:cold"] = "0x403e59d4"
@@ -52,6 +58,8 @@ BEGIN {
   memory_hash["memory_read:warm"] = "0x28f6afc5"
   memory_hash["branch_chain:cold"] = "0x811c9dc5"
   memory_hash["branch_chain:warm"] = "0x811c9dc5"
+  memory_hash["indirect_lookup:cold"] = "0x811c9dc5"
+  memory_hash["indirect_lookup:warm"] = "0x811c9dc5"
   memory_hash["scheduler:cold"] = "0x811c9dc5"
   memory_hash["scheduler:warm"] = "0x811c9dc5"
   memory_hash["mixed:cold"] = "0xc45006d7"
@@ -63,6 +71,8 @@ BEGIN {
   scheduler_hash["memory_read:warm"] = "0x1e4d33c5"
   scheduler_hash["branch_chain:cold"] = "0x1171fe38"
   scheduler_hash["branch_chain:warm"] = "0x35da79c5"
+  scheduler_hash["indirect_lookup:cold"] = "0x6de4b3f8"
+  scheduler_hash["indirect_lookup:warm"] = "0x074e79c5"
   scheduler_hash["scheduler:cold"] = "0x80d993b0"
   scheduler_hash["scheduler:warm"] = "0xe08f9dc5"
   scheduler_hash["mixed:cold"] = "0x76e1433c"
@@ -74,6 +84,8 @@ BEGIN {
   trace_hash["memory_read:warm"] = "0xc648afc5"
   trace_hash["branch_chain:cold"] = "0x0a69f0a4"
   trace_hash["branch_chain:warm"] = "0x23e541c5"
+  trace_hash["indirect_lookup:cold"] = "0x287cb2c5"
+  trace_hash["indirect_lookup:warm"] = "0x29e71dc5"
   trace_hash["scheduler:cold"] = "0xe7405a04"
   trace_hash["scheduler:warm"] = "0xf316ddc5"
   trace_hash["mixed:cold"] = "0x1bfebbf4"
@@ -82,16 +94,19 @@ BEGIN {
   cold_exec_max["mapped_alu"] = mapped_alu_cold_exec_max
   cold_exec_max["memory_read"] = memory_read_cold_exec_max
   cold_exec_max["branch_chain"] = branch_chain_cold_exec_max
+  cold_exec_max["indirect_lookup"] = indirect_lookup_cold_exec_max
   cold_exec_max["scheduler"] = scheduler_cold_exec_max
   cold_exec_max["mixed"] = mixed_cold_exec_max
   warm_exec_max["mapped_alu"] = mapped_alu_exec_max
   warm_exec_max["memory_read"] = memory_read_exec_max
   warm_exec_max["branch_chain"] = branch_chain_exec_max
+  warm_exec_max["indirect_lookup"] = indirect_lookup_exec_max
   warm_exec_max["scheduler"] = scheduler_exec_max
   warm_exec_max["mixed"] = mixed_exec_max
   bytes_max["mapped_alu"] = mapped_alu_bytes_max
   bytes_max["memory_read"] = memory_read_bytes_max
   bytes_max["branch_chain"] = branch_chain_bytes_max
+  bytes_max["indirect_lookup"] = indirect_lookup_bytes_max
   bytes_max["scheduler"] = scheduler_bytes_max
   bytes_max["mixed"] = mixed_bytes_max
 }

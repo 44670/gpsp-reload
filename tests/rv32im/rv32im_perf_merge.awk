@@ -87,12 +87,12 @@ NR == FNR {
 }
 
 END {
-  if (trace_windows != 12) {
-    print "expected 12 qemu trace counts, got " trace_windows > "/dev/stderr"
+  if (trace_windows != 14) {
+    print "expected 14 qemu trace counts, got " trace_windows > "/dev/stderr"
     failed = 1
   }
-  if (measurement_index != 11) {
-    print "expected 11 reported measurements, got " measurement_index > "/dev/stderr"
+  if (measurement_index != 13) {
+    print "expected 13 reported measurements, got " measurement_index > "/dev/stderr"
     failed = 1
   }
   if (failed)

@@ -21,6 +21,9 @@ typedef unsigned int usize;
 #define MEMORY_READ_CYCLES (MEMORY_READ_WORDS * 6u + 48u * 2u)
 #define MEMORY_WRITE_WORDS 16u
 #define MEMORY_WRITE_CYCLES (MEMORY_WRITE_WORDS * 6u + 15u)
+#define INDIRECT_LOOKUP_PAIRS 15u
+#define INDIRECT_LOOKUP_WORDS (INDIRECT_LOOKUP_PAIRS * 2u + 1u)
+#define INDIRECT_LOOKUP_CYCLES (INDIRECT_LOOKUP_WORDS * 6u)
 
 #if defined(BACKEND_COMPARE_RV32IM)
 #define BACKEND_NAME "rv32im"
@@ -834,6 +837,25 @@ static void prepare_memory_write(void)
   reg[10] = 0x04000000u;
 }
 
+static void install_indirect_lookup(void)
+{
+  u32 i;
+
+  install_base_rom();
+  for (i = 0; i < INDIRECT_LOOKUP_PAIRS; i++)
+  {
+    /* MOV lr, pc points at the following two-word block; BX lr therefore
+     * forces the real frontend/backend indirect lookup contract each time. */
+    store32(g_rom, WORKLOAD_PC - ROM_BASE + (i * 2u + 0u) * 4u,
+            0xe1a0e00fu);
+    store32(g_rom, WORKLOAD_PC - ROM_BASE + (i * 2u + 1u) * 4u,
+            0xe12fff1eu);
+  }
+  store32(g_rom,
+          WORKLOAD_PC - ROM_BASE + (INDIRECT_LOOKUP_WORDS - 1u) * 4u,
+          0xeafffffeu);
+}
+
 static int print_phase(const char *workload, const char *phase,
                        u32 guest_insns, u32 guest_cycles,
                        u32 generated_bytes, u32 code_bytes_added,
@@ -1610,6 +1632,9 @@ void _start(void)
   passed &= run_workload("memory_write", install_memory_write,
                          prepare_memory_write, MEMORY_WRITE_WORDS,
                          MEMORY_WRITE_CYCLES, 3u, 1u, 1u);
+  passed &= run_workload("indirect_lookup", install_indirect_lookup, NULL,
+                         INDIRECT_LOOKUP_WORDS, INDIRECT_LOOKUP_CYCLES,
+                         0u, 0u, 0u);
 #if defined(BACKEND_COMPARE_RV32IM)
   /* Keep the correctness-only stale-code proof outside all measured windows
    * so RAM/ROM cache history cannot perturb the frozen benchmark protocol. */
@@ -1624,7 +1649,7 @@ void _start(void)
   put_raw("result=");
   put_raw(passed ? "PASS" : "FAIL");
   put_raw(" command=backend-compare backend=" BACKEND_NAME
-          " workloads=3 phases=6 execute_arm_calls=");
+          " workloads=4 phases=8 execute_arm_calls=");
   put_u32_dec(g_execute_arm_calls);
 #if defined(BACKEND_COMPARE_RV32IM)
   put_raw(" native_blocks=");

@@ -27,9 +27,12 @@ BEGIN {
   key_for_window[4] = "memory_read:warm"
   key_for_window[5] = "memory_write:cold"
   key_for_window[6] = "memory_write:warm"
+  key_for_window[7] = "indirect_lookup:cold"
+  key_for_window[8] = "indirect_lookup:warm"
   workload[1] = "mapped_alu"
   workload[2] = "memory_read"
   workload[3] = "memory_write"
+  workload[4] = "indirect_lookup"
   phase[1] = "cold"
   phase[2] = "warm"
 }
@@ -157,7 +160,7 @@ END {
       spec_source_sha != source_sha)
     fail("frozen manifest or benchmark source changed")
 
-  for (wi = 1; wi <= 3; wi++) {
+  for (wi = 1; wi <= 4; wi++) {
     for (pi = 1; pi <= 2; pi++) {
       name = workload[wi]
       mode = phase[pi]
@@ -236,7 +239,7 @@ END {
             (raw["rv32im:" key] + 0) * 100 > \
               (spec_rv_raw[key] + 0) * (100 - memory_min_reduction))
           fail(key " RV32IM warm improvement was below the required reduction")
-      } else {
+      } else if (name == "memory_write") {
         if ((generated["rv32im:" key] + 0) > write_bytes_max)
           fail(key " RV32IM write generated-code budget exceeded")
         if (mode == "cold" && \
@@ -249,6 +252,10 @@ END {
                 10000 < \
               (spec_rv_raw[key] + 0) * write_warm_min_reduction_x100)
           fail(key " RV32IM write warm improvement was below the required reduction")
+      } else {
+        if (raw["rv32im:" key] != spec_rv_raw[key] ||
+            generated["rv32im:" key] != spec_rv_bytes[key])
+          fail(key " RV32IM indirect baseline changed")
       }
 
       raw_ratio = int((raw["rv32im:" key] + 0) * 10000 / \
@@ -301,7 +308,7 @@ END {
     exit 1
   for (ri = 1; ri <= report_count; ri++)
     print report[ri]
-  print "result=PASS command=backend-compare workload=all phases=6 " \
+  print "result=PASS command=backend-compare workload=all phases=8 " \
     "backends=rv32im,mips exact_guest_work=1 correctness_hashes_equal=1 " \
     "cold_warm_semantics_locked=1 execute_arm_calls=0 " \
     "memory_warm_min_reduction_percent=" memory_min_reduction \

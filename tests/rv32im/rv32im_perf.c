@@ -28,6 +28,7 @@ typedef unsigned int usize;
 #define PERF_ALU_INSNS 256u
 #define PERF_MEMORY_INSNS 48u
 #define PERF_BRANCH_BLOCKS 32u
+#define PERF_INDIRECT_BLOCKS 16u
 #define PERF_SCHEDULER_INSNS 1u
 #define PERF_MIXED_ALU0_INSNS 32u
 #define PERF_MIXED_MEMORY_INSNS 12u
@@ -35,6 +36,7 @@ typedef unsigned int usize;
 #define PERF_ALU_WARM_RUNS 128u
 #define PERF_MEMORY_WARM_RUNS 64u
 #define PERF_BRANCH_WARM_RUNS 128u
+#define PERF_INDIRECT_WARM_RUNS 128u
 #define PERF_SCHEDULER_WARM_RUNS 2048u
 #define PERF_MIXED_WARM_RUNS 64u
 
@@ -43,12 +45,14 @@ typedef unsigned int usize;
 #define PERF_BRANCH_START_PC 0x08012000u
 #define PERF_MIXED_START_PC 0x08013000u
 #define PERF_SCHEDULER_START_PC 0x08014000u
+#define PERF_INDIRECT_START_PC 0x08016000u
 
 typedef enum perf_workload_kind
 {
   PERF_WORKLOAD_MAPPED_ALU = 0,
   PERF_WORKLOAD_MEMORY_READ,
   PERF_WORKLOAD_BRANCH_CHAIN,
+  PERF_WORKLOAD_INDIRECT_LOOKUP,
   PERF_WORKLOAD_SCHEDULER,
   PERF_WORKLOAD_MIXED
 } perf_workload_kind;
@@ -88,6 +92,15 @@ typedef struct perf_observation
   u32 memory_hash;
   u32 scheduler_hash;
   u32 trace_hash;
+  u32 control_dispatcher_entries;
+  u32 control_direct_chain_attempts;
+  u32 control_direct_chain_hits;
+  u32 control_cycle_exits;
+  u32 control_indirect_lookup_hits;
+  u32 control_indirect_lookup_misses;
+  u32 control_fallthrough_lookup_hits;
+  u32 control_fallthrough_lookup_misses;
+  u32 control_scheduler_updates;
 } perf_observation;
 
 u32 reg[REG_MAX];
@@ -862,6 +875,59 @@ static int build_branch_chain(const char **reason)
   return 1;
 }
 
+static int build_indirect_lookup(const char **reason)
+{
+  u8 *ptr = g_perf_code;
+  u32 i;
+
+  clear_program(PERF_WORKLOAD_INDIRECT_LOOKUP, "indirect_lookup",
+                PERF_INDIRECT_START_PC, PERF_INDIRECT_WARM_RUNS);
+  for (i = 0; i < PERF_INDIRECT_BLOCKS; i++)
+  {
+    riscv_jit_block_meta *meta;
+    u32 pc = PERF_INDIRECT_START_PC + i * 8u;
+
+    riscv_emit_block_prologue(&ptr, &meta);
+    g_program.entries[i] = ((u8 *)meta) + block_prologue_size;
+    g_program.pcs[i] = pc;
+
+    if (i + 1u < PERF_INDIRECT_BLOCKS)
+    {
+      bool cycles_emitted = true;
+
+      /* MOV lr, pc materializes pc+8, then BX lr forces the real indirect
+       * dispatcher lookup to the next translated block. */
+      if (!riscv_emit_native_arm_data_proc_with_pc_ex(
+            &ptr, meta, 0xe1a0e00fu, pc, 0, 0, false,
+            &cycles_emitted) || cycles_emitted ||
+          !riscv_emit_native_arm_bx(
+            &ptr, meta, 0xe12fff1eu, pc + 4u, 2u))
+      {
+        *reason = "indirect_lookup_branch_emit_failed";
+        return 0;
+      }
+      riscv_emit_block_finalize(meta, &ptr, pc, pc + 8u, false);
+    }
+    else
+    {
+      if (!emit_alu_range(&ptr, meta, 3000u, 1u, pc, 1u, 1))
+      {
+        *reason = "indirect_lookup_final_emit_failed";
+        return 0;
+      }
+      g_program.end_pc = pc + 4u;
+      riscv_emit_block_finalize(meta, &ptr, pc, g_program.end_pc, false);
+    }
+  }
+
+  g_program.entry_count = PERF_INDIRECT_BLOCKS;
+  g_program.block_count = PERF_INDIRECT_BLOCKS;
+  g_program.guest_insns_per_run = (PERF_INDIRECT_BLOCKS - 1u) * 2u + 1u;
+  g_program.guest_cycles_per_run = g_program.guest_insns_per_run;
+  g_program.code_bytes = (u32)(ptr - g_perf_code);
+  return 1;
+}
+
 static int build_scheduler(const char **reason)
 {
   u8 *ptr = g_perf_code;
@@ -959,6 +1025,8 @@ static int build_program(perf_workload_kind kind, const char **reason)
     ok = build_memory_read(reason);
   else if (kind == PERF_WORKLOAD_BRANCH_CHAIN)
     ok = build_branch_chain(reason);
+  else if (kind == PERF_WORKLOAD_INDIRECT_LOOKUP)
+    ok = build_indirect_lookup(reason);
   else if (kind == PERF_WORKLOAD_SCHEDULER)
     ok = build_scheduler(reason);
   else
@@ -1121,8 +1189,12 @@ static void run_program(const perf_program *program, u32 iterations)
   }
 }
 
-static void capture_observation(perf_observation *observation)
+static void capture_observation(perf_observation *observation,
+                                const riscv_runtime_stats *before)
 {
+  riscv_runtime_stats after;
+
+  riscv_get_runtime_stats(&after);
   observation->lookup_calls = g_lookup_calls;
   observation->terminal_calls = g_terminal_calls;
   observation->update_calls = g_update_calls;
@@ -1138,6 +1210,42 @@ static void capture_observation(perf_observation *observation)
   observation->memory_hash = g_memory_hash;
   observation->scheduler_hash = g_scheduler_hash;
   observation->trace_hash = g_trace_hash;
+#if defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
+  observation->control_dispatcher_entries =
+    after.control_dispatcher_entries - before->control_dispatcher_entries;
+  observation->control_direct_chain_attempts =
+    after.control_direct_chain_attempts -
+      before->control_direct_chain_attempts;
+  observation->control_direct_chain_hits =
+    after.control_direct_chain_hits - before->control_direct_chain_hits;
+  observation->control_cycle_exits =
+    after.control_cycle_exits - before->control_cycle_exits;
+  observation->control_indirect_lookup_hits =
+    after.control_indirect_lookup_hits -
+      before->control_indirect_lookup_hits;
+  observation->control_indirect_lookup_misses =
+    after.control_indirect_lookup_misses -
+      before->control_indirect_lookup_misses;
+  observation->control_fallthrough_lookup_hits =
+    after.control_fallthrough_lookup_hits -
+      before->control_fallthrough_lookup_hits;
+  observation->control_fallthrough_lookup_misses =
+    after.control_fallthrough_lookup_misses -
+      before->control_fallthrough_lookup_misses;
+  observation->control_scheduler_updates =
+    after.control_scheduler_updates - before->control_scheduler_updates;
+#else
+  (void)before;
+  observation->control_dispatcher_entries = 0;
+  observation->control_direct_chain_attempts = 0;
+  observation->control_direct_chain_hits = 0;
+  observation->control_cycle_exits = 0;
+  observation->control_indirect_lookup_hits = 0;
+  observation->control_indirect_lookup_misses = 0;
+  observation->control_fallthrough_lookup_hits = 0;
+  observation->control_fallthrough_lookup_misses = 0;
+  observation->control_scheduler_updates = 0;
+#endif
 }
 
 static void reference_run(const perf_program *program, u32 iterations,
@@ -1175,6 +1283,19 @@ static void reference_run(const perf_program *program, u32 iterations,
       for (i = 0; i < PERF_BRANCH_BLOCKS; i++)
         values[0] += values[1];
     }
+    else if (program->kind == PERF_WORKLOAD_INDIRECT_LOOKUP)
+    {
+      for (i = 0; i + 1u < PERF_INDIRECT_BLOCKS; i++)
+      {
+        u32 target_pc = PERF_INDIRECT_START_PC + (i + 1u) * 8u;
+
+        values[REG_LR] = target_pc;
+        values[REG_PC] = target_pc;
+        values[REG_CPSR] &= ~0x20u;
+        trace_hash = fnv_u32(trace_hash, target_pc);
+      }
+      reference_alu(values, 3000u);
+    }
     else if (program->kind == PERF_WORKLOAD_SCHEDULER)
     {
       reference_alu(values, 0);
@@ -1195,8 +1316,10 @@ static void reference_run(const perf_program *program, u32 iterations,
     scheduler_hash = fnv_u32(scheduler_hash, program->end_pc);
   }
 
-  expected->lookup_calls = iterations;
-  expected->terminal_calls = iterations;
+  expected->lookup_calls = iterations *
+    (program->kind == PERF_WORKLOAD_INDIRECT_LOOKUP ?
+      PERF_INDIRECT_BLOCKS : 1u);
+  expected->terminal_calls = expected->lookup_calls;
   expected->update_calls = iterations;
   expected->read8_calls = read8;
   expected->read16_calls = read16;
@@ -1210,6 +1333,31 @@ static void reference_run(const perf_program *program, u32 iterations,
   expected->memory_hash = memory_hash;
   expected->scheduler_hash = scheduler_hash;
   expected->trace_hash = trace_hash;
+#if defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
+  expected->control_dispatcher_entries = expected->terminal_calls;
+  expected->control_direct_chain_attempts =
+    program->direct_chains_per_run * iterations;
+  expected->control_direct_chain_hits =
+    program->direct_chains_per_run * iterations;
+  expected->control_cycle_exits = iterations;
+  expected->control_indirect_lookup_hits =
+    program->kind == PERF_WORKLOAD_INDIRECT_LOOKUP ?
+      (PERF_INDIRECT_BLOCKS - 1u) * iterations : 0;
+  expected->control_indirect_lookup_misses = 0;
+  expected->control_fallthrough_lookup_hits = 0;
+  expected->control_fallthrough_lookup_misses = 0;
+  expected->control_scheduler_updates = iterations;
+#else
+  expected->control_dispatcher_entries = 0;
+  expected->control_direct_chain_attempts = 0;
+  expected->control_direct_chain_hits = 0;
+  expected->control_cycle_exits = 0;
+  expected->control_indirect_lookup_hits = 0;
+  expected->control_indirect_lookup_misses = 0;
+  expected->control_fallthrough_lookup_hits = 0;
+  expected->control_fallthrough_lookup_misses = 0;
+  expected->control_scheduler_updates = 0;
+#endif
 }
 
 static int observations_equal(const perf_observation *actual,
@@ -1229,7 +1377,24 @@ static int observations_equal(const perf_observation *actual,
     actual->state_hash == expected->state_hash &&
     actual->memory_hash == expected->memory_hash &&
     actual->scheduler_hash == expected->scheduler_hash &&
-    actual->trace_hash == expected->trace_hash;
+    actual->trace_hash == expected->trace_hash &&
+    actual->control_dispatcher_entries ==
+      expected->control_dispatcher_entries &&
+    actual->control_direct_chain_attempts ==
+      expected->control_direct_chain_attempts &&
+    actual->control_direct_chain_hits ==
+      expected->control_direct_chain_hits &&
+    actual->control_cycle_exits == expected->control_cycle_exits &&
+    actual->control_indirect_lookup_hits ==
+      expected->control_indirect_lookup_hits &&
+    actual->control_indirect_lookup_misses ==
+      expected->control_indirect_lookup_misses &&
+    actual->control_fallthrough_lookup_hits ==
+      expected->control_fallthrough_lookup_hits &&
+    actual->control_fallthrough_lookup_misses ==
+      expected->control_fallthrough_lookup_misses &&
+    actual->control_scheduler_updates ==
+      expected->control_scheduler_updates;
 }
 
 static void print_perf_result(const char *result, const char *phase,
@@ -1261,7 +1426,9 @@ static void print_perf_result(const char *result, const char *phase,
   put_raw(g_program.name);
   put_raw(" phase=");
   put_raw(phase);
-  put_raw(" backend=rv32im guest_insns=");
+  put_raw(" backend=rv32im iterations=");
+  put_u32_dec(iterations);
+  put_raw(" guest_insns=");
   put_u32_dec(guest_insns);
   put_raw(" guest_cycles=");
   put_u32_dec(guest_cycles);
@@ -1293,11 +1460,25 @@ static void print_perf_result(const char *result, const char *phase,
   put_u32_dec(g_program.emit_stats.perf_helper_call_sites);
   put_raw(" emitted_terminal_sites=");
   put_u32_dec(g_program.emit_stats.perf_terminal_call_sites);
+  put_raw(" dispatcher_entries=");
+  put_u32_dec(observation->control_dispatcher_entries);
   put_raw(" direct_chain_attempts=");
-  put_u32_dec(g_program.direct_chains_per_run * iterations);
+  put_u32_dec(observation->control_direct_chain_attempts);
   put_raw(" direct_chain_hits=");
-  put_u32_dec(g_program.direct_chains_per_run * iterations);
-  put_raw(" fallthrough_lookups=0 indirect_lookups=0 lookups=");
+  put_u32_dec(observation->control_direct_chain_hits);
+  put_raw(" cycle_exits=");
+  put_u32_dec(observation->control_cycle_exits);
+  put_raw(" indirect_lookup_hits=");
+  put_u32_dec(observation->control_indirect_lookup_hits);
+  put_raw(" indirect_lookup_misses=");
+  put_u32_dec(observation->control_indirect_lookup_misses);
+  put_raw(" fallthrough_lookup_hits=");
+  put_u32_dec(observation->control_fallthrough_lookup_hits);
+  put_raw(" fallthrough_lookup_misses=");
+  put_u32_dec(observation->control_fallthrough_lookup_misses);
+  put_raw(" scheduler_updates=");
+  put_u32_dec(observation->control_scheduler_updates);
+  put_raw(" lookups=");
   put_u32_dec(observation->lookup_calls);
   put_raw(" scheduler_exits=");
   put_u32_dec(observation->update_calls);
@@ -1334,7 +1515,13 @@ static void print_perf_result(const char *result, const char *phase,
   put_raw(phase[0] == 'c' ?
           " measurement_scope=translate_sync_first_execute" :
           " measurement_scope=steady_state_execute");
-  put_raw(" instrumentation_counter_semantics=emission_sites_x_iterations");
+  put_raw(" emission_counter_semantics=emission_sites_x_iterations");
+#if defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
+  put_raw(" control_counter_source=runtime_instrumented");
+#else
+  put_raw(" control_counter_source=disabled");
+#endif
+  put_raw(" control_counter_semantics=taken_runtime_events");
   put_raw(" reason=");
   put_raw(reason);
   put_chr('\n');
@@ -1346,15 +1533,19 @@ static int measure_phase(const char *phase, u32 iterations,
 {
   perf_observation actual;
   perf_observation expected;
+  riscv_runtime_stats control_before;
   u32 end_instret;
   u32 raw_instret;
   int equal;
 
+#if defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
+  riscv_get_runtime_stats(&control_before);
+#endif
   run_program(&g_program, iterations);
   end_instret = read_instret();
   rv32im_perf_measure_end();
   raw_instret = end_instret - start_instret;
-  capture_observation(&actual);
+  capture_observation(&actual, &control_before);
   reference_run(&g_program, iterations, &expected);
   equal = observations_equal(&actual, &expected);
   print_perf_result(equal ? "PASS" : "FAIL", phase,
@@ -1407,6 +1598,42 @@ static int measure_phase(const char *phase, u32 iterations,
     put_u32_dec(expected.terminal_calls);
     put_chr(',');
     put_u32_dec(expected.update_calls);
+    put_raw(" actual_control=");
+    put_u32_dec(actual.control_dispatcher_entries);
+    put_chr(',');
+    put_u32_dec(actual.control_direct_chain_attempts);
+    put_chr(',');
+    put_u32_dec(actual.control_direct_chain_hits);
+    put_chr(',');
+    put_u32_dec(actual.control_cycle_exits);
+    put_chr(',');
+    put_u32_dec(actual.control_indirect_lookup_hits);
+    put_chr(',');
+    put_u32_dec(actual.control_indirect_lookup_misses);
+    put_chr(',');
+    put_u32_dec(actual.control_fallthrough_lookup_hits);
+    put_chr(',');
+    put_u32_dec(actual.control_fallthrough_lookup_misses);
+    put_chr(',');
+    put_u32_dec(actual.control_scheduler_updates);
+    put_raw(" expected_control=");
+    put_u32_dec(expected.control_dispatcher_entries);
+    put_chr(',');
+    put_u32_dec(expected.control_direct_chain_attempts);
+    put_chr(',');
+    put_u32_dec(expected.control_direct_chain_hits);
+    put_chr(',');
+    put_u32_dec(expected.control_cycle_exits);
+    put_chr(',');
+    put_u32_dec(expected.control_indirect_lookup_hits);
+    put_chr(',');
+    put_u32_dec(expected.control_indirect_lookup_misses);
+    put_chr(',');
+    put_u32_dec(expected.control_fallthrough_lookup_hits);
+    put_chr(',');
+    put_u32_dec(expected.control_fallthrough_lookup_misses);
+    put_chr(',');
+    put_u32_dec(expected.control_scheduler_updates);
     put_raw(" last_update_cycles=");
     put_u32_hex((u32)g_last_update_cycles);
     put_raw(" last_update_pc=");
@@ -1453,6 +1680,108 @@ static int run_workload(perf_workload_kind kind)
     return 0;
   return 1;
 }
+
+#if defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
+static int verify_indirect_lookup_miss_counter(void)
+{
+  const char *reason = "unknown";
+  riscv_runtime_stats before;
+  riscv_runtime_stats after;
+  u32 dispatcher_entries;
+  u32 direct_chain_attempts;
+  u32 direct_chain_hits;
+  u32 cycle_exits;
+  u32 indirect_lookup_hits;
+  u32 indirect_lookup_misses;
+  u32 fallthrough_lookup_hits;
+  u32 fallthrough_lookup_misses;
+  u32 scheduler_updates;
+  int passed;
+
+  if (!build_program(PERF_WORKLOAD_INDIRECT_LOOKUP, &reason))
+  {
+    put_raw("result=FAIL command=rv32im-control-flow case=indirect_miss ");
+    put_raw("backend=rv32im reason=");
+    put_raw(reason);
+    put_chr('\n');
+    return 0;
+  }
+
+  /* Keep only the initial block discoverable. Its BX target is still a real
+   * translated PC, but the dispatcher must take and count the miss path. */
+  g_program.entry_count = 1;
+  reset_guest_state(&g_program);
+  reset_observation_counters();
+  riscv_get_runtime_stats(&before);
+  execute_arm_translate_internal(g_program.guest_cycles_per_run, &reg[0]);
+  riscv_get_runtime_stats(&after);
+
+  dispatcher_entries = after.control_dispatcher_entries -
+    before.control_dispatcher_entries;
+  direct_chain_attempts = after.control_direct_chain_attempts -
+    before.control_direct_chain_attempts;
+  direct_chain_hits = after.control_direct_chain_hits -
+    before.control_direct_chain_hits;
+  cycle_exits = after.control_cycle_exits - before.control_cycle_exits;
+  indirect_lookup_hits = after.control_indirect_lookup_hits -
+    before.control_indirect_lookup_hits;
+  indirect_lookup_misses = after.control_indirect_lookup_misses -
+    before.control_indirect_lookup_misses;
+  fallthrough_lookup_hits = after.control_fallthrough_lookup_hits -
+    before.control_fallthrough_lookup_hits;
+  fallthrough_lookup_misses = after.control_fallthrough_lookup_misses -
+    before.control_fallthrough_lookup_misses;
+  scheduler_updates = after.control_scheduler_updates -
+    before.control_scheduler_updates;
+
+  passed = dispatcher_entries == 1u && direct_chain_attempts == 0u &&
+    direct_chain_hits == 0u && cycle_exits == 0u &&
+    indirect_lookup_hits == 0u && indirect_lookup_misses == 1u &&
+    fallthrough_lookup_hits == 0u && fallthrough_lookup_misses == 0u &&
+    scheduler_updates == 0u && g_lookup_calls == 2u &&
+    g_terminal_calls == 1u && g_update_calls == 0u &&
+    g_fallbacks == 1u && g_initial_lookup_fallbacks == 0u &&
+    g_relookup_fallbacks == 1u && g_unsupported_fallbacks == 0u &&
+    g_execute_arm_calls == 1u &&
+    reg[REG_PC] == PERF_INDIRECT_START_PC + 8u;
+
+  put_raw("result=");
+  put_raw(passed ? "PASS" : "FAIL");
+  put_raw(" command=rv32im-control-flow case=indirect_miss backend=rv32im");
+  put_raw(" dispatcher_entries=");
+  put_u32_dec(dispatcher_entries);
+  put_raw(" direct_chain_attempts=");
+  put_u32_dec(direct_chain_attempts);
+  put_raw(" direct_chain_hits=");
+  put_u32_dec(direct_chain_hits);
+  put_raw(" cycle_exits=");
+  put_u32_dec(cycle_exits);
+  put_raw(" indirect_lookup_hits=");
+  put_u32_dec(indirect_lookup_hits);
+  put_raw(" indirect_lookup_misses=");
+  put_u32_dec(indirect_lookup_misses);
+  put_raw(" fallthrough_lookup_hits=");
+  put_u32_dec(fallthrough_lookup_hits);
+  put_raw(" fallthrough_lookup_misses=");
+  put_u32_dec(fallthrough_lookup_misses);
+  put_raw(" scheduler_updates=");
+  put_u32_dec(scheduler_updates);
+  put_raw(" lookups=");
+  put_u32_dec(g_lookup_calls);
+  put_raw(" terminal_calls=");
+  put_u32_dec(g_terminal_calls);
+  put_raw(" fallbacks=");
+  put_u32_dec(g_fallbacks);
+  put_raw(" relookup_fallbacks=");
+  put_u32_dec(g_relookup_fallbacks);
+  put_raw(" execute_arm_calls=");
+  put_u32_dec(g_execute_arm_calls);
+  put_raw(" control_counter_source=runtime_instrumented reason=");
+  put_raw(passed ? "runtime_miss_counted" : "runtime_miss_counter_mismatch");
+  put_chr('\n');
+  return passed;
+}
+#endif
 
 void execute_arm(u32 cycles)
 {
@@ -1669,14 +1998,19 @@ void _start(void)
       !run_workload(PERF_WORKLOAD_MAPPED_ALU) ||
       !run_workload(PERF_WORKLOAD_MEMORY_READ) ||
       !run_workload(PERF_WORKLOAD_BRANCH_CHAIN) ||
+      !run_workload(PERF_WORKLOAD_INDIRECT_LOOKUP) ||
       !run_workload(PERF_WORKLOAD_SCHEDULER) ||
-      !run_workload(PERF_WORKLOAD_MIXED))
+      !run_workload(PERF_WORKLOAD_MIXED)
+#if defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
+      || !verify_indirect_lookup_miss_counter()
+#endif
+      )
   {
     sys_exit(1);
   }
 
   put_raw("result=PASS command=rv32im-perf workload=all phase=summary ");
-  put_raw("backend=rv32im workloads=5 cold=5 warm=5 repeatable=1 profile=");
+  put_raw("backend=rv32im workloads=6 cold=6 warm=6 repeatable=1 profile=");
 #if defined(RV32IM_PERF_BASELINE_PROFILE)
   put_raw("mapped_alu_baseline ");
 #else

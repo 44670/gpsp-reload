@@ -7,7 +7,7 @@ function normalize_hex(value) {
 
 BEGIN {
   if (!expected_windows)
-    expected_windows = 12
+    expected_windows = 14
   begin_pc = normalize_hex(begin_pc)
   end_pc = normalize_hex(end_pc)
   collecting = 0

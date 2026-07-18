@@ -57,6 +57,22 @@ typedef struct riscv_runtime_stats
   u32 perf_mapped_invalidate_sites;
   u32 perf_mapped_reload_sites;
   u32 perf_mapped_reload_ops;
+  /* Runtime control-flow telemetry. These count events actually taken, not
+   * emitted sites or fixture-derived expectations. They are initialized only
+   * in RISCV_RUNTIME_CONTROL_FLOW_COUNTERS builds; keeping the stores out of
+   * instruction-count builds prevents the observer from perturbing cold
+   * translation windows. */
+#if defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
+  u32 control_dispatcher_entries;
+  u32 control_direct_chain_attempts;
+  u32 control_direct_chain_hits;
+  u32 control_cycle_exits;
+  u32 control_indirect_lookup_hits;
+  u32 control_indirect_lookup_misses;
+  u32 control_fallthrough_lookup_hits;
+  u32 control_fallthrough_lookup_misses;
+  u32 control_scheduler_updates;
+#endif
 } riscv_runtime_stats;
 
 typedef enum riscv_runtime_fallback_kind

@@ -30,7 +30,7 @@ if test -z "$begin_pc" || test -z "$end_pc"; then
   exit 1
 fi
 
-awk -v begin_pc="$begin_pc" -v end_pc="$end_pc" -v expected_windows=6 \
+awk -v begin_pc="$begin_pc" -v end_pc="$end_pc" -v expected_windows=8 \
   -f "$trace_awk" "$trace_fifo" > "$counts_log" &
 counter_pid=$!
 

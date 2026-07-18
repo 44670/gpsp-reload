@@ -354,6 +354,21 @@ static u32 riscv_native_store_insns;
 static u32 riscv_native_psr_insns;
 static u32 riscv_thumb_helper_insns;
 static cpu_alert_type riscv_cpu_alert;
+#if defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
+static u32 riscv_control_dispatcher_entries;
+static u32 riscv_control_direct_chain_attempts;
+static u32 riscv_control_direct_chain_hits;
+static u32 riscv_control_cycle_exits;
+static u32 riscv_control_indirect_lookup_hits;
+static u32 riscv_control_indirect_lookup_misses;
+static u32 riscv_control_fallthrough_lookup_hits;
+static u32 riscv_control_fallthrough_lookup_misses;
+static u32 riscv_control_scheduler_updates;
+
+#define RISCV_CONTROL_COUNT(counter) ((counter)++)
+#else
+#define RISCV_CONTROL_COUNT(counter) ((void)0)
+#endif
 
 #if defined(RISCV_RUNTIME_PERF_COUNTERS)
 static u32 riscv_perf_helper_call_sites;
@@ -521,6 +536,20 @@ static void riscv_emit_li(u8 **ptr, riscv_reg_number rd, u32 value)
 
   *ptr = translation_ptr;
 }
+
+#if defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
+static void riscv_emit_control_counter_increment(u8 **ptr, u32 *counter)
+{
+  u8 *translation_ptr;
+
+  riscv_emit_li(ptr, riscv_reg_t0, (u32)(uintptr_t)counter);
+  translation_ptr = *ptr;
+  riscv_emit_lw(riscv_reg_t1, riscv_reg_t0, 0);
+  riscv_emit_addi(riscv_reg_t1, riscv_reg_t1, 1);
+  riscv_emit_sw(riscv_reg_t1, riscv_reg_t0, 0);
+  *ptr = translation_ptr;
+}
+#endif
 
 static void riscv_emit_jit_run_block_tail_jump(u8 **ptr)
 {
@@ -3020,12 +3049,20 @@ static u8 *riscv_emit_branch_patch_site_with_cycle_exit(
   continuation_valid_mask = riscv_mapped_valid_mask;
   continuation_dirty_mask = riscv_mapped_dirty_mask;
 
+#if defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
+  riscv_emit_control_counter_increment(
+    &ptr, &riscv_control_direct_chain_attempts);
+#endif
   riscv_emit_cycles_load(&ptr, riscv_reg_t4);
   translation_ptr = ptr;
   cycle_exit_branch = translation_ptr;
   riscv_emit_bge(riscv_reg_zero, riscv_reg_t4, 0);
   ptr = translation_ptr;
 
+#if defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
+  riscv_emit_control_counter_increment(&ptr,
+                                       &riscv_control_direct_chain_hits);
+#endif
   branch_source = short_patch_site ?
     riscv_emit_unconditional_branch_patch_site_short(&ptr, false) :
     riscv_emit_unconditional_branch_patch_site(&ptr, false);
@@ -4038,7 +4075,13 @@ static u8 *riscv_lookup_current_block(u32 *pc_out, u32 *thumb_out)
   return block_lookup_address_arm(pc);
 }
 
-static u8 *riscv_lookup_or_fallback(void)
+typedef enum riscv_control_lookup_kind
+{
+  RISCV_CONTROL_LOOKUP_FALLTHROUGH = 0,
+  RISCV_CONTROL_LOOKUP_INDIRECT
+} riscv_control_lookup_kind;
+
+static u8 *riscv_lookup_or_fallback(riscv_control_lookup_kind kind)
 {
   u8 *entry;
   u32 pc;
@@ -4050,6 +4093,10 @@ static u8 *riscv_lookup_or_fallback(void)
   entry = riscv_lookup_current_block(&pc, &thumb);
   if (!entry || entry == RISCV_INVALID_BLOCK_ENTRY)
   {
+    if (kind == RISCV_CONTROL_LOOKUP_INDIRECT)
+      RISCV_CONTROL_COUNT(riscv_control_indirect_lookup_misses);
+    else
+      RISCV_CONTROL_COUNT(riscv_control_fallthrough_lookup_misses);
     riscv_interpreter_fallbacks++;
     riscv_relookup_fallbacks++;
     riscv_note_runtime_fallback(RISCV_RUNTIME_FALLBACK_RELOOKUP,
@@ -4059,6 +4106,11 @@ static u8 *riscv_lookup_or_fallback(void)
     riscv_run_interpreter_remainder();
     return NULL;
   }
+
+  if (kind == RISCV_CONTROL_LOOKUP_INDIRECT)
+    RISCV_CONTROL_COUNT(riscv_control_indirect_lookup_hits);
+  else
+    RISCV_CONTROL_COUNT(riscv_control_fallthrough_lookup_hits);
 
   return entry;
 }
@@ -5203,6 +5255,7 @@ static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta)
   u32 update_ret;
   cpu_alert_type alert = CPU_ALERT_NONE;
 
+  RISCV_CONTROL_COUNT(riscv_control_dispatcher_entries);
   riscv_blocks_executed++;
 
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
@@ -5234,6 +5287,9 @@ static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta)
                                    riscv_block_meta_end_pc(meta),
                                    riscv_block_meta_thumb(meta));
 
+  if (riscv_cycles_remaining <= 0)
+    RISCV_CONTROL_COUNT(riscv_control_cycle_exits);
+
   if (riscv_cpu_alert != CPU_ALERT_NONE)
     alert = riscv_handle_cpu_alert();
 
@@ -5243,6 +5299,7 @@ static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta)
   if ((alert & CPU_ALERT_HALT) || reg[CPU_HALT_STATE] != CPU_ACTIVE ||
       riscv_cycles_remaining <= 0)
   {
+    RISCV_CONTROL_COUNT(riscv_control_scheduler_updates);
     update_ret = update_gba(riscv_cycles_remaining);
     if (completed_frame(update_ret))
     {
@@ -5253,7 +5310,9 @@ static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta)
     riscv_cycles_remaining = (s32)cycles_to_run(update_ret);
   }
 
-  return riscv_lookup_or_fallback();
+  return riscv_lookup_or_fallback(
+    (meta->flags & RISCV_BLOCK_PC_WRITTEN) ?
+      RISCV_CONTROL_LOOKUP_INDIRECT : RISCV_CONTROL_LOOKUP_FALLTHROUGH);
 }
 
 void riscv_emit_block_prologue(u8 **translation_ptr_ref,
@@ -11068,6 +11127,17 @@ void init_emitter(bool must_swap)
   riscv_native_store_insns = 0;
   riscv_native_psr_insns = 0;
   riscv_thumb_helper_insns = 0;
+#if defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
+  riscv_control_dispatcher_entries = 0;
+  riscv_control_direct_chain_attempts = 0;
+  riscv_control_direct_chain_hits = 0;
+  riscv_control_cycle_exits = 0;
+  riscv_control_indirect_lookup_hits = 0;
+  riscv_control_indirect_lookup_misses = 0;
+  riscv_control_fallthrough_lookup_hits = 0;
+  riscv_control_fallthrough_lookup_misses = 0;
+  riscv_control_scheduler_updates = 0;
+#endif
 #if defined(RISCV_RUNTIME_PERF_COUNTERS)
   riscv_perf_helper_call_sites = 0;
   riscv_perf_terminal_call_sites = 0;
@@ -11099,6 +11169,22 @@ void riscv_get_runtime_stats(riscv_runtime_stats *stats)
   stats->native_store_insns = riscv_native_store_insns;
   stats->native_psr_insns = riscv_native_psr_insns;
   stats->thumb_helper_insns = riscv_thumb_helper_insns;
+#if defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
+  stats->control_dispatcher_entries = riscv_control_dispatcher_entries;
+  stats->control_direct_chain_attempts =
+    riscv_control_direct_chain_attempts;
+  stats->control_direct_chain_hits = riscv_control_direct_chain_hits;
+  stats->control_cycle_exits = riscv_control_cycle_exits;
+  stats->control_indirect_lookup_hits =
+    riscv_control_indirect_lookup_hits;
+  stats->control_indirect_lookup_misses =
+    riscv_control_indirect_lookup_misses;
+  stats->control_fallthrough_lookup_hits =
+    riscv_control_fallthrough_lookup_hits;
+  stats->control_fallthrough_lookup_misses =
+    riscv_control_fallthrough_lookup_misses;
+  stats->control_scheduler_updates = riscv_control_scheduler_updates;
+#endif
 #if defined(RISCV_RUNTIME_PERF_COUNTERS)
   stats->perf_helper_call_sites = riscv_perf_helper_call_sites;
   stats->perf_terminal_call_sites = riscv_perf_terminal_call_sites;
