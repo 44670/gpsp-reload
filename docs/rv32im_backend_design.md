@@ -257,7 +257,7 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 | Backend boundary | RV32IM status | Evidence / next decision |
 | --- | --- | --- |
 | Raw RV32I/M emission and ABI entry/exit | native+compare | `make -C tests/rv32im test` covers emitter encodings and qemu-riscv32 ABI stubs. |
-| Data processing, flags, shifts, multiply, long multiply, PC-source operands | native+compare | Runtime `compare` covers ALU, flag, multiply, shifted/register-shifted, and PC-source fixtures against the local ARM reference model. |
+| Data processing, flags, shifts, multiply, long multiply, PC-source operands | native+compare | Runtime `compare` covers ALU, flag, multiply, shifted/register-shifted, and PC-source fixtures against the local ARM reference model. The mapped AL/no-flags/no-PC fast path additionally checks 13 exact lowering encodings and runs 15 generated-code cases against the real `cpu.cc` interpreter, covering every mapped register class and critical data-processing and `MUL` operand aliases. |
 | PSR and banked-state boundaries | native+compare | `compare` covers MRS/MSR CPSR/SPSR, control-mode banked LR effects, SPSR helper writes, `MOVS pc`, and `LDM ... {pc}^`. |
 | Unsafe PSR/register combinations | explicit reject | `rejects runtime` pins `MRS r15,CPSR`, `MSR CPSR,r15`, and related non-AL direct-emitter rejection rules. |
 | Word/byte memory without PC writes | native+compare | `compare` covers helper loads/stores, PC-relative memory, register-offset memory, shifted register-offset memory, writeback, source-PC stores, IO observation, and remaining-cycle handoffs. ROM/same-page/aligned ARM `LDR rd, [pc, #imm]` literal-pool loads are direct constants, matching the existing Thumb literal-pool strategy. |
@@ -277,7 +277,8 @@ The RV32IM backend now has a standalone qemu-user proof suite in
 | Mixed contract chain across semantic boundaries | native+compare | `mixed` runs native data processing, helper-backed load, PC-writing load into a native target, alerting helper-backed store, scheduler refill, and deliberate fallback without resetting state. It pins register, memory, scheduler, trace, instruction-step, memory-event, scheduler-event, fallback-event, shadow-memory, counter, code-byte, and runtime-frame evidence. |
 | Armwrestler ARM Tests 0-4 and Thumbwrestler Tests 0-2 external ROM | interpreter+frontend JIT compare | `make -C tests/rv32im armwrestler` loads `/home/john/ref/armwrestler-gba-fixed/armwrestler-gba-fixed.gba`, patches only each loaded copy for deterministic `TESTNUM`, `VSync`, and `DrawResult` result capture, runs ARM Tests 0-4 and Thumb Tests 0-2 under the host `cpu.cc` interpreter and under `cpu_threaded.c` plus generated RV32IM in `qemu-riscv32`, and requires 79 results, failure mask `0`, native blocks/code bytes/nonzero native counters, ROM trace PCs, `fallbacks=0`, `fallback_events=0`, and `execute_arm_calls=0`. Tests 5-9 are Armwrestler stubs in this ROM. |
 | Armwrestler code-size reporting | regression ratchet | `make -C tests/rv32im armwrestler-report` prints stable `armwrestler_code_size` lines for every ARM/Thumb subtest plus final `arm_total`, `thumb_total`, `arm_max`, and `thumb_max`. After direct mapped-register ALU lowering, the measured totals are ARM `85508` bytes and Thumb `39964` bytes; Makefile ceilings are ARM `85636` and Thumb `39964`, with every per-test ceiling tightened to the current result plus 128 bytes. |
-| Deterministic performance baseline | measured+ratcheted | `make -C tests/rv32im perf` runs cold/warm `mapped_alu`, `memory_read`, `branch_chain`, and `mixed` workloads twice, checks exact dynamic RV32 instruction counts plus state/event hashes, and enforces the immutable M0 comparison plus current M1 code-byte and instruction ceilings. |
+| Deterministic performance baseline | measured+ratcheted | `make -C tests/rv32im perf` locks Clang 19.1.7, QEMU 10.0.8, RV32IM/ILP32/O2 build flags, and a workload-manifest hash; runs cold/warm `mapped_alu`, `memory_read`, `branch_chain`, `scheduler`, and `mixed` workloads twice; checks exact QEMU-trace RV32 instruction sums plus state/event hashes; and enforces the frozen M0 comparison plus current M1 byte/instruction ceilings. |
+| Armwrestler dynamic A/B | measured+ratcheted | `make -C tests/rv32im armwrestler-perf` runs cold and cache-stable warm replays for all eight real frontend groups. Baseline and optimized harness `.text` must be byte-identical, the external ROM SHA-256 is frozen, QEMU trace semantics are explicit, warm replays may add no code, and the 79/79/zero-fallback guest contract must remain equal. |
 | Thumb instruction lowering | native+ongoing | Thumbwrestler Tests 0-2 currently run through frontend JIT with zero fallbacks. Native lowering covers the Armwrestler Thumb paths, including high-register `ADD`/`MOV` with non-PC destinations, conditional branch taken/skipped cycle handling, direct `B`/`BX`, direct BL/BLH LR/PC updates, BL-pair target derivation from the live link value when it fits RV32IM `addi`, and patchable non-HLE SWI exits. Broader Thumb coverage remains an active MIPS-alignment task. |
 
 The common no-flags/no-PC mapped ARM ALU milestone is complete. Safe unshifted
@@ -294,37 +295,57 @@ scheduler, and trace hashes. Perf-only emission counters record helper-call
 sites and mapped flush/store/invalidate/reload operations without inserting
 counter instructions into generated production code.
 
-On the installed QEMU 10.0.8 linux-user build, the architectural `instret` CSR
-is readable but is derived from host ticks when QEMU icount is disabled. The
-same control window therefore changes across runs and is reported only as
-`rdinstret_csr_*` diagnostics with `rdinstret_csr_repeatable=0`. The regression
-gate uses QEMU's `in_asm,exec,nochain` trace between unique measurement markers
-to count executed guest RV32 instructions exactly; an empty three-instruction
-window is measured and subtracted. Two complete runs must match after removing
-only the explicitly unstable raw CSR diagnostics. Wall time is never a gate.
+On the installed QEMU 10.0.8 linux-user build, `instret` is readable but has
+not been validated as a repeatable architectural retired-instruction source.
+The raw samples are therefore reported only as `rdinstret_csr_*` diagnostics
+with `rdinstret_csr_verified=0`; no `retired_insns` field is emitted. The
+regression metric is `executed_rv32_insns`, sourced from QEMU's
+`in_asm,exec,nochain` trace between unique measurement markers, with
+`counter_semantics=qemu_tb_instruction_sum`. An empty three-instruction window
+is measured and subtracted. Two complete runs must match after removing only
+the explicitly unstable raw CSR diagnostics. Wall time is never a gate.
+
+The benchmark contract is frozen in `rv32im_perf_manifest.txt`, including the
+guest instruction counts and the state, memory, scheduler, and trace hashes.
+`rv32im_perf_environment.txt` separately records the exact compiler,
+QEMU-trace, build-flag, and profile-switch contract. Both manifest SHA-256
+values and the tool versions are verified before a run, preventing a changed
+workload or toolchain from masquerading as an optimization.
 
 The initial warm baseline is:
 
 | Workload | Guest instructions | Dynamic RV32 instructions | RV32/guest | Generated bytes |
 | --- | ---: | ---: | ---: | ---: |
-| `mapped_alu` | 32768 | 169890 | 5.18 | 3760 |
-| `memory_read` | 3072 | 222050 | 72.28 | 2536 |
-| `branch_chain` | 8064 | 87586 | 10.86 | 2424 |
-| `mixed` | 3904 | 87394 | 22.38 | 1500 |
+| `mapped_alu` | 32768 | 169889 | 5.18 | 3760 |
+| `memory_read` | 3072 | 222049 | 72.28 | 2536 |
+| `branch_chain` | 8064 | 87585 | 10.86 | 2424 |
+| `scheduler` | 2048 | 827425 | 404.01 | 68 |
+| `mixed` | 3904 | 87393 | 22.38 | 1500 |
 
 The M1 result, enforced against that immutable baseline, is:
 
 | Workload | Dynamic RV32 instructions | RV32/guest | Generated bytes | Change from M0 |
 | --- | ---: | ---: | ---: | ---: |
-| `mapped_alu` | 85410 | 2.60 | 1120 | instructions -49.72%, bytes -70.21% |
-| `memory_read` | 222050 | 72.28 | 2536 | unchanged |
-| `branch_chain` | 75298 | 9.33 | 2040 | instructions -14.03%, bytes -15.84% |
-| `mixed` | 79586 | 20.38 | 1012 | instructions -8.93%, bytes -32.53% |
+| `mapped_alu` | 85409 | 2.60 | 1120 | instructions -49.72%, bytes -70.21% |
+| `memory_read` | 222049 | 72.28 | 2536 | unchanged |
+| `branch_chain` | 75297 | 9.33 | 2040 | instructions -14.02%, bytes -15.84% |
+| `scheduler` | 821281 | 401.01 | 56 | instructions -0.74%, bytes -17.65% |
+| `mixed` | 79585 | 20.38 | 1012 | instructions -8.93%, bytes -32.53% |
 
 The parser separately requires at least a 25% warm `mapped_alu` instruction
 reduction, a strict generated-byte reduction, exact encoding coverage, stable
 correctness hashes, zero fallback execution, and the ratcheted current
 instruction/code-size ceilings.
+
+The real frontend A/B gate records a smaller but useful workload-level effect.
+Across ARM Tests 0-4 and Thumb Tests 0-2, the cache-stable warm replay changes
+from 8478795 to 8473477 executed RV32 instructions (-0.06%); ARM-only warm work
+changes from 6544047 to 6538729 (-0.08%), while Thumb is exactly unchanged at
+1934748. ARM cumulative generated code changes from 86084 to 85508 bytes. The
+cold translate-plus-first-execute total changes from 10576828 to 10610051
+(+0.31%), exposing the fast-path matcher's translation cost instead of hiding
+it. Both profiles remain 79/79, add zero code during warm replay, use zero
+fallbacks, and share identical guest trace/counter summaries.
 
 - raw RV32I/M emitter encoding checks against clang/LLVM reference output
 - qemu-riscv32 ABI entry/return checks

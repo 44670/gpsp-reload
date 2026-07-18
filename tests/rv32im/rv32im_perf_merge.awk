@@ -10,11 +10,12 @@ function field(name, i, kv) {
 function keep_field(value, kv, name) {
   split(value, kv, "=")
   name = kv[1]
-  return name != "rv32_instret_raw" &&
-    name != "rdinstret_overhead" &&
-    name != "rv32_instret" &&
-    name != "rv32_instret_per_guest_x100" &&
-    name != "counter_source"
+  return name != "rdinstret_csr_raw" &&
+    name != "rdinstret_csr_overhead" &&
+    name != "rdinstret_csr_net" &&
+    name != "rdinstret_csr_verified" &&
+    name != "counter_source" &&
+    name != "counter_semantics"
 }
 
 NR == FNR {
@@ -43,12 +44,12 @@ NR == FNR {
     }
 
     if (measurement_index == 1) {
-      print "result=PASS command=rv32im-perf workload=empty phase=control backend=rv32im guest_insns=0 guest_cycles=0 rv32_instret_raw=" trace_raw[1] " rv32_instret_overhead=" trace_raw[1] " rv32_instret=0 rv32_instret_per_guest_x100=0 harness_mode=runtime_fixture counter_source=qemu_exec_trace rdinstret_csr_repeatable=0 reason=measurement_overhead"
+      print "result=PASS command=rv32im-perf workload=empty phase=control backend=rv32im guest_insns=0 guest_cycles=0 executed_rv32_insns_raw=" trace_raw[1] " executed_rv32_insns_overhead=" trace_raw[1] " executed_rv32_insns=0 executed_rv32_insns_per_guest_x100=0 harness_mode=runtime_fixture counter_source=qemu_exec_trace counter_semantics=qemu_tb_instruction_sum rdinstret_csr_verified=0 reason=measurement_overhead"
     }
 
-    csr_raw = field("rv32_instret_raw")
-    csr_overhead = field("rdinstret_overhead")
-    csr_net = field("rv32_instret")
+    csr_raw = field("rdinstret_csr_raw")
+    csr_overhead = field("rdinstret_csr_overhead")
+    csr_net = field("rdinstret_csr_net")
     guest_insns = field("guest_insns") + 0
     net = trace_raw[window] - trace_raw[1]
     if (net < 0) {
@@ -63,15 +64,16 @@ NR == FNR {
         output = output (output == "" ? "" : " ") $i
     }
     per_guest = guest_insns ? int((net * 100) / guest_insns) : 0
-    output = output " rv32_instret_raw=" trace_raw[window]
-    output = output " rv32_instret_overhead=" trace_raw[1]
-    output = output " rv32_instret=" net
-    output = output " rv32_instret_per_guest_x100=" per_guest
+    output = output " executed_rv32_insns_raw=" trace_raw[window]
+    output = output " executed_rv32_insns_overhead=" trace_raw[1]
+    output = output " executed_rv32_insns=" net
+    output = output " executed_rv32_insns_per_guest_x100=" per_guest
     output = output " rdinstret_csr_raw=" csr_raw
     output = output " rdinstret_csr_overhead=" csr_overhead
     output = output " rdinstret_csr_net=" csr_net
     output = output " counter_source=qemu_exec_trace"
-    output = output " rdinstret_csr_repeatable=0"
+    output = output " counter_semantics=qemu_tb_instruction_sum"
+    output = output " rdinstret_csr_verified=0"
     print output
     next
   }
@@ -80,13 +82,17 @@ NR == FNR {
   next
 }
 
+{
+  print
+}
+
 END {
-  if (trace_windows != 10) {
-    print "expected 10 qemu trace counts, got " trace_windows > "/dev/stderr"
+  if (trace_windows != 12) {
+    print "expected 12 qemu trace counts, got " trace_windows > "/dev/stderr"
     failed = 1
   }
-  if (measurement_index != 9) {
-    print "expected 9 reported measurements, got " measurement_index > "/dev/stderr"
+  if (measurement_index != 11) {
+    print "expected 11 reported measurements, got " measurement_index > "/dev/stderr"
     failed = 1
   }
   if (failed)

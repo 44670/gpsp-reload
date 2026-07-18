@@ -484,7 +484,11 @@ static bool riscv_arm_reg_mapped(u32 reg_index,
                                  u32 *dirty_mask);
 static void riscv_emit_mapped_regs_reload_mask(u8 **ptr_ref,
                                                 u32 reload_mask);
+#if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
+extern volatile u32 riscv_runtime_perf_disable_mapped_alu_fastpath;
+#endif
 
+#if !defined(RISCV_RUNTIME_DISABLE_MAPPED_ALU_FASTPATH)
 static bool riscv_emit_arm_data_proc_mapped_reg_alu(u8 **ptr_ref,
                                                      u32 opcode)
 {
@@ -568,6 +572,7 @@ static bool riscv_emit_arm_data_proc_mapped_reg_alu(u8 **ptr_ref,
   riscv_mapped_dirty_mask |= rd_mask;
   return true;
 }
+#endif
 
 static void riscv_emit_guest_pc_load_ex(u8 **ptr_ref,
                                         riscv_jit_block_meta *meta,
@@ -5910,7 +5915,14 @@ static bool riscv_emit_native_arm_data_proc_with_pc_ex2(
     return true;
   }
 
+#if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
+  if (!riscv_runtime_perf_disable_mapped_alu_fastpath &&
+      riscv_emit_arm_data_proc_mapped_reg_alu(&ptr, opcode))
+#elif !defined(RISCV_RUNTIME_DISABLE_MAPPED_ALU_FASTPATH)
   if (riscv_emit_arm_data_proc_mapped_reg_alu(&ptr, opcode))
+#endif
+#if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH) || \
+    !defined(RISCV_RUNTIME_DISABLE_MAPPED_ALU_FASTPATH)
   {
     if (emit_cycles)
     {
@@ -5923,6 +5935,7 @@ static bool riscv_emit_native_arm_data_proc_with_pc_ex2(
     riscv_native_data_proc_insns++;
     return true;
   }
+#endif
 
   if (logical_flags &&
       (generated_flag_mask & 0x02u) &&
@@ -6676,7 +6689,14 @@ static bool riscv_emit_native_arm_multiply2(u8 **translation_ptr_ref,
     return false;
   }
 
+#if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
+  if (!riscv_runtime_perf_disable_mapped_alu_fastpath &&
+      !accumulate && !set_flags)
+#elif !defined(RISCV_RUNTIME_DISABLE_MAPPED_ALU_FASTPATH)
   if (!accumulate && !set_flags)
+#endif
+#if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH) || \
+    !defined(RISCV_RUNTIME_DISABLE_MAPPED_ALU_FASTPATH)
   {
     riscv_reg_number rd_host;
     riscv_reg_number rm_host;
@@ -6703,6 +6723,7 @@ static bool riscv_emit_native_arm_multiply2(u8 **translation_ptr_ref,
       return true;
     }
   }
+#endif
 
   riscv_emit_arm_reg_load(&ptr, riscv_reg_t0, rm);
   riscv_emit_arm_reg_load(&ptr, riscv_reg_t1, rs);

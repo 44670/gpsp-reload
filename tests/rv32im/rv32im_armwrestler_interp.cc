@@ -5,6 +5,9 @@
 extern "C" {
 #include "common.h"
 }
+#if defined(RV32IM_MAPPED_ALU_ONLY)
+#include "rv32im_mapped_alu_cases.h"
+#endif
 
 #ifndef ARMWRESTLER_ROM
 #define ARMWRESTLER_ROM \
@@ -36,6 +39,7 @@ extern "C" {
 #define RUN_CYCLES 200000u
 #define RUN_CHUNKS 64u
 
+#if !defined(RV32IM_MAPPED_ALU_ONLY)
 static const u32 g_arm_test_ids[ARMWRESTLER_ARM_TESTS] =
   { 0u, 1u, 2u, 3u, 4u };
 static const u32 g_arm_test_results[ARMWRESTLER_ARM_TESTS] =
@@ -44,6 +48,7 @@ static const u32 g_thumb_test_ids[ARMWRESTLER_THUMB_TESTS] =
   { 0u, 1u, 2u };
 static const u32 g_thumb_test_results[ARMWRESTLER_THUMB_TESTS] =
   { 11u, 7u, 2u };
+#endif
 
 static u8 g_rom[ROM_MAX_BYTES];
 static u8 g_rom_open_bus[ROM_PAGE_BYTES];
@@ -51,8 +56,10 @@ static u32 g_rom_size;
 static u32 g_update_calls;
 static u32 g_read32_calls;
 static u32 g_write32_calls;
+#if !defined(RV32IM_MAPPED_ALU_ONLY)
 static u32 g_total_observed_results;
 static u32 g_total_failure_mask;
+#endif
 
 u32 gamepak_sticky_bit[1024 / 32];
 u32 gamepak_size;
@@ -148,6 +155,7 @@ static void store32(u8 *base, u32 offset, u32 value)
   base[offset + 3u] = (u8)(value >> 24);
 }
 
+#if !defined(RV32IM_MAPPED_ALU_ONLY)
 static bool load_rom(void)
 {
   FILE *file = std::fopen(ARMWRESTLER_ROM, "rb");
@@ -213,6 +221,7 @@ static void patch_loaded_rom(void)
   patch_bytes(THUMB_DRAW_RESULT_PC, thumb_draw_result_patch,
               sizeof(thumb_draw_result_patch));
 }
+#endif
 
 static void map_read_region(u32 start, u32 bytes, u8 *base, u32 mask)
 {
@@ -234,6 +243,7 @@ static void init_memory_map(void)
   }
 }
 
+#if !defined(RV32IM_MAPPED_ALU_ONLY)
 static void clear_runtime_memory(void)
 {
   std::memset(ewram, 0, sizeof(ewram));
@@ -243,6 +253,7 @@ static void clear_runtime_memory(void)
   std::memset(palette_ram, 0, sizeof(palette_ram));
   std::memset(oam_ram, 0, sizeof(oam_ram));
 }
+#endif
 
 static u8 *addr_ptr(u32 address, u32 size)
 {
@@ -347,6 +358,7 @@ u32 function_cc update_gba(int remaining_cycles)
   return FRAME_COMPLETE;
 }
 
+#if !defined(RV32IM_MAPPED_ALU_ONLY)
 static u32 result_word(u32 offset)
 {
   return load32(iwram + 0x8000u, (RESULT_BASE - IWRAM_BASE) + offset);
@@ -375,7 +387,58 @@ static void init_thumbwrestler_cpu_state(void)
   reg[10] = 0;
   reg[11] = 0xffffffffu;
 }
+#endif
 
+#if defined(RV32IM_MAPPED_ALU_ONLY)
+static bool run_mapped_alu_interpreter_cases(void)
+{
+  bool all_passed = true;
+
+  std::memset(g_rom, 0, sizeof(g_rom));
+  g_rom_size = sizeof(g_rom);
+  init_memory_map();
+
+  for (u32 i = 0; i < RV32IM_MAPPED_ALU_CASE_COUNT; i++)
+  {
+    const rv32im_mapped_alu_case *item = &rv32im_mapped_alu_cases[i];
+    u32 pc = 0x08015000u + i * 0x100u;
+    bool passed;
+
+    store32(g_rom, pc - ROM_BASE, rv32im_mapped_alu_opcode(item));
+    init_cpu();
+    rv32im_mapped_alu_initial_regs(&reg[0]);
+    reg[REG_PC] = pc;
+    reg[REG_CPSR] = 0x2000001fu;
+    reg[CPU_MODE] = MODE_SYSTEM;
+    reg[CPU_HALT_STATE] = CPU_ACTIVE;
+    execute_arm(1u);
+
+    passed = reg[REG_PC] == pc + 4u && reg[REG_CPSR] == 0x2000001fu;
+    std::printf("result=%s command=rv32im-mapped-alu-semantics case=%s "
+                "backend=interp opcode=0x%08x rd=%u rd_value=0x%08x "
+                "pc=0x%08x cpsr=0x%08x guest_state_hash=0x%08x "
+                "harness_mode=cpu_cc_interpreter reason=%s\n",
+                passed ? "PASS" : "FAIL", item->name,
+                rv32im_mapped_alu_opcode(item), item->rd, reg[item->rd],
+                reg[REG_PC], reg[REG_CPSR],
+                rv32im_mapped_alu_state_hash(&reg[0]),
+                passed ? "interpreter_case_executed" :
+                         "interpreter_case_contract_mismatch");
+    if (!passed)
+      all_passed = false;
+  }
+
+  std::printf("result=%s command=rv32im-mapped-alu-semantics case=all "
+              "backend=interp cases=%u reason=%s\n",
+              all_passed ? "PASS" : "FAIL",
+              (u32)RV32IM_MAPPED_ALU_CASE_COUNT,
+              all_passed ? "interpreter_semantic_cases_complete" :
+                           "interpreter_semantic_case_failed");
+  return all_passed;
+}
+#endif
+
+#if !defined(RV32IM_MAPPED_ALU_ONLY)
 static void print_summary(const char *result, const char *suite, u32 test_id,
                           u32 expected_results, const char *reason)
 {
@@ -473,9 +536,13 @@ static bool run_thumbwrestler_test(u32 test_id, u32 expected_results)
                 "thumbwrestler_test_interpreter_passed");
   return true;
 }
+#endif
 
 int main(void)
 {
+#if defined(RV32IM_MAPPED_ALU_ONLY)
+  return run_mapped_alu_interpreter_cases() ? 0 : 1;
+#else
   if (!load_rom())
   {
     std::printf("result=FAIL command=armwrestler-interp reason=rom_load_failed "
@@ -511,4 +578,5 @@ int main(void)
 
   print_aggregate_summary("PASS", "armwrestler_all_interpreter_passed");
   return 0;
+#endif
 }

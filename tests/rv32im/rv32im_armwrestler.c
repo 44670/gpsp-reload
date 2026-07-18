@@ -55,6 +55,21 @@ typedef unsigned int usize;
 #define RUN_CHUNKS 64u
 #define ARMWRESTLER_TOP_BLOCKS 8u
 
+#if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
+#if defined(ARMWRESTLER_PERF_BASELINE_PROFILE)
+__attribute__((section(".data")))
+volatile u32 riscv_runtime_perf_disable_mapped_alu_fastpath = 1u;
+#else
+__attribute__((section(".data")))
+volatile u32 riscv_runtime_perf_disable_mapped_alu_fastpath = 0u;
+#endif
+#define ARMWRESTLER_JIT_PROFILE "runtime_selected"
+#elif defined(RISCV_RUNTIME_DISABLE_MAPPED_ALU_FASTPATH)
+#define ARMWRESTLER_JIT_PROFILE "mapped_alu_baseline"
+#else
+#define ARMWRESTLER_JIT_PROFILE "optimized"
+#endif
+
 typedef struct
 {
   u32 start_pc;
@@ -115,8 +130,30 @@ static u32 g_total_observed_results;
 static u32 g_total_failure_mask;
 static u32 g_arm_code_bytes_total;
 static u32 g_thumb_code_bytes_total;
+static u32 g_last_warm_replays;
+static u32 g_last_warm_observed_results;
+static u32 g_last_warm_failure_mask;
+static u32 g_last_warm_code_bytes_added;
+static u32 g_warm_replays_total;
+static u32 g_warm_code_bytes_added_total;
 static armwrestler_block_hotspot g_block_hotspots[ARMWRESTLER_TOP_BLOCKS];
 static u32 g_block_hotspot_count;
+
+/* Out-of-line markers delimit only the real frontend/JIT execution loop.
+ * QEMU trace analysis counts the RV32 instructions represented by executed
+ * translation blocks between these markers; it does not call the result an
+ * architectural retired-instruction count. */
+__attribute__((noinline))
+void rv32im_armwrestler_measure_begin(void)
+{
+  __asm__ volatile("addi zero, zero, 21" ::: "memory");
+}
+
+__attribute__((noinline))
+void rv32im_armwrestler_measure_end(void)
+{
+  __asm__ volatile("addi zero, zero, 23" ::: "memory");
+}
 
 static long syscall1(long n, long arg0)
 {
@@ -678,6 +715,20 @@ static u32 runtime_native_counter_sum(const riscv_runtime_stats *stats)
          stats->native_psr_insns;
 }
 
+static void run_frontend_until_results(u32 expected_results)
+{
+  u32 i;
+
+  for (i = 0; i < RUN_CHUNKS; i++)
+  {
+    execute_arm_translate_internal(RUN_CYCLES, &reg[0]);
+    if (result_word(0) >= expected_results)
+      break;
+    if (g_execute_arm_calls || g_fallback_count)
+      break;
+  }
+}
+
 static void print_block_hotspots(void)
 {
   u32 i;
@@ -785,6 +836,16 @@ static void print_summary(const char *result, const char *suite, u32 test_id,
   put_u32_hex(g_fallback_hash);
   put_raw(" update_calls=");
   put_u32_dec(g_update_calls);
+  put_raw(" warm_replays=");
+  put_u32_dec(g_last_warm_replays);
+  put_raw(" warm_observed_results=");
+  put_u32_dec(g_last_warm_observed_results);
+  put_raw(" warm_failure_mask=");
+  put_u32_hex(g_last_warm_failure_mask);
+  put_raw(" warm_code_bytes_added=");
+  put_u32_dec(g_last_warm_code_bytes_added);
+  put_raw(" jit_profile=");
+  put_raw(ARMWRESTLER_JIT_PROFILE);
   put_raw(" harness_mode=armwrestler_frontend_jit_only reason=");
   put_raw(reason);
   put_raw("\n");
@@ -852,6 +913,12 @@ static void print_aggregate_summary(const char *result, const char *reason)
   put_u32_hex(g_fallback_hash);
   put_raw(" update_calls=");
   put_u32_dec(g_update_calls);
+  put_raw(" warm_replays=");
+  put_u32_dec(g_warm_replays_total);
+  put_raw(" warm_code_bytes_added=");
+  put_u32_dec(g_warm_code_bytes_added_total);
+  put_raw(" jit_profile=");
+  put_raw(ARMWRESTLER_JIT_PROFILE);
   put_raw(" harness_mode=armwrestler_frontend_jit_only reason=");
   put_raw(reason);
   put_raw("\n");
@@ -861,11 +928,13 @@ static int run_armwrestler_test(u32 test_id, u32 expected_results)
 {
   riscv_runtime_stats before;
   riscv_runtime_stats after;
+#if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
+  riscv_runtime_stats after_cold;
+#endif
   u32 before_execute_arm_calls;
   u32 before_fallback_count;
   u32 before_code_bytes;
   u32 after_code_bytes;
-  u32 i;
 
   patch_test_id(test_id);
   clear_runtime_memory();
@@ -875,20 +944,19 @@ static int run_armwrestler_test(u32 test_id, u32 expected_results)
   init_cpu_state();
   reset_dynarec_for_armwrestler();
   reset_block_hotspots();
+  g_last_warm_replays = 0;
+  g_last_warm_observed_results = 0;
+  g_last_warm_failure_mask = 0;
+  g_last_warm_code_bytes_added = 0;
 
   riscv_get_runtime_stats(&before);
   before_execute_arm_calls = g_execute_arm_calls;
   before_fallback_count = g_fallback_count;
   before_code_bytes = (u32)(rom_translation_ptr - rom_translation_cache);
 
-  for (i = 0; i < RUN_CHUNKS; i++)
-  {
-    execute_arm_translate_internal(RUN_CYCLES, &reg[0]);
-    if (result_word(0) >= expected_results)
-      break;
-    if (g_execute_arm_calls || g_fallback_count)
-      break;
-  }
+  rv32im_armwrestler_measure_begin();
+  run_frontend_until_results(expected_results);
+  rv32im_armwrestler_measure_end();
 
   riscv_get_runtime_stats(&after);
   after_code_bytes = (u32)(rom_translation_ptr - rom_translation_cache);
@@ -926,6 +994,41 @@ static int run_armwrestler_test(u32 test_id, u32 expected_results)
     return 0;
   }
 
+#if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
+  after_cold = after;
+  clear_runtime_memory();
+  store32(iwram + 0x8000u, (RESULT_BASE - IWRAM_BASE) + 20u,
+          expected_results);
+  init_memory_map();
+  init_cpu_state();
+
+  rv32im_armwrestler_measure_begin();
+  run_frontend_until_results(expected_results);
+  rv32im_armwrestler_measure_end();
+
+  riscv_get_runtime_stats(&after);
+  g_last_warm_replays = 1;
+  g_last_warm_observed_results = result_word(0);
+  g_last_warm_failure_mask = result_word(4);
+  g_last_warm_code_bytes_added =
+      (u32)(rom_translation_ptr - rom_translation_cache) - after_code_bytes;
+  g_warm_replays_total++;
+  g_warm_code_bytes_added_total += g_last_warm_code_bytes_added;
+
+  if (g_last_warm_observed_results != expected_results ||
+      g_last_warm_failure_mask != 0 ||
+      g_last_warm_code_bytes_added != 0 ||
+      after.blocks_executed == after_cold.blocks_executed ||
+      g_execute_arm_calls != before_execute_arm_calls ||
+      g_fallback_count != before_fallback_count ||
+      after.interpreter_fallbacks != before.interpreter_fallbacks)
+  {
+    print_summary("FAIL", "arm", test_id, expected_results,
+                  "warm_replay_mismatch");
+    return 0;
+  }
+#endif
+
   print_summary("PASS", "arm", test_id, expected_results,
                 "armwrestler_arm_test_jit_only_passed");
   return 1;
@@ -935,11 +1038,13 @@ static int run_thumbwrestler_test(u32 test_id, u32 expected_results)
 {
   riscv_runtime_stats before;
   riscv_runtime_stats after;
+#if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
+  riscv_runtime_stats after_cold;
+#endif
   u32 before_execute_arm_calls;
   u32 before_fallback_count;
   u32 before_code_bytes;
   u32 after_code_bytes;
-  u32 i;
 
   clear_runtime_memory();
   store32(iwram + 0x8000u, 0x08u, test_id);
@@ -949,20 +1054,19 @@ static int run_thumbwrestler_test(u32 test_id, u32 expected_results)
   init_thumbwrestler_cpu_state();
   reset_dynarec_for_armwrestler();
   reset_block_hotspots();
+  g_last_warm_replays = 0;
+  g_last_warm_observed_results = 0;
+  g_last_warm_failure_mask = 0;
+  g_last_warm_code_bytes_added = 0;
 
   riscv_get_runtime_stats(&before);
   before_execute_arm_calls = g_execute_arm_calls;
   before_fallback_count = g_fallback_count;
   before_code_bytes = (u32)(rom_translation_ptr - rom_translation_cache);
 
-  for (i = 0; i < RUN_CHUNKS; i++)
-  {
-    execute_arm_translate_internal(RUN_CYCLES, &reg[0]);
-    if (result_word(0) >= expected_results)
-      break;
-    if (g_execute_arm_calls || g_fallback_count)
-      break;
-  }
+  rv32im_armwrestler_measure_begin();
+  run_frontend_until_results(expected_results);
+  rv32im_armwrestler_measure_end();
 
   riscv_get_runtime_stats(&after);
   after_code_bytes = (u32)(rom_translation_ptr - rom_translation_cache);
@@ -999,6 +1103,42 @@ static int run_thumbwrestler_test(u32 test_id, u32 expected_results)
                   "missing_native_execution_evidence");
     return 0;
   }
+
+#if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
+  after_cold = after;
+  clear_runtime_memory();
+  store32(iwram + 0x8000u, 0x08u, test_id);
+  store32(iwram + 0x8000u, (RESULT_BASE - IWRAM_BASE) + 20u,
+          expected_results);
+  init_memory_map();
+  init_thumbwrestler_cpu_state();
+
+  rv32im_armwrestler_measure_begin();
+  run_frontend_until_results(expected_results);
+  rv32im_armwrestler_measure_end();
+
+  riscv_get_runtime_stats(&after);
+  g_last_warm_replays = 1;
+  g_last_warm_observed_results = result_word(0);
+  g_last_warm_failure_mask = result_word(4);
+  g_last_warm_code_bytes_added =
+      (u32)(rom_translation_ptr - rom_translation_cache) - after_code_bytes;
+  g_warm_replays_total++;
+  g_warm_code_bytes_added_total += g_last_warm_code_bytes_added;
+
+  if (g_last_warm_observed_results != expected_results ||
+      g_last_warm_failure_mask != 0 ||
+      g_last_warm_code_bytes_added != 0 ||
+      after.blocks_executed == after_cold.blocks_executed ||
+      g_execute_arm_calls != before_execute_arm_calls ||
+      g_fallback_count != before_fallback_count ||
+      after.interpreter_fallbacks != before.interpreter_fallbacks)
+  {
+    print_summary("FAIL", "thumb", test_id, expected_results,
+                  "warm_replay_mismatch");
+    return 0;
+  }
+#endif
 
   print_summary("PASS", "thumb", test_id, expected_results,
                 "thumbwrestler_test_jit_only_passed");

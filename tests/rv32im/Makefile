@@ -6,11 +6,15 @@ QEMU_RISCV32 ?= qemu-riscv32
 HARNESS := rv32im_harness
 CODEGEN := rv32im_codegen
 ARMWRESTLER := rv32im_armwrestler
+ARMWRESTLER_PERF_BASELINE := rv32im_armwrestler_perf_baseline
+ARMWRESTLER_PERF_OPTIMIZED := rv32im_armwrestler_perf_optimized
 ARMWRESTLER_INTERP := rv32im_armwrestler_interp
 ABI_TEST := rv32im_abi_test
 EXEC_TEST := rv32im_exec_test
 RUNTIME_TEST := rv32im_runtime_test
 PERF_TEST := rv32im_perf
+PERF_BASELINE_TEST := rv32im_perf_baseline
+MAPPED_ALU_INTERP := rv32im_mapped_alu_interp
 OUT_DIR := out
 SMOKE_PNG := $(OUT_DIR)/rv32im_harness.png
 SMOKE_RUNTIME_PNG := $(OUT_DIR)/rv32im_harness_runtime.png
@@ -22,6 +26,14 @@ MIXED_LOG := $(OUT_DIR)/rv32im_harness_mixed.log
 REJECTS_LOG := $(OUT_DIR)/rv32im_harness_rejects.log
 ARMWRESTLER_LOG := $(OUT_DIR)/rv32im_armwrestler.log
 ARMWRESTLER_INTERP_LOG := $(OUT_DIR)/rv32im_armwrestler_interp.log
+ARMWRESTLER_PERF_BASELINE_LOG := $(OUT_DIR)/rv32im_armwrestler_perf_baseline.log
+ARMWRESTLER_PERF_OPTIMIZED_LOG := $(OUT_DIR)/rv32im_armwrestler_perf_optimized.log
+ARMWRESTLER_PERF_BASELINE_COUNTS := $(OUT_DIR)/rv32im_armwrestler_perf_baseline_counts.log
+ARMWRESTLER_PERF_OPTIMIZED_COUNTS := $(OUT_DIR)/rv32im_armwrestler_perf_optimized_counts.log
+ARMWRESTLER_PERF_REPORT := $(OUT_DIR)/rv32im_armwrestler_perf_report.log
+ARMWRESTLER_PERF_BASELINE_TEXT := $(OUT_DIR)/rv32im_armwrestler_perf_baseline.text
+ARMWRESTLER_PERF_OPTIMIZED_TEXT := $(OUT_DIR)/rv32im_armwrestler_perf_optimized.text
+ARMWRESTLER_PERF_TRACE_FIFO := $(OUT_DIR)/rv32im_armwrestler_perf_trace.fifo
 RUNTIME_LOG := $(OUT_DIR)/rv32im_runtime.log
 PERF_LOG := $(OUT_DIR)/rv32im_perf.log
 PERF_REPEAT_LOG := $(OUT_DIR)/rv32im_perf_repeat.log
@@ -33,6 +45,26 @@ PERF_TRACE_COUNTS := $(OUT_DIR)/rv32im_perf_trace_counts.log
 PERF_REPEAT_TRACE_COUNTS := $(OUT_DIR)/rv32im_perf_repeat_trace_counts.log
 PERF_STABLE_LOG := $(OUT_DIR)/rv32im_perf_stable.log
 PERF_REPEAT_STABLE_LOG := $(OUT_DIR)/rv32im_perf_repeat_stable.log
+PERF_BASELINE_LOG := $(OUT_DIR)/rv32im_perf_baseline.log
+PERF_BASELINE_RAW_LOG := $(OUT_DIR)/rv32im_perf_baseline_raw.log
+PERF_BASELINE_QEMU_LOG := $(OUT_DIR)/rv32im_perf_baseline_qemu.log
+PERF_BASELINE_TRACE_COUNTS := $(OUT_DIR)/rv32im_perf_baseline_trace_counts.log
+PERF_ENV_LOG := $(OUT_DIR)/rv32im_perf_env.log
+MAPPED_ALU_INTERP_LOG := $(OUT_DIR)/rv32im_mapped_alu_interp.log
+MAPPED_ALU_JIT_LOG := $(OUT_DIR)/rv32im_mapped_alu_jit.log
+PERF_WORKLOAD_MANIFEST := rv32im_perf_manifest.txt
+PERF_ENVIRONMENT_MANIFEST := rv32im_perf_environment.txt
+PERF_BENCHMARK_ID := rv32im-perf-m0-v2
+PERF_EXPECTED_CLANG_VERSION ?= 19.1.7
+PERF_EXPECTED_QEMU_VERSION ?= 10.0.8
+PERF_EXPECTED_MANIFEST_SHA256 := e8235f6e050faf0ee2d500fa94c32744a91270bd6edb977fd82d59ba7b58c457
+PERF_EXPECTED_ENVIRONMENT_SHA256 := 7f372d08dfd234a3a774dbb5d3d430241c1c4044497c8726e3fe9f9f661e762b
+PERF_BUILD_CONFIG := clang-rv32im-ilp32-o2-freestanding-v1
+ARMWRESTLER_ROM := /home/john/ref/armwrestler-gba-fixed/armwrestler-gba-fixed.gba
+ARMWRESTLER_PERF_BASELINE_SPEC := rv32im_armwrestler_perf_baseline.txt
+ARMWRESTLER_PERF_BENCHMARK_ID := rv32im-armwrestler-perf-v1
+ARMWRESTLER_PERF_EXPECTED_ROM_SHA256 := 9f08d807c03ef296d38ef73e9b827a3d8c77cead9ced44b07d64c10f5f7d0746
+ARMWRESTLER_PERF_TIMEOUT_SECONDS := 120
 ARMWRESTLER_ARM0_CODE_BYTES_MAX ?= 12648
 ARMWRESTLER_ARM1_CODE_BYTES_MAX ?= 12080
 ARMWRESTLER_ARM2_CODE_BYTES_MAX ?= 21388
@@ -44,17 +76,19 @@ ARMWRESTLER_THUMB2_CODE_BYTES_MAX ?= 8348
 ARMWRESTLER_ARM_CODE_BYTES_MAX ?= 85636
 ARMWRESTLER_THUMB_CODE_BYTES_MAX ?= 39964
 ARMWRESTLER_THUMB_HELPERS_MAX ?= 0
-PERF_MAPPED_ALU_BASELINE_WARM_INSTRET := 169890
+PERF_MAPPED_ALU_BASELINE_WARM_EXEC_INSNS := 169889
 PERF_MAPPED_ALU_BASELINE_BYTES := 3760
 PERF_MAPPED_ALU_MIN_IMPROVEMENT_PERCENT ?= 25
-PERF_MAPPED_ALU_COLD_INSTRET_MAX ?= 72809
-PERF_MAPPED_ALU_WARM_INSTRET_MAX ?= 85410
+PERF_MAPPED_ALU_COLD_EXEC_INSNS_MAX ?= 72808
+PERF_MAPPED_ALU_WARM_EXEC_INSNS_MAX ?= 85409
 PERF_MAPPED_ALU_BYTES_MAX ?= 1120
-PERF_MEMORY_READ_WARM_INSTRET_MAX ?= 222050
+PERF_MEMORY_READ_WARM_EXEC_INSNS_MAX ?= 222049
 PERF_MEMORY_READ_BYTES_MAX ?= 2536
-PERF_BRANCH_CHAIN_WARM_INSTRET_MAX ?= 75298
+PERF_BRANCH_CHAIN_WARM_EXEC_INSNS_MAX ?= 75297
 PERF_BRANCH_CHAIN_BYTES_MAX ?= 2040
-PERF_MIXED_WARM_INSTRET_MAX ?= 79586
+PERF_SCHEDULER_WARM_EXEC_INSNS_MAX ?= 821281
+PERF_SCHEDULER_BYTES_MAX ?= 56
+PERF_MIXED_WARM_EXEC_INSNS_MAX ?= 79585
 PERF_MIXED_BYTES_MAX ?= 1012
 CODEGEN_BIN := $(OUT_DIR)/rv32im_codegen.bin
 CODEGEN_REF_ELF := $(OUT_DIR)/rv32im_codegen_ref.elf
@@ -98,7 +132,7 @@ HOST_CXX ?= c++
 LLVM_OBJCOPY ?= llvm-objcopy
 LLVM_NM ?= llvm-nm
 
-all: $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_INTERP) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST)
+all: $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP)
 
 $(HARNESS): rv32im_harness.c $(ROOT)/riscv/riscv_runtime.c \
 		$(ROOT)/riscv/riscv_emit.h $(ROOT)/riscv/riscv_codegen.h \
@@ -125,11 +159,31 @@ $(RUNTIME_TEST): rv32im_runtime_test.c $(ROOT)/riscv/riscv_runtime.c \
 
 $(PERF_TEST): rv32im_perf.c $(ROOT)/riscv/riscv_runtime.c \
 		$(ROOT)/riscv/riscv_emit.h $(ROOT)/riscv/riscv_codegen.h \
-		$(ROOT)/riscv/riscv_runtime_test_shim.h
+		$(ROOT)/riscv/riscv_runtime_test_shim.h rv32im_mapped_alu_cases.h
 	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) \
 		-DRISCV_RUNTIME_STANDALONE_TEST -DRISCV_RUNTIME_PERF_COUNTERS \
 		-I$(ROOT) -I$(ROOT)/riscv \
 		-o $@ rv32im_perf.c $(ROOT)/riscv/riscv_runtime.c
+
+$(PERF_BASELINE_TEST): rv32im_perf.c $(ROOT)/riscv/riscv_runtime.c \
+		$(ROOT)/riscv/riscv_emit.h $(ROOT)/riscv/riscv_codegen.h \
+		$(ROOT)/riscv/riscv_runtime_test_shim.h rv32im_mapped_alu_cases.h
+	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) \
+		-DRISCV_RUNTIME_STANDALONE_TEST -DRISCV_RUNTIME_PERF_COUNTERS \
+		-DRISCV_RUNTIME_DISABLE_MAPPED_ALU_FASTPATH \
+		-DRV32IM_PERF_BASELINE_PROFILE \
+		-I$(ROOT) -I$(ROOT)/riscv \
+		-o $@ rv32im_perf.c $(ROOT)/riscv/riscv_runtime.c
+
+$(MAPPED_ALU_INTERP): rv32im_armwrestler_interp.cc \
+		rv32im_mapped_alu_cases.h $(ROOT)/cpu.cc $(ROOT)/cpu.h \
+		$(ROOT)/gba_memory.h $(ROOT)/common.h
+	$(HOST_CXX) -std=c++11 -O2 -Wall -Wextra \
+		-DRV32IM_MAPPED_ALU_ONLY \
+		-DHAVE_STRINGS_H -DHAVE_STDINT_H -DHAVE_INTTYPES_H \
+		-I$(ROOT) -I$(ROOT)/libretro \
+		-I$(ROOT)/libretro/libretro-common/include \
+		-o $@ rv32im_armwrestler_interp.cc $(ROOT)/cpu.cc
 
 $(ARMWRESTLER): rv32im_armwrestler.c rv32im_frontend_shim.h \
 		$(ROOT)/cpu_threaded.c $(ROOT)/riscv/riscv_runtime.c \
@@ -138,6 +192,32 @@ $(ARMWRESTLER): rv32im_armwrestler.c rv32im_frontend_shim.h \
 	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) \
 		-DRISCV_RUNTIME_STANDALONE_TEST -DHAVE_DYNAREC -DRISCV_ARCH \
 		-DMMAP_JIT_CACHE -I. -I$(ROOT) -I$(ROOT)/riscv \
+		-include rv32im_frontend_shim.h \
+		-o $@ rv32im_armwrestler.c $(ROOT)/cpu_threaded.c \
+		$(ROOT)/riscv/riscv_runtime.c
+
+$(ARMWRESTLER_PERF_BASELINE): rv32im_armwrestler.c rv32im_frontend_shim.h \
+		$(ROOT)/cpu_threaded.c $(ROOT)/riscv/riscv_runtime.c \
+		$(ROOT)/riscv/riscv_emit.h $(ROOT)/riscv/riscv_codegen.h \
+		$(ROOT)/riscv/riscv_runtime_test_shim.h
+	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) \
+		-DRISCV_RUNTIME_STANDALONE_TEST -DHAVE_DYNAREC -DRISCV_ARCH \
+		-DMMAP_JIT_CACHE -DRISCV_RUNTIME_PERF_PROFILE_SWITCH \
+		-DARMWRESTLER_PERF_BASELINE_PROFILE \
+		-I. -I$(ROOT) -I$(ROOT)/riscv \
+		-include rv32im_frontend_shim.h \
+		-o $@ rv32im_armwrestler.c $(ROOT)/cpu_threaded.c \
+		$(ROOT)/riscv/riscv_runtime.c
+
+$(ARMWRESTLER_PERF_OPTIMIZED): rv32im_armwrestler.c rv32im_frontend_shim.h \
+		$(ROOT)/cpu_threaded.c $(ROOT)/riscv/riscv_runtime.c \
+		$(ROOT)/riscv/riscv_emit.h $(ROOT)/riscv/riscv_codegen.h \
+		$(ROOT)/riscv/riscv_runtime_test_shim.h
+	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) \
+		-DRISCV_RUNTIME_STANDALONE_TEST -DHAVE_DYNAREC -DRISCV_ARCH \
+		-DMMAP_JIT_CACHE -DRISCV_RUNTIME_PERF_PROFILE_SWITCH \
+		-DARMWRESTLER_PERF_OPTIMIZED_PROFILE \
+		-I. -I$(ROOT) -I$(ROOT)/riscv \
 		-include rv32im_frontend_shim.h \
 		-o $@ rv32im_armwrestler.c $(ROOT)/cpu_threaded.c \
 		$(ROOT)/riscv/riscv_runtime.c
@@ -343,7 +423,56 @@ armwrestler-interp: $(ARMWRESTLER_INTERP) | $(OUT_DIR)
 	grep -q 'observed_results=79 failure_mask=0x00000000' $(ARMWRESTLER_INTERP_LOG)
 	grep -q 'harness_mode=armwrestler_interpreter reason=armwrestler_all_interpreter_passed' $(ARMWRESTLER_INTERP_LOG)
 
-armwrestler: armwrestler-interp armwrestler-jit
+armwrestler-perf: perf-env-check $(ARMWRESTLER_PERF_BASELINE) \
+		$(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_PERF_BASELINE_SPEC) \
+		rv32im_armwrestler_trace_run.sh rv32im_armwrestler_perf_check.awk \
+		rv32im_qemu_trace_count.awk | $(OUT_DIR)
+	@rom_sha=`sha256sum $(ARMWRESTLER_ROM) | awk '{ print $$1 }'`; \
+	if test "$$rom_sha" != "$(ARMWRESTLER_PERF_EXPECTED_ROM_SHA256)"; then \
+		echo "result=FAIL command=armwrestler-perf rom_sha256=$$rom_sha expected_rom_sha256=$(ARMWRESTLER_PERF_EXPECTED_ROM_SHA256) reason=rom_changed"; \
+		exit 1; \
+	fi
+	$(LLVM_OBJCOPY) --dump-section .text=$(ARMWRESTLER_PERF_BASELINE_TEXT) \
+		$(ARMWRESTLER_PERF_BASELINE)
+	$(LLVM_OBJCOPY) --dump-section .text=$(ARMWRESTLER_PERF_OPTIMIZED_TEXT) \
+		$(ARMWRESTLER_PERF_OPTIMIZED)
+	cmp $(ARMWRESTLER_PERF_BASELINE_TEXT) $(ARMWRESTLER_PERF_OPTIMIZED_TEXT)
+	sh rv32im_armwrestler_trace_run.sh $(QEMU_RISCV32) $(LLVM_NM) \
+		rv32im_qemu_trace_count.awk ./$(ARMWRESTLER_PERF_BASELINE) \
+		$(ARMWRESTLER_PERF_BASELINE_COUNTS) \
+		$(ARMWRESTLER_PERF_BASELINE_LOG) $(ARMWRESTLER_PERF_TRACE_FIFO) \
+		$(ARMWRESTLER_PERF_TIMEOUT_SECONDS)
+	sh rv32im_armwrestler_trace_run.sh $(QEMU_RISCV32) $(LLVM_NM) \
+		rv32im_qemu_trace_count.awk ./$(ARMWRESTLER_PERF_OPTIMIZED) \
+		$(ARMWRESTLER_PERF_OPTIMIZED_COUNTS) \
+		$(ARMWRESTLER_PERF_OPTIMIZED_LOG) $(ARMWRESTLER_PERF_TRACE_FIFO) \
+		$(ARMWRESTLER_PERF_TIMEOUT_SECONDS)
+	@text_sha=`sha256sum $(ARMWRESTLER_PERF_BASELINE_TEXT) | awk '{ print $$1 }'`; \
+	environment_sha=`sha256sum $(PERF_ENVIRONMENT_MANIFEST) | awk '{ print $$1 }'`; \
+	clang_version=`$(CLANG) --version | sed -n '1s/.* version \([0-9][0-9.]*\).*/\1/p'`; \
+	qemu_version=`$(QEMU_RISCV32) --version | sed -n '1s/.* version \([0-9][0-9.]*\).*/\1/p'`; \
+	awk -v spec_file=$(ARMWRESTLER_PERF_BASELINE_SPEC) \
+		-v baseline_counts_file=$(ARMWRESTLER_PERF_BASELINE_COUNTS) \
+		-v optimized_counts_file=$(ARMWRESTLER_PERF_OPTIMIZED_COUNTS) \
+		-v baseline_log_file=$(ARMWRESTLER_PERF_BASELINE_LOG) \
+		-v optimized_log_file=$(ARMWRESTLER_PERF_OPTIMIZED_LOG) \
+		-v benchmark_id=$(ARMWRESTLER_PERF_BENCHMARK_ID) \
+		-v rom_sha=$(ARMWRESTLER_PERF_EXPECTED_ROM_SHA256) \
+		-v clang_version="$$clang_version" -v qemu_version="$$qemu_version" \
+		-v build_config=$(PERF_BUILD_CONFIG) \
+		-v environment_sha="$$environment_sha" -v text_sha="$$text_sha" \
+		-f rv32im_armwrestler_perf_check.awk \
+		$(ARMWRESTLER_PERF_BASELINE_SPEC) \
+		$(ARMWRESTLER_PERF_BASELINE_COUNTS) \
+		$(ARMWRESTLER_PERF_OPTIMIZED_COUNTS) \
+		$(ARMWRESTLER_PERF_BASELINE_LOG) \
+		$(ARMWRESTLER_PERF_OPTIMIZED_LOG) | tee $(ARMWRESTLER_PERF_REPORT)
+	grep -q 'result=PASS command=armwrestler-perf test=all phase=summary' \
+		$(ARMWRESTLER_PERF_REPORT)
+	grep -q 'observed_results=79 failure_mask=0x00000000 fallbacks=0 fallback_events=0 execute_arm_calls=0' \
+		$(ARMWRESTLER_PERF_REPORT)
+
+armwrestler: armwrestler-interp armwrestler-jit armwrestler-perf
 	grep -q 'observed_results=79 failure_mask=0x00000000' $(ARMWRESTLER_INTERP_LOG)
 	grep -q 'observed_results=79 failure_mask=0x00000000' $(ARMWRESTLER_LOG)
 	grep -q 'native_blocks=[1-9][0-9]*' $(ARMWRESTLER_LOG)
@@ -451,32 +580,70 @@ runtime: $(RUNTIME_TEST) | $(OUT_DIR)
 	$(QEMU_RISCV32) ./$(RUNTIME_TEST) | tee $(RUNTIME_LOG)
 	awk -f rv32im_runtime_size.awk $(RUNTIME_LOG)
 
-perf: $(PERF_TEST) | $(OUT_DIR)
+perf-env-check: $(PERF_WORKLOAD_MANIFEST) $(PERF_ENVIRONMENT_MANIFEST) | $(OUT_DIR)
+	@clang_version=`$(CLANG) --version | sed -n '1s/.* version \([0-9][0-9.]*\).*/\1/p'`; \
+	qemu_version=`$(QEMU_RISCV32) --version | sed -n '1s/.* version \([0-9][0-9.]*\).*/\1/p'`; \
+	manifest_sha=`sha256sum $(PERF_WORKLOAD_MANIFEST) | awk '{ print $$1 }'`; \
+	environment_sha=`sha256sum $(PERF_ENVIRONMENT_MANIFEST) | awk '{ print $$1 }'`; \
+	if test "$$clang_version" != "$(PERF_EXPECTED_CLANG_VERSION)"; then \
+		echo "result=FAIL command=rv32im-perf-env clang_version=$$clang_version expected_clang_version=$(PERF_EXPECTED_CLANG_VERSION) reason=clang_version_mismatch"; \
+		exit 1; \
+	fi; \
+	if test "$$qemu_version" != "$(PERF_EXPECTED_QEMU_VERSION)"; then \
+		echo "result=FAIL command=rv32im-perf-env qemu_version=$$qemu_version expected_qemu_version=$(PERF_EXPECTED_QEMU_VERSION) reason=qemu_version_mismatch"; \
+		exit 1; \
+	fi; \
+	if test "$$manifest_sha" != "$(PERF_EXPECTED_MANIFEST_SHA256)"; then \
+		echo "result=FAIL command=rv32im-perf-env workload_manifest_sha256=$$manifest_sha expected_manifest_sha256=$(PERF_EXPECTED_MANIFEST_SHA256) reason=workload_manifest_changed"; \
+		exit 1; \
+	fi; \
+	if test "$$environment_sha" != "$(PERF_EXPECTED_ENVIRONMENT_SHA256)"; then \
+		echo "result=FAIL command=rv32im-perf-env environment_manifest_sha256=$$environment_sha expected_environment_sha256=$(PERF_EXPECTED_ENVIRONMENT_SHA256) reason=build_environment_manifest_changed"; \
+		exit 1; \
+	fi; \
+	echo "result=PASS command=rv32im-perf-env benchmark_id=$(PERF_BENCHMARK_ID) clang_version=$$clang_version qemu_version=$$qemu_version target=riscv32 march=rv32im mabi=ilp32 optimization=O2 freestanding=1 compressed=0 build_config=$(PERF_BUILD_CONFIG) workload_manifest_sha256=$$manifest_sha environment_manifest_sha256=$$environment_sha reason=environment_locked" | tee $(PERF_ENV_LOG)
+
+perf: perf-env-check $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP) | $(OUT_DIR)
 	@begin_pc=`$(LLVM_NM) -n $(PERF_TEST) | awk '$$3 == "rv32im_perf_measure_begin" { print $$1 }'`; \
 	end_pc=`$(LLVM_NM) -n $(PERF_TEST) | awk '$$3 == "rv32im_perf_measure_end" { print $$1 }'`; \
 	test -n "$$begin_pc" && test -n "$$end_pc"; \
 	$(QEMU_RISCV32) -d in_asm,exec,nochain -D $(PERF_QEMU_LOG) \
 		./$(PERF_TEST) > $(PERF_RAW_LOG) || { \
 		rc=$$?; \
-		echo "result=FAIL command=rv32im-perf workload=control phase=probe backend=rv32im reason=rdinstret_unavailable_or_runner_failed" | tee -a $(PERF_RAW_LOG); \
+		echo "result=FAIL command=rv32im-perf workload=control phase=probe backend=rv32im reason=qemu_exec_trace_runner_failed" | tee -a $(PERF_RAW_LOG); \
 		exit $$rc; \
 	}; \
 	awk -v begin_pc="$$begin_pc" -v end_pc="$$end_pc" \
 		-f rv32im_qemu_trace_count.awk $(PERF_QEMU_LOG) > $(PERF_TRACE_COUNTS); \
-	awk -f rv32im_perf_merge.awk $(PERF_TRACE_COUNTS) $(PERF_RAW_LOG) > $(PERF_LOG)
+	awk -f rv32im_perf_merge.awk $(PERF_TRACE_COUNTS) $(PERF_RAW_LOG) > $(PERF_LOG).body
+	awk '{ print }' $(PERF_ENV_LOG) $(PERF_LOG).body > $(PERF_LOG)
 	@cat $(PERF_LOG)
 	@begin_pc=`$(LLVM_NM) -n $(PERF_TEST) | awk '$$3 == "rv32im_perf_measure_begin" { print $$1 }'`; \
 	end_pc=`$(LLVM_NM) -n $(PERF_TEST) | awk '$$3 == "rv32im_perf_measure_end" { print $$1 }'`; \
 	$(QEMU_RISCV32) -d in_asm,exec,nochain -D $(PERF_REPEAT_QEMU_LOG) \
 		./$(PERF_TEST) > $(PERF_REPEAT_RAW_LOG) || { \
 		rc=$$?; \
-		echo "result=FAIL command=rv32im-perf workload=control phase=probe backend=rv32im reason=rdinstret_unavailable_or_runner_failed" | tee -a $(PERF_REPEAT_RAW_LOG); \
+		echo "result=FAIL command=rv32im-perf workload=control phase=probe backend=rv32im reason=qemu_exec_trace_runner_failed" | tee -a $(PERF_REPEAT_RAW_LOG); \
 		exit $$rc; \
 	}; \
 	awk -v begin_pc="$$begin_pc" -v end_pc="$$end_pc" \
 		-f rv32im_qemu_trace_count.awk $(PERF_REPEAT_QEMU_LOG) > $(PERF_REPEAT_TRACE_COUNTS); \
 	awk -f rv32im_perf_merge.awk $(PERF_REPEAT_TRACE_COUNTS) \
-		$(PERF_REPEAT_RAW_LOG) > $(PERF_REPEAT_LOG)
+		$(PERF_REPEAT_RAW_LOG) > $(PERF_REPEAT_LOG).body
+	awk '{ print }' $(PERF_ENV_LOG) $(PERF_REPEAT_LOG).body > $(PERF_REPEAT_LOG)
+	@begin_pc=`$(LLVM_NM) -n $(PERF_BASELINE_TEST) | awk '$$3 == "rv32im_perf_measure_begin" { print $$1 }'`; \
+	end_pc=`$(LLVM_NM) -n $(PERF_BASELINE_TEST) | awk '$$3 == "rv32im_perf_measure_end" { print $$1 }'`; \
+	$(QEMU_RISCV32) -d in_asm,exec,nochain -D $(PERF_BASELINE_QEMU_LOG) \
+		./$(PERF_BASELINE_TEST) > $(PERF_BASELINE_RAW_LOG) || { \
+		rc=$$?; \
+		echo "result=FAIL command=rv32im-perf workload=control phase=probe backend=rv32im profile=mapped_alu_baseline reason=qemu_exec_trace_runner_failed" | tee -a $(PERF_BASELINE_RAW_LOG); \
+		exit $$rc; \
+	}; \
+	awk -v begin_pc="$$begin_pc" -v end_pc="$$end_pc" \
+		-f rv32im_qemu_trace_count.awk $(PERF_BASELINE_QEMU_LOG) > $(PERF_BASELINE_TRACE_COUNTS); \
+	awk -f rv32im_perf_merge.awk $(PERF_BASELINE_TRACE_COUNTS) \
+		$(PERF_BASELINE_RAW_LOG) > $(PERF_BASELINE_LOG).body; \
+	awk '{ print }' $(PERF_ENV_LOG) $(PERF_BASELINE_LOG).body > $(PERF_BASELINE_LOG)
 	grep '^result=.* command=rv32im-perf ' $(PERF_LOG) > $(PERF_STABLE_LOG)
 	grep '^result=.* command=rv32im-perf ' $(PERF_REPEAT_LOG) > $(PERF_REPEAT_STABLE_LOG)
 	@sed -E 's/ rdinstret_csr_raw=[^ ]+//; s/ rdinstret_csr_overhead=[^ ]+//; s/ rdinstret_csr_net=[^ ]+//' \
@@ -485,24 +652,36 @@ perf: $(PERF_TEST) | $(OUT_DIR)
 		$(PERF_REPEAT_STABLE_LOG) > $(PERF_REPEAT_STABLE_LOG).normalized
 	cmp $(PERF_STABLE_LOG).normalized $(PERF_REPEAT_STABLE_LOG).normalized
 	awk \
-		-v mapped_alu_baseline_instret=$(PERF_MAPPED_ALU_BASELINE_WARM_INSTRET) \
+		-v mapped_alu_baseline_exec=$(PERF_MAPPED_ALU_BASELINE_WARM_EXEC_INSNS) \
 		-v mapped_alu_baseline_bytes=$(PERF_MAPPED_ALU_BASELINE_BYTES) \
 		-v mapped_alu_min_improvement=$(PERF_MAPPED_ALU_MIN_IMPROVEMENT_PERCENT) \
-		-v mapped_alu_cold_instret_max=$(PERF_MAPPED_ALU_COLD_INSTRET_MAX) \
-		-v mapped_alu_instret_max=$(PERF_MAPPED_ALU_WARM_INSTRET_MAX) \
+		-v mapped_alu_cold_exec_max=$(PERF_MAPPED_ALU_COLD_EXEC_INSNS_MAX) \
+		-v mapped_alu_exec_max=$(PERF_MAPPED_ALU_WARM_EXEC_INSNS_MAX) \
 		-v mapped_alu_bytes_max=$(PERF_MAPPED_ALU_BYTES_MAX) \
-		-v memory_read_instret_max=$(PERF_MEMORY_READ_WARM_INSTRET_MAX) \
+		-v memory_read_exec_max=$(PERF_MEMORY_READ_WARM_EXEC_INSNS_MAX) \
 		-v memory_read_bytes_max=$(PERF_MEMORY_READ_BYTES_MAX) \
-		-v branch_chain_instret_max=$(PERF_BRANCH_CHAIN_WARM_INSTRET_MAX) \
+		-v branch_chain_exec_max=$(PERF_BRANCH_CHAIN_WARM_EXEC_INSNS_MAX) \
 		-v branch_chain_bytes_max=$(PERF_BRANCH_CHAIN_BYTES_MAX) \
-		-v mixed_instret_max=$(PERF_MIXED_WARM_INSTRET_MAX) \
+		-v scheduler_exec_max=$(PERF_SCHEDULER_WARM_EXEC_INSNS_MAX) \
+		-v scheduler_bytes_max=$(PERF_SCHEDULER_BYTES_MAX) \
+		-v mixed_exec_max=$(PERF_MIXED_WARM_EXEC_INSNS_MAX) \
 		-v mixed_bytes_max=$(PERF_MIXED_BYTES_MAX) \
 		-f rv32im_perf_check.awk $(PERF_LOG)
+	awk -v spec_file=rv32im_perf_baseline.txt \
+		-v baseline_file=$(PERF_BASELINE_LOG) \
+		-v optimized_file=$(PERF_LOG) \
+		-f rv32im_perf_ab_check.awk rv32im_perf_baseline.txt \
+		$(PERF_BASELINE_LOG) $(PERF_LOG)
+	./$(MAPPED_ALU_INTERP) > $(MAPPED_ALU_INTERP_LOG)
+	grep '^result=.* command=rv32im-mapped-alu-semantics ' \
+		$(PERF_LOG) > $(MAPPED_ALU_JIT_LOG)
+	awk -f rv32im_mapped_alu_parity.awk \
+		$(MAPPED_ALU_INTERP_LOG) $(MAPPED_ALU_JIT_LOG)
 
 test: codegen abi exec runtime perf frontend core-build rejects compare mixed smoke
 
 clean:
-	rm -f $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_INTERP) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST)
+	rm -f $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP)
 	rm -rf $(OUT_DIR)
 
-.PHONY: all codegen abi exec runtime perf frontend core-build smoke compare mixed rejects armwrestler-jit armwrestler-interp armwrestler armwrestler-report test clean
+.PHONY: all codegen abi exec runtime perf perf-env-check frontend core-build smoke compare mixed rejects armwrestler-jit armwrestler-interp armwrestler-perf armwrestler armwrestler-report test clean

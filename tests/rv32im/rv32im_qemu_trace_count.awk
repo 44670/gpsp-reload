@@ -6,6 +6,8 @@ function normalize_hex(value) {
 }
 
 BEGIN {
+  if (!expected_windows)
+    expected_windows = 12
   begin_pc = normalize_hex(begin_pc)
   end_pc = normalize_hex(end_pc)
   collecting = 0
@@ -73,8 +75,8 @@ END {
     print "unterminated qemu trace measurement window" > "/dev/stderr"
     failed = 1
   }
-  if (windows != 10) {
-    print "expected 10 qemu trace windows, got " windows > "/dev/stderr"
+  if (windows != expected_windows) {
+    print "expected " expected_windows " qemu trace windows, got " windows > "/dev/stderr"
     failed = 1
   }
   if (failed)

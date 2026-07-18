@@ -1,5 +1,8 @@
 #include "riscv_runtime_test_shim.h"
 #include "riscv_emit.h"
+#if !defined(RV32IM_PERF_BASELINE_PROFILE)
+#include "rv32im_mapped_alu_cases.h"
+#endif
 
 typedef unsigned int usize;
 
@@ -25,24 +28,28 @@ typedef unsigned int usize;
 #define PERF_ALU_INSNS 256u
 #define PERF_MEMORY_INSNS 48u
 #define PERF_BRANCH_BLOCKS 32u
+#define PERF_SCHEDULER_INSNS 1u
 #define PERF_MIXED_ALU0_INSNS 32u
 #define PERF_MIXED_MEMORY_INSNS 12u
 #define PERF_MIXED_ALU1_INSNS 16u
 #define PERF_ALU_WARM_RUNS 128u
 #define PERF_MEMORY_WARM_RUNS 64u
 #define PERF_BRANCH_WARM_RUNS 128u
+#define PERF_SCHEDULER_WARM_RUNS 2048u
 #define PERF_MIXED_WARM_RUNS 64u
 
 #define PERF_ALU_START_PC 0x08010000u
 #define PERF_MEMORY_START_PC 0x08011000u
 #define PERF_BRANCH_START_PC 0x08012000u
 #define PERF_MIXED_START_PC 0x08013000u
+#define PERF_SCHEDULER_START_PC 0x08014000u
 
 typedef enum perf_workload_kind
 {
   PERF_WORKLOAD_MAPPED_ALU = 0,
   PERF_WORKLOAD_MEMORY_READ,
   PERF_WORKLOAD_BRANCH_CHAIN,
+  PERF_WORKLOAD_SCHEDULER,
   PERF_WORKLOAD_MIXED
 } perf_workload_kind;
 
@@ -108,13 +115,15 @@ static u32 g_scheduler_hash;
 static u32 g_trace_hash;
 static s32 g_last_update_cycles;
 static u32 g_last_update_pc;
-static u32 g_instret_overhead;
+static u32 g_rdinstret_csr_overhead;
 static volatile u32 g_control_sink;
 
 /* qemu-user exposes instret as a host-tick-derived value when icount is not
- * available. These unique, out-of-line markers let the Makefile's QEMU exec
- * trace recover an exact architectural instruction count for each CSR window
- * while retaining the raw rdinstret values as diagnostics. */
+ * available. These unique, out-of-line markers let the Makefile sum the RV32
+ * instructions represented by executed QEMU translation blocks. This is an
+ * executed-instruction trace metric, not an architectural retired-instruction
+ * counter. Raw rdinstret values remain diagnostic-only until independently
+ * verified reliable. */
 __attribute__((noinline))
 void rv32im_perf_measure_begin(void)
 {
@@ -495,6 +504,7 @@ static int emit_memory_range(u8 **ptr, riscv_jit_block_meta *meta,
   return 1;
 }
 
+#if !defined(RV32IM_PERF_BASELINE_PROFILE)
 typedef struct mapped_alu_encoding_case
 {
   const char *name;
@@ -532,6 +542,13 @@ static int verify_mapped_alu_encodings(void)
   mapped_alu_encoding_case cases[12];
   u32 case_count = 0;
   u32 i;
+
+  if (RV32IM_MAPPED_ALU_CASE_COUNT != 15u)
+  {
+    put_raw("result=FAIL command=rv32im-perf workload=mapped_alu_encoding ");
+    put_raw("phase=check backend=rv32im reason=shared_case_count_changed\n");
+    return 0;
+  }
 
 #define ADD_ENCODING_CASE(case_name, arm_op, arm_rn, arm_rd, arm_rm, words)   \
   do                                                                          \
@@ -596,6 +613,16 @@ static int verify_mapped_alu_encodings(void)
     u32 actual_words;
     u32 word;
 
+    if (cases[i].opcode != rv32im_mapped_alu_opcode(
+          &rv32im_mapped_alu_cases[i]))
+    {
+      put_raw("result=FAIL command=rv32im-perf workload=mapped_alu_encoding ");
+      put_raw("phase=check backend=rv32im case=");
+      put_raw(cases[i].name);
+      put_raw(" reason=shared_opcode_mismatch\n");
+      return 0;
+    }
+
     riscv_emit_block_prologue(&ptr, &meta);
     body = ptr;
     if (!riscv_emit_native_arm_data_proc_with_pc_ex(
@@ -654,7 +681,11 @@ static int verify_mapped_alu_encodings(void)
     riscv_emit_block_prologue(&ptr, &meta);
     body = ptr;
     if (!riscv_emit_native_arm_multiply(
-          &ptr, meta, 0xe0040291u, 0u))
+          &ptr, meta,
+          rv32im_mapped_alu_opcode(
+            &rv32im_mapped_alu_cases[
+              RV32IM_MAPPED_ALU_FIRST_MULTIPLY_CASE]),
+          0u))
     {
       put_raw("result=FAIL command=rv32im-perf workload=mapped_alu_encoding ");
       put_raw("phase=check backend=rv32im case=mul reason=lowering_rejected\n");
@@ -687,6 +718,7 @@ static int verify_mapped_alu_encodings(void)
   put_raw(" harness_mode=runtime_fixture reason=exact_mapped_alu_encodings\n");
   return 1;
 }
+#endif
 
 static void clear_program(perf_workload_kind kind, const char *name,
                           u32 start_pc, u32 warm_runs)
@@ -829,6 +861,33 @@ static int build_branch_chain(const char **reason)
   return 1;
 }
 
+static int build_scheduler(const char **reason)
+{
+  u8 *ptr = g_perf_code;
+  riscv_jit_block_meta *meta;
+
+  clear_program(PERF_WORKLOAD_SCHEDULER, "scheduler",
+                PERF_SCHEDULER_START_PC, PERF_SCHEDULER_WARM_RUNS);
+  riscv_emit_block_prologue(&ptr, &meta);
+  g_program.entries[0] = ((u8 *)meta) + block_prologue_size;
+  g_program.pcs[0] = PERF_SCHEDULER_START_PC;
+  g_program.entry_count = 1;
+  if (!emit_alu_range(&ptr, meta, 0, PERF_SCHEDULER_INSNS,
+                      PERF_SCHEDULER_START_PC, PERF_SCHEDULER_INSNS, 1))
+  {
+    *reason = "scheduler_emit_failed";
+    return 0;
+  }
+  g_program.end_pc = PERF_SCHEDULER_START_PC + PERF_SCHEDULER_INSNS * 4u;
+  riscv_emit_block_finalize(meta, &ptr, PERF_SCHEDULER_START_PC,
+                            g_program.end_pc, false);
+  g_program.block_count = 1;
+  g_program.guest_insns_per_run = PERF_SCHEDULER_INSNS;
+  g_program.guest_cycles_per_run = PERF_SCHEDULER_INSNS;
+  g_program.code_bytes = (u32)(ptr - g_perf_code);
+  return 1;
+}
+
 static int build_mixed(const char **reason)
 {
   u8 *ptr = g_perf_code;
@@ -899,6 +958,8 @@ static int build_program(perf_workload_kind kind, const char **reason)
     ok = build_memory_read(reason);
   else if (kind == PERF_WORKLOAD_BRANCH_CHAIN)
     ok = build_branch_chain(reason);
+  else if (kind == PERF_WORKLOAD_SCHEDULER)
+    ok = build_scheduler(reason);
   else
     ok = build_mixed(reason);
   if (!ok)
@@ -919,6 +980,134 @@ static int build_program(perf_workload_kind kind, const char **reason)
   riscv_get_runtime_stats(&g_program.emit_stats);
   return 1;
 }
+
+#if !defined(RV32IM_PERF_BASELINE_PROFILE)
+static void reset_mapped_alu_case_state(u32 pc)
+{
+  u32 i;
+
+  for (i = 0; i < REG_MAX; i++)
+    reg[i] = 0;
+  rv32im_mapped_alu_initial_regs(&reg[0]);
+  reg[REG_PC] = pc;
+  reg[REG_CPSR] = 0x2000001fu;
+  reg[CPU_MODE] = 0x1fu;
+  reg[CPU_HALT_STATE] = CPU_ACTIVE;
+  for (i = 0; i < ARRAY_SIZE(spsr); i++)
+    spsr[i] = 0;
+  for (i = 0; i < ARRAY_SIZE(reg_mode) * ARRAY_SIZE(reg_mode[0]); i++)
+    ((u32 *)reg_mode)[i] = 0;
+  idle_loop_target_pc = 0xffffffffu;
+}
+
+static int verify_mapped_alu_semantics(void)
+{
+  u32 i;
+
+  for (i = 0; i < RV32IM_MAPPED_ALU_CASE_COUNT; i++)
+  {
+    const rv32im_mapped_alu_case *item = &rv32im_mapped_alu_cases[i];
+    u32 pc = 0x08015000u + i * 0x100u;
+    u8 *ptr = g_perf_code;
+    riscv_jit_block_meta *meta;
+    bool cycles_emitted = false;
+    long flush_result;
+    riscv_runtime_stats stats;
+    int emitted;
+    int passed;
+
+    init_emitter(false);
+    clear_program(PERF_WORKLOAD_MAPPED_ALU, "mapped_alu_semantics", pc, 1u);
+    riscv_emit_block_prologue(&ptr, &meta);
+    g_program.entries[0] = ((u8 *)meta) + block_prologue_size;
+    g_program.pcs[0] = pc;
+    g_program.entry_count = 1;
+
+    if (item->kind == RV32IM_MAPPED_ALU_MULTIPLY)
+    {
+      emitted = riscv_emit_native_arm_multiply(
+        &ptr, meta, rv32im_mapped_alu_opcode(item), 1u);
+      cycles_emitted = true;
+    }
+    else
+    {
+      emitted = riscv_emit_native_arm_data_proc_with_pc_ex(
+        &ptr, meta, rv32im_mapped_alu_opcode(item), pc, 1u, 0,
+        true, &cycles_emitted);
+    }
+
+    if (!emitted || !cycles_emitted)
+    {
+      put_raw("result=FAIL command=rv32im-mapped-alu-semantics case=");
+      put_raw(item->name);
+      put_raw(" backend=rv32im reason=lowering_rejected\n");
+      return 0;
+    }
+
+    g_program.end_pc = pc + 4u;
+    riscv_emit_block_finalize(meta, &ptr, pc, g_program.end_pc, false);
+    g_program.block_count = 1;
+    g_program.code_bytes = (u32)(ptr - g_perf_code);
+    flush_result = syscall3(SYS_RISCV_FLUSH_ICACHE, (long)g_perf_code,
+                            (long)(g_perf_code + g_program.code_bytes), 0);
+    if (flush_result != 0)
+    {
+      put_raw("result=FAIL command=rv32im-mapped-alu-semantics case=");
+      put_raw(item->name);
+      put_raw(" backend=rv32im reason=icache_sync_failed\n");
+      return 0;
+    }
+
+    reset_mapped_alu_case_state(pc);
+    reset_observation_counters();
+    execute_arm_translate_internal(1u, &reg[0]);
+    riscv_get_runtime_stats(&stats);
+    passed = reg[REG_PC] == pc + 4u && reg[REG_CPSR] == 0x2000001fu &&
+      g_fallbacks == 0 && g_execute_arm_calls == 0 &&
+      g_lookup_calls == 1 && g_update_calls == 1 &&
+      stats.blocks_executed > 0;
+
+    put_raw("result=");
+    put_raw(passed ? "PASS" : "FAIL");
+    put_raw(" command=rv32im-mapped-alu-semantics case=");
+    put_raw(item->name);
+    put_raw(" backend=rv32im opcode=");
+    put_u32_hex(rv32im_mapped_alu_opcode(item));
+    put_raw(" rd=");
+    put_u32_dec(item->rd);
+    put_raw(" rd_value=");
+    put_u32_hex(reg[item->rd]);
+    put_raw(" pc=");
+    put_u32_hex(reg[REG_PC]);
+    put_raw(" cpsr=");
+    put_u32_hex(reg[REG_CPSR]);
+    put_raw(" guest_state_hash=");
+    put_u32_hex(rv32im_mapped_alu_state_hash(&reg[0]));
+    put_raw(" generated_bytes=");
+    put_u32_dec(g_program.code_bytes);
+    put_raw(" native_blocks=");
+    put_u32_dec(stats.blocks_executed);
+    put_raw(" fallbacks=");
+    put_u32_dec(g_fallbacks);
+    put_raw(" execute_arm_calls=");
+    put_u32_dec(g_execute_arm_calls);
+    put_raw(" harness_mode=runtime_fixture reason=");
+    put_raw(passed ? "native_case_executed" : "native_case_contract_mismatch");
+    put_chr('\n');
+    if (!passed)
+      return 0;
+  }
+
+  put_raw("result=PASS command=rv32im-mapped-alu-semantics case=all ");
+  put_raw("backend=rv32im cases=");
+  put_u32_dec((u32)RV32IM_MAPPED_ALU_CASE_COUNT);
+  put_raw(" operations=and,eor,sub,rsb,add,orr,mov,mvn,bic,mul ");
+  put_raw("aliases=rd_rn,rd_rm,rn_rm,mul_rd_rs,mul_rm_rs ");
+  put_raw("caller_and_callee_mappings=1 ");
+  put_raw("reason=native_semantic_cases_complete\n");
+  return 1;
+}
+#endif
 
 static void run_program(const perf_program *program, u32 iterations)
 {
@@ -985,6 +1174,10 @@ static void reference_run(const perf_program *program, u32 iterations,
       for (i = 0; i < PERF_BRANCH_BLOCKS; i++)
         values[0] += values[1];
     }
+    else if (program->kind == PERF_WORKLOAD_SCHEDULER)
+    {
+      reference_alu(values, 0);
+    }
     else
     {
       for (i = 0; i < PERF_MIXED_ALU0_INSNS; i++)
@@ -1046,8 +1239,8 @@ static void print_perf_result(const char *result, const char *phase,
 {
   u32 guest_insns = g_program.guest_insns_per_run * iterations;
   u32 guest_cycles = g_program.guest_cycles_per_run * iterations;
-  u32 net_instret = raw_instret > g_instret_overhead ?
-    raw_instret - g_instret_overhead : 0;
+  u32 net_instret = raw_instret > g_rdinstret_csr_overhead ?
+    raw_instret - g_rdinstret_csr_overhead : 0;
   u32 total_helpers = observation->read8_calls + observation->read16_calls +
     observation->read32_calls + observation->terminal_calls;
   u32 mapped_flushes =
@@ -1071,14 +1264,12 @@ static void print_perf_result(const char *result, const char *phase,
   put_u32_dec(guest_insns);
   put_raw(" guest_cycles=");
   put_u32_dec(guest_cycles);
-  put_raw(" rv32_instret_raw=");
+  put_raw(" rdinstret_csr_raw=");
   put_u32_dec(raw_instret);
-  put_raw(" rdinstret_overhead=");
-  put_u32_dec(g_instret_overhead);
-  put_raw(" rv32_instret=");
+  put_raw(" rdinstret_csr_overhead=");
+  put_u32_dec(g_rdinstret_csr_overhead);
+  put_raw(" rdinstret_csr_net=");
   put_u32_dec(net_instret);
-  put_raw(" rv32_instret_per_guest_x100=");
-  put_u32_dec(guest_insns ? (net_instret * 100u) / guest_insns : 0);
   put_raw(" generated_blocks=");
   put_u32_dec(g_program.block_count);
   put_raw(" generated_bytes=");
@@ -1137,7 +1328,12 @@ static void print_perf_result(const char *result, const char *phase,
   put_u32_hex(observation->scheduler_hash);
   put_raw(" trace_hash=");
   put_u32_hex(observation->trace_hash);
-  put_raw(" harness_mode=runtime_fixture counter_source=rdinstret");
+  put_raw(" harness_mode=runtime_fixture counter_source=rdinstret_csr_diagnostic");
+  put_raw(" rdinstret_csr_verified=0");
+  put_raw(phase[0] == 'c' ?
+          " measurement_scope=translate_sync_first_execute" :
+          " measurement_scope=steady_state_execute");
+  put_raw(" instrumentation_counter_semantics=emission_sites_x_iterations");
   put_raw(" reason=");
   put_raw(reason);
   put_chr('\n');
@@ -1415,8 +1611,8 @@ static int run_rdinstret_probe(void)
   first = read_instret();
   second = read_instret();
   rv32im_perf_measure_end();
-  g_instret_overhead = second - first;
-  if (!g_instret_overhead)
+  g_rdinstret_csr_overhead = second - first;
+  if (!g_rdinstret_csr_overhead)
   {
     put_raw("result=FAIL command=rv32im-perf workload=control phase=probe ");
     put_raw("backend=rv32im reason=rdinstret_not_monotonic\n");
@@ -1429,7 +1625,7 @@ static int run_rdinstret_probe(void)
   control_end = read_instret();
   rv32im_perf_measure_end();
   control_raw = control_end - control_start;
-  if (control_raw <= g_instret_overhead)
+  if (control_raw <= g_rdinstret_csr_overhead)
   {
     put_raw("result=FAIL command=rv32im-perf workload=control phase=probe ");
     put_raw("backend=rv32im reason=rdinstret_control_invalid\n");
@@ -1437,16 +1633,16 @@ static int run_rdinstret_probe(void)
   }
 
   put_raw("result=PASS command=rv32im-perf workload=control phase=probe ");
-  put_raw("backend=rv32im guest_insns=0 guest_cycles=0 rv32_instret_raw=");
+  put_raw("backend=rv32im guest_insns=0 guest_cycles=0 rdinstret_csr_raw=");
   put_u32_dec(control_raw);
-  put_raw(" rdinstret_overhead=");
-  put_u32_dec(g_instret_overhead);
-  put_raw(" rv32_instret=");
-  put_u32_dec(control_raw - g_instret_overhead);
+  put_raw(" rdinstret_csr_overhead=");
+  put_u32_dec(g_rdinstret_csr_overhead);
+  put_raw(" rdinstret_csr_net=");
+  put_u32_dec(control_raw - g_rdinstret_csr_overhead);
   put_raw(" control_iterations=4096 control_hash=");
   put_u32_hex(control_hash);
-  put_raw(" harness_mode=runtime_fixture counter_source=rdinstret ");
-  put_raw("reason=rdinstret_available\n");
+  put_raw(" harness_mode=runtime_fixture counter_source=rdinstret_csr_diagnostic ");
+  put_raw("rdinstret_csr_verified=0 reason=rdinstret_csr_diagnostic_available\n");
   return 1;
 }
 
@@ -1465,17 +1661,26 @@ void _start(void)
   g_perf_code = (u8 *)map_result;
 
   if (!run_rdinstret_probe() ||
+#if !defined(RV32IM_PERF_BASELINE_PROFILE)
       !verify_mapped_alu_encodings() ||
+      !verify_mapped_alu_semantics() ||
+#endif
       !run_workload(PERF_WORKLOAD_MAPPED_ALU) ||
       !run_workload(PERF_WORKLOAD_MEMORY_READ) ||
       !run_workload(PERF_WORKLOAD_BRANCH_CHAIN) ||
+      !run_workload(PERF_WORKLOAD_SCHEDULER) ||
       !run_workload(PERF_WORKLOAD_MIXED))
   {
     sys_exit(1);
   }
 
   put_raw("result=PASS command=rv32im-perf workload=all phase=summary ");
-  put_raw("backend=rv32im workloads=4 cold=4 warm=4 repeatable=1 ");
+  put_raw("backend=rv32im workloads=5 cold=5 warm=5 repeatable=1 profile=");
+#if defined(RV32IM_PERF_BASELINE_PROFILE)
+  put_raw("mapped_alu_baseline ");
+#else
+  put_raw("optimized ");
+#endif
   put_raw("reason=perf_suite_complete\n");
   sys_exit(0);
 }
