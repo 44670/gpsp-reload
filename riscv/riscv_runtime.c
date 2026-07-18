@@ -2698,9 +2698,14 @@ static u8 *riscv_emit_branch_patch_site_with_cycle_exit(
   u8 *branch_source;
   u8 *cycle_exit_branch;
   u8 *translation_ptr;
+  u32 continuation_valid_mask;
+  u32 continuation_dirty_mask;
 
   if (flush_before_patch)
     riscv_emit_mapped_regs_flush_dirty(&ptr);
+
+  continuation_valid_mask = riscv_mapped_valid_mask;
+  continuation_dirty_mask = riscv_mapped_dirty_mask;
 
   riscv_emit_cycles_load(&ptr, riscv_reg_t4);
   translation_ptr = ptr;
@@ -2720,6 +2725,11 @@ static u8 *riscv_emit_branch_patch_site_with_cycle_exit(
   riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_t0, target_pc);
   riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
   riscv_emit_helper_call_no_flush(&ptr, meta);
+
+  /* The slow scheduler tail does not fall through. Preserve the mapped-state
+     model seen by an internal hot target emitted after this patch site. */
+  riscv_mapped_valid_mask = continuation_valid_mask;
+  riscv_mapped_dirty_mask = continuation_dirty_mask;
 
   *ptr_ref = ptr;
   return branch_source;
@@ -3021,6 +3031,7 @@ bool riscv_emit_arm_conditional_block_header(u8 **translation_ptr_ref,
                                              u8 **branch_source)
 {
   u8 *ptr = *translation_ptr_ref;
+  u8 *body_branch;
 
   if (branch_source)
     *branch_source = NULL;
@@ -3038,9 +3049,15 @@ bool riscv_emit_arm_conditional_block_header(u8 **translation_ptr_ref,
     RISCV_MAPPED_REGS_MASK & ~riscv_mapped_valid_mask);
 
   riscv_emit_adjust_cycles(&ptr, cycles);
-  if (!riscv_emit_arm_condition_branch(&ptr, condition ^ 1u, 0,
-                                       branch_source))
+  /* A B-type skip cannot span the largest frontend ARM block. Branch over a
+     fixed AUIPC/JALR patch site when the condition passes; the false path
+     then has full RV32 address range to reach the end of the block. */
+  if (!riscv_emit_arm_condition_branch(&ptr, condition,
+                                       4 + RISCV_BRANCH_PATCH_BYTES,
+                                       &body_branch))
     return false;
+  (void)body_branch;
+  *branch_source = riscv_emit_unconditional_branch_patch_site(&ptr, false);
 
   riscv_arm_conditional_entry_valid_mask = riscv_mapped_valid_mask;
   riscv_arm_conditional_entry_dirty_mask = riscv_mapped_dirty_mask;
@@ -3059,7 +3076,7 @@ void riscv_emit_arm_conditional_block_close(u8 **ptr_ref,
     riscv_mapped_dirty_mask |= riscv_arm_conditional_entry_dirty_mask;
   }
   riscv_arm_conditional_block_active = false;
-  riscv_patch_conditional_branch(branch_source, *ptr_ref);
+  riscv_patch_unconditional_branch(branch_source, *ptr_ref);
 }
 
 bool riscv_emit_cycle_update(u8 **translation_ptr_ref,
@@ -7043,6 +7060,7 @@ static bool riscv_emit_native_arm_direct_branch(u8 **translation_ptr_ref,
                                                 bool flush_before_patch_site)
 {
   u32 condition = opcode >> 28;
+  u32 target_pc = pc + (u32)riscv_arm_branch_delta(opcode);
   u8 *ptr = *translation_ptr_ref;
 
   if (branch_source)
@@ -7062,8 +7080,6 @@ static bool riscv_emit_native_arm_direct_branch(u8 **translation_ptr_ref,
 
   if (!patchable)
   {
-    u32 target_pc = pc + (u32)riscv_arm_branch_delta(opcode);
-
     riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_t0, target_pc);
     riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
   }
@@ -7071,22 +7087,17 @@ static bool riscv_emit_native_arm_direct_branch(u8 **translation_ptr_ref,
 
   if (patchable)
   {
-    /* The frontend patches direct branches before publishing the block. */
+    /* Keep the scheduler checkpoint on the patched path. A direct chain can
+       otherwise run forever without returning through riscv_jit_run_block. */
+    if (target_pc == idle_loop_target_pc)
+      riscv_emit_cycles_store(&ptr, riscv_reg_zero);
+
     if (branch_source)
-      *branch_source = short_patch_site ?
-        riscv_emit_unconditional_branch_patch_site_short(
-          &ptr, flush_before_patch_site) :
-        riscv_emit_unconditional_branch_patch_site(
-          &ptr, flush_before_patch_site);
+      *branch_source = riscv_emit_branch_patch_site_with_cycle_exit(
+        &ptr, meta, target_pc, short_patch_site, flush_before_patch_site);
     else
-    {
-      if (short_patch_site)
-        riscv_emit_unconditional_branch_patch_site_short(
-          &ptr, flush_before_patch_site);
-      else
-        riscv_emit_unconditional_branch_patch_site(
-          &ptr, flush_before_patch_site);
-    }
+      (void)riscv_emit_branch_patch_site_with_cycle_exit(
+        &ptr, meta, target_pc, short_patch_site, flush_before_patch_site);
   }
   else
   {
@@ -7223,23 +7234,20 @@ static bool riscv_emit_native_arm_swi_common(u8 **translation_ptr_ref,
 
   riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_a0, pc + 4u);
   riscv_emit_stateful_c_call_stack(
-    &ptr, RISCV_STACK_HELPER_EXECUTE_SWI_ARM, false);
+    &ptr, RISCV_STACK_HELPER_EXECUTE_SWI_ARM, patchable);
   riscv_emit_adjust_cycles(&ptr, cycles);
 
   if (patchable)
   {
+    if (idle_loop_target_pc == 0x00000008u)
+      riscv_emit_cycles_store(&ptr, riscv_reg_zero);
+
     if (branch_source)
-      *branch_source = short_patch_site ?
-        riscv_emit_unconditional_branch_patch_site_short(&ptr, true) :
-        riscv_emit_unconditional_branch_patch_site(&ptr, true);
+      *branch_source = riscv_emit_branch_patch_site_with_cycle_exit(
+        &ptr, meta, 0x00000008u, short_patch_site, true);
     else
-    {
-      if (short_patch_site)
-        riscv_emit_unconditional_branch_patch_site_short(&ptr, true);
-      else
-        riscv_emit_unconditional_branch_patch_site(&ptr, true);
-    }
-    riscv_emit_terminal_helper_call_no_flush(&ptr, meta);
+      (void)riscv_emit_branch_patch_site_with_cycle_exit(
+        &ptr, meta, 0x00000008u, short_patch_site, true);
   }
   else
   {
@@ -9913,21 +9921,18 @@ bool riscv_emit_native_thumb_swi_patchable(u8 **translation_ptr_ref,
 
   riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_a0, pc);
   riscv_emit_stateful_c_call_stack(
-    &ptr, RISCV_STACK_HELPER_EXECUTE_SWI_THUMB, false);
+    &ptr, RISCV_STACK_HELPER_EXECUTE_SWI_THUMB, true);
   riscv_emit_adjust_cycles(&ptr, cycles);
 
+  if (idle_loop_target_pc == 0x00000008u)
+    riscv_emit_cycles_store(&ptr, riscv_reg_zero);
+
   if (branch_source)
-    *branch_source = short_patch_site ?
-      riscv_emit_unconditional_branch_patch_site_short(&ptr, true) :
-      riscv_emit_unconditional_branch_patch_site(&ptr, true);
+    *branch_source = riscv_emit_branch_patch_site_with_cycle_exit(
+      &ptr, meta, 0x00000008u, short_patch_site, true);
   else
-  {
-    if (short_patch_site)
-      riscv_emit_unconditional_branch_patch_site_short(&ptr, true);
-    else
-      riscv_emit_unconditional_branch_patch_site(&ptr, true);
-  }
-  riscv_emit_terminal_helper_call_no_flush(&ptr, meta);
+    (void)riscv_emit_branch_patch_site_with_cycle_exit(
+      &ptr, meta, 0x00000008u, short_patch_site, true);
 
   *translation_ptr_ref = ptr;
   riscv_native_branch_insns++;

@@ -9,6 +9,8 @@ ARMWRESTLER := rv32im_armwrestler
 ARMWRESTLER_PERF_BASELINE := rv32im_armwrestler_perf_baseline
 ARMWRESTLER_PERF_OPTIMIZED := rv32im_armwrestler_perf_optimized
 ARMWRESTLER_INTERP := rv32im_armwrestler_interp
+FRONTEND_CONTROL_JIT := rv32im_frontend_control_jit
+FRONTEND_CONTROL_INTERP := rv32im_frontend_control_interp
 ABI_TEST := rv32im_abi_test
 EXEC_TEST := rv32im_exec_test
 RUNTIME_TEST := rv32im_runtime_test
@@ -26,6 +28,9 @@ MIXED_LOG := $(OUT_DIR)/rv32im_harness_mixed.log
 REJECTS_LOG := $(OUT_DIR)/rv32im_harness_rejects.log
 ARMWRESTLER_LOG := $(OUT_DIR)/rv32im_armwrestler.log
 ARMWRESTLER_INTERP_LOG := $(OUT_DIR)/rv32im_armwrestler_interp.log
+FRONTEND_CONTROL_JIT_LOG := $(OUT_DIR)/rv32im_frontend_control_jit.log
+FRONTEND_CONTROL_INTERP_LOG := $(OUT_DIR)/rv32im_frontend_control_interp.log
+FRONTEND_CONTROL_COMPARE_LOG := $(OUT_DIR)/rv32im_frontend_control_compare.log
 ARMWRESTLER_PERF_BASELINE_LOG := $(OUT_DIR)/rv32im_armwrestler_perf_baseline.log
 ARMWRESTLER_PERF_OPTIMIZED_LOG := $(OUT_DIR)/rv32im_armwrestler_perf_optimized.log
 ARMWRESTLER_PERF_BASELINE_COUNTS := $(OUT_DIR)/rv32im_armwrestler_perf_baseline_counts.log
@@ -65,15 +70,15 @@ ARMWRESTLER_PERF_BASELINE_SPEC := rv32im_armwrestler_perf_baseline.txt
 ARMWRESTLER_PERF_BENCHMARK_ID := rv32im-armwrestler-perf-v1
 ARMWRESTLER_PERF_EXPECTED_ROM_SHA256 := 9f08d807c03ef296d38ef73e9b827a3d8c77cead9ced44b07d64c10f5f7d0746
 ARMWRESTLER_PERF_TIMEOUT_SECONDS := 120
-ARMWRESTLER_ARM0_CODE_BYTES_MAX ?= 12648
-ARMWRESTLER_ARM1_CODE_BYTES_MAX ?= 12080
-ARMWRESTLER_ARM2_CODE_BYTES_MAX ?= 21388
-ARMWRESTLER_ARM3_CODE_BYTES_MAX ?= 12156
-ARMWRESTLER_ARM4_CODE_BYTES_MAX ?= 27876
+ARMWRESTLER_ARM0_CODE_BYTES_MAX ?= 14416
+ARMWRESTLER_ARM1_CODE_BYTES_MAX ?= 13704
+ARMWRESTLER_ARM2_CODE_BYTES_MAX ?= 23532
+ARMWRESTLER_ARM3_CODE_BYTES_MAX ?= 13676
+ARMWRESTLER_ARM4_CODE_BYTES_MAX ?= 30324
 ARMWRESTLER_THUMB0_CODE_BYTES_MAX ?= 21788
 ARMWRESTLER_THUMB1_CODE_BYTES_MAX ?= 10212
 ARMWRESTLER_THUMB2_CODE_BYTES_MAX ?= 8348
-ARMWRESTLER_ARM_CODE_BYTES_MAX ?= 85636
+ARMWRESTLER_ARM_CODE_BYTES_MAX ?= 95652
 ARMWRESTLER_THUMB_CODE_BYTES_MAX ?= 39964
 ARMWRESTLER_THUMB_HELPERS_MAX ?= 0
 PERF_MAPPED_ALU_BASELINE_WARM_EXEC_INSNS := 169889
@@ -84,12 +89,12 @@ PERF_MAPPED_ALU_WARM_EXEC_INSNS_MAX ?= 85409
 PERF_MAPPED_ALU_BYTES_MAX ?= 1120
 PERF_MEMORY_READ_WARM_EXEC_INSNS_MAX ?= 222049
 PERF_MEMORY_READ_BYTES_MAX ?= 2536
-PERF_BRANCH_CHAIN_WARM_EXEC_INSNS_MAX ?= 75297
-PERF_BRANCH_CHAIN_BYTES_MAX ?= 2040
+PERF_BRANCH_CHAIN_WARM_EXEC_INSNS_MAX ?= 83233
+PERF_BRANCH_CHAIN_BYTES_MAX ?= 3276
 PERF_SCHEDULER_WARM_EXEC_INSNS_MAX ?= 821281
 PERF_SCHEDULER_BYTES_MAX ?= 56
-PERF_MIXED_WARM_EXEC_INSNS_MAX ?= 79585
-PERF_MIXED_BYTES_MAX ?= 1012
+PERF_MIXED_WARM_EXEC_INSNS_MAX ?= 79713
+PERF_MIXED_BYTES_MAX ?= 1048
 CODEGEN_BIN := $(OUT_DIR)/rv32im_codegen.bin
 CODEGEN_REF_ELF := $(OUT_DIR)/rv32im_codegen_ref.elf
 CODEGEN_REF_BIN := $(OUT_DIR)/rv32im_codegen_ref.bin
@@ -132,7 +137,7 @@ HOST_CXX ?= c++
 LLVM_OBJCOPY ?= llvm-objcopy
 LLVM_NM ?= llvm-nm
 
-all: $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP)
+all: $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(FRONTEND_CONTROL_JIT) $(FRONTEND_CONTROL_INTERP) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP)
 
 $(HARNESS): rv32im_harness.c $(ROOT)/riscv/riscv_runtime.c \
 		$(ROOT)/riscv/riscv_emit.h $(ROOT)/riscv/riscv_codegen.h \
@@ -230,6 +235,29 @@ $(ARMWRESTLER_INTERP): rv32im_armwrestler_interp.cc $(ROOT)/cpu.cc \
 		-I$(ROOT)/libretro/libretro-common/include \
 		-o $@ rv32im_armwrestler_interp.cc $(ROOT)/cpu.cc
 
+$(FRONTEND_CONTROL_JIT): rv32im_armwrestler.c \
+		rv32im_frontend_control_cases.h rv32im_frontend_shim.h \
+		$(ROOT)/cpu_threaded.c $(ROOT)/riscv/riscv_runtime.c \
+		$(ROOT)/riscv/riscv_emit.h $(ROOT)/riscv/riscv_codegen.h \
+		$(ROOT)/riscv/riscv_runtime_test_shim.h
+	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) \
+		-DRISCV_RUNTIME_STANDALONE_TEST -DHAVE_DYNAREC -DRISCV_ARCH \
+		-DMMAP_JIT_CACHE -DRV32IM_FRONTEND_CONTROL_ONLY \
+		-I. -I$(ROOT) -I$(ROOT)/riscv \
+		-include rv32im_frontend_shim.h \
+		-o $@ rv32im_armwrestler.c $(ROOT)/cpu_threaded.c \
+		$(ROOT)/riscv/riscv_runtime.c
+
+$(FRONTEND_CONTROL_INTERP): rv32im_armwrestler_interp.cc \
+		rv32im_frontend_control_cases.h $(ROOT)/cpu.cc $(ROOT)/cpu.h \
+		$(ROOT)/gba_memory.h $(ROOT)/common.h
+	$(HOST_CXX) -std=c++11 -O2 -Wall -Wextra \
+		-DRV32IM_FRONTEND_CONTROL_ONLY \
+		-DHAVE_STRINGS_H -DHAVE_STDINT_H -DHAVE_INTTYPES_H \
+		-I$(ROOT) -I$(ROOT)/libretro \
+		-I$(ROOT)/libretro/libretro-common/include \
+		-o $@ rv32im_armwrestler_interp.cc $(ROOT)/cpu.cc
+
 $(OUT_DIR):
 	mkdir -p $@
 
@@ -260,6 +288,17 @@ codegen: $(CODEGEN) $(CODEGEN_REF_BIN) | $(OUT_DIR)
 	@echo "RV32IM codegen test passed"
 
 frontend: $(FRONTEND_OBJ)
+
+frontend-control: $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CONTROL_JIT) \
+		rv32im_frontend_control_compare.awk | $(OUT_DIR)
+	timeout 20s ./$(FRONTEND_CONTROL_INTERP) > $(FRONTEND_CONTROL_INTERP_LOG)
+	cat $(FRONTEND_CONTROL_INTERP_LOG)
+	timeout 20s $(QEMU_RISCV32) ./$(FRONTEND_CONTROL_JIT) > $(FRONTEND_CONTROL_JIT_LOG)
+	cat $(FRONTEND_CONTROL_JIT_LOG)
+	awk -v expected_cases=7 -f rv32im_frontend_control_compare.awk \
+		$(FRONTEND_CONTROL_INTERP_LOG) $(FRONTEND_CONTROL_JIT_LOG) \
+		> $(FRONTEND_CONTROL_COMPARE_LOG)
+	cat $(FRONTEND_CONTROL_COMPARE_LOG)
 
 core-build:
 	$(MAKE) -C $(ROOT) $(CORE_BUILD_FLAGS) $(CORE_BUILD_TARGET)
@@ -678,10 +717,10 @@ perf: perf-env-check $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP) | $
 	awk -f rv32im_mapped_alu_parity.awk \
 		$(MAPPED_ALU_INTERP_LOG) $(MAPPED_ALU_JIT_LOG)
 
-test: codegen abi exec runtime perf frontend core-build rejects compare mixed smoke
+test: codegen abi exec runtime perf frontend frontend-control core-build rejects compare mixed smoke
 
 clean:
-	rm -f $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP)
+	rm -f $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(FRONTEND_CONTROL_JIT) $(FRONTEND_CONTROL_INTERP) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP)
 	rm -rf $(OUT_DIR)
 
-.PHONY: all codegen abi exec runtime perf perf-env-check frontend core-build smoke compare mixed rejects armwrestler-jit armwrestler-interp armwrestler-perf armwrestler armwrestler-report test clean
+.PHONY: all codegen abi exec runtime perf perf-env-check frontend frontend-control core-build smoke compare mixed rejects armwrestler-jit armwrestler-interp armwrestler-perf armwrestler armwrestler-report test clean

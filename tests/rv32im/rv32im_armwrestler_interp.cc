@@ -8,6 +8,9 @@ extern "C" {
 #if defined(RV32IM_MAPPED_ALU_ONLY)
 #include "rv32im_mapped_alu_cases.h"
 #endif
+#if defined(RV32IM_FRONTEND_CONTROL_ONLY)
+#include "rv32im_frontend_control_cases.h"
+#endif
 
 #ifndef ARMWRESTLER_ROM
 #define ARMWRESTLER_ROM \
@@ -54,6 +57,7 @@ static u8 g_rom[ROM_MAX_BYTES];
 static u8 g_rom_open_bus[ROM_PAGE_BYTES];
 static u32 g_rom_size;
 static u32 g_update_calls;
+static s32 g_update_last_cycles;
 static u32 g_read32_calls;
 static u32 g_write32_calls;
 #if !defined(RV32IM_MAPPED_ALU_ONLY)
@@ -353,8 +357,8 @@ cpu_alert_type function_cc write_memory32(u32 address, u32 value)
 
 u32 function_cc update_gba(int remaining_cycles)
 {
-  (void)remaining_cycles;
   g_update_calls++;
+  g_update_last_cycles = (s32)remaining_cycles;
   return FRAME_COMPLETE;
 }
 
@@ -538,9 +542,89 @@ static bool run_thumbwrestler_test(u32 test_id, u32 expected_results)
 }
 #endif
 
+#if defined(RV32IM_FRONTEND_CONTROL_ONLY)
+static void install_frontend_control_case(
+  const rv32im_frontend_control_case *item)
+{
+  std::memset(g_rom, 0, sizeof(g_rom));
+  g_rom_size = sizeof(g_rom);
+  store32(g_rom, 8u, 0xeafffffeu);
+  for (u32 i = 0; i < item->generated_words; i++)
+  {
+    store32(g_rom, RV32IM_FRONTEND_CONTROL_PC - ROM_BASE + i * 4u,
+            0x12800001u);
+  }
+  for (u32 i = 0; i < item->word_count; i++)
+  {
+    store32(g_rom, RV32IM_FRONTEND_CONTROL_PC - ROM_BASE + i * 4u,
+            item->words[i]);
+  }
+}
+
+static bool run_frontend_control_case(
+  const rv32im_frontend_control_case *item)
+{
+  u32 state_hash;
+  bool passed;
+
+  install_frontend_control_case(item);
+  clear_runtime_memory();
+  init_memory_map();
+  init_cpu();
+  reg[REG_PC] = RV32IM_FRONTEND_CONTROL_PC;
+  reg[REG_CPSR] = item->initial_cpsr;
+  idle_loop_target_pc = item->idle_pc;
+  g_update_calls = 0;
+  g_update_last_cycles = (s32)0x7fffffffu;
+  g_read32_calls = 0;
+  g_write32_calls = 0;
+
+  execute_arm(item->cycles);
+
+  state_hash = rv32im_frontend_control_state_hash(
+    &reg[0], &spsr[0], &reg_mode[0][0], g_update_calls,
+    g_update_last_cycles);
+  passed = g_update_calls == 1u &&
+           g_update_last_cycles != (s32)0x7fffffffu;
+  std::printf("result=%s command=frontend-control case=%s backend=interp "
+              "state_hash=0x%08x r0=0x%08x lr=0x%08x pc=0x%08x "
+              "cpsr=0x%08x svc_spsr=0x%08x svc_lr=0x%08x "
+              "update_calls=%u update_cycles=0x%08x update_exhausted=%u "
+              "generated_words=%u "
+              "harness_mode=cpu_cc_interpreter reason=%s\n",
+              passed ? "PASS" : "FAIL", item->name, state_hash,
+              reg[0], reg[REG_LR], reg[REG_PC], reg[REG_CPSR],
+              REG_SPSR(MODE_SUPERVISOR),
+              REG_MODE(MODE_SUPERVISOR)[6], g_update_calls,
+              (u32)g_update_last_cycles,
+              g_update_last_cycles <= 0 ? 1u : 0u,
+              item->generated_words,
+              passed ? "interpreter_exit_contract_executed" :
+                       "interpreter_exit_contract_failed");
+  return passed;
+}
+
+static bool run_frontend_control_cases(void)
+{
+  for (u32 i = 0; i < RV32IM_FRONTEND_CONTROL_CASE_COUNT; i++)
+  {
+    if (!run_frontend_control_case(&rv32im_frontend_control_cases[i]))
+      return false;
+  }
+
+  std::printf("result=PASS command=frontend-control case=all backend=interp "
+              "cases=%u harness_mode=cpu_cc_interpreter "
+              "reason=interpreter_exit_contract_cases_complete\n",
+              (u32)RV32IM_FRONTEND_CONTROL_CASE_COUNT);
+  return true;
+}
+#endif
+
 int main(void)
 {
-#if defined(RV32IM_MAPPED_ALU_ONLY)
+#if defined(RV32IM_FRONTEND_CONTROL_ONLY)
+  return run_frontend_control_cases() ? 0 : 1;
+#elif defined(RV32IM_MAPPED_ALU_ONLY)
   return run_mapped_alu_interpreter_cases() ? 0 : 1;
 #else
   if (!load_rom())

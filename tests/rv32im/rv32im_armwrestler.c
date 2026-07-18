@@ -1,5 +1,8 @@
 #include "rv32im_frontend_shim.h"
 #include "riscv_emit.h"
+#if defined(RV32IM_FRONTEND_CONTROL_ONLY)
+#include "rv32im_frontend_control_cases.h"
+#endif
 
 typedef unsigned int usize;
 
@@ -118,6 +121,7 @@ static u32 g_rom_size;
 static u32 g_execute_arm_calls;
 static u32 g_execute_arm_cycles;
 static u32 g_update_calls;
+static s32 g_update_last_cycles;
 static u32 g_trace_count;
 static u32 g_trace_first_pc;
 static u32 g_trace_last_pc;
@@ -550,8 +554,8 @@ void set_cpu_mode(u32 new_mode)
 
 u32 function_cc update_gba(int remaining_cycles)
 {
-  (void)remaining_cycles;
   g_update_calls++;
+  g_update_last_cycles = (s32)remaining_cycles;
   return FRAME_COMPLETE;
 }
 
@@ -652,6 +656,10 @@ static void init_cpu_state(void)
   reg[REG_CPSR] = 0x0000001fu;
   reg[CPU_MODE] = MODE_SYSTEM;
   reg[CPU_HALT_STATE] = CPU_ACTIVE;
+  reg_mode[MODE_USER & 0xfu][5] = 0x03007f00u;
+  reg_mode[MODE_IRQ & 0xfu][5] = 0x03007fa0u;
+  reg_mode[MODE_FIQ & 0xfu][5] = 0x03007fa0u;
+  reg_mode[MODE_SUPERVISOR & 0xfu][5] = 0x03007fe0u;
 }
 
 static void init_thumbwrestler_cpu_state(void)
@@ -1145,10 +1153,154 @@ static int run_thumbwrestler_test(u32 test_id, u32 expected_results)
   return 1;
 }
 
+#if defined(RV32IM_FRONTEND_CONTROL_ONLY)
+static void install_frontend_control_case(
+  const rv32im_frontend_control_case *item)
+{
+  u32 i;
+
+  memset(g_rom, 0, sizeof(g_rom));
+  g_rom_size = sizeof(g_rom);
+  store32(g_rom, 8u, 0xeafffffeu);
+  for (i = 0; i < item->generated_words; i++)
+  {
+    store32(g_rom, RV32IM_FRONTEND_CONTROL_PC - ROM_BASE + i * 4u,
+            0x12800001u);
+  }
+  for (i = 0; i < item->word_count; i++)
+  {
+    store32(g_rom, RV32IM_FRONTEND_CONTROL_PC - ROM_BASE + i * 4u,
+            item->words[i]);
+  }
+}
+
+static void reset_frontend_control_observations(void)
+{
+  g_execute_arm_calls = 0;
+  g_execute_arm_cycles = 0;
+  g_update_calls = 0;
+  g_update_last_cycles = (s32)0x7fffffffu;
+  g_trace_count = 0;
+  g_trace_first_pc = 0;
+  g_trace_last_pc = 0;
+  g_trace_hash = 2166136261u;
+  g_fallback_count = 0;
+  g_fallback_first_pc = 0;
+  g_fallback_last_pc = 0;
+  g_fallback_hash = 2166136261u;
+}
+
+static int run_frontend_control_case(
+  const rv32im_frontend_control_case *item)
+{
+  riscv_runtime_stats stats;
+  u32 state_hash;
+  u32 before_code_bytes;
+  u32 code_bytes;
+  int passed;
+
+  install_frontend_control_case(item);
+  clear_runtime_memory();
+  init_memory_map();
+  init_cpu_state();
+  reg[REG_PC] = RV32IM_FRONTEND_CONTROL_PC;
+  reg[REG_CPSR] = item->initial_cpsr;
+  idle_loop_target_pc = item->idle_pc;
+  reset_frontend_control_observations();
+  reset_dynarec_for_armwrestler();
+  init_emitter(false);
+  before_code_bytes = (u32)(rom_translation_ptr - rom_translation_cache);
+
+  execute_arm_translate_internal(item->cycles, &reg[0]);
+
+  riscv_get_runtime_stats(&stats);
+  code_bytes = (u32)(rom_translation_ptr - rom_translation_cache) -
+               before_code_bytes;
+  state_hash = rv32im_frontend_control_state_hash(
+    &reg[0], &spsr[0], &reg_mode[0][0], g_update_calls,
+    g_update_last_cycles);
+  passed = g_update_calls == 1u &&
+           g_update_last_cycles != (s32)0x7fffffffu &&
+           g_execute_arm_calls == 0u && g_fallback_count == 0u &&
+           stats.interpreter_fallbacks == 0u &&
+           stats.blocks_executed != 0u && code_bytes != 0u &&
+           (item->generated_words == 0u || code_bytes > 4096u) &&
+           g_trace_count != 0u &&
+           g_trace_first_pc >= ROM_BASE && g_trace_first_pc < 0x0e000000u;
+
+  put_raw("result=");
+  put_raw(passed ? "PASS" : "FAIL");
+  put_raw(" command=frontend-control case=");
+  put_raw(item->name);
+  put_raw(" backend=rv32im state_hash=");
+  put_u32_hex(state_hash);
+  put_raw(" r0=");
+  put_u32_hex(reg[0]);
+  put_raw(" lr=");
+  put_u32_hex(reg[REG_LR]);
+  put_raw(" pc=");
+  put_u32_hex(reg[REG_PC]);
+  put_raw(" cpsr=");
+  put_u32_hex(reg[REG_CPSR]);
+  put_raw(" svc_spsr=");
+  put_u32_hex(REG_SPSR(MODE_SUPERVISOR));
+  put_raw(" svc_lr=");
+  put_u32_hex(REG_MODE(MODE_SUPERVISOR)[6]);
+  put_raw(" update_calls=");
+  put_u32_dec(g_update_calls);
+  put_raw(" update_cycles=");
+  put_u32_hex((u32)g_update_last_cycles);
+  put_raw(" update_exhausted=");
+  put_u32_dec(g_update_last_cycles <= 0 ? 1u : 0u);
+  put_raw(" generated_words=");
+  put_u32_dec(item->generated_words);
+  put_raw(" native_blocks=");
+  put_u32_dec(stats.blocks_executed);
+  put_raw(" code_bytes=");
+  put_u32_dec(code_bytes);
+  put_raw(" trace_first_pc=");
+  put_u32_hex(g_trace_first_pc);
+  put_raw(" trace_count=");
+  put_u32_dec(g_trace_count);
+  put_raw(" fallbacks=");
+  put_u32_dec(g_fallback_count);
+  put_raw(" execute_arm_calls=");
+  put_u32_dec(g_execute_arm_calls);
+  put_raw(" harness_mode=cpu_threaded_frontend reason=");
+  put_raw(passed ? "native_exit_contract_executed" :
+                   "native_exit_contract_failed");
+  put_raw("\n");
+  return passed;
+}
+
+static int run_frontend_control_cases(void)
+{
+  u32 i;
+
+  init_dynarec_for_armwrestler();
+  for (i = 0; i < RV32IM_FRONTEND_CONTROL_CASE_COUNT; i++)
+  {
+    if (!run_frontend_control_case(&rv32im_frontend_control_cases[i]))
+      return 0;
+  }
+
+  put_raw("result=PASS command=frontend-control case=all backend=rv32im "
+          "cases=");
+  put_u32_dec((u32)RV32IM_FRONTEND_CONTROL_CASE_COUNT);
+  put_raw(" harness_mode=cpu_threaded_frontend "
+          "reason=native_exit_contract_cases_complete\n");
+  return 1;
+}
+#endif
+
 void _start(void)
 {
   u32 i;
 
+#if defined(RV32IM_FRONTEND_CONTROL_ONLY)
+  (void)i;
+  sys_exit(run_frontend_control_cases() ? 0 : 1);
+#else
   if (!load_rom())
   {
     put_raw("result=FAIL command=armwrestler reason=rom_load_failed path="
@@ -1185,4 +1337,5 @@ void _start(void)
 
   print_aggregate_summary("PASS", "armwrestler_all_jit_only_passed");
   sys_exit(0);
+#endif
 }

@@ -58,7 +58,7 @@ BEGIN {
 	track("thumb_cond_branch_code_bytes", 212, "thumb_direct");
 	track("thumb_b_code_bytes", 144, "thumb_direct");
 	track("thumb_bx_code_bytes", 212, "thumb_direct");
-	track("thumb_swi_code_bytes", 140, "thumb_direct");
+	track("thumb_swi_code_bytes", 172, "thumb_direct");
 	track("thumb_bl_pair_code_bytes", 144, "thumb_direct");
 	track("thumb_blh_code_bytes", 148, "thumb_direct");
 
@@ -184,7 +184,7 @@ BEGIN {
 	track("swp_byte_code_bytes", 176, "arm_swap");
 
 	track("swi_code_bytes", 140, "arm_swi_hle");
-	track("swi_patch_code_bytes", 144, "arm_swi_hle");
+	track("swi_patch_code_bytes", 180, "arm_swi_hle");
 	track("swi_target_code_bytes", 152, "arm_swi_hle");
 	track("hle_div_code_bytes", 220, "arm_swi_hle");
 	track("hle_divarm_code_bytes", 220, "arm_swi_hle");
