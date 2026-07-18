@@ -81,7 +81,18 @@ volatile u32 riscv_runtime_perf_disable_mapped_alu_fastpath =
 __attribute__((section(".data")))
 volatile u32 riscv_runtime_perf_disable_fast_ram_reads =
   ARMWRESTLER_PERF_DISABLE_FAST_RAM_READS;
+#if defined(ARMWRESTLER_PERF_FAST_STORE_AB)
+#if !defined(RISCV_RUNTIME_ENABLE_FAST_RAM_STORES) || \
+    !defined(ARMWRESTLER_PERF_DISABLE_FAST_RAM_STORES)
+#error "Fast-store A/B builds must select the store optimization"
+#endif
+__attribute__((section(".data")))
+volatile u32 riscv_runtime_perf_disable_fast_ram_stores =
+  ARMWRESTLER_PERF_DISABLE_FAST_RAM_STORES;
+#define ARMWRESTLER_JIT_PROFILE "fast_ram_stores_ab"
+#else
 #define ARMWRESTLER_JIT_PROFILE "fast_ram_reads_ab"
+#endif
 #elif defined(RISCV_RUNTIME_DISABLE_MAPPED_ALU_FASTPATH)
 #define ARMWRESTLER_JIT_PROFILE "mapped_alu_baseline"
 #else
@@ -876,6 +887,10 @@ static void print_summary(const char *result, const char *suite, u32 test_id,
   put_u32_dec(!riscv_runtime_perf_disable_mapped_alu_fastpath);
   put_raw(" fast_ram_reads_enabled=");
   put_u32_dec(!riscv_runtime_perf_disable_fast_ram_reads);
+#if defined(ARMWRESTLER_PERF_FAST_STORE_AB)
+  put_raw(" fast_ram_stores_enabled=");
+  put_u32_dec(!riscv_runtime_perf_disable_fast_ram_stores);
+#endif
 #endif
   put_raw(" harness_mode=armwrestler_frontend_jit_only reason=");
   put_raw(reason);
@@ -955,6 +970,10 @@ static void print_aggregate_summary(const char *result, const char *reason)
   put_u32_dec(!riscv_runtime_perf_disable_mapped_alu_fastpath);
   put_raw(" fast_ram_reads_enabled=");
   put_u32_dec(!riscv_runtime_perf_disable_fast_ram_reads);
+#if defined(ARMWRESTLER_PERF_FAST_STORE_AB)
+  put_raw(" fast_ram_stores_enabled=");
+  put_u32_dec(!riscv_runtime_perf_disable_fast_ram_stores);
+#endif
 #endif
   put_raw(" harness_mode=armwrestler_frontend_jit_only reason=");
   put_raw(reason);

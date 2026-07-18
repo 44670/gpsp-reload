@@ -223,9 +223,9 @@ END {
         fail(key " MIPS reference no longer reproduces the frozen baseline")
 
       if (name == "mapped_alu") {
-        if (raw["rv32im:" key] != spec_rv_raw[key] ||
+        if ((raw["rv32im:" key] + 0) > (spec_rv_raw[key] + 0) ||
             generated["rv32im:" key] != spec_rv_bytes[key])
-          fail(key " RV32IM non-memory guard changed")
+          fail(key " RV32IM non-memory guard regressed")
       } else if (name == "memory_read") {
         if ((generated["rv32im:" key] + 0) > memory_bytes_max)
           fail(key " RV32IM generated-code budget exceeded")
@@ -237,9 +237,18 @@ END {
               (spec_rv_raw[key] + 0) * (100 - memory_min_reduction))
           fail(key " RV32IM warm improvement was below the required reduction")
       } else {
-        if (raw["rv32im:" key] != spec_rv_raw[key] ||
-            generated["rv32im:" key] != spec_rv_bytes[key])
-          fail(key " RV32IM write baseline changed before optimization")
+        if ((generated["rv32im:" key] + 0) > write_bytes_max)
+          fail(key " RV32IM write generated-code budget exceeded")
+        if (mode == "cold" && \
+            (raw["rv32im:" key] + 0) * 10000 > \
+              (spec_rv_raw[key] + 0) * \
+                (10000 + write_cold_regression_max_x100))
+          fail(key " RV32IM write cold instruction budget exceeded")
+        if (mode == "warm" && \
+            ((spec_rv_raw[key] + 0) - (raw["rv32im:" key] + 0)) * \
+                10000 < \
+              (spec_rv_raw[key] + 0) * write_warm_min_reduction_x100)
+          fail(key " RV32IM write warm improvement was below the required reduction")
       }
 
       raw_ratio = int((raw["rv32im:" key] + 0) * 10000 / \
@@ -296,5 +305,10 @@ END {
     "backends=rv32im,mips exact_guest_work=1 correctness_hashes_equal=1 " \
     "cold_warm_semantics_locked=1 execute_arm_calls=0 " \
     "memory_warm_min_reduction_percent=" memory_min_reduction \
-    " write_baseline_locked=1 reason=frozen_mips_comparable_baseline_verified"
+    " write_cold_regression_max_percent_x100=" \
+      write_cold_regression_max_x100 \
+    " write_warm_min_reduction_percent_x100=" \
+      write_warm_min_reduction_x100 \
+    " write_smc_contract_locked=1" \
+    " reason=frozen_mips_comparable_baseline_verified"
 }

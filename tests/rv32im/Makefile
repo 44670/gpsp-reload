@@ -9,6 +9,8 @@ CODEGEN := rv32im_codegen
 ARMWRESTLER := rv32im_armwrestler
 ARMWRESTLER_PERF_BASELINE := rv32im_armwrestler_perf_baseline
 ARMWRESTLER_PERF_OPTIMIZED := rv32im_armwrestler_perf_optimized
+ARMWRESTLER_STORE_PERF_BASELINE := rv32im_armwrestler_store_perf_baseline
+ARMWRESTLER_STORE_PERF_OPTIMIZED := rv32im_armwrestler_store_perf_optimized
 ARMWRESTLER_INTERP := rv32im_armwrestler_interp
 FRONTEND_CONTROL_JIT := rv32im_frontend_control_jit
 FRONTEND_CONTROL_INTERP := rv32im_frontend_control_interp
@@ -64,6 +66,18 @@ ARMWRESTLER_PERF_REPORT := $(OUT_DIR)/rv32im_armwrestler_perf_report.log
 ARMWRESTLER_PERF_BASELINE_TEXT := $(OUT_DIR)/rv32im_armwrestler_perf_baseline.text
 ARMWRESTLER_PERF_OPTIMIZED_TEXT := $(OUT_DIR)/rv32im_armwrestler_perf_optimized.text
 ARMWRESTLER_PERF_TRACE_FIFO := $(OUT_DIR)/rv32im_armwrestler_perf_trace.fifo
+ARMWRESTLER_STORE_PERF_BASELINE_LOG := $(OUT_DIR)/rv32im_armwrestler_store_perf_baseline.log
+ARMWRESTLER_STORE_PERF_OPTIMIZED_LOG := $(OUT_DIR)/rv32im_armwrestler_store_perf_optimized.log
+ARMWRESTLER_STORE_PERF_BASELINE_COUNTS := $(OUT_DIR)/rv32im_armwrestler_store_perf_baseline_counts.log
+ARMWRESTLER_STORE_PERF_OPTIMIZED_COUNTS := $(OUT_DIR)/rv32im_armwrestler_store_perf_optimized_counts.log
+ARMWRESTLER_STORE_PERF_BASELINE_REPEAT_LOG := $(OUT_DIR)/rv32im_armwrestler_store_perf_baseline_repeat.log
+ARMWRESTLER_STORE_PERF_OPTIMIZED_REPEAT_LOG := $(OUT_DIR)/rv32im_armwrestler_store_perf_optimized_repeat.log
+ARMWRESTLER_STORE_PERF_BASELINE_REPEAT_COUNTS := $(OUT_DIR)/rv32im_armwrestler_store_perf_baseline_repeat_counts.log
+ARMWRESTLER_STORE_PERF_OPTIMIZED_REPEAT_COUNTS := $(OUT_DIR)/rv32im_armwrestler_store_perf_optimized_repeat_counts.log
+ARMWRESTLER_STORE_PERF_REPORT := $(OUT_DIR)/rv32im_armwrestler_store_perf_report.log
+ARMWRESTLER_STORE_PERF_BASELINE_TEXT := $(OUT_DIR)/rv32im_armwrestler_store_perf_baseline.text
+ARMWRESTLER_STORE_PERF_OPTIMIZED_TEXT := $(OUT_DIR)/rv32im_armwrestler_store_perf_optimized.text
+ARMWRESTLER_STORE_PERF_TRACE_FIFO := $(OUT_DIR)/rv32im_armwrestler_store_perf_trace.fifo
 RUNTIME_LOG := $(OUT_DIR)/rv32im_runtime.log
 PERF_LOG := $(OUT_DIR)/rv32im_perf.log
 PERF_REPEAT_LOG := $(OUT_DIR)/rv32im_perf_repeat.log
@@ -101,11 +115,14 @@ BACKEND_COMPARE_EXPECTED_RV_QEMU_VERSION ?= 10.0.8
 BACKEND_COMPARE_EXPECTED_MIPS_QEMU_VERSION ?= 10.0.8
 BACKEND_COMPARE_EXPECTED_MANIFEST_SHA256 := 2acb74603e7392cb07a14991d5e04e426435933327ebe34929730fa95d5e36b4
 BACKEND_COMPARE_EXPECTED_ENVIRONMENT_SHA256 := b67f1516178fa87885bae48078b41cbada84091b078159508bb89c4f6d0513c6
-BACKEND_COMPARE_EXPECTED_SOURCE_SHA256 := fe84b1ea1370df7e5ca813a41c6c974b4c67dbaeee3d3c85c02c615bc1792969
-GBA_MEMORY_DIFF_EXPECTED_MANIFEST_SHA256 := d2d108c26e6e8c1aa01b6fc8f46cc56da80d03d2553941b3efc25fb6d961ad4e
+BACKEND_COMPARE_EXPECTED_SOURCE_SHA256 := 6b50ae0433a8c8cff5fec4d2daa9cb54d5d31cb72395728f66e0ca6167c4ee18
+GBA_MEMORY_DIFF_EXPECTED_MANIFEST_SHA256 := 0434fcf5ab795b904714339f99b80043acbd2b718a65bcac4df1051f05632b65
 BACKEND_COMPARE_MEMORY_MIN_REDUCTION_PERCENT ?= 30
-BACKEND_COMPARE_MEMORY_COLD_RAW_MAX ?= 38500
+BACKEND_COMPARE_MEMORY_COLD_RAW_MAX ?= 39000
 BACKEND_COMPARE_MEMORY_BYTES_MAX ?= 1900
+BACKEND_COMPARE_WRITE_COLD_REGRESSION_MAX_PERCENT_X100 ?= 300
+BACKEND_COMPARE_WRITE_WARM_MIN_REDUCTION_PERCENT_X100 ?= 500
+BACKEND_COMPARE_WRITE_BYTES_MAX ?= 1060
 BACKEND_COMPARE_TIMEOUT_SECONDS := 30
 ARMWRESTLER_ROM := /home/john/ref/armwrestler-gba-fixed/armwrestler-gba-fixed.gba
 ARMWRESTLER_PERF_BASELINE_SPEC := rv32im_armwrestler_perf_baseline.txt
@@ -115,16 +132,21 @@ ARMWRESTLER_PERF_TIMEOUT_SECONDS := 120
 ARMWRESTLER_PERF_COLD_PER_TEST_REGRESSION_MAX_PERCENT_X100 ?= 150
 ARMWRESTLER_PERF_COLD_AGGREGATE_REGRESSION_MAX_PERCENT_X100 ?= 100
 ARMWRESTLER_PERF_WARM_MIN_REDUCTION_PERCENT_X100 ?= 10
-ARMWRESTLER_ARM0_CODE_BYTES_MAX ?= 14380
-ARMWRESTLER_ARM1_CODE_BYTES_MAX ?= 13536
-ARMWRESTLER_ARM2_CODE_BYTES_MAX ?= 22268
-ARMWRESTLER_ARM3_CODE_BYTES_MAX ?= 13376
-ARMWRESTLER_ARM4_CODE_BYTES_MAX ?= 29752
-ARMWRESTLER_THUMB0_CODE_BYTES_MAX ?= 21524
-ARMWRESTLER_THUMB1_CODE_BYTES_MAX ?= 9844
-ARMWRESTLER_THUMB2_CODE_BYTES_MAX ?= 8020
-ARMWRESTLER_ARM_CODE_BYTES_MAX ?= 93312
-ARMWRESTLER_THUMB_CODE_BYTES_MAX ?= 39388
+ARMWRESTLER_STORE_PERF_BASELINE_SPEC := rv32im_armwrestler_store_perf_baseline.txt
+ARMWRESTLER_STORE_PERF_BENCHMARK_ID := rv32im-armwrestler-fast-store-v1
+ARMWRESTLER_STORE_PERF_COLD_PER_TEST_REGRESSION_MAX_PERCENT_X100 ?= 150
+ARMWRESTLER_STORE_PERF_COLD_AGGREGATE_REGRESSION_MAX_PERCENT_X100 ?= 100
+ARMWRESTLER_STORE_PERF_WARM_MIN_REDUCTION_PERCENT_X100 ?= 5
+ARMWRESTLER_ARM0_CODE_BYTES_MAX ?= 14180
+ARMWRESTLER_ARM1_CODE_BYTES_MAX ?= 13296
+ARMWRESTLER_ARM2_CODE_BYTES_MAX ?= 22068
+ARMWRESTLER_ARM3_CODE_BYTES_MAX ?= 13176
+ARMWRESTLER_ARM4_CODE_BYTES_MAX ?= 29552
+ARMWRESTLER_THUMB0_CODE_BYTES_MAX ?= 21548
+ARMWRESTLER_THUMB1_CODE_BYTES_MAX ?= 9880
+ARMWRESTLER_THUMB2_CODE_BYTES_MAX ?= 8044
+ARMWRESTLER_ARM_CODE_BYTES_MAX ?= 92272
+ARMWRESTLER_THUMB_CODE_BYTES_MAX ?= 39472
 ARMWRESTLER_THUMB_HELPERS_MAX ?= 0
 PERF_MAPPED_ALU_BASELINE_WARM_EXEC_INSNS := 169889
 PERF_MAPPED_ALU_BASELINE_BYTES := 3760
@@ -212,7 +234,7 @@ HOST_CXX ?= c++
 LLVM_OBJCOPY ?= llvm-objcopy
 LLVM_NM ?= llvm-nm
 
-all: $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(FRONTEND_CONTROL_JIT) $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CACHE_JIT) $(BACKEND_COMPARE_RV32) $(BACKEND_COMPARE_MIPS) $(GBA_MEMORY_DIFF_RV32) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP)
+all: $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_STORE_PERF_BASELINE) $(ARMWRESTLER_STORE_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(FRONTEND_CONTROL_JIT) $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CACHE_JIT) $(BACKEND_COMPARE_RV32) $(BACKEND_COMPARE_MIPS) $(GBA_MEMORY_DIFF_RV32) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP)
 
 $(HARNESS): rv32im_harness.c $(ROOT)/riscv/riscv_runtime.c \
 		$(ROOT)/riscv/riscv_emit.h $(ROOT)/riscv/riscv_codegen.h \
@@ -273,6 +295,7 @@ $(ARMWRESTLER): rv32im_armwrestler.c rv32im_frontend_shim.h \
 	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) \
 		-DRISCV_RUNTIME_STANDALONE_TEST -DHAVE_DYNAREC -DRISCV_ARCH \
 		-DMMAP_JIT_CACHE -DRISCV_RUNTIME_ENABLE_FAST_RAM_READS \
+		-DRISCV_RUNTIME_ENABLE_FAST_RAM_STORES \
 		-I. -I$(ROOT) -I$(ROOT)/riscv \
 		-include rv32im_frontend_shim.h \
 		-o $@ rv32im_armwrestler.c $(ROOT)/cpu_threaded.c \
@@ -303,6 +326,44 @@ $(ARMWRESTLER_PERF_OPTIMIZED): rv32im_armwrestler.c rv32im_frontend_shim.h \
 		-DRISCV_RUNTIME_ENABLE_FAST_RAM_READS \
 		-DARMWRESTLER_PERF_DISABLE_MAPPED_ALU_FASTPATH=0 \
 		-DARMWRESTLER_PERF_DISABLE_FAST_RAM_READS=0 \
+		-I. -I$(ROOT) -I$(ROOT)/riscv \
+		-include rv32im_frontend_shim.h \
+		-o $@ rv32im_armwrestler.c $(ROOT)/cpu_threaded.c \
+		$(ROOT)/riscv/riscv_runtime.c
+
+$(ARMWRESTLER_STORE_PERF_BASELINE): rv32im_armwrestler.c \
+		rv32im_frontend_shim.h $(ROOT)/cpu_threaded.c \
+		$(ROOT)/riscv/riscv_runtime.c $(ROOT)/riscv/riscv_emit.h \
+		$(ROOT)/riscv/riscv_codegen.h \
+		$(ROOT)/riscv/riscv_runtime_test_shim.h
+	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) \
+		-DRISCV_RUNTIME_STANDALONE_TEST -DHAVE_DYNAREC -DRISCV_ARCH \
+		-DMMAP_JIT_CACHE -DRISCV_RUNTIME_PERF_PROFILE_SWITCH \
+		-DRISCV_RUNTIME_ENABLE_FAST_RAM_READS \
+		-DRISCV_RUNTIME_ENABLE_FAST_RAM_STORES \
+		-DARMWRESTLER_PERF_FAST_STORE_AB \
+		-DARMWRESTLER_PERF_DISABLE_MAPPED_ALU_FASTPATH=0 \
+		-DARMWRESTLER_PERF_DISABLE_FAST_RAM_READS=0 \
+		-DARMWRESTLER_PERF_DISABLE_FAST_RAM_STORES=1 \
+		-I. -I$(ROOT) -I$(ROOT)/riscv \
+		-include rv32im_frontend_shim.h \
+		-o $@ rv32im_armwrestler.c $(ROOT)/cpu_threaded.c \
+		$(ROOT)/riscv/riscv_runtime.c
+
+$(ARMWRESTLER_STORE_PERF_OPTIMIZED): rv32im_armwrestler.c \
+		rv32im_frontend_shim.h $(ROOT)/cpu_threaded.c \
+		$(ROOT)/riscv/riscv_runtime.c $(ROOT)/riscv/riscv_emit.h \
+		$(ROOT)/riscv/riscv_codegen.h \
+		$(ROOT)/riscv/riscv_runtime_test_shim.h
+	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) \
+		-DRISCV_RUNTIME_STANDALONE_TEST -DHAVE_DYNAREC -DRISCV_ARCH \
+		-DMMAP_JIT_CACHE -DRISCV_RUNTIME_PERF_PROFILE_SWITCH \
+		-DRISCV_RUNTIME_ENABLE_FAST_RAM_READS \
+		-DRISCV_RUNTIME_ENABLE_FAST_RAM_STORES \
+		-DARMWRESTLER_PERF_FAST_STORE_AB \
+		-DARMWRESTLER_PERF_DISABLE_MAPPED_ALU_FASTPATH=0 \
+		-DARMWRESTLER_PERF_DISABLE_FAST_RAM_READS=0 \
+		-DARMWRESTLER_PERF_DISABLE_FAST_RAM_STORES=0 \
 		-I. -I$(ROOT) -I$(ROOT)/riscv \
 		-include rv32im_frontend_shim.h \
 		-o $@ rv32im_armwrestler.c $(ROOT)/cpu_threaded.c \
@@ -360,6 +421,7 @@ $(BACKEND_COMPARE_RV32): rv32im_backend_compare.c \
 		-DRISCV_RUNTIME_STANDALONE_TEST -DHAVE_DYNAREC -DRISCV_ARCH \
 		-DMMAP_JIT_CACHE -DBACKEND_COMPARE_RV32IM \
 		-DRISCV_RUNTIME_ENABLE_FAST_RAM_READS \
+		-DRISCV_RUNTIME_ENABLE_FAST_RAM_STORES \
 		-I. -I$(ROOT) -I$(ROOT)/riscv \
 		-include backend_compare_frontend_shim.h \
 		-o $@ rv32im_backend_compare.c $(ROOT)/cpu_threaded.c \
@@ -367,24 +429,22 @@ $(BACKEND_COMPARE_RV32): rv32im_backend_compare.c \
 
 $(OUT_DIR)/gba_memory_rv32_diff.o: $(ROOT)/gba_memory.c \
 		$(ROOT)/gba_memory.h $(ROOT)/common.h | $(OUT_DIR)
-	# Only production read sections survive --gc-sections.  Host headers supply
+	# Only production read/write sections survive --gc-sections. Host headers supply
 	# declarations because this workspace has no RV32 libc sysroot; the float
 	# alias avoids an x86 glibc-only typedef that retained code never uses.
 	$(CLANG) --target=riscv32-linux-gnu --sysroot=/ \
 		-isystem /usr/include -isystem /usr/include/riscv64-linux-gnu \
 		-march=rv32im -mabi=ilp32 -std=c99 -O2 -ffreestanding \
 		-ffunction-sections -fdata-sections -fno-builtin \
+		-fno-inline-functions \
 		'-D__float128=long double' \
 		-DHAVE_STRINGS_H -DHAVE_STDINT_H -DHAVE_INTTYPES_H \
-		-Dwrite_memory8=gba_memory_unused_write_memory8 \
-		-Dwrite_memory16=gba_memory_unused_write_memory16 \
-		-Dwrite_memory32=gba_memory_unused_write_memory32 \
-		-Dwrite_io_register8=gba_memory_unused_write_io_register8 \
-		-Dwrite_io_register16=gba_memory_unused_write_io_register16 \
-		-Dwrite_io_register32=gba_memory_unused_write_io_register32 \
-		-Dwrite_backup=gba_memory_unused_write_backup \
-		-Dwrite_eeprom=gba_memory_unused_write_eeprom \
-		-Dwrite_gpio=gba_memory_unused_write_gpio \
+		-Dwrite_io_register8=gba_memory_diff_real_write_io_register8 \
+		-Dwrite_io_register16=gba_memory_diff_real_write_io_register16 \
+		-Dwrite_io_register32=gba_memory_diff_real_write_io_register32 \
+		-Dwrite_backup=gba_memory_diff_real_write_backup \
+		-Dwrite_eeprom=gba_memory_diff_real_write_eeprom \
+		-Dwrite_gpio=gba_memory_diff_real_write_gpio \
 		-Dload_gamepak_page=gba_memory_real_load_gamepak_page \
 		-I$(ROOT) -I$(ROOT)/libretro \
 		-I$(ROOT)/libretro/libretro-common/include -c $< -o $@
@@ -397,11 +457,18 @@ $(GBA_MEMORY_DIFF_RV32): rv32im_backend_compare.c \
 	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) -ffunction-sections \
 		-fdata-sections -Wl,--gc-sections -Wl,--build-id=none \
 		-Wl,--wrap=gba_memory_real_load_gamepak_page \
+		-Wl,--wrap=gba_memory_diff_real_write_io_register8 \
+		-Wl,--wrap=gba_memory_diff_real_write_io_register16 \
+		-Wl,--wrap=gba_memory_diff_real_write_io_register32 \
+		-Wl,--wrap=gba_memory_diff_real_write_backup \
+		-Wl,--wrap=gba_memory_diff_real_write_eeprom \
+		-Wl,--wrap=gba_memory_diff_real_write_gpio \
 		-Wno-unused-function -Wno-unused-variable \
 		-DRISCV_RUNTIME_STANDALONE_TEST -DHAVE_DYNAREC -DRISCV_ARCH \
 		-DMMAP_JIT_CACHE -DBACKEND_COMPARE_RV32IM \
 		-DBACKEND_COMPARE_REAL_GBA_MEMORY \
 		-DRISCV_RUNTIME_ENABLE_FAST_RAM_READS \
+		-DRISCV_RUNTIME_ENABLE_FAST_RAM_STORES \
 		-I. -I$(ROOT) -I$(ROOT)/riscv \
 		-include backend_compare_frontend_shim.h \
 		-o $@ rv32im_backend_compare.c $(ROOT)/riscv/riscv_runtime.c \
@@ -697,6 +764,13 @@ armwrestler-perf: perf-env-check $(ARMWRESTLER_PERF_BASELINE) \
 		-v clang_version="$$clang_version" -v qemu_version="$$qemu_version" \
 		-v build_config=$(PERF_BUILD_CONFIG) \
 		-v environment_sha="$$environment_sha" -v text_sha="$$text_sha" \
+		-v isolated_optimization=fast_ram_reads \
+		-v jit_profile=fast_ram_reads_ab \
+		-v baseline_mapped_alu_enabled=1 \
+		-v baseline_fast_ram_reads_enabled=0 \
+		-v optimized_fast_ram_reads_enabled=1 \
+		-v baseline_fast_ram_stores_enabled=na \
+		-v optimized_fast_ram_stores_enabled=na \
 		-v cold_per_test_regression_max_x100=$(ARMWRESTLER_PERF_COLD_PER_TEST_REGRESSION_MAX_PERCENT_X100) \
 		-v cold_aggregate_regression_max_x100=$(ARMWRESTLER_PERF_COLD_AGGREGATE_REGRESSION_MAX_PERCENT_X100) \
 		-v warm_min_reduction_x100=$(ARMWRESTLER_PERF_WARM_MIN_REDUCTION_PERCENT_X100) \
@@ -711,7 +785,94 @@ armwrestler-perf: perf-env-check $(ARMWRESTLER_PERF_BASELINE) \
 	grep -q 'observed_results=79 failure_mask=0x00000000 fallbacks=0 fallback_events=0 execute_arm_calls=0' \
 		$(ARMWRESTLER_PERF_REPORT)
 
-armwrestler: armwrestler-interp armwrestler-jit armwrestler-perf gba-memory-diff
+armwrestler-store-perf: perf-env-check $(ARMWRESTLER_STORE_PERF_BASELINE) \
+		$(ARMWRESTLER_STORE_PERF_OPTIMIZED) \
+		$(ARMWRESTLER_STORE_PERF_BASELINE_SPEC) \
+		rv32im_armwrestler_trace_run.sh rv32im_armwrestler_perf_check.awk \
+		rv32im_qemu_trace_count.awk | $(OUT_DIR)
+	@rom_sha=`sha256sum $(ARMWRESTLER_ROM) | awk '{ print $$1 }'`; \
+	if test "$$rom_sha" != "$(ARMWRESTLER_PERF_EXPECTED_ROM_SHA256)"; then \
+		echo "result=FAIL command=armwrestler-store-perf rom_sha256=$$rom_sha expected_rom_sha256=$(ARMWRESTLER_PERF_EXPECTED_ROM_SHA256) reason=rom_changed"; \
+		exit 1; \
+	fi
+	$(LLVM_OBJCOPY) --dump-section .text=$(ARMWRESTLER_STORE_PERF_BASELINE_TEXT) \
+		$(ARMWRESTLER_STORE_PERF_BASELINE)
+	$(LLVM_OBJCOPY) --dump-section .text=$(ARMWRESTLER_STORE_PERF_OPTIMIZED_TEXT) \
+		$(ARMWRESTLER_STORE_PERF_OPTIMIZED)
+	cmp $(ARMWRESTLER_STORE_PERF_BASELINE_TEXT) \
+		$(ARMWRESTLER_STORE_PERF_OPTIMIZED_TEXT)
+	sh rv32im_armwrestler_trace_run.sh $(QEMU_RISCV32) $(LLVM_NM) \
+		rv32im_qemu_trace_count.awk ./$(ARMWRESTLER_STORE_PERF_BASELINE) \
+		$(ARMWRESTLER_STORE_PERF_BASELINE_COUNTS) \
+		$(ARMWRESTLER_STORE_PERF_BASELINE_LOG) \
+		$(ARMWRESTLER_STORE_PERF_TRACE_FIFO) \
+		$(ARMWRESTLER_PERF_TIMEOUT_SECONDS)
+	sh rv32im_armwrestler_trace_run.sh $(QEMU_RISCV32) $(LLVM_NM) \
+		rv32im_qemu_trace_count.awk ./$(ARMWRESTLER_STORE_PERF_OPTIMIZED) \
+		$(ARMWRESTLER_STORE_PERF_OPTIMIZED_COUNTS) \
+		$(ARMWRESTLER_STORE_PERF_OPTIMIZED_LOG) \
+		$(ARMWRESTLER_STORE_PERF_TRACE_FIFO) \
+		$(ARMWRESTLER_PERF_TIMEOUT_SECONDS)
+	sh rv32im_armwrestler_trace_run.sh $(QEMU_RISCV32) $(LLVM_NM) \
+		rv32im_qemu_trace_count.awk ./$(ARMWRESTLER_STORE_PERF_BASELINE) \
+		$(ARMWRESTLER_STORE_PERF_BASELINE_REPEAT_COUNTS) \
+		$(ARMWRESTLER_STORE_PERF_BASELINE_REPEAT_LOG) \
+		$(ARMWRESTLER_STORE_PERF_TRACE_FIFO) \
+		$(ARMWRESTLER_PERF_TIMEOUT_SECONDS)
+	sh rv32im_armwrestler_trace_run.sh $(QEMU_RISCV32) $(LLVM_NM) \
+		rv32im_qemu_trace_count.awk ./$(ARMWRESTLER_STORE_PERF_OPTIMIZED) \
+		$(ARMWRESTLER_STORE_PERF_OPTIMIZED_REPEAT_COUNTS) \
+		$(ARMWRESTLER_STORE_PERF_OPTIMIZED_REPEAT_LOG) \
+		$(ARMWRESTLER_STORE_PERF_TRACE_FIFO) \
+		$(ARMWRESTLER_PERF_TIMEOUT_SECONDS)
+	cmp $(ARMWRESTLER_STORE_PERF_BASELINE_COUNTS) \
+		$(ARMWRESTLER_STORE_PERF_BASELINE_REPEAT_COUNTS)
+	cmp $(ARMWRESTLER_STORE_PERF_OPTIMIZED_COUNTS) \
+		$(ARMWRESTLER_STORE_PERF_OPTIMIZED_REPEAT_COUNTS)
+	cmp $(ARMWRESTLER_STORE_PERF_BASELINE_LOG) \
+		$(ARMWRESTLER_STORE_PERF_BASELINE_REPEAT_LOG)
+	cmp $(ARMWRESTLER_STORE_PERF_OPTIMIZED_LOG) \
+		$(ARMWRESTLER_STORE_PERF_OPTIMIZED_REPEAT_LOG)
+	@text_sha=`sha256sum $(ARMWRESTLER_STORE_PERF_BASELINE_TEXT) | awk '{ print $$1 }'`; \
+	environment_sha=`sha256sum $(PERF_ENVIRONMENT_MANIFEST) | awk '{ print $$1 }'`; \
+	clang_version=`$(CLANG) --version | sed -n '1s/.* version \([0-9][0-9.]*\).*/\1/p'`; \
+	qemu_version=`$(QEMU_RISCV32) --version | sed -n '1s/.* version \([0-9][0-9.]*\).*/\1/p'`; \
+	awk -v spec_file=$(ARMWRESTLER_STORE_PERF_BASELINE_SPEC) \
+		-v baseline_counts_file=$(ARMWRESTLER_STORE_PERF_BASELINE_COUNTS) \
+		-v optimized_counts_file=$(ARMWRESTLER_STORE_PERF_OPTIMIZED_COUNTS) \
+		-v baseline_log_file=$(ARMWRESTLER_STORE_PERF_BASELINE_LOG) \
+		-v optimized_log_file=$(ARMWRESTLER_STORE_PERF_OPTIMIZED_LOG) \
+		-v benchmark_id=$(ARMWRESTLER_STORE_PERF_BENCHMARK_ID) \
+		-v rom_sha=$(ARMWRESTLER_PERF_EXPECTED_ROM_SHA256) \
+		-v clang_version="$$clang_version" -v qemu_version="$$qemu_version" \
+		-v build_config=$(PERF_BUILD_CONFIG) \
+		-v environment_sha="$$environment_sha" -v text_sha="$$text_sha" \
+		-v isolated_optimization=fast_ram_stores \
+		-v jit_profile=fast_ram_stores_ab \
+		-v baseline_mapped_alu_enabled=1 \
+		-v baseline_fast_ram_reads_enabled=1 \
+		-v optimized_fast_ram_reads_enabled=1 \
+		-v baseline_fast_ram_stores_enabled=0 \
+		-v optimized_fast_ram_stores_enabled=1 \
+		-v cold_per_test_regression_max_x100=$(ARMWRESTLER_STORE_PERF_COLD_PER_TEST_REGRESSION_MAX_PERCENT_X100) \
+		-v cold_aggregate_regression_max_x100=$(ARMWRESTLER_STORE_PERF_COLD_AGGREGATE_REGRESSION_MAX_PERCENT_X100) \
+		-v warm_min_reduction_x100=$(ARMWRESTLER_STORE_PERF_WARM_MIN_REDUCTION_PERCENT_X100) \
+		-f rv32im_armwrestler_perf_check.awk \
+		$(ARMWRESTLER_STORE_PERF_BASELINE_SPEC) \
+		$(ARMWRESTLER_STORE_PERF_BASELINE_COUNTS) \
+		$(ARMWRESTLER_STORE_PERF_OPTIMIZED_COUNTS) \
+		$(ARMWRESTLER_STORE_PERF_BASELINE_LOG) \
+		$(ARMWRESTLER_STORE_PERF_OPTIMIZED_LOG) | \
+		tee $(ARMWRESTLER_STORE_PERF_REPORT)
+	grep -q 'result=PASS command=armwrestler-perf test=all phase=summary' \
+		$(ARMWRESTLER_STORE_PERF_REPORT)
+	grep -q 'isolated_optimization=fast_ram_stores' \
+		$(ARMWRESTLER_STORE_PERF_REPORT)
+	grep -q 'observed_results=79 failure_mask=0x00000000 fallbacks=0 fallback_events=0 execute_arm_calls=0' \
+		$(ARMWRESTLER_STORE_PERF_REPORT)
+
+armwrestler: armwrestler-interp armwrestler-jit armwrestler-perf \
+		armwrestler-store-perf gba-memory-diff
 	grep -q 'observed_results=79 failure_mask=0x00000000' $(ARMWRESTLER_INTERP_LOG)
 	grep -q 'observed_results=79 failure_mask=0x00000000' $(ARMWRESTLER_LOG)
 	grep -q 'native_blocks=[1-9][0-9]*' $(ARMWRESTLER_LOG)
@@ -882,6 +1043,9 @@ backend-compare: backend-compare-env-check $(BACKEND_COMPARE_RV32) \
 	cmp $(BACKEND_COMPARE_MIPS_COUNTS) $(BACKEND_COMPARE_MIPS_REPEAT_COUNTS)
 	cmp $(BACKEND_COMPARE_MIPS_LOG) $(BACKEND_COMPARE_MIPS_REPEAT_LOG)
 	grep -Fq 'result=PASS command=backend-compare-fast-ram backend=rv32im cases=75 regions=ewram,iwram,slow-path widths=u8,s8,u16,s16,u32 alignment=0,1,2,3 mirroring=1 boundaries=0x01ffffff,0x04000000 pc_visibility=1 reference=fixture_memory_model reason=fast_ram_reads_match_memory_contract' $(BACKEND_COMPARE_RV32_LOG)
+	grep -Fq 'result=PASS command=backend-compare-fast-store backend=rv32im cases=42 smc_cases=6 regions=ewram,iwram widths=u8,u16,u32 alignment=0,1,2,3 mirroring=1 pc_visibility=1 mapped_state_preserved=1 reference=fixture_memory_model reason=fast_ram_stores_match_memory_and_smc_contract' $(BACKEND_COMPARE_RV32_LOG)
+	grep -Fq 'result=PASS command=backend-compare-store-smc backend=rv32im paths=fast-proven-ram,generic-dynamic-address fast_old_value=1 fast_patched_value=2 dynamic_old_value=3 dynamic_patched_value=4 smc_flushes=2 fast_flushed_dirty_r3=90 generic_flushed_dirty_r3=107' $(BACKEND_COMPARE_RV32_LOG)
+	grep -Fq 'fallbacks=0 execute_arm_calls=0 harness_mode=cpu_threaded_frontend_rv32im reason=fast_and_generic_stores_invalidate_stale_ram_blocks' $(BACKEND_COMPARE_RV32_LOG)
 	awk -v spec_file=$(BACKEND_COMPARE_BASELINE_SPEC) \
 		-v rv_counts_file=$(BACKEND_COMPARE_RV32_COUNTS) \
 		-v rv_log_file=$(BACKEND_COMPARE_RV32_LOG) \
@@ -899,6 +1063,9 @@ backend-compare: backend-compare-env-check $(BACKEND_COMPARE_RV32) \
 		-v memory_min_reduction=$(BACKEND_COMPARE_MEMORY_MIN_REDUCTION_PERCENT) \
 		-v memory_cold_raw_max=$(BACKEND_COMPARE_MEMORY_COLD_RAW_MAX) \
 		-v memory_bytes_max=$(BACKEND_COMPARE_MEMORY_BYTES_MAX) \
+		-v write_cold_regression_max_x100=$(BACKEND_COMPARE_WRITE_COLD_REGRESSION_MAX_PERCENT_X100) \
+		-v write_warm_min_reduction_x100=$(BACKEND_COMPARE_WRITE_WARM_MIN_REDUCTION_PERCENT_X100) \
+		-v write_bytes_max=$(BACKEND_COMPARE_WRITE_BYTES_MAX) \
 		-f rv32im_backend_compare_check.awk \
 		$(BACKEND_COMPARE_BASELINE_SPEC) \
 		$(BACKEND_COMPARE_RV32_COUNTS) $(BACKEND_COMPARE_RV32_LOG) \
@@ -912,8 +1079,10 @@ gba-memory-diff: $(GBA_MEMORY_DIFF_RV32) $(GBA_MEMORY_DIFF_MANIFEST) | $(OUT_DIR
 	$(QEMU_RISCV32) ./$(GBA_MEMORY_DIFF_RV32) > $(GBA_MEMORY_DIFF_REPEAT_LOG)
 	cmp $(GBA_MEMORY_DIFF_LOG) $(GBA_MEMORY_DIFF_REPEAT_LOG)
 	grep -Fq 'result=PASS command=backend-compare-fast-ram backend=rv32im cases=75 regions=ewram,iwram,slow-path widths=u8,s8,u16,s16,u32 alignment=0,1,2,3 mirroring=1 boundaries=0x01ffffff,0x04000000 pc_visibility=1 reference=linked_gba_memory.c reason=fast_ram_reads_match_memory_contract' $(GBA_MEMORY_DIFF_LOG)
-	grep -Fq 'result=PASS command=gba-memory-diff backend=rv32im cases=75 source=gba_memory.c fast_path=riscv_fast_read harness_mode=qemu_user_real_memory reason=linked_real_memory_equal' $(GBA_MEMORY_DIFF_LOG)
+	grep -Fq 'result=PASS command=backend-compare-fast-store backend=rv32im cases=42 smc_cases=6 regions=ewram,iwram widths=u8,u16,u32 alignment=0,1,2,3 mirroring=1 pc_visibility=1 mapped_state_preserved=1 reference=linked_gba_memory.c reason=fast_ram_stores_match_memory_and_smc_contract' $(GBA_MEMORY_DIFF_LOG)
+	grep -Fq 'result=PASS command=gba-memory-diff backend=rv32im read_cases=75 write_cases=42 smc_cases=6 source=gba_memory.c fast_path=riscv_fast_read,riscv_fast_store harness_mode=qemu_user_real_memory reason=linked_real_memory_equal' $(GBA_MEMORY_DIFF_LOG)
 	$(LLVM_NM) $(GBA_MEMORY_DIFF_RV32) | grep -Eq ' [Tt] read_memory(8|16|32)$$'
+	$(LLVM_NM) $(GBA_MEMORY_DIFF_RV32) | grep -Eq ' [Tt] write_memory(8|16|32)$$'
 	@manifest_sha=`sha256sum $(GBA_MEMORY_DIFF_MANIFEST) | awk '{ print $$1 }'`; \
 	if test "$$manifest_sha" != "$(GBA_MEMORY_DIFF_EXPECTED_MANIFEST_SHA256)"; then \
 		echo "result=FAIL command=gba-memory-diff-env manifest_sha256=$$manifest_sha expected_manifest_sha256=$(GBA_MEMORY_DIFF_EXPECTED_MANIFEST_SHA256) reason=manifest_changed"; \
@@ -1026,7 +1195,7 @@ perf: perf-env-check $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP) | $
 test: codegen abi exec runtime perf frontend frontend-control frontend-cache backend-compare gba-memory-diff core-build rejects compare mixed smoke
 
 clean:
-	rm -f $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(FRONTEND_CONTROL_JIT) $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CACHE_JIT) $(BACKEND_COMPARE_RV32) $(BACKEND_COMPARE_MIPS) $(GBA_MEMORY_DIFF_RV32) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP)
+	rm -f $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_STORE_PERF_BASELINE) $(ARMWRESTLER_STORE_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(FRONTEND_CONTROL_JIT) $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CACHE_JIT) $(BACKEND_COMPARE_RV32) $(BACKEND_COMPARE_MIPS) $(GBA_MEMORY_DIFF_RV32) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP)
 	rm -rf $(OUT_DIR)
 
-.PHONY: all codegen abi exec runtime perf perf-env-check frontend frontend-control frontend-cache backend-compare backend-compare-env-check gba-memory-diff core-build smoke compare mixed rejects armwrestler-jit armwrestler-interp armwrestler-perf armwrestler armwrestler-report test clean
+.PHONY: all codegen abi exec runtime perf perf-env-check frontend frontend-control frontend-cache backend-compare backend-compare-env-check gba-memory-diff core-build smoke compare mixed rejects armwrestler-jit armwrestler-interp armwrestler-perf armwrestler-store-perf armwrestler armwrestler-report test clean

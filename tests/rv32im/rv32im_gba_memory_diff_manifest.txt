@@ -1,4 +1,4 @@
-benchmark_id=rv32im-gba-memory-diff-v1
+benchmark_id=rv32im-gba-memory-diff-v2
 target=riscv32 isa=rv32im abi=ilp32 compressed=0
 runner=qemu-riscv32 execution=qemu-user freestanding=1 static_link=1
 compiler=clang optimization=O2 linker=lld gc_sections=1
@@ -6,12 +6,16 @@ header_model=host_declarations_only float128_alias=long_double rv32_libc_linked=
 memory_source=../../gba_memory.c
 fast_read_source=../../riscv/riscv_runtime.c
 driver_source=rv32im_backend_compare.c
-memory_contract=production_read_memory8,read_memory8s,read_memory16,read_memory16s,read_memory32
-fast_contract=riscv_fast_read_u8,riscv_fast_read_s8,riscv_fast_read_u16,riscv_fast_read_s16,riscv_fast_read_u32
+memory_contract=production_read_memory8,read_memory8s,read_memory16,read_memory16s,read_memory32,write_memory8,write_memory16,write_memory32
+fast_contract=riscv_fast_read_u8,riscv_fast_read_s8,riscv_fast_read_u16,riscv_fast_read_s16,riscv_fast_read_u32,riscv_fast_store_u8,riscv_fast_store_u16,riscv_fast_store_u32
 regions=ewram,iwram,slow-path
-widths=u8,s8,u16,s16,u32
+read_widths=u8,s8,u16,s16,u32 store_widths=u8,u16,u32
 alignment=0,1,2,3 mirroring=1 boundaries=0x01ffffff,0x04000000
-cases=75 pc_visibility=1
-write_symbols=fixture_only read_symbols=linked_from_gba_memory.c
+read_cases=75 write_cases=42 smc_cases=6 pc_visibility=1 mapped_state_preserved=1
+read_symbols=linked_from_gba_memory.c write_symbols=linked_from_gba_memory.c
+write_nonram_helpers=link_wrapped fixture_scope=unretained_nonram_branches
+fast_store_scope=frontend_proven_aligned_ewram_iwram
+generic_store_contract=dynamic_address_ram_direct,nonram_production_helper,shadow_checked
+smc_contract=aligned_and_unaligned_shadow_tag_hit,mapped_state_published_before_generated_call,CPU_ALERT_SMC
 repeatability=stdout_byte_exact
 source_identity=manifest,gba_memory.c,riscv_runtime.c,linked_binary_sha256

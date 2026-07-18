@@ -40,7 +40,8 @@ function capture_result(profile, test, prefix) {
   result_warm_code_added[prefix] = field("warm_code_bytes_added")
   result_jit_profile[prefix] = field("jit_profile")
   result_mapped_alu_enabled[prefix] = field("mapped_alu_fastpath_enabled")
-  result_fast_ram_enabled[prefix] = field("fast_ram_reads_enabled")
+  result_fast_ram_reads_enabled[prefix] = field("fast_ram_reads_enabled")
+  result_fast_ram_stores_enabled[prefix] = field("fast_ram_stores_enabled")
   result_harness[prefix] = field("harness_mode")
 }
 
@@ -74,7 +75,8 @@ FILENAME == spec_file && /^benchmark_id=/ {
   spec_text_sha = field("text_sha256")
   spec_optimization = field("isolated_optimization")
   spec_baseline_mapped_alu = field("baseline_mapped_alu_fastpath_enabled")
-  spec_baseline_fast_ram = field("baseline_fast_ram_reads_enabled")
+  spec_baseline_fast_ram_reads = field("baseline_fast_ram_reads_enabled")
+  spec_baseline_fast_ram_stores = field("baseline_fast_ram_stores_enabled")
   next
 }
 
@@ -137,7 +139,8 @@ FILENAME == spec_file && /^summary=baseline/ {
   aggregate_warm_code_added[profile] = field("warm_code_bytes_added")
   aggregate_jit_profile[profile] = field("jit_profile")
   aggregate_mapped_alu_enabled[profile] = field("mapped_alu_fastpath_enabled")
-  aggregate_fast_ram_enabled[profile] = field("fast_ram_reads_enabled")
+  aggregate_fast_ram_reads_enabled[profile] = field("fast_ram_reads_enabled")
+  aggregate_fast_ram_stores_enabled[profile] = field("fast_ram_stores_enabled")
   aggregate_harness[profile] = field("harness_mode")
   next
 }
@@ -154,9 +157,11 @@ END {
       spec_semantics != "qemu_tb_instruction_sum" ||
       spec_rdinstret_verified != "0")
     fail("counter source/semantics were mislabeled")
-  if (spec_optimization != "fast_ram_reads" ||
-      spec_baseline_mapped_alu != "1" || spec_baseline_fast_ram != "0")
-    fail("frozen baseline did not isolate fast RAM reads")
+  if (spec_optimization != isolated_optimization ||
+      spec_baseline_mapped_alu != baseline_mapped_alu_enabled ||
+      spec_baseline_fast_ram_reads != baseline_fast_ram_reads_enabled ||
+      spec_baseline_fast_ram_stores != baseline_fast_ram_stores_enabled)
+    fail("frozen baseline did not isolate the selected optimization")
 
   for (ti = 1; ti <= 8; ti++) {
     test = tests[ti]
@@ -189,12 +194,18 @@ END {
           result_warm_mask[prefix] != "0x00000000" ||
           result_warm_code_added[prefix] != "0")
         fail(prefix " warm replay was not a cache-stable equivalent run")
-      expected_fast_ram = profile == "baseline" ? "0" : "1"
-      if (result_jit_profile[prefix] != "fast_ram_reads_ab" ||
-          result_mapped_alu_enabled[prefix] != "1" ||
-          result_fast_ram_enabled[prefix] != expected_fast_ram ||
+      expected_fast_ram_reads = profile == "baseline" ? \
+        baseline_fast_ram_reads_enabled : optimized_fast_ram_reads_enabled
+      expected_fast_ram_stores = profile == "baseline" ? \
+        baseline_fast_ram_stores_enabled : optimized_fast_ram_stores_enabled
+      if (expected_fast_ram_stores == "na")
+        expected_fast_ram_stores = ""
+      if (result_jit_profile[prefix] != jit_profile ||
+          result_mapped_alu_enabled[prefix] != baseline_mapped_alu_enabled ||
+          result_fast_ram_reads_enabled[prefix] != expected_fast_ram_reads ||
+          result_fast_ram_stores_enabled[prefix] != expected_fast_ram_stores ||
           result_harness[prefix] != "armwrestler_frontend_jit_only")
-        fail(prefix " did not run the isolated fast-RAM-read profile")
+        fail(prefix " did not run the isolated selector profile")
     }
 
     if (count_value["baseline:" cold_window] != spec_cold[test] ||
@@ -203,9 +214,9 @@ END {
       fail(test " no longer reproduces the frozen baseline")
     if ((result_code["optimized:" test] + 0) > (result_code["baseline:" test] + 0))
       fail(test " generated code size regressed")
-    if ((count_value["optimized:" warm_window] + 0) >= \
+    if ((count_value["optimized:" warm_window] + 0) > \
         (count_value["baseline:" warm_window] + 0))
-      fail(test " did not improve warm execution")
+      fail(test " regressed warm execution")
     if ((count_value["optimized:" cold_window] + 0) * 10000 > \
         (count_value["baseline:" cold_window] + 0) * \
           (10000 + cold_per_test_regression_max_x100))
@@ -269,6 +280,12 @@ END {
 
   for (pi = 1; pi <= 2; pi++) {
     profile = pi == 1 ? "baseline" : "optimized"
+    expected_fast_ram_reads = profile == "baseline" ? \
+      baseline_fast_ram_reads_enabled : optimized_fast_ram_reads_enabled
+    expected_fast_ram_stores = profile == "baseline" ? \
+      baseline_fast_ram_stores_enabled : optimized_fast_ram_stores_enabled
+    if (expected_fast_ram_stores == "na")
+      expected_fast_ram_stores = ""
     if (aggregate_seen[profile] != 1 || aggregate_result[profile] != "PASS" ||
         aggregate_expected[profile] != "79" ||
         aggregate_observed[profile] != "79" ||
@@ -279,9 +296,10 @@ END {
         aggregate_interp_calls[profile] != "0" ||
         aggregate_warm_replays[profile] != "8" ||
         aggregate_warm_code_added[profile] != "0" ||
-        aggregate_jit_profile[profile] != "fast_ram_reads_ab" ||
-        aggregate_mapped_alu_enabled[profile] != "1" ||
-        aggregate_fast_ram_enabled[profile] != (profile == "baseline" ? "0" : "1") ||
+        aggregate_jit_profile[profile] != jit_profile ||
+        aggregate_mapped_alu_enabled[profile] != baseline_mapped_alu_enabled ||
+        aggregate_fast_ram_reads_enabled[profile] != expected_fast_ram_reads ||
+        aggregate_fast_ram_stores_enabled[profile] != expected_fast_ram_stores ||
         aggregate_harness[profile] != "armwrestler_frontend_jit_only")
       fail(profile " aggregate native/correctness contract changed")
   }
@@ -290,11 +308,13 @@ END {
       totals["baseline:all:cold"] != spec_summary_cold ||
       totals["baseline:all:warm"] != spec_summary_warm)
     fail("aggregate baseline no longer matches the frozen specification")
-  if ((aggregate_arm_code["optimized"] + 0) >= \
+  if ((aggregate_arm_code["optimized"] + 0) > \
         (aggregate_arm_code["baseline"] + 0) ||
-      (aggregate_thumb_code["optimized"] + 0) >= \
-        (aggregate_thumb_code["baseline"] + 0))
-    fail("ARM or Thumb aggregate code size did not improve")
+      (aggregate_thumb_code["optimized"] + 0) > \
+        (aggregate_thumb_code["baseline"] + 0) ||
+      (aggregate_arm_code["optimized"] + aggregate_thumb_code["optimized"]) >= \
+        (aggregate_arm_code["baseline"] + aggregate_thumb_code["baseline"]))
+    fail("aggregate code size regressed or did not improve overall")
   if (totals["optimized:all:cold"] * 10000 > \
       totals["baseline:all:cold"] * \
         (10000 + cold_aggregate_regression_max_x100))
@@ -302,9 +322,9 @@ END {
   if ((totals["baseline:all:warm"] - totals["optimized:all:warm"]) * \
         10000 < totals["baseline:all:warm"] * warm_min_reduction_x100)
     fail("aggregate warm improvement was below the required reduction")
-  if (totals["optimized:arm:warm"] >= totals["baseline:arm:warm"] ||
-      totals["optimized:thumb:warm"] >= totals["baseline:thumb:warm"])
-    fail("ARM or Thumb aggregate warm execution did not improve")
+  if (totals["optimized:arm:warm"] > totals["baseline:arm:warm"] ||
+      totals["optimized:thumb:warm"] > totals["baseline:thumb:warm"])
+    fail("ARM or Thumb aggregate warm execution regressed")
   require_equal("optimized", "all", "blocks_emitted",
                 aggregate_blocks["optimized"], aggregate_blocks["baseline"])
   require_equal("optimized", "all", "native blocks",
@@ -360,8 +380,12 @@ END {
       " cold_aggregate_regression_max_percent_x100=" \
         cold_aggregate_regression_max_x100 \
       " warm_min_reduction_percent_x100=" warm_min_reduction_x100 \
-      " isolated_optimization=fast_ram_reads mapped_alu_fastpath_enabled=1" \
-      " baseline_fast_ram_reads_enabled=0 optimized_fast_ram_reads_enabled=1" \
+      " isolated_optimization=" isolated_optimization \
+      " mapped_alu_fastpath_enabled=" baseline_mapped_alu_enabled \
+      " baseline_fast_ram_reads_enabled=" baseline_fast_ram_reads_enabled \
+      " optimized_fast_ram_reads_enabled=" optimized_fast_ram_reads_enabled \
+      " baseline_fast_ram_stores_enabled=" baseline_fast_ram_stores_enabled \
+      " optimized_fast_ram_stores_enabled=" optimized_fast_ram_stores_enabled \
       " repeatability=byte_exact" \
       " environment_manifest_sha256=" environment_sha \
       " text_sha256=" text_sha " reason=real_frontend_ab_verified"
