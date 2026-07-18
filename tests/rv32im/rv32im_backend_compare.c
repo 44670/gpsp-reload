@@ -19,6 +19,8 @@ typedef unsigned int usize;
 #define MAPPED_ALU_CYCLES (MAPPED_ALU_WORDS * 6u + 8u * 2u)
 #define MEMORY_READ_WORDS 49u
 #define MEMORY_READ_CYCLES (MEMORY_READ_WORDS * 6u + 48u * 2u)
+#define MEMORY_WRITE_WORDS 16u
+#define MEMORY_WRITE_CYCLES (MEMORY_WRITE_WORDS * 6u + 15u)
 
 #if defined(BACKEND_COMPARE_RV32IM)
 #define BACKEND_NAME "rv32im"
@@ -121,6 +123,16 @@ static u32 g_update_calls;
 static s32 g_update_cycles;
 static u32 g_execute_arm_calls;
 static u32 g_restart_pc;
+static u32 g_io_event_count;
+static u32 g_io_event_hash;
+static u32 g_alert_event_count;
+static u32 g_alert_event_hash;
+static u32 g_irq_checks;
+
+extern u32 iwram_code_min;
+extern u32 iwram_code_max;
+extern u32 ewram_code_min;
+extern u32 ewram_code_max;
 
 #if defined(BACKEND_COMPARE_RV32IM)
 static long syscall1(long number, long arg0)
@@ -371,6 +383,34 @@ static u32 memory_hash(void)
   return hash;
 }
 
+static u32 io_write_hash(void)
+{
+  const u8 *io = (const u8 *)io_registers;
+  u32 hash = HASH_INIT;
+  u32 i;
+
+  for (i = 0; i < 16u; i++)
+  {
+    hash ^= io[i];
+    hash *= 16777619u;
+  }
+  hash = hash_word(hash, g_io_event_count);
+  return hash_word(hash, g_io_event_hash);
+}
+
+static u32 alert_hash(void)
+{
+  u32 hash = hash_word(HASH_INIT, g_alert_event_count);
+
+  hash = hash_word(hash, g_alert_event_hash);
+  return hash_word(hash, g_irq_checks);
+}
+
+static u32 smc_hash(void)
+{
+  return hash_word(HASH_INIT, flush_ram_count);
+}
+
 static u32 scheduler_hash(void)
 {
   u32 hash = hash_word(HASH_INIT, g_update_calls);
@@ -472,37 +512,73 @@ u32 function_cc read_memory32(u32 address)
 }
 #endif
 
+static cpu_alert_type record_io_write(u32 width, u32 address, u32 value)
+{
+  cpu_alert_type alert = CPU_ALERT_NONE;
+
+  if ((address & 0x3ffu) == 8u)
+  {
+    alert = CPU_ALERT_SMC | CPU_ALERT_IRQ;
+    ewram_code_min = 0;
+    ewram_code_max = 64u;
+    iwram_code_min = ~0u;
+    iwram_code_max = 0;
+  }
+  g_io_event_count++;
+  g_io_event_hash = hash_word(g_io_event_hash, width);
+  g_io_event_hash = hash_word(g_io_event_hash, address);
+  g_io_event_hash = hash_word(g_io_event_hash, value);
+  g_io_event_hash = hash_word(g_io_event_hash, alert);
+  if (alert)
+  {
+    g_alert_event_count++;
+    g_alert_event_hash = hash_word(g_alert_event_hash, alert);
+  }
+  return alert;
+}
+
+cpu_alert_type function_cc write_io_register8(u32 address, u32 value)
+{
+  value &= 0xffu;
+  *((u8 *)io_registers + (address & 0x3ffu)) = (u8)value;
+  return record_io_write(8u, address, value);
+}
+
+cpu_alert_type function_cc write_io_register16(u32 address, u32 value)
+{
+  value &= 0xffffu;
+  store16((u8 *)io_registers + (address & 0x3ffu), 0, (u16)value);
+  return record_io_write(16u, address, value);
+}
+
+cpu_alert_type function_cc write_io_register32(u32 address, u32 value)
+{
+  store32((u8 *)io_registers + (address & 0x3ffu), 0, value);
+  return record_io_write(32u, address, value);
+}
+
 cpu_alert_type function_cc write_memory8(u32 address, u8 value)
 {
+  if ((address >> 24) == 0x04u)
+    return write_io_register8(address, value);
   *address_ptr(address) = value;
   return CPU_ALERT_NONE;
 }
 
 cpu_alert_type function_cc write_memory16(u32 address, u16 value)
 {
+  if ((address >> 24) == 0x04u)
+    return write_io_register16(address, value);
   store16(address_ptr(address), 0, value);
   return CPU_ALERT_NONE;
 }
 
 cpu_alert_type function_cc write_memory32(u32 address, u32 value)
 {
+  if ((address >> 24) == 0x04u)
+    return write_io_register32(address, value);
   store32(address_ptr(address), 0, value);
   return CPU_ALERT_NONE;
-}
-
-cpu_alert_type function_cc write_io_register8(u32 address, u32 value)
-{
-  return write_memory8(0x04000000u | (address & 0x3ffu), (u8)value);
-}
-
-cpu_alert_type function_cc write_io_register16(u32 address, u32 value)
-{
-  return write_memory16(0x04000000u | (address & 0x3ffu), (u16)value);
-}
-
-cpu_alert_type function_cc write_io_register32(u32 address, u32 value)
-{
-  return write_memory32(0x04000000u | (address & 0x3ffu), value);
 }
 
 #if !defined(BACKEND_COMPARE_REAL_GBA_MEMORY)
@@ -542,6 +618,7 @@ void process_cheats(void)
 
 u32 check_and_raise_interrupts(void)
 {
+  g_irq_checks++;
   return 0;
 }
 
@@ -598,6 +675,7 @@ static void clear_cpu_and_memory(void)
   memset(spsr, 0, sizeof(u32) * 6u);
   memset(reg_mode, 0, sizeof(u32) * 7u * 7u);
   memset(ewram, 0, 1024u * 256u * 2u);
+  memset(io_registers, 0, sizeof(u16) * 512u);
   for (i = 0; i < 64u; i++)
     ewram[i] = (u8)(i * 37u + 11u);
   for (i = 0; i < 6u; i++)
@@ -627,6 +705,12 @@ static void clear_cpu_and_memory(void)
   reg_mode[MODE_SUPERVISOR & 0x0fu][5] = 0x03007fe0u;
   g_update_calls = 0;
   g_update_cycles = (s32)0x7fffffffu;
+  g_io_event_count = 0;
+  g_io_event_hash = HASH_INIT;
+  g_alert_event_count = 0;
+  g_alert_event_hash = HASH_INIT;
+  g_irq_checks = 0;
+  flush_ram_count = 0;
 }
 
 static void install_base_rom(void)
@@ -672,18 +756,54 @@ static void install_memory_read(void)
   store32(g_rom, WORKLOAD_PC - ROM_BASE + 48u * 4u, 0xeafffffeu);
 }
 
+static void install_memory_write(void)
+{
+  u32 i;
+
+  install_base_rom();
+  for (i = 0; i < 4u; i++)
+  {
+    u32 offset = i * 12u;
+    u32 halfword_offset = offset + 6u;
+    store32(g_rom, WORKLOAD_PC - ROM_BASE + (i * 3u + 0u) * 4u,
+            0xe5812000u | offset);
+    store32(g_rom, WORKLOAD_PC - ROM_BASE + (i * 3u + 1u) * 4u,
+            0xe5c13000u | (offset + 4u));
+    store32(g_rom, WORKLOAD_PC - ROM_BASE + (i * 3u + 2u) * 4u,
+            0xe1c140b0u | ((halfword_offset & 0xf0u) << 4) |
+              (halfword_offset & 0x0fu));
+  }
+  store32(g_rom, WORKLOAD_PC - ROM_BASE + 12u * 4u, 0xe58a5000u);
+  store32(g_rom, WORKLOAD_PC - ROM_BASE + 13u * 4u, 0xe5ca6004u);
+  store32(g_rom, WORKLOAD_PC - ROM_BASE + 14u * 4u, 0xe1ca70b8u);
+  store32(g_rom, WORKLOAD_PC - ROM_BASE + 15u * 4u, 0xeafffffeu);
+}
+
+static void prepare_memory_write(void)
+{
+  reg[10] = 0x04000000u;
+}
+
 static int print_phase(const char *workload, const char *phase,
                        u32 guest_insns, u32 guest_cycles,
                        u32 generated_bytes, u32 code_bytes_added,
-                       u32 expected_updates)
+                       u32 expected_updates, u32 io_events_per_run,
+                       u32 alerts_per_run, u32 smc_flushes_per_run)
 {
   u32 state = state_hash();
   u32 memory = memory_hash();
   u32 scheduler = scheduler_hash();
+  u32 io_write = io_write_hash();
+  u32 alerts = alert_hash();
+  u32 smc = smc_hash();
   int passed = g_execute_arm_calls == 0u &&
                g_update_calls == expected_updates &&
                g_update_cycles == 0 && generated_bytes != 0u &&
-               (phase[0] == 'c' || code_bytes_added == 0u);
+               (phase[0] == 'c' || code_bytes_added == 0u) &&
+               g_io_event_count == expected_updates * io_events_per_run &&
+               g_alert_event_count == expected_updates * alerts_per_run &&
+               g_irq_checks == expected_updates * alerts_per_run &&
+               flush_ram_count == expected_updates * smc_flushes_per_run;
 
   put_raw("result=");
   put_raw(passed ? "PASS" : "FAIL");
@@ -704,6 +824,22 @@ static int print_phase(const char *workload, const char *phase,
   put_u32_hex(state);
   put_raw(" memory_hash=");
   put_u32_hex(memory);
+  put_raw(" ram_write_hash=");
+  put_u32_hex(memory);
+  put_raw(" io_write_hash=");
+  put_u32_hex(io_write);
+  put_raw(" alert_hash=");
+  put_u32_hex(alerts);
+  put_raw(" smc_hash=");
+  put_u32_hex(smc);
+  put_raw(" io_events=");
+  put_u32_dec(g_io_event_count);
+  put_raw(" alert_events=");
+  put_u32_dec(g_alert_event_count);
+  put_raw(" irq_checks=");
+  put_u32_dec(g_irq_checks);
+  put_raw(" smc_flushes=");
+  put_u32_dec(flush_ram_count);
   put_raw(" scheduler_hash=");
   put_u32_hex(scheduler);
   put_raw(" update_calls=");
@@ -720,7 +856,9 @@ static int print_phase(const char *workload, const char *phase,
 }
 
 static int run_workload(const char *name, void (*install)(void),
-                        u32 words, u32 cycles)
+                        void (*prepare)(void), u32 words, u32 cycles,
+                        u32 io_events_per_run, u32 alerts_per_run,
+                        u32 smc_flushes_per_run)
 {
   u32 cache_start;
   u32 cache_after_cold;
@@ -733,6 +871,8 @@ static int run_workload(const char *name, void (*install)(void),
   install();
   flush_translation_cache_rom();
   clear_cpu_and_memory();
+  if (prepare)
+    prepare();
   cache_start = (u32)(rom_translation_ptr - rom_translation_cache);
   backend_compare_measure_begin();
   execute_arm_translate_internal(RUN_CYCLE_BUDGET, &reg[0]);
@@ -740,9 +880,13 @@ static int run_workload(const char *name, void (*install)(void),
   cache_after_cold = (u32)(rom_translation_ptr - rom_translation_cache);
   passed = print_phase(name, "cold", words, cycles,
                        cache_after_cold - cache_start,
-                       cache_after_cold - cache_start, 1u);
+                       cache_after_cold - cache_start, 1u,
+                       io_events_per_run, alerts_per_run,
+                       smc_flushes_per_run);
 
   clear_cpu_and_memory();
+  if (prepare)
+    prepare();
   backend_compare_measure_begin();
   for (i = 0; i < WARM_ITERATIONS; i++)
     execute_arm_translate_internal(RUN_CYCLE_BUDGET, &reg[0]);
@@ -752,7 +896,8 @@ static int run_workload(const char *name, void (*install)(void),
                         cycles * WARM_ITERATIONS,
                         cache_after_cold - cache_start,
                         cache_after_warm - cache_after_cold,
-                        WARM_ITERATIONS);
+                        WARM_ITERATIONS, io_events_per_run,
+                        alerts_per_run, smc_flushes_per_run);
   return passed;
 }
 
@@ -917,10 +1062,13 @@ void _start(void)
 #else
   passed = 1;
 #endif
-  passed &= run_workload("mapped_alu", install_mapped_alu,
-                         MAPPED_ALU_WORDS, MAPPED_ALU_CYCLES);
-  passed &= run_workload("memory_read", install_memory_read,
-                         MEMORY_READ_WORDS, MEMORY_READ_CYCLES);
+  passed &= run_workload("mapped_alu", install_mapped_alu, NULL,
+                         MAPPED_ALU_WORDS, MAPPED_ALU_CYCLES, 0u, 0u, 0u);
+  passed &= run_workload("memory_read", install_memory_read, NULL,
+                         MEMORY_READ_WORDS, MEMORY_READ_CYCLES, 0u, 0u, 0u);
+  passed &= run_workload("memory_write", install_memory_write,
+                         prepare_memory_write, MEMORY_WRITE_WORDS,
+                         MEMORY_WRITE_CYCLES, 3u, 1u, 1u);
 #if defined(BACKEND_COMPARE_RV32IM)
   riscv_get_runtime_stats(&stats);
   native_ops = stats.native_data_proc_insns + stats.native_branch_insns +
@@ -932,7 +1080,7 @@ void _start(void)
   put_raw("result=");
   put_raw(passed ? "PASS" : "FAIL");
   put_raw(" command=backend-compare backend=" BACKEND_NAME
-          " workloads=2 phases=4 execute_arm_calls=");
+          " workloads=3 phases=6 execute_arm_calls=");
   put_u32_dec(g_execute_arm_calls);
 #if defined(BACKEND_COMPARE_RV32IM)
   put_raw(" native_blocks=");

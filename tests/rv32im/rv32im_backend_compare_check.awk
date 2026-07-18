@@ -25,8 +25,11 @@ BEGIN {
   key_for_window[2] = "mapped_alu:warm"
   key_for_window[3] = "memory_read:cold"
   key_for_window[4] = "memory_read:warm"
+  key_for_window[5] = "memory_write:cold"
+  key_for_window[6] = "memory_write:warm"
   workload[1] = "mapped_alu"
   workload[2] = "memory_read"
+  workload[3] = "memory_write"
   phase[1] = "cold"
   phase[2] = "warm"
 }
@@ -71,6 +74,14 @@ FILENAME == spec_file && /^workload=/ {
   spec_state[key] = field("state_hash")
   spec_memory[key] = field("memory_hash")
   spec_scheduler[key] = field("scheduler_hash")
+  spec_ram_write[key] = field("ram_write_hash")
+  spec_io_write[key] = field("io_write_hash")
+  spec_alert[key] = field("alert_hash")
+  spec_smc[key] = field("smc_hash")
+  spec_io_events[key] = field("io_events")
+  spec_alert_events[key] = field("alert_events")
+  spec_irq_checks[key] = field("irq_checks")
+  spec_smc_flushes[key] = field("smc_flushes")
   spec_rv_raw[key] = field("rv32_qemu_trace_raw")
   spec_mips_raw[key] = field("mips_qemu_trace_raw")
   spec_rv_bytes[key] = field("rv32_generated_bytes")
@@ -105,6 +116,14 @@ FILENAME == spec_file && /^workload=/ {
   state[prefix ":" key] = field("state_hash")
   memory[prefix ":" key] = field("memory_hash")
   scheduler[prefix ":" key] = field("scheduler_hash")
+  ram_write[prefix ":" key] = field("ram_write_hash")
+  io_write[prefix ":" key] = field("io_write_hash")
+  alert[prefix ":" key] = field("alert_hash")
+  smc[prefix ":" key] = field("smc_hash")
+  io_events[prefix ":" key] = field("io_events")
+  alert_events[prefix ":" key] = field("alert_events")
+  irq_checks[prefix ":" key] = field("irq_checks")
+  smc_flushes[prefix ":" key] = field("smc_flushes")
   updates[prefix ":" key] = field("update_calls")
   update_cycles[prefix ":" key] = field("update_cycles")
   interp_calls[prefix ":" key] = field("execute_arm_calls")
@@ -138,7 +157,7 @@ END {
       spec_source_sha != source_sha)
     fail("frozen manifest or benchmark source changed")
 
-  for (wi = 1; wi <= 2; wi++) {
+  for (wi = 1; wi <= 3; wi++) {
     for (pi = 1; pi <= 2; pi++) {
       name = workload[wi]
       mode = phase[pi]
@@ -168,8 +187,17 @@ END {
           fail(observation " guest work changed")
         if (state[observation] != spec_state[key] ||
             memory[observation] != spec_memory[key] ||
-            scheduler[observation] != spec_scheduler[key])
+            scheduler[observation] != spec_scheduler[key] ||
+            ram_write[observation] != spec_ram_write[key] ||
+            io_write[observation] != spec_io_write[key] ||
+            alert[observation] != spec_alert[key] ||
+            smc[observation] != spec_smc[key])
           fail(observation " correctness hash changed")
+        if (io_events[observation] != spec_io_events[key] ||
+            alert_events[observation] != spec_alert_events[key] ||
+            irq_checks[observation] != spec_irq_checks[key] ||
+            smc_flushes[observation] != spec_smc_flushes[key])
+          fail(observation " write-helper event counts changed")
         if (updates[observation] != spec_updates[key] ||
             update_cycles[observation] != "0x00000000")
           fail(observation " scheduler boundary changed")
@@ -183,7 +211,11 @@ END {
 
       if (state["rv32im:" key] != state["mips:" key] ||
           memory["rv32im:" key] != memory["mips:" key] ||
-          scheduler["rv32im:" key] != scheduler["mips:" key])
+          scheduler["rv32im:" key] != scheduler["mips:" key] ||
+          ram_write["rv32im:" key] != ram_write["mips:" key] ||
+          io_write["rv32im:" key] != io_write["mips:" key] ||
+          alert["rv32im:" key] != alert["mips:" key] ||
+          smc["rv32im:" key] != smc["mips:" key])
         fail(key " RV32IM and MIPS guest-visible results diverged")
 
       if (raw["mips:" key] != spec_mips_raw[key] ||
@@ -194,7 +226,7 @@ END {
         if (raw["rv32im:" key] != spec_rv_raw[key] ||
             generated["rv32im:" key] != spec_rv_bytes[key])
           fail(key " RV32IM non-memory guard changed")
-      } else {
+      } else if (name == "memory_read") {
         if ((generated["rv32im:" key] + 0) > memory_bytes_max)
           fail(key " RV32IM generated-code budget exceeded")
         if (mode == "cold" &&
@@ -204,6 +236,10 @@ END {
             (raw["rv32im:" key] + 0) * 100 > \
               (spec_rv_raw[key] + 0) * (100 - memory_min_reduction))
           fail(key " RV32IM warm improvement was below the required reduction")
+      } else {
+        if (raw["rv32im:" key] != spec_rv_raw[key] ||
+            generated["rv32im:" key] != spec_rv_bytes[key])
+          fail(key " RV32IM write baseline changed before optimization")
       }
 
       raw_ratio = int((raw["rv32im:" key] + 0) * 10000 / \
@@ -227,6 +263,14 @@ END {
         " state_hash=" state["rv32im:" key] \
         " memory_hash=" memory["rv32im:" key] \
         " scheduler_hash=" scheduler["rv32im:" key] \
+        " ram_write_hash=" ram_write["rv32im:" key] \
+        " io_write_hash=" io_write["rv32im:" key] \
+        " alert_hash=" alert["rv32im:" key] \
+        " smc_hash=" smc["rv32im:" key] \
+        " io_events=" io_events["rv32im:" key] \
+        " alert_events=" alert_events["rv32im:" key] \
+        " irq_checks=" irq_checks["rv32im:" key] \
+        " smc_flushes=" smc_flushes["rv32im:" key] \
         " counter_source=qemu_exec_trace" \
         " counter_semantics=qemu_tb_instruction_sum" \
         " reason=real_frontend_guest_work_equal"
@@ -248,9 +292,9 @@ END {
     exit 1
   for (ri = 1; ri <= report_count; ri++)
     print report[ri]
-  print "result=PASS command=backend-compare workload=all phases=4 " \
+  print "result=PASS command=backend-compare workload=all phases=6 " \
     "backends=rv32im,mips exact_guest_work=1 correctness_hashes_equal=1 " \
     "cold_warm_semantics_locked=1 execute_arm_calls=0 " \
     "memory_warm_min_reduction_percent=" memory_min_reduction \
-    " reason=frozen_mips_comparable_baseline_verified"
+    " write_baseline_locked=1 reason=frozen_mips_comparable_baseline_verified"
 }
