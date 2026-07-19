@@ -37,6 +37,14 @@ function require_positive(field, value) {
 		fail("field=" field " must be positive");
 }
 
+function require_gt(field, minimum, value) {
+	value = value_of(field);
+	if (value == "")
+		fail("missing field=" field);
+	if ((value + 0) <= minimum)
+		fail("field=" field " value=" value " must_be_gt=" minimum);
+}
+
 BEGIN {
 	arm_tracked_total_max = 18000;
 	thumb_direct_total_max = 5600;
@@ -63,7 +71,7 @@ BEGIN {
 	track("thumb_branch_target_code_bytes", 260, "thumb_direct");
 	track("thumb_cond_branch_code_bytes", 212, "thumb_direct");
 	track("thumb_b_code_bytes", 144, "thumb_direct");
-	track("thumb_bx_code_bytes", 212, "thumb_direct");
+	track("thumb_bx_code_bytes", 220, "thumb_direct");
 	track("thumb_swi_code_bytes", 172, "thumb_direct");
 	track("thumb_bl_pair_code_bytes", 144, "thumb_direct");
 	track("thumb_blh_code_bytes", 148, "thumb_direct");
@@ -198,10 +206,19 @@ BEGIN {
 
 /result=PASS command=runtime/ {
 	seen = 1;
-	require_eq("final_thumb_helpers", 0);
+	# One deliberately helper-backed Thumb BLH drives the warm indirect-cache
+	# mapped-register invalidation regression. Any additional helper remains a
+	# hard failure.
+	require_eq("final_thumb_helpers", 1);
 	require_eq("first_exec_fallbacks", 0);
 	require_positive("jit_sticky_preserve_checks");
 	require_positive("interpreter_sticky_clear_checks");
+	require_eq("range_store_alert_sites", 1024);
+	require_gt("range_store_max_alert_span", 65535);
+	require_gt("range_conditional_span", 65535);
+	require_eq("range_long_patch_cases", 11);
+	require_positive("range_store_code_bytes");
+	require_positive("range_conditional_code_bytes");
 
 	for (i = 1; i <= field_count; i++) {
 		field = fields[i];

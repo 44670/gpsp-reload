@@ -1587,6 +1587,97 @@ static int verify_generated_store_smc_invalidation(void)
   put_raw("\n");
   return passed;
 }
+
+static int verify_bios_cpuset_block(void)
+{
+  static const u32 cpuset_words[] =
+  {
+    0xe310040eu, 0xe52d4004u, 0x0a000018u, 0xe1a03582u,
+    0xe1a034a3u, 0xe3c3360eu, 0xe0833000u, 0xe313040eu,
+    0x0a000012u, 0xe3c234ffu, 0xe3120301u, 0xe3c3360eu,
+    0x1a000010u, 0xe3120401u, 0x1a00001eu, 0xe3530000u,
+    0x0a00000au, 0xe1a02000u, 0xe0803083u, 0xe0601001u,
+    0xe3e044f1u, 0xe1520004u, 0x91d2c0b0u, 0x859fc0a0u,
+    0xe181c0b2u, 0xe2822002u, 0xe1520003u, 0x1afffff8u,
+    0xe8bd0010u, 0xe12fff1eu, 0xe3120401u, 0xe3c11003u,
+    0xe3c02003u, 0x1a000015u, 0xe3530000u, 0x10621001u,
+    0x13e0c4f1u, 0x0afffff5u, 0xe152000cu, 0x95920000u,
+    0x859f0060u, 0xe2533001u, 0xe7810002u, 0xe2822004u,
+    0x1afffff8u, 0xeaffffedu, 0xe350040fu, 0x31d020b0u,
+    0x259f203cu, 0xe3530000u, 0x0affffe8u, 0xe0813083u,
+    0xe0c120b2u, 0xe1510003u, 0x1afffffcu, 0xeaffffe3u,
+    0xe352040fu, 0x35922000u, 0x259f2018u, 0xe3530000u,
+    0x0affffdeu, 0xe2533001u, 0xe4812004u, 0x1afffffcu,
+    0xeaffffdau, 0x00001cadu, 0x1cad1cadu,
+  };
+  const u32 idle_pc = WORKLOAD_PC + 0x180u;
+  const u32 source_pc = WORKLOAD_PC + 0x200u;
+  const u32 dest_pc = 0x03001000u;
+  u8 *dest = iwram + 0x8000u + (dest_pc & 0x7fffu);
+  u32 expected_hash = HASH_INIT;
+  u32 actual_hash = HASH_INIT;
+  u32 i;
+  int passed = 1;
+
+  install_base_rom();
+  for (i = 0; i < sizeof(cpuset_words) / sizeof(cpuset_words[0]); i++)
+    store32(g_rom, WORKLOAD_PC - ROM_BASE + i * 4u, cpuset_words[i]);
+  store32(g_rom, idle_pc - ROM_BASE, 0xeafffffeu);
+  for (i = 0; i < 8u; i++)
+  {
+    u32 value = 0x10213243u + i * 0x11111111u;
+    store32(g_rom, source_pc - ROM_BASE + i * 4u, value);
+    expected_hash = hash_word(expected_hash, value);
+  }
+
+  flush_translation_cache_rom();
+  clear_cpu_and_memory();
+  memset(dest, 0, 32u);
+  memset(iwram + (dest_pc & 0x7fffu), 0, 32u);
+  reg[0] = source_pc;
+  reg[1] = dest_pc;
+  reg[2] = 0x04000008u;
+  reg[REG_LR] = idle_pc;
+  reg[REG_PC] = WORKLOAD_PC;
+  idle_loop_target_pc = idle_pc;
+  g_restart_pc = idle_pc;
+  execute_arm_translate_internal(RUN_CYCLE_BUDGET, &reg[0]);
+
+  for (i = 0; i < 8u; i++)
+  {
+    u32 actual = load32(dest, i * 4u);
+    u32 expected = load32(g_rom, source_pc - ROM_BASE + i * 4u);
+    actual_hash = hash_word(actual_hash, actual);
+    if (actual != expected)
+      passed = 0;
+  }
+  passed &= g_execute_arm_calls == 0u;
+
+  put_raw("result=");
+  put_raw(passed ? "PASS" : "FAIL");
+  put_raw(" command=backend-compare-bios-cpuset backend=rv32im words=8 ");
+  put_raw("expected_hash=");
+  put_u32_hex(expected_hash);
+  put_raw(" actual_hash=");
+  put_u32_hex(actual_hash);
+  put_raw(" r0=");
+  put_u32_hex(reg[0]);
+  put_raw(" r1=");
+  put_u32_hex(reg[1]);
+  put_raw(" r2=");
+  put_u32_hex(reg[2]);
+  put_raw(" r3=");
+  put_u32_hex(reg[3]);
+  put_raw(" pc=");
+  put_u32_hex(reg[REG_PC]);
+  put_raw(" execute_arm_calls=");
+  put_u32_dec(g_execute_arm_calls);
+  put_raw(" harness_mode=cpu_threaded_frontend_rv32im reason=");
+  put_raw(passed ? "openbios_cpuset_copy_matches" :
+                   "openbios_cpuset_copy_mismatch");
+  put_raw("\n");
+  return passed;
+}
 #endif
 
 void _start(void)
@@ -1638,6 +1729,7 @@ void _start(void)
 #if defined(BACKEND_COMPARE_RV32IM)
   /* Keep the correctness-only stale-code proof outside all measured windows
    * so RAM/ROM cache history cannot perturb the frozen benchmark protocol. */
+  passed &= verify_bios_cpuset_block();
   passed &= verify_generated_store_smc_invalidation();
   riscv_get_runtime_stats(&stats);
   native_ops = stats.native_data_proc_insns + stats.native_branch_insns +

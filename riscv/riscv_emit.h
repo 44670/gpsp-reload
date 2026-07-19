@@ -425,7 +425,89 @@ void riscv_note_runtime_fallback(u32 kind, u32 pc, u32 thumb,
                                  u32 cycles_remaining);
 void riscv_patch_unconditional_branch(u8 *source, const u8 *target);
 void riscv_patch_unconditional_branch_short(u8 *source, const u8 *target);
+void riscv_patch_external_unconditional_branch(u8 *source,
+                                               const u8 *target);
+void riscv_patch_external_unconditional_branch_short(u8 *source,
+                                                     const u8 *target);
 void riscv_patch_conditional_branch(u8 *source, const u8 *target);
+void riscv_set_runtime_debug_force_dispatch(bool force_dispatch);
+bool riscv_runtime_debug_force_dispatch(void);
+enum
+{
+  RISCV_DEBUG_DISABLE_THUMB_SHIFT = 1u << 0,
+  RISCV_DEBUG_DISABLE_THUMB_ALU = 1u << 1,
+  RISCV_DEBUG_DISABLE_THUMB_HI_CMP = 1u << 2,
+  RISCV_DEBUG_DISABLE_THUMB_MEMORY = 1u << 3,
+  RISCV_DEBUG_DISABLE_THUMB_BLOCK_MEMORY = 1u << 4,
+  RISCV_DEBUG_DISABLE_THUMB_COND_BRANCH = 1u << 5,
+  RISCV_DEBUG_DISABLE_THUMB_B = 1u << 6,
+  RISCV_DEBUG_DISABLE_THUMB_BX = 1u << 7,
+  RISCV_DEBUG_DISABLE_THUMB_SWI = 1u << 8,
+  RISCV_DEBUG_DISABLE_THUMB_PC_POOL = 1u << 9,
+  RISCV_DEBUG_DISABLE_THUMB_BL = 1u << 10,
+  RISCV_DEBUG_DISABLE_THUMB_BLH = 1u << 11,
+  RISCV_DEBUG_DISABLE_THUMB_GENERIC_FAST = 1u << 12
+};
+void riscv_set_runtime_debug_disable_thumb_native(u32 mask);
+bool riscv_runtime_debug_thumb_native_disabled(u32 mask);
+enum
+{
+  RISCV_DEBUG_DISABLE_ARM_DATA_PROC = 1u << 0,
+  RISCV_DEBUG_DISABLE_ARM_TEST = 1u << 1,
+  RISCV_DEBUG_DISABLE_ARM_MULTIPLY = 1u << 2,
+  RISCV_DEBUG_DISABLE_ARM_MULTIPLY_LONG = 1u << 3,
+  RISCV_DEBUG_DISABLE_ARM_PSR = 1u << 4,
+  RISCV_DEBUG_DISABLE_ARM_B = 1u << 5,
+  RISCV_DEBUG_DISABLE_ARM_BL = 1u << 6,
+  RISCV_DEBUG_DISABLE_ARM_BX = 1u << 7,
+  RISCV_DEBUG_DISABLE_ARM_SWI = 1u << 8,
+  RISCV_DEBUG_DISABLE_ARM_HLE_DIV = 1u << 9,
+  RISCV_DEBUG_DISABLE_ARM_SWAP = 1u << 10,
+  RISCV_DEBUG_DISABLE_ARM_BLOCK_MEMORY = 1u << 11,
+  RISCV_DEBUG_DISABLE_ARM_MEMORY = 1u << 12,
+  RISCV_DEBUG_DISABLE_ARM_PC_POOL = 1u << 13
+};
+void riscv_set_runtime_debug_disable_arm_native(bool disable);
+void riscv_set_runtime_debug_disable_arm_native_mask(u32 mask);
+void riscv_request_runtime_debug_stop(void);
+typedef struct riscv_runtime_debug_branch_probe
+{
+  u32 valid;
+  u32 pc;
+  u32 r0_host;
+  u32 r1_host;
+  u32 nzcv_host;
+} riscv_runtime_debug_branch_probe;
+void riscv_set_runtime_debug_branch_probe_pc(u32 pc);
+void riscv_get_runtime_debug_branch_probe(
+  riscv_runtime_debug_branch_probe *probe);
+typedef struct riscv_runtime_debug_arm_probe
+{
+  u32 count;
+  u32 pc;
+  u32 valid_mask;
+  u32 dirty_mask;
+  u32 host_r0;
+  u32 host_r1;
+  u32 host_r2;
+  u32 host_r3;
+  u32 host_r12;
+  u32 host_sp;
+  u32 host_lr;
+  u32 host_nzcv;
+  u32 state_r0;
+  u32 state_r1;
+  u32 state_r2;
+  u32 state_r3;
+  u32 state_r12;
+  u32 state_sp;
+  u32 state_lr;
+  u32 state_cpsr;
+  u32 state_mode;
+} riscv_runtime_debug_arm_probe;
+void riscv_set_runtime_debug_arm_probe_pc(u32 pc);
+void riscv_get_runtime_debug_arm_probe(riscv_runtime_debug_arm_probe *probe);
+void riscv_emit_debug_arm_instruction_probe(u8 **translation_ptr, u32 pc);
 void riscv_emit_arm_conditional_block_close(u8 **translation_ptr,
                                             u8 *branch_source);
 void riscv_arm_const_update_data_proc(u32 opcode, u32 pc, u32 condition,
@@ -575,10 +657,7 @@ void riscv_thumb_const_update(u32 opcode,
   } while (0)
 
 #define emit_trace_arm_instruction(pc)                                        \
-  do                                                                          \
-  {                                                                           \
-    (void)(pc);                                                               \
-  } while (0)
+  riscv_emit_debug_arm_instruction_probe(&translation_ptr, (pc))
 
 #define emit_trace_thumb_instruction(pc)                                      \
   do                                                                          \
@@ -1075,7 +1154,12 @@ void riscv_thumb_const_update(u32 opcode,
 #define thumb_load_pc_pool_const(rd, value)                                   \
   do                                                                          \
   {                                                                           \
-    if (!riscv_emit_native_thumb_load_pc_pool_const(                           \
+    if (riscv_runtime_debug_thumb_native_disabled(                            \
+          RISCV_DEBUG_DISABLE_THUMB_PC_POOL))                                 \
+    {                                                                         \
+      riscv_emit_thumb_instruction(false);                                    \
+    }                                                                         \
+    else if (!riscv_emit_native_thumb_load_pc_pool_const(                      \
           &translation_ptr, riscv_block_meta, (rd), (value)))                 \
     {                                                                         \
       riscv_emit_current_thumb_instruction();                                 \
@@ -1169,6 +1253,14 @@ void riscv_thumb_const_update(u32 opcode,
 #define thumb_bl()                                                            \
   do                                                                          \
   {                                                                           \
+    /* The scan pass records the second half of every well-formed BL as a   \
+     * direct exit. The native BL implementation deliberately returns via   \
+     * the dispatcher instead of exposing a patch site, but it must still   \
+     * consume that scan-pass slot. Otherwise the next patchable branch is   \
+     * paired with the BL target and chains to the wrong guest PC. */         \
+    block_exits[block_exit_position].branch_source = NULL;                    \
+    block_exits[block_exit_position].branch_patch_short = 0;                  \
+    block_exit_position++;                                                    \
     if (riscv_emit_native_thumb_bl_pair(&translation_ptr, riscv_block_meta,    \
                                         last_opcode, opcode, pc, cycle_count)) \
     {                                                                         \

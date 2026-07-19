@@ -33,8 +33,15 @@ u8 *last_rom_translation_ptr = NULL;
 u8 *last_ram_translation_ptr = NULL;
 
 #if defined(RISCV_ARCH) && !defined(MMAP_JIT_CACHE)
+#if defined(ESP32S31_JIT)
+GPSP_EXT_RAM_BSS u8 rom_translation_cache[ROM_TRANSLATION_CACHE_SIZE]
+  __attribute__((aligned(64)));
+GPSP_EXT_RAM_BSS u8 ram_translation_cache[RAM_TRANSLATION_CACHE_SIZE]
+  __attribute__((aligned(64)));
+#else
 u8 rom_translation_cache[ROM_TRANSLATION_CACHE_SIZE];
 u8 ram_translation_cache[RAM_TRANSLATION_CACHE_SIZE];
+#endif
 #endif
 
 #if defined(MMAP_JIT_CACHE) || defined(XTENSA_ARCH)
@@ -277,6 +284,12 @@ typedef struct
 #elif defined(ARM_ARCH) || defined(ARM64_ARCH)
   void platform_cache_sync(void *baseaddr, void *endptr) {
     __clear_cache(baseaddr, endptr);
+  }
+#elif defined(RISCV_ARCH) && defined(ESP32S31_JIT)
+  #include "esp32s31/jit_platform.h"
+  void platform_cache_sync(void *baseaddr, void *endptr) {
+    if (!esp32s31_jit_cache_sync(baseaddr, endptr))
+      abort();
   }
 #elif defined(MIPS_ARCH) || defined(RISCV_ARCH)
   void platform_cache_sync(void *baseaddr, void *endptr) {
@@ -3285,6 +3298,21 @@ enum
 block_data_type block_data[MAX_BLOCK_SIZE];
 block_exit_type block_exits[MAX_EXITS];
 
+#if defined(RV32IM_FRONTEND_CONTROL_ONLY)
+void rv32im_frontend_control_set_update_slot(u32 index, u32 value)
+{
+  if(index < MAX_BLOCK_SIZE)
+    block_data[index].update_cycles = value;
+}
+
+u32 rv32im_frontend_control_get_update_slot(u32 index)
+{
+  if(index < MAX_BLOCK_SIZE)
+    return block_data[index].update_cycles;
+  return 0;
+}
+#endif
+
 #define smc_write_arm_yes() {                                                 \
   intptr_t offset = (pc < 0x03000000) ? 0x40000 : -0x8000;                    \
   if(address32(pc_address_block, (block_end_pc & 0x7FFF) + offset) == 0)      \
@@ -3318,6 +3346,12 @@ block_exit_type block_exits[MAX_EXITS];
     type##_load_opcode();                                                     \
     type##_pc_base_status();                                                  \
     type##_flag_status();                                                     \
+    /* An unconditional exit breaks before the common loop footer. Clear    \
+       this slot here so a target marker left by an older translation cannot \
+       become a scheduler checkpoint in the new block. This is especially    \
+       important for the second half of a Thumb BL pair: resuming there       \
+       changes it into the standalone BLH form and consumes stale LR. */      \
+    block_data[block_data_position].update_cycles = 0;                        \
                                                                               \
     if(type##_exit_point)                                                     \
     {                                                                         \
@@ -3376,7 +3410,6 @@ block_exit_type block_exits[MAX_EXITS];
         goto block_end;                                                       \
     }                                                                         \
                                                                               \
-    block_data[block_data_position].update_cycles = 0;                        \
     block_data_position++;                                                    \
     if((block_data_position == HOST_MAX_BLOCK_SIZE) ||                        \
      (block_end_pc == 0x3007FF0) || (block_end_pc == 0x203FFFF0))             \
@@ -3614,12 +3647,15 @@ bool translate_block_arm(u32 pc, bool ram_region)
       return false;
 #if defined(RISCV_ARCH)
     if(external_block_exits[i].branch_patch_short)
-      riscv_patch_unconditional_branch_short(
+      riscv_patch_external_unconditional_branch_short(
        external_block_exits[i].branch_source, translation_target);
     else
-#endif
+      riscv_patch_external_unconditional_branch(
+       external_block_exits[i].branch_source, translation_target);
+#else
     generate_branch_patch_unconditional(
       external_block_exits[i].branch_source, translation_target);
+#endif
   }
 #endif
   return true;
@@ -3827,12 +3863,15 @@ bool translate_block_thumb(u32 pc, bool ram_region)
       return false;
 #if defined(RISCV_ARCH)
     if(external_block_exits[i].branch_patch_short)
-      riscv_patch_unconditional_branch_short(
+      riscv_patch_external_unconditional_branch_short(
        external_block_exits[i].branch_source, translation_target);
     else
-#endif
+      riscv_patch_external_unconditional_branch(
+       external_block_exits[i].branch_source, translation_target);
+#else
     generate_branch_patch_unconditional(
       external_block_exits[i].branch_source, translation_target);
+#endif
   }
 #endif
   return true;

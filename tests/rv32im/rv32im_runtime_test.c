@@ -15,7 +15,7 @@ typedef unsigned int usize;
 #define PROT_EXEC 4
 #define MAP_PRIVATE 2
 #define MAP_ANONYMOUS 32
-#define EXEC_MAP_BYTES 262144u
+#define EXEC_MAP_BYTES 1048576u
 
 #define BLOCK_START_PC 0x08000000u
 #define BLOCK_END_PC 0x08000004u
@@ -246,11 +246,16 @@ typedef unsigned int usize;
 #define THUMB_B_OPCODE \
   (0xe000u | ((THUMB_BRANCH_TARGET_START_PC - THUMB_B_START_PC - 4u) >> 1))
 #define THUMB_BX_START_PC 0x02001260u
-#define THUMB_BX_END_PC (THUMB_BX_START_PC + 2u)
-#define THUMB_BX_CYCLES 1u
+#define THUMB_BX_BRANCH_PC (THUMB_BX_START_PC + 2u)
+#define THUMB_BX_END_PC (THUMB_BX_START_PC + 4u)
+#define THUMB_BX_CYCLES 2u
+#define THUMB_BX_CMP_R0_5 0x2805u
 #define THUMB_BX_R1 0x4708u
+#define THUMB_BX_R0_VALUE 5u
 #define THUMB_BX_TARGET_RAW 0x02001301u
 #define THUMB_BX_TARGET_PC (THUMB_BX_TARGET_RAW & ~1u)
+#define THUMB_BX_CPSR_VALUE \
+  (CPSR_Z_BIT | CPSR_C_BIT | CPSR_T_BIT | CPSR_LOW_VALUE)
 #define THUMB_SWI_START_PC 0x02001280u
 #define THUMB_SWI_END_PC (THUMB_SWI_START_PC + 2u)
 #define THUMB_SWI_CYCLES 1u
@@ -272,6 +277,17 @@ typedef unsigned int usize;
 #define THUMB_BLH_LR_INITIAL 0x02001340u
 #define THUMB_BLH_TARGET (THUMB_BLH_LR_INITIAL + 4u)
 #define THUMB_BLH_LINK ((THUMB_BLH_START_PC + 2u) | 1u)
+#define THUMB_HELPER_EXIT_START_PC 0x02001400u
+#define THUMB_HELPER_EXIT_END_PC (THUMB_HELPER_EXIT_START_PC + 2u)
+#define THUMB_HELPER_EXIT_CYCLES 1u
+#define THUMB_HELPER_EXIT_BLH 0xf800u
+#define THUMB_HELPER_EXIT_TARGET_PC 0x02001440u
+#define THUMB_HELPER_EXIT_TARGET_END_PC \
+  (THUMB_HELPER_EXIT_TARGET_PC + 2u)
+#define THUMB_HELPER_EXIT_TARGET_CYCLES 1u
+#define THUMB_HELPER_EXIT_MOV_R0_LR 0x4670u
+#define THUMB_HELPER_EXIT_LINK ((THUMB_HELPER_EXIT_START_PC + 2u) | 1u)
+#define THUMB_HELPER_EXIT_R0_SENTINEL 0xdeadbeefu
 #define MULTIPLY_START_PC 0x08000080u
 #define MULTIPLY_END_PC (MULTIPLY_START_PC + 8u)
 #define MULTIPLY_MUL_CYCLES 5u
@@ -643,7 +659,8 @@ typedef unsigned int usize;
 #define PC_SOURCE_EOR_REG_RS_PC (PC_SOURCE_START_PC + 16u)
 #define PC_SOURCE_TST_PC (PC_SOURCE_START_PC + 20u)
 #define PC_SOURCE_TST_REG_PC (PC_SOURCE_START_PC + 24u)
-#define PC_SOURCE_END_PC (PC_SOURCE_START_PC + 28u)
+#define PC_SOURCE_ADR_ZERO_PC (PC_SOURCE_START_PC + 28u)
+#define PC_SOURCE_END_PC (PC_SOURCE_START_PC + 32u)
 #define PC_SOURCE_ADD_CYCLES 4u
 #define PC_SOURCE_MOV_CYCLES 5u
 #define PC_SOURCE_EOR_IMM_CYCLES 6u
@@ -651,11 +668,12 @@ typedef unsigned int usize;
 #define PC_SOURCE_EOR_REG_RS_CYCLES 8u
 #define PC_SOURCE_TST_CYCLES 5u
 #define PC_SOURCE_TST_REG_CYCLES 6u
+#define PC_SOURCE_ADR_ZERO_CYCLES 4u
 #define PC_SOURCE_TOTAL_CYCLES \
   (PC_SOURCE_ADD_CYCLES + PC_SOURCE_MOV_CYCLES + \
    PC_SOURCE_EOR_IMM_CYCLES + PC_SOURCE_EOR_REG_RM_CYCLES + \
    PC_SOURCE_EOR_REG_RS_CYCLES + PC_SOURCE_TST_CYCLES + \
-   PC_SOURCE_TST_REG_CYCLES)
+   PC_SOURCE_TST_REG_CYCLES + PC_SOURCE_ADR_ZERO_CYCLES)
 #define PC_SOURCE_ADD_R6_PC_0X20 0xe28f6020u
 #define PC_SOURCE_MOV_R7_PC 0xe1a0700fu
 #define PC_SOURCE_EOR_R8_R0_PC_LSL2 0xe020810fu
@@ -663,6 +681,7 @@ typedef unsigned int usize;
 #define PC_SOURCE_EOR_R10_R0_R1_LSL_PC 0xe020af11u
 #define PC_SOURCE_TST_R0_PC 0xe110000fu
 #define PC_SOURCE_TST_R0_R1_LSL_PC 0xe1100f11u
+#define PC_SOURCE_ADD_R11_PC_ZERO 0xe28fb000u
 #define PC_SOURCE_R0_VALUE 0x01010101u
 #define PC_SOURCE_R1_VALUE 0x00000003u
 #define PC_SOURCE_R2_VALUE 4u
@@ -676,6 +695,7 @@ typedef unsigned int usize;
 #define PC_SOURCE_R10_VALUE \
   (PC_SOURCE_R0_VALUE ^ \
    (PC_SOURCE_R1_VALUE << ((PC_SOURCE_EOR_REG_RS_PC + 8u) & 0xffu)))
+#define PC_SOURCE_R11_VALUE (PC_SOURCE_ADR_ZERO_PC + 8u)
 #define PC_SOURCE_CPSR_VALUE (0x70000000u | CPSR_LOW_VALUE)
 #define SWI_START_PC 0x08000c40u
 #define SWI_END_PC (SWI_START_PC + 4u)
@@ -955,12 +975,25 @@ typedef unsigned int usize;
 #define STORE_ALERT_CHAIN_CYCLES 5u
 #define STORE_ALERT_CHAIN_TOTAL_CYCLES \
   (STORE_TOTAL_CYCLES + STORE_ALERT_CHAIN_CYCLES)
+#define RANGE_STORE_START_PC 0x08010000u
+#define RANGE_STORE_SITE_COUNT 1024u
+#define RANGE_STORE_END_PC \
+  (RANGE_STORE_START_PC + RANGE_STORE_SITE_COUNT * 4u)
+#define RANGE_STORE_TOTAL_CYCLES \
+  (RANGE_STORE_SITE_COUNT * STORE_TOTAL_CYCLES)
+#define RANGE_CONDITIONAL_START_PC 0x08020000u
+#define RANGE_CONDITIONAL_END_PC (RANGE_CONDITIONAL_START_PC + 4u)
+#define RANGE_CONDITIONAL_CYCLES 6u
+#define RANGE_CONDITIONAL_PAD_NOPS 16384u
 #define STORE_WORD_BLOCK_OFFSET 1536u
 #define STORE_BYTE_BLOCK_OFFSET 2048u
 #define STORE_PC_BLOCK_OFFSET 2560u
 #define BX_START_PC 0x08000400u
+#define BX_END_PC (BX_START_PC + 8u)
 #define BX_CYCLES 8u
 #define BX_R7 0xe12fff17u
+#define BX_UNREACHABLE_MOV_R6_0X55 0xe3a06055u
+#define BX_UNREACHABLE_CYCLES 1u
 #define BX_ARM_TARGET 0x02001000u
 #define BX_ARM_TARGET_END_PC (BX_ARM_TARGET + 4u)
 #define BX_ARM_TARGET_CYCLES 5u
@@ -1674,6 +1707,11 @@ typedef unsigned int usize;
 #define MAPPED_GPR_BLOCK_OFFSET 196608u
 #define MAPPED_HELPER_BLOCK_OFFSET 200704u
 #define MAPPED_NZCV_BLOCK_OFFSET 204800u
+#define THUMB_HELPER_EXIT_BLOCK_OFFSET 208896u
+#define THUMB_HELPER_EXIT_TARGET_BLOCK_OFFSET 212992u
+#define RANGE_STORE_BLOCK_OFFSET 262144u
+#define RANGE_CONDITIONAL_BLOCK_OFFSET 524288u
+#define RANGE_LONG_PATCH_BLOCK_OFFSET 900000u
 #define DIRTY_INTERNAL_BRANCH_BLOCK_OFFSET 98816u
 #define EXPECTED_INITIAL_ROM_WATERMARK 16u
 
@@ -1690,6 +1728,8 @@ static u8 *g_lookup_next_entry;
 static u32 g_lookup_next_pc;
 static u8 *g_thumb_lookup_entry;
 static u32 g_thumb_lookup_entry_pc;
+static u8 *g_thumb_lookup_next_entry;
+static u32 g_thumb_lookup_next_pc;
 static u8 *g_data_entry;
 static u8 *g_mapped_gpr_entry;
 static u8 *g_mapped_helper_entry;
@@ -1721,6 +1761,8 @@ static u8 *g_thumb_bx_entry;
 static u8 *g_thumb_swi_entry;
 static u8 *g_thumb_bl_pair_entry;
 static u8 *g_thumb_blh_entry;
+static u8 *g_thumb_helper_exit_entry;
+static u8 *g_thumb_helper_exit_target_entry;
 static u8 *g_multiply_entry;
 static u8 *g_multiply_flag_muls_entry;
 static u8 *g_multiply_flag_mlas_entry;
@@ -1780,6 +1822,8 @@ static u8 *g_pc_base_half_load_entry;
 static u8 *g_pc_base_half_store_entry;
 static u8 *g_pc_base_half_neg_store_entry;
 static u8 *g_store_alert_chain_entry;
+static u8 *g_range_store_entry;
+static u8 *g_range_conditional_entry;
 static u8 *g_store_word_entry;
 static u8 *g_store_byte_entry;
 static u8 *g_store_pc_entry;
@@ -1903,6 +1947,11 @@ static u32 g_block_write_count;
 static u32 g_block_write_addr[BLOCK_MEM_MAX_TRANSFERS];
 static u32 g_block_write_value[BLOCK_MEM_MAX_TRANSFERS];
 static cpu_alert_type g_store_alert;
+static u32 g_store_alert_after_call;
+static u32 g_range_store_alert_sites;
+static u32 g_range_store_max_alert_span;
+static u32 g_range_conditional_span;
+static u32 g_range_long_patch_cases;
 static u32 g_init_bios_hooks_calls;
 static riscv_runtime_stats g_first_emit_stats;
 static riscv_runtime_stats g_first_execute_stats;
@@ -2099,6 +2148,8 @@ static void reset_runtime_observations(u32 pc)
   g_lookup_next_pc = 0;
   g_thumb_lookup_entry = (u8 *)0;
   g_thumb_lookup_entry_pc = pc;
+  g_thumb_lookup_next_entry = (u8 *)0;
+  g_thumb_lookup_next_pc = 0;
   g_lookup_calls = 0;
   g_lookup_pc = 0;
   g_thumb_lookup_calls = 0;
@@ -2143,6 +2194,7 @@ static void reset_runtime_observations(u32 pc)
   g_irq_check_calls = 0;
   g_block_write_count = 0;
   g_store_alert = CPU_ALERT_NONE;
+  g_store_alert_after_call = 0;
 }
 
 static void run_init_emitter_contract_case(void)
@@ -3482,8 +3534,17 @@ static u32 build_thumb_bx_block(u8 *code)
   riscv_emit_block_prologue(&translation_ptr, &meta);
   g_thumb_bx_entry = ((u8 *)meta) + block_prologue_size;
 
+  /* Leave packed NZCV dirty so BX must preserve its raw target before the
+   * REG_PC flush uses t0/t1 to publish those flags. */
+  if (!riscv_emit_native_thumb_alu(&translation_ptr, meta,
+                                   THUMB_BX_CMP_R0_5, 0x0fu))
+  {
+    put_raw("result=FAIL command=runtime reason=thumb_bx_cmp_rejected\n");
+    sys_exit(1);
+  }
+
   if (!riscv_emit_native_thumb_bx(&translation_ptr, meta, THUMB_BX_R1,
-                                  THUMB_BX_START_PC, THUMB_BX_CYCLES))
+                                  THUMB_BX_BRANCH_PC, THUMB_BX_CYCLES))
   {
     put_raw("result=FAIL command=runtime reason=thumb_bx_emit_rejected\n");
     sys_exit(1);
@@ -3573,6 +3634,87 @@ static u32 build_thumb_blh_block(u8 *code)
 
   riscv_emit_block_finalize(meta, &translation_ptr,
                             THUMB_BLH_START_PC, THUMB_BLH_END_PC, true);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_thumb_helper_exit_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  bool cycles_emitted = false;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_thumb_helper_exit_entry = ((u8 *)meta) + block_prologue_size;
+
+  /* Deliberately use the generic helper for BLH.  It updates state-backed LR
+   * and PC, invalidates all mapped registers, and emits a terminal indirect
+   * lookup -- the exact composition that a warm lookup-cache hit must not
+   * chain across without reloading the mappings. */
+  if (!riscv_emit_native_thumb_instruction(
+        &translation_ptr, meta, THUMB_HELPER_EXIT_BLH,
+        THUMB_HELPER_EXIT_START_PC, THUMB_HELPER_EXIT_CYCLES, true,
+        &cycles_emitted))
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=thumb_helper_exit_emit_rejected\n");
+    sys_exit(1);
+  }
+  if (!cycles_emitted)
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=thumb_helper_exit_not_helper_backed\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            THUMB_HELPER_EXIT_START_PC,
+                            THUMB_HELPER_EXIT_END_PC, true);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_thumb_helper_exit_target_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  bool cycles_emitted = true;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_thumb_helper_exit_target_entry =
+    ((u8 *)meta) + block_prologue_size;
+
+  if (!riscv_emit_native_thumb_instruction(
+        &translation_ptr, meta, THUMB_HELPER_EXIT_MOV_R0_LR,
+        THUMB_HELPER_EXIT_TARGET_PC, THUMB_HELPER_EXIT_TARGET_CYCLES, false,
+        &cycles_emitted))
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=thumb_helper_exit_target_emit_rejected\n");
+    sys_exit(1);
+  }
+  if (cycles_emitted)
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=thumb_helper_exit_target_used_helper\n");
+    sys_exit(1);
+  }
+  if (!riscv_emit_cycle_update(&translation_ptr, meta,
+                               THUMB_HELPER_EXIT_TARGET_END_PC,
+                               THUMB_HELPER_EXIT_TARGET_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=thumb_helper_exit_target_cycle_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            THUMB_HELPER_EXIT_TARGET_PC,
+                            THUMB_HELPER_EXIT_TARGET_END_PC, true);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -4127,6 +4269,20 @@ static u32 build_pc_source_block(u8 *code)
         PC_SOURCE_TST_REG_CYCLES))
   {
     put_raw("result=FAIL command=runtime reason=pc_source_tst_reg_rejected\n");
+    sys_exit(1);
+  }
+
+  /* Model the OpenBIOS "push; ADR lr, target" sequence: a helper call leaves
+   * t0 holding a host address before ADD Rd,PC,#0 is emitted.  The PC-folded
+   * result must remain authoritative instead of falling back to stale t0. */
+  riscv_emit_addi(riscv_reg_t0, riscv_reg_zero, -1);
+  if (!riscv_emit_native_arm_data_proc_with_pc(
+        &translation_ptr, meta,
+        PC_SOURCE_ADD_R11_PC_ZERO,
+        PC_SOURCE_ADR_ZERO_PC,
+        PC_SOURCE_ADR_ZERO_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=pc_source_adr_zero_rejected\n");
     sys_exit(1);
   }
 
@@ -4829,6 +4985,213 @@ static u32 build_store_block(u8 *code, u32 opcode, u32 pc, u8 **entry_out)
   return code_bytes;
 }
 
+static s32 decode_test_branch_offset(u32 instruction)
+{
+  u32 offset =
+    (((instruction >> 31) & 0x01u) << 12) |
+    (((instruction >> 25) & 0x3fu) << 5) |
+    (((instruction >> 8) & 0x0fu) << 1) |
+    (((instruction >> 7) & 0x01u) << 11);
+
+  return (s32)(offset << 19) >> 19;
+}
+
+static u32 decode_test_long_jump_target(const char *test_name, u8 *source)
+{
+  u32 auipc = ((u32 *)source)[0];
+  u32 jalr = ((u32 *)source)[1];
+  u32 upper;
+  s32 lower;
+
+  if ((auipc & 0x7fu) != 0x17u ||
+      ((auipc >> 7) & 0x1fu) != (u32)riscv_reg_t6)
+    fail_u32(test_name, "long_jump_auipc", auipc, 0x17u);
+  if ((jalr & 0x7fu) != 0x67u ||
+      ((jalr >> 7) & 0x1fu) != (u32)riscv_reg_zero ||
+      ((jalr >> 15) & 0x1fu) != (u32)riscv_reg_t6)
+    fail_u32(test_name, "long_jump_jalr", jalr, 0x67u);
+
+  upper = auipc & 0xfffff000u;
+  lower = (s32)jalr >> 20;
+  return (u32)(usize)source + upper + (u32)lower;
+}
+
+static void run_range_long_patch_cases(u8 *source)
+{
+  static const u32 deltas[] = {
+    0x00000000u,
+    0x000007fcu,
+    0x00000800u,
+    0x7ffff7fcu,
+    0x7ffff800u,
+    0x7ffffffcu,
+    0x80000000u,
+    0x800007fcu,
+    0x80000800u,
+    0xfffff800u,
+    0xfffffffcu
+  };
+  u32 source_address = (u32)(usize)source;
+  u32 i;
+
+  if (RANGE_LONG_PATCH_BLOCK_OFFSET + 8u > EXEC_MAP_BYTES)
+    fail_u32("range_long_patch", "scratch_range",
+             RANGE_LONG_PATCH_BLOCK_OFFSET + 8u, EXEC_MAP_BYTES);
+
+  for (i = 0; i < sizeof(deltas) / sizeof(deltas[0]); i++)
+  {
+    u32 expected = source_address + deltas[i];
+    const u8 *target = (const u8 *)(usize)expected;
+    u32 actual;
+
+    riscv_patch_unconditional_branch(source, target);
+    actual = decode_test_long_jump_target("range_long_patch", source);
+    if (actual != expected)
+      fail_u32("range_long_patch", "target", actual, expected);
+    g_range_long_patch_cases++;
+  }
+}
+
+static u32 build_range_store_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u32 code_bytes;
+  u32 site;
+  u32 common_target = 0;
+  u32 max_span = 0;
+  u32 alert_sites = 0;
+  u8 *scan;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_range_store_entry = ((u8 *)meta) + block_prologue_size;
+
+  for (site = 0; site < RANGE_STORE_SITE_COUNT; site++)
+  {
+    if (!riscv_emit_native_arm_access_memory(
+          &translation_ptr, meta, STORE_STR_R6_R3_0X28,
+          RANGE_STORE_START_PC + site * 4u, STORE_BASE_CYCLES))
+    {
+      put_raw("result=FAIL command=runtime "
+              "reason=range_store_emit_rejected\n");
+      sys_exit(1);
+    }
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            RANGE_STORE_START_PC, RANGE_STORE_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  if (code_bytes >= RANGE_CONDITIONAL_BLOCK_OFFSET - RANGE_STORE_BLOCK_OFFSET)
+    fail_u32("range_store_layout", "code_bytes", code_bytes,
+             RANGE_CONDITIONAL_BLOCK_OFFSET - RANGE_STORE_BLOCK_OFFSET - 1u);
+
+  for (scan = g_range_store_entry; scan + 12u <= translation_ptr; scan += 4u)
+  {
+    u32 branch = ((u32 *)scan)[0];
+    u32 auipc = ((u32 *)scan)[1];
+    u32 jalr = ((u32 *)scan)[2];
+    u32 target;
+    u32 span;
+
+    if ((branch & 0x7fu) != 0x63u ||
+        ((branch >> 12) & 0x07u) != 0u ||
+        ((branch >> 15) & 0x1fu) != (u32)riscv_reg_a0 ||
+        ((branch >> 20) & 0x1fu) != (u32)riscv_reg_zero ||
+        decode_test_branch_offset(branch) != 12 ||
+        (auipc & 0x7fu) != 0x17u ||
+        ((auipc >> 7) & 0x1fu) != (u32)riscv_reg_t6 ||
+        (jalr & 0x7fu) != 0x67u ||
+        ((jalr >> 7) & 0x1fu) != (u32)riscv_reg_zero ||
+        ((jalr >> 15) & 0x1fu) != (u32)riscv_reg_t6)
+      continue;
+
+    target = decode_test_long_jump_target("range_store_layout", scan + 4u);
+    if (common_target == 0u)
+      common_target = target;
+    else if (target != common_target)
+      fail_u32("range_store_layout", "common_target", target,
+               common_target);
+    span = target >= (u32)(usize)(scan + 4u) ?
+      target - (u32)(usize)(scan + 4u) :
+      (u32)(usize)(scan + 4u) - target;
+    if (span > max_span)
+      max_span = span;
+    alert_sites++;
+  }
+
+  if (alert_sites != RANGE_STORE_SITE_COUNT)
+    fail_u32("range_store_layout", "alert_sites", alert_sites,
+             RANGE_STORE_SITE_COUNT);
+  if (max_span <= 4094u)
+    fail_u32("range_store_layout", "max_span", max_span, 4095u);
+  if (common_target < (u32)(usize)code ||
+      common_target >= (u32)(usize)translation_ptr)
+    fail_u32("range_store_layout", "target_range", common_target,
+             (u32)(usize)code);
+
+  g_range_store_alert_sites = alert_sites;
+  g_range_store_max_alert_span = max_span;
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code,
+           (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_range_conditional_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  u8 *skip_source;
+  u8 *skip_target;
+  u32 code_bytes;
+  u32 i;
+  u32 decoded_target;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_range_conditional_entry = ((u8 *)meta) + block_prologue_size;
+  if (!riscv_emit_arm_conditional_block_header(
+        &translation_ptr, meta, 0u, RANGE_CONDITIONAL_CYCLES,
+        &skip_source))
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=range_conditional_header_rejected\n");
+    sys_exit(1);
+  }
+
+  for (i = 0; i < RANGE_CONDITIONAL_PAD_NOPS; i++)
+    riscv_emit_nop();
+
+  if (!riscv_emit_native_arm_data_proc(&translation_ptr, meta,
+                                       ADD_R2_R0_R1, 0))
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=range_conditional_body_rejected\n");
+    sys_exit(1);
+  }
+  riscv_emit_arm_conditional_block_close(&translation_ptr, skip_source);
+  skip_target = translation_ptr;
+  decoded_target =
+    decode_test_long_jump_target("range_conditional_layout", skip_source);
+  if (decoded_target != (u32)(usize)skip_target)
+    fail_u32("range_conditional_layout", "target", decoded_target,
+             (u32)(usize)skip_target);
+  g_range_conditional_span =
+    (u32)(usize)skip_target - (u32)(usize)skip_source;
+  if (g_range_conditional_span <= 4094u)
+    fail_u32("range_conditional_layout", "span",
+             g_range_conditional_span, 4095u);
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            RANGE_CONDITIONAL_START_PC,
+                            RANGE_CONDITIONAL_END_PC, false);
+  code_bytes = (u32)(translation_ptr - code);
+  if (RANGE_CONDITIONAL_BLOCK_OFFSET + code_bytes > EXEC_MAP_BYTES)
+    fail_u32("range_conditional_layout", "code_bytes", code_bytes,
+             EXEC_MAP_BYTES - RANGE_CONDITIONAL_BLOCK_OFFSET);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code,
+           (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
 static u32 build_pc_base_half_load_block(u8 *code)
 {
   u8 *translation_ptr = code;
@@ -4943,8 +5306,19 @@ static u32 build_bx_block(u8 *code)
     sys_exit(1);
   }
 
+  /* A frontend block can contain code after an unconditional BX when an
+   * earlier branch targets that later code.  The BX tail must exit instead
+   * of falling through into this deliberately observable instruction. */
+  if (!riscv_emit_native_arm_data_proc(
+        &translation_ptr, meta, BX_UNREACHABLE_MOV_R6_0X55,
+        BX_UNREACHABLE_CYCLES))
+  {
+    put_raw("result=FAIL command=runtime reason=bx_tail_emit_rejected\n");
+    sys_exit(1);
+  }
+
   riscv_emit_block_finalize(meta, &translation_ptr, BX_START_PC,
-                            BX_START_PC + 4u, false);
+                            BX_END_PC, false);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
   return code_bytes;
@@ -7214,6 +7588,7 @@ static void run_thumb_bx_case(void)
 
   reset_runtime_observations(THUMB_BX_START_PC);
   reg[REG_CPSR] = CPSR_T_BIT | CPSR_LOW_VALUE;
+  reg[0] = THUMB_BX_R0_VALUE;
   reg[1] = THUMB_BX_TARGET_RAW;
   g_thumb_lookup_entry = g_thumb_bx_entry;
   g_thumb_lookup_entry_pc = THUMB_BX_START_PC;
@@ -7225,7 +7600,7 @@ static void run_thumb_bx_case(void)
     fail_u32("thumb_bx", "r1", reg[1], THUMB_BX_TARGET_RAW);
   expect_thumb_control_common("thumb_bx_stats", &stats_before,
                               THUMB_BX_TARGET_PC,
-                              CPSR_T_BIT | CPSR_LOW_VALUE);
+                              THUMB_BX_CPSR_VALUE);
 }
 
 static void set_thumb_swi_mode_inputs(void)
@@ -7311,6 +7686,78 @@ static void run_thumb_blh_case(void)
   expect_thumb_control_common("thumb_blh_stats", &stats_before,
                               THUMB_BLH_TARGET,
                               CPSR_T_BIT | CPSR_LOW_VALUE);
+}
+
+static void prepare_thumb_helper_exit_run(void)
+{
+  reg[0] = THUMB_HELPER_EXIT_R0_SENTINEL;
+  reg[REG_LR] = THUMB_HELPER_EXIT_TARGET_PC;
+  reg[REG_PC] = THUMB_HELPER_EXIT_START_PC;
+  reg[REG_CPSR] = CPSR_T_BIT | CPSR_LOW_VALUE;
+  reg[CPU_HALT_STATE] = CPU_ACTIVE;
+  idle_loop_target_pc = IDLE_LOOP_DISABLED;
+  g_lookup_calls = 0;
+  g_lookup_pc = 0;
+  g_thumb_lookup_calls = 0;
+  g_thumb_lookup_pc = 0;
+  g_update_calls = 0;
+  g_update_cycles = 0x7fffffff;
+  g_update_first_return = FRAME_COMPLETE;
+  g_update_later_return = FRAME_COMPLETE;
+  g_update_first_pc_changed = 0;
+  g_execute_calls = 0;
+  g_execute_cycles = 0;
+  g_execute_pc = 0;
+}
+
+static void expect_thumb_helper_exit_run(const char *test_name)
+{
+  if (reg[0] != THUMB_HELPER_EXIT_LINK)
+    fail_u32(test_name, "r0_from_reloaded_lr", reg[0],
+             THUMB_HELPER_EXIT_LINK);
+  if (reg[REG_LR] != THUMB_HELPER_EXIT_LINK)
+    fail_u32(test_name, "state_lr", reg[REG_LR],
+             THUMB_HELPER_EXIT_LINK);
+  if (reg[REG_PC] != THUMB_HELPER_EXIT_TARGET_END_PC)
+    fail_u32(test_name, "pc", reg[REG_PC],
+             THUMB_HELPER_EXIT_TARGET_END_PC);
+  if (reg[REG_CPSR] != (CPSR_T_BIT | CPSR_LOW_VALUE))
+    fail_u32(test_name, "cpsr", reg[REG_CPSR],
+             CPSR_T_BIT | CPSR_LOW_VALUE);
+  if (g_lookup_calls != 0)
+    fail_u32(test_name, "arm_lookup_calls", g_lookup_calls, 0);
+  if (g_thumb_lookup_calls != 2u)
+    fail_u32(test_name, "thumb_lookup_calls", g_thumb_lookup_calls, 2u);
+  if (g_update_calls != 1u)
+    fail_u32(test_name, "update_calls", g_update_calls, 1u);
+  if ((u32)g_update_cycles != 0u)
+    fail_u32(test_name, "update_cycles", (u32)g_update_cycles, 0u);
+  if (g_execute_calls != 0u)
+    fail_u32(test_name, "execute_calls", g_execute_calls, 0u);
+}
+
+static void run_thumb_helper_exit_warm_cache_case(void)
+{
+  reset_runtime_observations(THUMB_HELPER_EXIT_START_PC);
+  g_thumb_lookup_entry = g_thumb_helper_exit_entry;
+  g_thumb_lookup_entry_pc = THUMB_HELPER_EXIT_START_PC;
+  g_thumb_lookup_next_entry = g_thumb_helper_exit_target_entry;
+  g_thumb_lookup_next_pc = THUMB_HELPER_EXIT_TARGET_PC;
+
+  prepare_thumb_helper_exit_run();
+  execute_arm_translate_internal(THUMB_HELPER_EXIT_CYCLES +
+                                 THUMB_HELPER_EXIT_TARGET_CYCLES,
+                                 &reg[0]);
+  expect_thumb_helper_exit_run("thumb_helper_exit_cache_cold");
+
+  /* Keep the indirect cache populated by the cold run.  A hit used to jump
+   * directly into the target while s10 still held the pre-helper LR, even
+   * though the helper had published a new LR in reg[]. */
+  prepare_thumb_helper_exit_run();
+  execute_arm_translate_internal(THUMB_HELPER_EXIT_CYCLES +
+                                 THUMB_HELPER_EXIT_TARGET_CYCLES,
+                                 &reg[0]);
+  expect_thumb_helper_exit_run("thumb_helper_exit_cache_warm");
 }
 
 static void run_initial_lookup_fallback_case(const char *test_name,
@@ -8412,6 +8859,8 @@ static void expect_pc_source_results(const char *test_name)
     fail_u32(test_name, "r9", reg[9], PC_SOURCE_R9_VALUE);
   if (reg[10] != PC_SOURCE_R10_VALUE)
     fail_u32(test_name, "r10", reg[10], PC_SOURCE_R10_VALUE);
+  if (reg[11] != PC_SOURCE_R11_VALUE)
+    fail_u32(test_name, "r11", reg[11], PC_SOURCE_R11_VALUE);
   if (reg[REG_CPSR] != PC_SOURCE_CPSR_VALUE)
     fail_u32(test_name, "cpsr", reg[REG_CPSR], PC_SOURCE_CPSR_VALUE);
   if (reg[REG_PC] != PC_SOURCE_END_PC)
@@ -8555,6 +9004,43 @@ static void run_conditional_truth_table_cases(void)
 
   for (condition = 0; condition < CONDITIONAL_CONDITIONS; condition++)
     run_conditional_condition_case(condition);
+}
+
+static void run_range_conditional_case(const char *test_name,
+                                       u32 cpsr, u32 expected_r2)
+{
+  u32 expected_cpsr = cpsr | CPSR_LOW_VALUE;
+
+  reset_runtime_observations(RANGE_CONDITIONAL_START_PC);
+  g_lookup_entry = g_range_conditional_entry;
+  reg[0] = CONDITIONAL_R0_VALUE;
+  reg[1] = CONDITIONAL_R1_VALUE;
+  reg[REG_CPSR] = expected_cpsr;
+
+  execute_arm_translate_internal(RANGE_CONDITIONAL_CYCLES, &reg[0]);
+
+  if (reg[2] != expected_r2)
+    fail_u32(test_name, "r2", reg[2], expected_r2);
+  if (reg[REG_PC] != RANGE_CONDITIONAL_END_PC)
+    fail_u32(test_name, "pc", reg[REG_PC], RANGE_CONDITIONAL_END_PC);
+  if (reg[REG_CPSR] != expected_cpsr)
+    fail_u32(test_name, "cpsr", reg[REG_CPSR], expected_cpsr);
+  if (g_lookup_calls != 1)
+    fail_u32(test_name, "lookup_calls", g_lookup_calls, 1);
+  if (g_update_calls != 1)
+    fail_u32(test_name, "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != 0u)
+    fail_u32(test_name, "update_cycles", (u32)g_update_cycles, 0u);
+  if (g_execute_calls != 0)
+    fail_u32(test_name, "execute_calls", g_execute_calls, 0);
+  expect_stickybits_match_execution_mode(test_name);
+}
+
+static void run_range_conditional_cases(void)
+{
+  run_range_conditional_case("range_conditional_taken", CPSR_Z_BIT,
+                             CONDITIONAL_R2_VALUE);
+  run_range_conditional_case("range_conditional_skipped", 0u, 0u);
 }
 
 static void set_cpu_mode_inputs(void)
@@ -9494,11 +9980,14 @@ static void run_bx_arm_remaining_cycles_case(void)
   reset_runtime_observations(BX_START_PC);
   g_lookup_entry = g_bx_entry;
   reg[7] = BX_ARM_TARGET;
+  reg[6] = 0;
 
   execute_arm_translate_internal(BX_CYCLES + extra_cycles, &reg[0]);
 
   if (reg[REG_PC] != BX_ARM_TARGET)
     fail_u32("bx_arm_remaining", "pc", reg[REG_PC], BX_ARM_TARGET);
+  if (reg[6] != 0)
+    fail_u32("bx_arm_remaining", "fallthrough_r6", reg[6], 0);
   if (reg[REG_CPSR] & CPSR_T_BIT)
     fail_u32("bx_arm_remaining", "cpsr_t", reg[REG_CPSR] & CPSR_T_BIT, 0);
   if (g_update_calls != 0)
@@ -13347,6 +13836,50 @@ static void run_store_halt_alert_case(void)
   expect_stickybits_match_execution_mode("store_halt");
 }
 
+static void run_range_store_case(const char *test_name, u32 alert_call)
+{
+  u32 expected_calls = alert_call ? alert_call : RANGE_STORE_SITE_COUNT;
+  u32 expected_pc = alert_call ?
+    RANGE_STORE_START_PC + alert_call * 4u : RANGE_STORE_END_PC;
+  u32 expected_cycles = alert_call ?
+    RANGE_STORE_TOTAL_CYCLES - alert_call * STORE_TOTAL_CYCLES : 0u;
+
+  reset_runtime_observations(RANGE_STORE_START_PC);
+  g_lookup_entry = g_range_store_entry;
+  g_store_alert = alert_call ? CPU_ALERT_HALT : CPU_ALERT_NONE;
+  g_store_alert_after_call = alert_call;
+  reg[3] = STORE_BASE_ADDR;
+  reg[6] = STORE_VALUE;
+
+  execute_arm_translate_internal(RANGE_STORE_TOTAL_CYCLES, &reg[0]);
+
+  if (g_write32_calls != expected_calls)
+    fail_u32(test_name, "write32_calls", g_write32_calls, expected_calls);
+  if (g_write32_pc != expected_pc)
+    fail_u32(test_name, "write32_pc", g_write32_pc, expected_pc);
+  if (reg[REG_PC] != expected_pc)
+    fail_u32(test_name, "pc", reg[REG_PC], expected_pc);
+  if (g_update_calls != 1)
+    fail_u32(test_name, "update_calls", g_update_calls, 1);
+  if ((u32)g_update_cycles != expected_cycles)
+    fail_u32(test_name, "update_cycles", (u32)g_update_cycles,
+             expected_cycles);
+  if (g_execute_calls != 0)
+    fail_u32(test_name, "execute_calls", g_execute_calls, 0);
+  if (alert_call && reg[CPU_HALT_STATE] != CPU_HALT)
+    fail_u32(test_name, "halt_state", reg[CPU_HALT_STATE], CPU_HALT);
+  expect_stickybits_match_execution_mode(test_name);
+}
+
+static void run_range_store_cases(void)
+{
+  run_range_store_case("range_store_no_alert", 0u);
+  run_range_store_case("range_store_alert_first", 1u);
+  run_range_store_case("range_store_alert_middle",
+                       RANGE_STORE_SITE_COUNT / 2u);
+  run_range_store_case("range_store_alert_last", RANGE_STORE_SITE_COUNT);
+}
+
 void execute_arm(u32 cycles)
 {
   g_execute_calls++;
@@ -13487,6 +14020,8 @@ u32 function_cc read_memory16s(u32 address)
 
 cpu_alert_type function_cc write_memory32(u32 address, u32 value)
 {
+  cpu_alert_type alert;
+
   g_write32_calls++;
   g_write32_addr = address;
   g_write32_value = value;
@@ -13504,9 +14039,12 @@ cpu_alert_type function_cc write_memory32(u32 address, u32 value)
     g_block_write_value[g_block_write_count] = value;
     g_block_write_count++;
   }
-  if (g_store_alert & CPU_ALERT_HALT)
+  alert = (g_store_alert_after_call == 0u ||
+           g_write32_calls == g_store_alert_after_call) ?
+    g_store_alert : CPU_ALERT_NONE;
+  if (alert & CPU_ALERT_HALT)
     reg[CPU_HALT_STATE] = CPU_HALT;
-  return g_store_alert;
+  return alert;
 }
 
 cpu_alert_type function_cc write_memory16(u32 address, u16 value)
@@ -13582,6 +14120,10 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
 {
   g_thumb_lookup_calls++;
   g_thumb_lookup_pc = pc;
+
+  if (g_thumb_lookup_next_entry && pc == g_thumb_lookup_next_pc)
+    return g_thumb_lookup_next_entry;
+
   if (g_thumb_lookup_entry && pc == g_thumb_lookup_entry_pc)
     return g_thumb_lookup_entry;
 
@@ -13695,6 +14237,8 @@ void _start(void)
   u32 pc_base_half_store_code_bytes;
   u32 pc_base_half_neg_store_code_bytes;
   u32 store_alert_chain_code_bytes;
+  u32 range_store_code_bytes;
+  u32 range_conditional_code_bytes;
   u32 store_word_code_bytes;
   u32 store_byte_code_bytes;
   u32 store_pc_code_bytes;
@@ -13879,6 +14423,10 @@ void _start(void)
   thumb_bl_pair_code_bytes =
     build_thumb_bl_pair_block(code + THUMB_BL_PAIR_BLOCK_OFFSET);
   thumb_blh_code_bytes = build_thumb_blh_block(code + THUMB_BLH_BLOCK_OFFSET);
+  (void)build_thumb_helper_exit_block(
+    code + THUMB_HELPER_EXIT_BLOCK_OFFSET);
+  (void)build_thumb_helper_exit_target_block(
+    code + THUMB_HELPER_EXIT_TARGET_BLOCK_OFFSET);
   multiply_code_bytes = build_multiply_block(code + MULTIPLY_BLOCK_OFFSET);
   multiply_flag_muls_code_bytes =
     build_multiply_flag_block(code + MULTIPLY_FLAG_MULS_BLOCK_OFFSET,
@@ -14225,6 +14773,11 @@ void _start(void)
                       PC_BASE_STR_R6_PC_0X20,
                       PC_BASE_STORE_START_PC,
                       &g_pc_base_store_entry);
+  range_store_code_bytes =
+    build_range_store_block(code + RANGE_STORE_BLOCK_OFFSET);
+  range_conditional_code_bytes =
+    build_range_conditional_block(code + RANGE_CONDITIONAL_BLOCK_OFFSET);
+  run_range_long_patch_cases(code + RANGE_LONG_PATCH_BLOCK_OFFSET);
   bx_code_bytes = build_bx_block(code + BX_BLOCK_OFFSET);
   bx_arm_target_code_bytes =
     build_single_data_proc_block(code + BX_ARM_TARGET_BLOCK_OFFSET,
@@ -14517,6 +15070,7 @@ void _start(void)
   run_thumb_swi_case();
   run_thumb_bl_pair_case();
   run_thumb_blh_case();
+  run_thumb_helper_exit_warm_cache_case();
   run_initial_lookup_miss_fallback_case();
   run_initial_lookup_invalid_fallback_case();
   run_initial_thumb_lookup_miss_fallback_case();
@@ -14658,6 +15212,7 @@ void _start(void)
   run_pc_source_boundary_case();
   run_pc_source_remaining_case();
   run_conditional_truth_table_cases();
+  run_range_conditional_cases();
   run_swi_boundary_case();
   run_swi_remaining_case();
   run_swi_native_target_case();
@@ -14770,6 +15325,7 @@ void _start(void)
   run_store_smc_irq_alert_case();
   run_store_smc_irq_native_chain_case();
   run_store_halt_alert_case();
+  run_range_store_cases();
   run_half_store_smc_irq_alert_case();
   run_half_store_halt_alert_case();
   run_half_reg_store_remaining_cycles_case();
@@ -14995,6 +15551,18 @@ void _start(void)
   put_u32_dec(store_word_code_bytes);
   put_raw(" store_alert_chain_code_bytes=");
   put_u32_dec(store_alert_chain_code_bytes);
+  put_raw(" range_store_code_bytes=");
+  put_u32_dec(range_store_code_bytes);
+  put_raw(" range_store_alert_sites=");
+  put_u32_dec(g_range_store_alert_sites);
+  put_raw(" range_store_max_alert_span=");
+  put_u32_dec(g_range_store_max_alert_span);
+  put_raw(" range_conditional_code_bytes=");
+  put_u32_dec(range_conditional_code_bytes);
+  put_raw(" range_conditional_span=");
+  put_u32_dec(g_range_conditional_span);
+  put_raw(" range_long_patch_cases=");
+  put_u32_dec(g_range_long_patch_cases);
   put_raw(" store_byte_code_bytes=");
   put_u32_dec(store_byte_code_bytes);
   put_raw(" store_pc_code_bytes=");
@@ -15293,6 +15861,10 @@ void _start(void)
   put_u32_hex((u32)g_store_word_entry);
   put_raw(" store_alert_chain_entry=");
   put_u32_hex((u32)g_store_alert_chain_entry);
+  put_raw(" range_store_entry=");
+  put_u32_hex((u32)g_range_store_entry);
+  put_raw(" range_conditional_entry=");
+  put_u32_hex((u32)g_range_conditional_entry);
   put_raw(" store_byte_entry=");
   put_u32_hex((u32)g_store_byte_entry);
   put_raw(" store_pc_entry=");

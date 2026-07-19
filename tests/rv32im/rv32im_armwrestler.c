@@ -80,7 +80,8 @@ typedef unsigned int usize;
 #if (defined(ARMWRESTLER_PERF_FAST_STORE_AB) + \
      defined(ARMWRESTLER_PERF_ENTRY_SETUP_AB) + \
      defined(ARMWRESTLER_PERF_STATE_HELPER_AB) + \
-     defined(ARMWRESTLER_PERF_VALIDATED_ENTRY_AB)) > 1
+     defined(ARMWRESTLER_PERF_VALIDATED_ENTRY_AB) + \
+     defined(ARMWRESTLER_PERF_INDIRECT_LOOKUP_AB)) > 1
 #error "Armwrestler perf builds must isolate exactly one optimization"
 #endif
 __attribute__((section(".data")))
@@ -103,7 +104,22 @@ __attribute__((section(".data")))
 volatile u32 riscv_runtime_perf_disable_fast_ram_stores =
   ARMWRESTLER_PERF_DISABLE_FAST_RAM_STORES;
 #endif
-#if defined(ARMWRESTLER_PERF_VALIDATED_ENTRY_AB)
+#if defined(ARMWRESTLER_PERF_INDIRECT_LOOKUP_AB)
+#if !defined(RISCV_RUNTIME_INDIRECT_LOOKUP_PROFILE_SWITCH)
+#error "Indirect-lookup A/B builds must enable the runtime selector"
+#endif
+#if !defined(ARMWRESTLER_PERF_DISABLE_INDIRECT_LOOKUP_CACHE) || \
+    !defined(ARMWRESTLER_PERF_DISABLE_ENTRY_SETUP_OPT)
+#error "Indirect-lookup A/B builds must select and pin the profile"
+#endif
+__attribute__((section(".data")))
+volatile u32 riscv_runtime_perf_disable_indirect_lookup_cache =
+  ARMWRESTLER_PERF_DISABLE_INDIRECT_LOOKUP_CACHE;
+__attribute__((section(".data")))
+volatile u32 riscv_runtime_perf_disable_entry_setup_opt =
+  ARMWRESTLER_PERF_DISABLE_ENTRY_SETUP_OPT;
+#define ARMWRESTLER_JIT_PROFILE "indirect_lookup_cache_ab"
+#elif defined(ARMWRESTLER_PERF_VALIDATED_ENTRY_AB)
 #if !defined(RISCV_RUNTIME_VALIDATED_ENTRY_PROFILE_SWITCH)
 #error "Validated-entry A/B builds must enable the runtime selector"
 #endif
@@ -951,9 +967,14 @@ static void print_summary(const char *result, const char *suite, u32 test_id,
 #endif
 #if defined(ARMWRESTLER_PERF_ENTRY_SETUP_AB) || \
     defined(ARMWRESTLER_PERF_VALIDATED_ENTRY_AB) || \
-    defined(ARMWRESTLER_PERF_STATE_HELPER_AB)
+    defined(ARMWRESTLER_PERF_STATE_HELPER_AB) || \
+    defined(ARMWRESTLER_PERF_INDIRECT_LOOKUP_AB)
   put_raw(" entry_setup_optimized=");
   put_u32_dec(!riscv_runtime_perf_disable_entry_setup_opt);
+#endif
+#if defined(ARMWRESTLER_PERF_INDIRECT_LOOKUP_AB)
+  put_raw(" indirect_lookup_cache_enabled=");
+  put_u32_dec(!riscv_runtime_perf_disable_indirect_lookup_cache);
 #endif
 #endif
   put_raw(" harness_mode=armwrestler_frontend_jit_only reason=");
@@ -1048,9 +1069,14 @@ static void print_aggregate_summary(const char *result, const char *reason)
 #endif
 #if defined(ARMWRESTLER_PERF_ENTRY_SETUP_AB) || \
     defined(ARMWRESTLER_PERF_VALIDATED_ENTRY_AB) || \
-    defined(ARMWRESTLER_PERF_STATE_HELPER_AB)
+    defined(ARMWRESTLER_PERF_STATE_HELPER_AB) || \
+    defined(ARMWRESTLER_PERF_INDIRECT_LOOKUP_AB)
   put_raw(" entry_setup_optimized=");
   put_u32_dec(!riscv_runtime_perf_disable_entry_setup_opt);
+#endif
+#if defined(ARMWRESTLER_PERF_INDIRECT_LOOKUP_AB)
+  put_raw(" indirect_lookup_cache_enabled=");
+  put_u32_dec(!riscv_runtime_perf_disable_indirect_lookup_cache);
 #endif
 #endif
   put_raw(" harness_mode=armwrestler_frontend_jit_only reason=");
@@ -1296,6 +1322,9 @@ static int run_thumbwrestler_test(u32 test_id, u32 expected_results)
 }
 
 #if defined(RV32IM_FRONTEND_CONTROL_ONLY)
+extern void rv32im_frontend_control_set_update_slot(u32 index, u32 value);
+extern u32 rv32im_frontend_control_get_update_slot(u32 index);
+
 static void install_frontend_control_case(
   const rv32im_frontend_control_case *item)
 {
@@ -1339,6 +1368,7 @@ static int run_frontend_control_case(
   u32 state_hash;
   u32 before_code_bytes;
   u32 code_bytes;
+  u32 stale_slot_cleared = 1u;
   int passed;
 
   install_frontend_control_case(item);
@@ -1353,6 +1383,17 @@ static int run_frontend_control_case(
   init_emitter(false);
   before_code_bytes = (u32)(rom_translation_ptr - rom_translation_cache);
 
+  if (item->stale_update_index_plus_one != 0u)
+  {
+    const u32 slot = item->stale_update_index_plus_one - 1u;
+
+    rv32im_frontend_control_set_update_slot(slot, 1u);
+    if (!translate_block_thumb(RV32IM_FRONTEND_CONTROL_PC, false))
+      stale_slot_cleared = 0u;
+    else if (rv32im_frontend_control_get_update_slot(slot) != 0u)
+      stale_slot_cleared = 0u;
+  }
+
   execute_arm_translate_internal(item->cycles, &reg[0]);
 
   riscv_get_runtime_stats(&stats);
@@ -1366,6 +1407,7 @@ static int run_frontend_control_case(
            g_execute_arm_calls == 0u && g_fallback_count == 0u &&
            stats.interpreter_fallbacks == 0u &&
            stats.blocks_executed != 0u && code_bytes != 0u &&
+           stale_slot_cleared != 0u &&
            (item->generated_words == 0u || code_bytes > 4096u) &&
            g_trace_count != 0u &&
            g_trace_first_pc >= ROM_BASE && g_trace_first_pc < 0x0e000000u;
@@ -1408,6 +1450,8 @@ static int run_frontend_control_case(
   put_u32_dec(g_fallback_count);
   put_raw(" execute_arm_calls=");
   put_u32_dec(g_execute_arm_calls);
+  put_raw(" stale_slot_cleared=");
+  put_u32_dec(stale_slot_cleared);
   put_raw(" harness_mode=cpu_threaded_frontend reason=");
   put_raw(passed ? "native_exit_contract_executed" :
                    "native_exit_contract_failed");
