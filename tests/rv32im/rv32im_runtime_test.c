@@ -1,6 +1,10 @@
 #include "riscv_runtime_test_shim.h"
 #include "riscv_emit.h"
 
+#if !defined(__riscv_compressed)
+#error "The ESP32-S31 runtime gate must be compiled for RV32IMC"
+#endif
+
 typedef unsigned int usize;
 
 #define SYS_WRITE 64
@@ -15,7 +19,7 @@ typedef unsigned int usize;
 #define PROT_EXEC 4
 #define MAP_PRIVATE 2
 #define MAP_ANONYMOUS 32
-#define EXEC_MAP_BYTES 1048576u
+#define EXEC_MAP_BYTES 2097152u
 
 #define BLOCK_START_PC 0x08000000u
 #define BLOCK_END_PC 0x08000004u
@@ -1952,6 +1956,9 @@ static u32 g_range_store_alert_sites;
 static u32 g_range_store_max_alert_span;
 static u32 g_range_conditional_span;
 static u32 g_range_long_patch_cases;
+static u32 g_range_short_patch_jal_cases;
+static u32 g_range_short_patch_fallback_cases;
+static u32 g_range_short_patch_exec_cases;
 static u32 g_init_bios_hooks_calls;
 static riscv_runtime_stats g_first_emit_stats;
 static riscv_runtime_stats g_first_execute_stats;
@@ -5016,6 +5023,25 @@ static u32 decode_test_long_jump_target(const char *test_name, u8 *source)
   return (u32)(usize)source + upper + (u32)lower;
 }
 
+static u32 decode_test_jal_target(const char *test_name, u8 *source)
+{
+  u32 instruction = ((u32 *)source)[0];
+  u32 encoded_offset;
+  s32 offset;
+
+  if ((instruction & 0x7fu) != 0x6fu ||
+      ((instruction >> 7) & 0x1fu) != (u32)riscv_reg_zero)
+    fail_u32(test_name, "jal", instruction, 0x0000006fu);
+
+  encoded_offset =
+    (((instruction >> 31) & 0x01u) << 20) |
+    (((instruction >> 21) & 0x03ffu) << 1) |
+    (((instruction >> 20) & 0x01u) << 11) |
+    (((instruction >> 12) & 0x00ffu) << 12);
+  offset = (s32)(encoded_offset << 11) >> 11;
+  return (u32)(usize)source + (u32)offset;
+}
+
 static void run_range_long_patch_cases(u8 *source)
 {
   static const u32 deltas[] = {
@@ -5049,6 +5075,80 @@ static void run_range_long_patch_cases(u8 *source)
     if (actual != expected)
       fail_u32("range_long_patch", "target", actual, expected);
     g_range_long_patch_cases++;
+  }
+}
+
+static void run_range_short_patch_cases(u8 *source)
+{
+  static const u32 jal_deltas[] = {
+    0x00000000u,
+    0x00000002u,
+    0x000ffffeu,
+    0xfff00000u,
+    0xfffffffeu
+  };
+  static const u32 fallback_deltas[] = {
+    0x00100000u,
+    0x7ffffffeu,
+    0x80000000u,
+    0xffeffffeu
+  };
+  const u32 source_address = (u32)(usize)source;
+  u32 i;
+
+  for (i = 0; i < sizeof(jal_deltas) / sizeof(jal_deltas[0]); i++)
+  {
+    u32 expected = source_address + jal_deltas[i];
+
+    riscv_patch_unconditional_branch_short(
+      source, (const u8 *)(usize)expected);
+    if (decode_test_jal_target("range_short_patch_jal", source) != expected)
+      fail_u32("range_short_patch_jal", "target",
+               decode_test_jal_target("range_short_patch_jal", source),
+               expected);
+    if (((u32 *)source)[1] != 0x00000013u)
+      fail_u32("range_short_patch_jal", "reserved_nop",
+               ((u32 *)source)[1], 0x00000013u);
+    g_range_short_patch_jal_cases++;
+  }
+
+  for (i = 0; i < sizeof(fallback_deltas) / sizeof(fallback_deltas[0]); i++)
+  {
+    u32 expected = source_address + fallback_deltas[i];
+    u32 actual;
+
+    riscv_patch_unconditional_branch_short(
+      source, (const u8 *)(usize)expected);
+    actual = decode_test_long_jump_target(
+      "range_short_patch_fallback", source);
+    if (actual != expected)
+      fail_u32("range_short_patch_fallback", "target", actual, expected);
+    g_range_short_patch_fallback_cases++;
+  }
+
+  {
+    u8 *target = source + 0x00100000u;
+    u32 (*entry)(void);
+    u32 actual;
+
+    if (RANGE_LONG_PATCH_BLOCK_OFFSET + 0x00100000u + 8u >
+        EXEC_MAP_BYTES)
+      fail_u32("range_short_patch_exec", "target_range",
+               RANGE_LONG_PATCH_BLOCK_OFFSET + 0x00100000u + 8u,
+               EXEC_MAP_BYTES);
+
+    /* addi a0,zero,42; ret. The call into source supplies ra, and the
+       AUIPC/JALR fallback must preserve it while crossing +1 MiB. */
+    ((u32 *)target)[0] = 0x02a00513u;
+    ((u32 *)target)[1] = 0x00008067u;
+    riscv_patch_unconditional_branch_short(source, target);
+    syscall3(SYS_RISCV_FLUSH_ICACHE, (long)source, (long)(source + 8u), 0);
+    syscall3(SYS_RISCV_FLUSH_ICACHE, (long)target, (long)(target + 8u), 0);
+    entry = (u32 (*)(void))(void *)source;
+    actual = entry();
+    if (actual != 42u)
+      fail_u32("range_short_patch_exec", "return", actual, 42u);
+    g_range_short_patch_exec_cases++;
   }
 }
 
@@ -14778,6 +14878,7 @@ void _start(void)
   range_conditional_code_bytes =
     build_range_conditional_block(code + RANGE_CONDITIONAL_BLOCK_OFFSET);
   run_range_long_patch_cases(code + RANGE_LONG_PATCH_BLOCK_OFFSET);
+  run_range_short_patch_cases(code + RANGE_LONG_PATCH_BLOCK_OFFSET);
   bx_code_bytes = build_bx_block(code + BX_BLOCK_OFFSET);
   bx_arm_target_code_bytes =
     build_single_data_proc_block(code + BX_ARM_TARGET_BLOCK_OFFSET,
@@ -15337,6 +15438,7 @@ void _start(void)
 
   put_raw("result=PASS command=runtime code_bytes=");
   put_u32_dec(data_code_bytes);
+  put_raw(" host_compressed=1");
   put_raw(" mapped_gpr_code_bytes=");
   put_u32_dec(mapped_gpr_code_bytes);
   put_raw(" mapped_helper_code_bytes=");
@@ -15563,6 +15665,12 @@ void _start(void)
   put_u32_dec(g_range_conditional_span);
   put_raw(" range_long_patch_cases=");
   put_u32_dec(g_range_long_patch_cases);
+  put_raw(" range_short_patch_jal_cases=");
+  put_u32_dec(g_range_short_patch_jal_cases);
+  put_raw(" range_short_patch_fallback_cases=");
+  put_u32_dec(g_range_short_patch_fallback_cases);
+  put_raw(" range_short_patch_exec_cases=");
+  put_u32_dec(g_range_short_patch_exec_cases);
   put_raw(" store_byte_code_bytes=");
   put_u32_dec(store_byte_code_bytes);
   put_raw(" store_pc_code_bytes=");

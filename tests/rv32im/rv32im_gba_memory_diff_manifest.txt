@@ -1,5 +1,5 @@
 benchmark_id=rv32im-gba-memory-diff-v2
-target=riscv32 isa=rv32im abi=ilp32 compressed=0
+target=riscv32 isa=rv32imc abi=ilp32 compressed=1
 runner=qemu-riscv32 execution=qemu-user freestanding=1 static_link=1
 compiler=clang optimization=O2 linker=lld gc_sections=1
 header_model=host_declarations_only float128_alias=long_double rv32_libc_linked=0

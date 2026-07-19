@@ -17,7 +17,10 @@
 #define RISCV_BLOCK_META_BYTES 8
 #define block_prologue_size RISCV_BLOCK_META_BYTES
 #define RISCV_BRANCH_PATCH_BYTES 8
-#define RISCV_BRANCH_PATCH_SHORT_BYTES 4
+/* Internal edges normally execute as one JAL, but reserve the same eight
+ * bytes as a long edge so block growth can fall back to AUIPC/JALR instead of
+ * silently wrapping JAL's signed 21-bit displacement. */
+#define RISCV_BRANCH_PATCH_SHORT_BYTES 8
 
 #if !defined(RISCV_RUNTIME_DISABLE_INDIRECT_LOOKUP_CACHE) || \
     defined(RISCV_RUNTIME_INDIRECT_LOOKUP_PROFILE_SWITCH)
@@ -606,9 +609,10 @@ void riscv_thumb_const_update(u32 opcode,
   ((block_exits[block_exit_position].branch_target >= block_start_pc) &&      \
    (block_exits[block_exit_position].branch_target < block_end_pc))
 
-/* Internal targets are bounded by HOST_MAX_BLOCK_SIZE and fit a JAL patch.
- * External targets can occupy any point in the full ROM/RAM cache, so they
- * reserve the AUIPC/JALR form instead of constraining cache capacity. */
+/* Internal targets normally fit a JAL and use its one-instruction hot path;
+ * their reserved eight-byte slot can still fall back to AUIPC/JALR. External
+ * targets always use the full-range form because they may occupy any point in
+ * the ROM/RAM translation caches. */
 #define riscv_branch_patch_short()                                            \
   riscv_branch_patch_internal()
 

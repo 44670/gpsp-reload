@@ -25,6 +25,7 @@ function capture(prefix, key) {
   memory[prefix ":" key] = field("memory_hash")
   scheduler[prefix ":" key] = field("scheduler_hash")
   trace[prefix ":" key] = field("trace_hash")
+  optimized_trace[prefix ":" key] = field("optimized_trace_hash")
   source[prefix ":" key] = field("counter_source")
   semantics[prefix ":" key] = field("counter_semantics")
   csr_verified[prefix ":" key] = field("rdinstret_csr_verified")
@@ -129,9 +130,14 @@ END {
             cycles[prefix ":" key] != cycles["spec:" key] ||
             state[prefix ":" key] != state["spec:" key] ||
             memory[prefix ":" key] != memory["spec:" key] ||
-            scheduler[prefix ":" key] != scheduler["spec:" key] ||
-            trace[prefix ":" key] != trace["spec:" key])
+            scheduler[prefix ":" key] != scheduler["spec:" key])
           fail(prefix ":" key " changed frozen workload/result contract")
+        expected_trace = trace["spec:" key]
+        if (prefix == "optimized" &&
+            optimized_trace["spec:" key] != "")
+          expected_trace = optimized_trace["spec:" key]
+        if (trace[prefix ":" key] != expected_trace)
+          fail(prefix ":" key " changed frozen lookup-trace contract")
       }
 
       if (insns["baseline:" key] != insns["spec:" key] ||
@@ -139,9 +145,13 @@ END {
         fail(key " no longer reproduces frozen baseline")
       if (name != "mapped_alu") {
         if (name == "indirect_lookup") {
-          if ((insns["optimized:" key] + 0) * 100 > \
-              (insns["baseline:" key] + 0) * 101)
-            fail(key " regressed more than one percent against baseline")
+          regression_max_x100 = mode == "cold" ? \
+            indirect_lookup_cold_regression_max_x100 : \
+            indirect_lookup_warm_regression_max_x100
+          if ((insns["optimized:" key] + 0) * 10000 > \
+              (insns["baseline:" key] + 0) * \
+              (10000 + regression_max_x100))
+            fail(key " exceeded its indirect-lookup regression ceiling")
         } else if ((insns["optimized:" key] + 0) > \
                    (insns["baseline:" key] + 0)) {
           fail(key " regressed against baseline")

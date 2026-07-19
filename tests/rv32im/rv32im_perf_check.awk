@@ -85,7 +85,9 @@ BEGIN {
   trace_hash["branch_chain:cold"] = "0x0a69f0a4"
   trace_hash["branch_chain:warm"] = "0x23e541c5"
   trace_hash["indirect_lookup:cold"] = "0x287cb2c5"
-  trace_hash["indirect_lookup:warm"] = "0x29e71dc5"
+  # A warm indirect-cache hit intentionally bypasses block_lookup_address_arm,
+  # so this hashes one initial lookup per scheduler run rather than every edge.
+  trace_hash["indirect_lookup:warm"] = "0x34df41c5"
   trace_hash["scheduler:cold"] = "0xe7405a04"
   trace_hash["scheduler:warm"] = "0xf316ddc5"
   trace_hash["mixed:cold"] = "0x1bfebbf4"
@@ -220,11 +222,11 @@ END {
   byte_improvement_x100 = int( \
     (mapped_alu_baseline_bytes - mapped_alu_optimized_bytes) * 10000 / \
     mapped_alu_baseline_bytes)
-  print "RV32IM mapped_alu baseline warm_executed_rv32_insns=" mapped_alu_baseline_exec \
+  print "RV32IMC mapped_alu baseline warm_executed_rv32_insns=" mapped_alu_baseline_exec \
     " generated_bytes=" mapped_alu_baseline_bytes
-  print "RV32IM mapped_alu optimized warm_executed_rv32_insns=" \
+  print "RV32IMC mapped_alu optimized warm_executed_rv32_insns=" \
     mapped_alu_optimized_exec " generated_bytes=" \
     mapped_alu_optimized_bytes " executed_insns_reduction_percent_x100=" \
     improvement_x100 " byte_reduction_percent_x100=" byte_improvement_x100
-  print "RV32IM deterministic perf check passed"
+  print "RV32IMC deterministic perf check passed"
 }

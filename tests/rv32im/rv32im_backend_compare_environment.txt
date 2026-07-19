@@ -1,4 +1,4 @@
-environment_id=rv32im-mips-qemu-clang-v1
+environment_id=rv32imc-mips-qemu-clang-v1
 compiler=clang
 clang_version=19.1.7
 rv32_qemu=qemu-riscv32
@@ -6,7 +6,7 @@ rv32_qemu_version=10.0.8
 mips_qemu=qemu-mipsel
 mips_qemu_version=10.0.8
 rv32_target=riscv32
-rv32_isa=rv32im
+rv32_isa=rv32imc
 rv32_abi=ilp32
 mips_target=mipsel-linux-gnu
 mips_isa=mips32r2
@@ -17,10 +17,10 @@ optimization=O2
 debug_info=1
 freestanding=1
 static_link=1
-rv32_compressed=0
+rv32_compressed=1
 mips_pic=0
 mips_abicalls=0
-rv32_cflags=--target=riscv32,-march=rv32im,-mabi=ilp32,-std=c99,-O2,-g,-Wall,-Wextra,-ffreestanding,-fno-builtin,-fno-stack-protector,-fno-pic,-fno-unwind-tables,-fno-asynchronous-unwind-tables
+rv32_cflags=--target=riscv32,-march=rv32imc,-mabi=ilp32,-std=c99,-O2,-g,-Wall,-Wextra,-ffreestanding,-fno-builtin,-fno-stack-protector,-fno-pic,-fno-unwind-tables,-fno-asynchronous-unwind-tables
 mips_cflags=--target=mipsel-linux-gnu,-march=mips32r2,-mabi=32,-EL,-G0,-std=c99,-O2,-g,-Wall,-Wextra,-ffreestanding,-fno-builtin,-fno-stack-protector,-fno-pic,-mno-abicalls,-fno-unwind-tables,-fno-asynchronous-unwind-tables
 rv32_defines=RISCV_RUNTIME_STANDALONE_TEST,HAVE_DYNAREC,RISCV_ARCH,MMAP_JIT_CACHE,BACKEND_COMPARE_RV32IM
 mips_defines=HAVE_DYNAREC,MIPS_ARCH,BACKEND_COMPARE_MIPS

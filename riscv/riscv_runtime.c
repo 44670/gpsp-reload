@@ -3223,6 +3223,14 @@ static u32 riscv_encode_j_inst(riscv_reg_number rd, s32 offset)
          riscv_opcode_jal;
 }
 
+static bool riscv_jal_delta_fits(u32 delta)
+{
+  const s32 offset = (s32)delta;
+
+  return (delta & 1u) == 0u &&
+         offset >= -1048576 && offset <= 1048574;
+}
+
 static void riscv_patch_local_branch(u8 *source, const u8 *target);
 static void riscv_emit_helper_call_no_flush(
   u8 **ptr, const riscv_jit_block_meta *meta);
@@ -3260,6 +3268,7 @@ static u8 *riscv_emit_unconditional_branch_patch_site_short(
   u8 *translation_ptr = *ptr_ref;
   u8 *source = translation_ptr;
 
+  riscv_emit_nop();
   riscv_emit_nop();
 
   *ptr_ref = translation_ptr;
@@ -3409,13 +3418,22 @@ void riscv_patch_unconditional_branch(u8 *source, const u8 *target)
 
 void riscv_patch_unconditional_branch_short(u8 *source, const u8 *target)
 {
-  s32 offset;
+  u32 delta;
 
   if (!source || !target)
     return;
 
-  offset = (s32)((intptr_t)target - (intptr_t)source);
-  ((u32 *)source)[0] = riscv_encode_j_inst(riscv_reg_zero, offset);
+  delta = (u32)(uintptr_t)target - (u32)(uintptr_t)source;
+  if (!riscv_jal_delta_fits(delta))
+  {
+    riscv_patch_unconditional_branch(source, target);
+    return;
+  }
+
+  ((u32 *)source)[0] =
+    riscv_encode_j_inst(riscv_reg_zero, (s32)delta);
+  ((u32 *)source)[1] = riscv_encode_i(
+    riscv_opcode_op_imm, 0x0, riscv_reg_zero, riscv_reg_zero, 0);
 }
 
 void riscv_set_runtime_debug_force_dispatch(bool force_dispatch)
@@ -3529,7 +3547,7 @@ void riscv_patch_conditional_branch(u8 *source, const u8 *target)
     return;
   }
 
-  offset = (s32)((intptr_t)target - (intptr_t)source);
+  offset = (s32)((u32)(uintptr_t)target - (u32)(uintptr_t)source);
   ((u32 *)source)[0] = riscv_encode_j_inst(riscv_reg_zero, offset);
 }
 
@@ -3548,7 +3566,7 @@ static void riscv_patch_local_branch(u8 *source, const u8 *target)
   funct3 = (instruction >> 12) & 0x07u;
   rs1 = (riscv_reg_number)((instruction >> 15) & 0x1fu);
   rs2 = (riscv_reg_number)((instruction >> 20) & 0x1fu);
-  offset = (s32)((intptr_t)target - (intptr_t)source);
+  offset = (s32)((u32)(uintptr_t)target - (u32)(uintptr_t)source);
 
   ((u32 *)source)[0] = riscv_encode_b_inst(funct3, rs1, rs2, offset);
 }
@@ -3557,10 +3575,10 @@ static s32 riscv_decode_long_jump_offset(const u8 *source)
 {
   const u32 auipc = ((const u32 *)source)[0];
   const u32 jalr = ((const u32 *)source)[1];
-  const s32 upper = (s32)(auipc & 0xfffff000u);
+  const u32 upper = auipc & 0xfffff000u;
   const s32 lower = (s32)jalr >> 20;
 
-  return upper + lower;
+  return (s32)(upper + (u32)lower);
 }
 
 static void riscv_patch_store_alert_branches(riscv_jit_block_meta *meta,
@@ -3573,7 +3591,7 @@ static void riscv_patch_store_alert_branches(riscv_jit_block_meta *meta,
     s32 next = riscv_decode_long_jump_offset(source);
 
     riscv_patch_unconditional_branch(source, target);
-    branch_chain = next ? (u32)((s32)branch_chain + next) : 0u;
+    branch_chain = next ? branch_chain + (u32)next : 0u;
   }
 }
 
