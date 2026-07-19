@@ -2923,6 +2923,35 @@ static void riscv_note_c_call_clobbers_mapped_regs(void)
   riscv_invalidate_mapped_regs();
 }
 
+/* A normal helper often happens to preserve more host registers than its
+ * declared contract requires.  That can hide a stale mapped-register bug for
+ * months: the emitter marks a slot invalid, but generated code keeps using
+ * the old host value and appears correct until a different helper body or
+ * compiler version really clobbers it.  The frontend state-contract gate
+ * enables this poison pass so every declared clobber becomes observable.
+ * Production builds emit nothing. */
+static void riscv_emit_test_poison_mapped_regs(u8 **ptr_ref, u32 mask)
+{
+#if defined(RISCV_RUNTIME_TEST_POISON_MAPPED_REGS)
+  u32 slot;
+
+#if !defined(RISCV_RUNTIME_STANDALONE_TEST)
+#error "mapped-register poisoning is test-only"
+#endif
+
+  mask &= RISCV_MAPPED_REGS_MASK;
+  for (slot = 0; slot < RISCV_MAPPED_REG_COUNT; slot++)
+  {
+    if (mask & (1u << slot))
+      riscv_emit_li(ptr_ref, riscv_mapped_host_regs[slot],
+                    0xd00d0000u | slot);
+  }
+#else
+  (void)ptr_ref;
+  (void)mask;
+#endif
+}
+
 static bool riscv_entry_setup_optimized(void);
 static bool riscv_state_helpers_enabled(void);
 
@@ -2986,6 +3015,7 @@ static void riscv_emit_c_call_stack(u8 **ptr, u32 stack_offset)
 {
   riscv_emit_mapped_regs_flush_dirty(ptr);
   riscv_emit_c_call_stack_raw(ptr, stack_offset);
+  riscv_emit_test_poison_mapped_regs(ptr, RISCV_MAPPED_CALLER_SAVED_MASK);
 #if defined(RISCV_RUNTIME_PERF_COUNTERS)
   riscv_perf_mapped_invalidate_sites++;
 #endif
@@ -3010,6 +3040,7 @@ static void riscv_emit_read_call_stack(u8 **ptr, u32 stack_offset)
   riscv_emit_mapped_regs_flush_mask(
     ptr, riscv_mapped_dirty_mask & RISCV_MAPPED_CALLER_SAVED_MASK);
   riscv_emit_c_call_stack_raw(ptr, stack_offset);
+  riscv_emit_test_poison_mapped_regs(ptr, RISCV_MAPPED_CALLER_SAVED_MASK);
 #if defined(RISCV_RUNTIME_PERF_COUNTERS)
   riscv_perf_mapped_invalidate_sites++;
 #endif
@@ -3028,6 +3059,7 @@ static void riscv_emit_read_call_address(u8 **ptr, uintptr_t target)
   riscv_emit_mapped_regs_flush_mask(
     ptr, riscv_mapped_dirty_mask & RISCV_MAPPED_CALLER_SAVED_MASK);
   riscv_emit_c_call_address_raw(ptr, target);
+  riscv_emit_test_poison_mapped_regs(ptr, RISCV_MAPPED_CALLER_SAVED_MASK);
 #if defined(RISCV_RUNTIME_PERF_COUNTERS)
   riscv_perf_mapped_invalidate_sites++;
 #endif
@@ -3098,6 +3130,7 @@ static void riscv_emit_memory_read_call_stack(u8 **ptr, u32 stack_offset)
   riscv_emit_mapped_regs_flush_mask(
     ptr, riscv_mapped_dirty_mask & RISCV_MAPPED_CALLER_SAVED_MASK);
   riscv_emit_c_call_stack_raw(ptr, stack_offset);
+  riscv_emit_test_poison_mapped_regs(ptr, RISCV_MAPPED_CALLER_SAVED_MASK);
 #if defined(RISCV_RUNTIME_PERF_COUNTERS)
   riscv_perf_mapped_invalidate_sites++;
 #endif
@@ -3148,6 +3181,8 @@ static void riscv_emit_memory_store_call_stack_known(
   {
     riscv_emit_mapped_regs_flush_dirty(ptr);
     riscv_emit_c_call_address_raw(ptr, direct_target);
+    riscv_emit_test_poison_mapped_regs(ptr,
+                                       RISCV_MAPPED_CALLER_SAVED_MASK);
 #if defined(RISCV_RUNTIME_PERF_COUNTERS)
     riscv_perf_mapped_invalidate_sites++;
 #endif
@@ -3168,6 +3203,7 @@ static void riscv_emit_stateful_c_call_stack(u8 **ptr, u32 stack_offset,
 {
   riscv_emit_mapped_regs_flush_dirty(ptr);
   riscv_emit_c_call_stack_raw(ptr, stack_offset);
+  riscv_emit_test_poison_mapped_regs(ptr, RISCV_MAPPED_REGS_MASK);
 #if defined(RISCV_RUNTIME_PERF_COUNTERS)
   riscv_perf_mapped_invalidate_sites++;
 #endif
@@ -3916,32 +3952,6 @@ static void riscv_store_ram_regions(u32 address, u8 **data,
   }
 }
 
-static bool __attribute__((noinline))
-riscv_store_shadow_tagged_unaligned(const u8 *shadow, u32 offset,
-                                    u32 mask, u32 width)
-{
-  u32 i;
-
-  if (offset <= mask - (width - 1u))
-  {
-    for (i = 0; i < width; i++)
-    {
-      if (shadow[i])
-        return true;
-    }
-  }
-  else
-  {
-    const u8 *shadow_base = shadow - offset;
-
-    for (i = 0; i < width; i++)
-    {
-      if (shadow_base[(offset + i) & mask])
-        return true;
-    }
-  }
-  return false;
-}
 #else
 #define RISCV_STORE_SLOW_ATTR
 #endif
@@ -3975,6 +3985,11 @@ riscv_store_u16(u32 address, u32 value)
 {
   cpu_alert_type alert;
 
+  /* ARM7TDMI stores ignore the low address bit.  The interpreter applies
+   * this alignment before entering write_memory16; keep the same contract
+   * for both direct C calls and fast-store slow tails. */
+  address &= ~1u;
+
 #if defined(RISCV_RUNTIME_HAS_FAST_RAM_STORES)
   if ((address >> 25) == 1u)
   {
@@ -3986,8 +4001,7 @@ riscv_store_u16(u32 address, u32 value)
 
     riscv_store_ram_regions(address, &data, &shadow, &offset, &mask);
     *((u16 *)data) = (u16)value;
-    tagged = !(offset & 1u) ? *((const u16 *)shadow) != 0 :
-      riscv_store_shadow_tagged_unaligned(shadow, offset, mask, 2u);
+    tagged = *((const u16 *)shadow) != 0;
     alert = tagged ? CPU_ALERT_SMC : CPU_ALERT_NONE;
   }
   else
@@ -4002,6 +4016,11 @@ riscv_store_u32(u32 address, u32 value)
 {
   cpu_alert_type alert;
 
+  /* As in cpu.cc's fast_write_memory(32), a guest STR writes the aligned
+   * word containing the effective address.  This must happen before RAM
+   * pointer and SMC-shadow selection, not only in the non-RAM helper. */
+  address &= ~3u;
+
 #if defined(RISCV_RUNTIME_HAS_FAST_RAM_STORES)
   if ((address >> 25) == 1u)
   {
@@ -4013,8 +4032,7 @@ riscv_store_u32(u32 address, u32 value)
 
     riscv_store_ram_regions(address, &data, &shadow, &offset, &mask);
     *((u32 *)data) = value;
-    tagged = !(offset & 3u) ? *((const u32 *)shadow) != 0 :
-      riscv_store_shadow_tagged_unaligned(shadow, offset, mask, 4u);
+    tagged = *((const u32 *)shadow) != 0;
     alert = tagged ? CPU_ALERT_SMC : CPU_ALERT_NONE;
   }
   else
@@ -11539,6 +11557,7 @@ bool riscv_emit_native_thumb_bl_pair(u8 **translation_ptr_ref,
     riscv_emit_mapped_regs_flush_dirty(&ptr);
     riscv_emit_c_call_address_raw(
       &ptr, (uintptr_t)riscv_thumb_execute_bl_pair);
+    riscv_emit_test_poison_mapped_regs(&ptr, RISCV_MAPPED_REGS_MASK);
     riscv_note_c_call_clobbers_mapped_regs();
     riscv_emit_adjust_cycles(&ptr, cycles);
     meta->flags |= RISCV_BLOCK_PC_WRITTEN;

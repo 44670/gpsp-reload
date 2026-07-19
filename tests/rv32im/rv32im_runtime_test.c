@@ -12422,6 +12422,8 @@ static void run_shifted_reg_offset_pc_word_store_case(
     const char *test_name, u8 *entry, u32 start_pc, u32 end_pc,
     u32 total_cycles, u32 address, u32 value, u32 extra_cycles)
 {
+  const u32 store_address = address & ~3u;
+
   reset_runtime_observations(start_pc);
   g_lookup_entry = entry;
   reg[3] = REG_OFFSET_BASE_ADDR;
@@ -12431,8 +12433,8 @@ static void run_shifted_reg_offset_pc_word_store_case(
 
   if (g_write32_calls != 1)
     fail_u32(test_name, "write32_calls", g_write32_calls, 1);
-  if (g_write32_addr != address)
-    fail_u32(test_name, "write32_addr", g_write32_addr, address);
+  if (g_write32_addr != store_address)
+    fail_u32(test_name, "write32_addr", g_write32_addr, store_address);
   if (g_write32_value != value)
     fail_u32(test_name, "write32_value", g_write32_value, value);
   if (g_write32_pc != end_pc)

@@ -1201,23 +1201,25 @@ static int verify_fast_ram_stores(void)
   do                                                                          \
   {                                                                           \
     u32 address = addresses[i];                                               \
+    u32 effective_address = address & ~(u32)(align_mask);                    \
+    u32 test_address = address & ~3u;                                        \
     u8 before[8];                                                             \
     u8 expected[8];                                                           \
     cpu_alert_type expected_alert;                                            \
     u32 actual_alert;                                                         \
     bool leaf = (address >> 25) == 1u &&                                     \
                 (address & (align_mask)) == 0u;                              \
-    prepare_store_test_bytes(address, before);                                \
+    prepare_store_test_bytes(test_address, before);                           \
     reg[REG_PC] = 0x08001000u;                                                \
-    expected_alert = reference_fn(address, (store_value));                    \
-    snapshot_store_test_bytes(address, expected);                             \
-    restore_store_test_bytes(address, before);                                \
+    expected_alert = reference_fn(effective_address, (store_value));          \
+    snapshot_store_test_bytes(test_address, expected);                        \
+    restore_store_test_bytes(test_address, before);                           \
     reg[REG_PC] = 0x0800abcdu;                                                \
     actual_alert = backend_compare_call_fast_store(                          \
       address, (store_value), 0x08001234u, fast_fn, reg);                    \
     cases++;                                                                  \
     if (actual_alert != expected_alert ||                                     \
-        !store_test_bytes_equal(address, expected) ||                        \
+        !store_test_bytes_equal(test_address, expected) ||                   \
         reg[REG_PC] != (leaf ? 0x0800abcdu : 0x08001234u))                   \
     {                                                                         \
       put_raw("result=FAIL command=backend-compare-fast-store width="       \
@@ -1227,7 +1229,7 @@ static int verify_fast_ram_stores(void)
       put_u32_hex(hash_word(HASH_INIT,                                       \
                             load32(expected, 0)));                            \
       put_raw(" actual_hash=");                                            \
-      put_u32_hex(store_test_bytes_hash(address));                            \
+      put_u32_hex(store_test_bytes_hash(test_address));                       \
       put_raw(" expected_alert=");                                         \
       put_u32_hex(expected_alert);                                            \
       put_raw(" actual_alert=");                                           \
@@ -1260,17 +1262,19 @@ static int verify_fast_ram_stores(void)
   do                                                                          \
   {                                                                           \
     u32 address = smc_addresses[i] + (address_delta);                         \
+    u32 effective_address = address & ~((u32)(tag_bytes) - 1u);              \
+    u32 test_address = address & ~3u;                                        \
     u8 before[8];                                                             \
     u8 expected[8];                                                           \
     u32 old_cpsr = 0x2123451fu;                                               \
     u32 j;                                                                    \
     u32 actual_alert;                                                         \
-    prepare_store_test_bytes(address, before);                                \
-    reference_fn(address, (store_value));                                     \
-    snapshot_store_test_bytes(address, expected);                             \
-    restore_store_test_bytes(address, before);                                \
+    prepare_store_test_bytes(test_address, before);                           \
+    reference_fn(effective_address, (store_value));                           \
+    snapshot_store_test_bytes(test_address, expected);                        \
+    restore_store_test_bytes(test_address, before);                           \
     for (j = 0; j < (tag_bytes); j++)                                         \
-      store_test_shadow(address)[j] = (u8)(j + 1u);                           \
+      store_test_shadow(effective_address)[j] = (u8)(j + 1u);                 \
     for (j = 0; j < REG_PC; j++)                                              \
       reg[j] = mapped_state[j];                                               \
     reg[REG_PC] = 0x0800abcdu;                                                \
@@ -1279,7 +1283,7 @@ static int verify_fast_ram_stores(void)
       address, (store_value), 0x08005678u, fast_fn, mapped_state);           \
     smc_cases++;                                                              \
     if (actual_alert != CPU_ALERT_SMC ||                                      \
-        !store_test_bytes_equal(address, expected) ||                        \
+        !store_test_bytes_equal(test_address, expected) ||                   \
         !store_test_state_matches(mapped_state, old_cpsr, 0x08005678u))      \
     {                                                                         \
       put_raw("result=FAIL command=backend-compare-fast-store-smc width="   \
@@ -1289,7 +1293,7 @@ static int verify_fast_ram_stores(void)
       put_u32_hex(hash_word(HASH_INIT,                                       \
                             load32(expected, 0)));                            \
       put_raw(" actual_hash=");                                            \
-      put_u32_hex(store_test_bytes_hash(address));                            \
+      put_u32_hex(store_test_bytes_hash(test_address));                       \
       put_raw(" alert=");                                                  \
       put_u32_hex(actual_alert);                                              \
       put_raw(" pc=");                                                     \

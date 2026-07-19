@@ -587,13 +587,16 @@ static bool run_frontend_control_case(
   passed = g_update_calls == 1u &&
            g_update_last_cycles != (s32)0x7fffffffu;
   std::printf("result=%s command=frontend-control case=%s backend=interp "
-              "state_hash=0x%08x r0=0x%08x lr=0x%08x pc=0x%08x "
+              "state_hash=0x%08x r0=0x%08x r1=0x%08x r2=0x%08x "
+              "r3=0x%08x r4=0x%08x r5=0x%08x r8=0x%08x r10=0x%08x "
+              "lr=0x%08x pc=0x%08x "
               "cpsr=0x%08x svc_spsr=0x%08x svc_lr=0x%08x "
               "update_calls=%u update_cycles=0x%08x update_exhausted=%u "
               "generated_words=%u "
               "harness_mode=cpu_cc_interpreter reason=%s\n",
               passed ? "PASS" : "FAIL", item->name, state_hash,
-              reg[0], reg[REG_LR], reg[REG_PC], reg[REG_CPSR],
+              reg[0], reg[1], reg[2], reg[3], reg[4], reg[5], reg[8],
+              reg[10], reg[REG_LR], reg[REG_PC], reg[REG_CPSR],
               REG_SPSR(MODE_SUPERVISOR),
               REG_MODE(MODE_SUPERVISOR)[6], g_update_calls,
               (u32)g_update_last_cycles,

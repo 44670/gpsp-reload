@@ -7,6 +7,7 @@ QEMU_MIPSEL ?= qemu-mipsel
 HARNESS := rv32im_harness
 CODEGEN := rv32im_codegen
 ARMWRESTLER := rv32im_armwrestler
+ARMWRESTLER_STATE_CONTRACT := rv32im_armwrestler_state_contract
 ARMWRESTLER_PERF_BASELINE := rv32im_armwrestler_perf_baseline
 ARMWRESTLER_PERF_OPTIMIZED := rv32im_armwrestler_perf_optimized
 ARMWRESTLER_STORE_PERF_BASELINE := rv32im_armwrestler_store_perf_baseline
@@ -19,6 +20,7 @@ ARMWRESTLER_VALIDATED_ENTRY_PERF_BASELINE := rv32im_armwrestler_validated_entry_
 ARMWRESTLER_VALIDATED_ENTRY_PERF_OPTIMIZED := rv32im_armwrestler_validated_entry_perf_optimized
 ARMWRESTLER_INTERP := rv32im_armwrestler_interp
 FRONTEND_CONTROL_JIT := rv32im_frontend_control_jit
+FRONTEND_CONTROL_DISPATCH := rv32im_frontend_control_dispatch
 FRONTEND_CONTROL_INTERP := rv32im_frontend_control_interp
 FRONTEND_CACHE_JIT := rv32im_frontend_cache_jit
 BACKEND_COMPARE_RV32 := rv32im_backend_compare
@@ -63,8 +65,10 @@ COMPARE_LOG := $(OUT_DIR)/rv32im_harness_compare.log
 MIXED_LOG := $(OUT_DIR)/rv32im_harness_mixed.log
 REJECTS_LOG := $(OUT_DIR)/rv32im_harness_rejects.log
 ARMWRESTLER_LOG := $(OUT_DIR)/rv32im_armwrestler.log
+ARMWRESTLER_STATE_CONTRACT_LOG := $(OUT_DIR)/rv32im_armwrestler_state_contract.log
 ARMWRESTLER_INTERP_LOG := $(OUT_DIR)/rv32im_armwrestler_interp.log
 FRONTEND_CONTROL_JIT_LOG := $(OUT_DIR)/rv32im_frontend_control_jit.log
+FRONTEND_CONTROL_DISPATCH_LOG := $(OUT_DIR)/rv32im_frontend_control_dispatch.log
 FRONTEND_CONTROL_INTERP_LOG := $(OUT_DIR)/rv32im_frontend_control_interp.log
 FRONTEND_CONTROL_COMPARE_LOG := $(OUT_DIR)/rv32im_frontend_control_compare.log
 FRONTEND_CACHE_JIT_LOG := $(OUT_DIR)/rv32im_frontend_cache_jit.log
@@ -203,8 +207,8 @@ BACKEND_COMPARE_EXPECTED_RV_QEMU_VERSION ?= 10.0.8
 BACKEND_COMPARE_EXPECTED_MIPS_QEMU_VERSION ?= 10.0.8
 BACKEND_COMPARE_EXPECTED_MANIFEST_SHA256 := 67dc6526083b23cc7d103e58be84baead6f6cc5cc22be3131066f486badb983d
 BACKEND_COMPARE_EXPECTED_ENVIRONMENT_SHA256 := e16190fc430fae35dc4e8f14d7364faf92959f31de0bdd1407dabde1e2747c81
-BACKEND_COMPARE_EXPECTED_SOURCE_SHA256 := 6731288cfcaf339d2d108645f64584155a5fc2af00b124ca4bf7015d19c7a932
-GBA_MEMORY_DIFF_EXPECTED_MANIFEST_SHA256 := 6ee4f4d279775df10eaef3e64d15ca3cbd6e003b4e398344893ec4d395f4c665
+BACKEND_COMPARE_EXPECTED_SOURCE_SHA256 := e45fc656be6b9677b18727fa3b9ac0d9df14cc47d51d56bea138586f5b9ae69a
+GBA_MEMORY_DIFF_EXPECTED_MANIFEST_SHA256 := 2aba65a2f0301191e02d11601bb14e09cb3b837ab0338190bf120dbb982a7609
 BACKEND_COMPARE_MEMORY_MIN_REDUCTION_PERCENT ?= 33
 BACKEND_COMPARE_MEMORY_COLD_RAW_MAX ?= 40106
 BACKEND_COMPARE_MEMORY_BYTES_MAX ?= 1952
@@ -635,6 +639,21 @@ $(ARMWRESTLER): rv32im_armwrestler.c rv32im_frontend_shim.h \
 		-o $@ rv32im_armwrestler.c $(ROOT)/cpu_threaded.c \
 		$(ROOT)/riscv/riscv_runtime.c
 
+$(ARMWRESTLER_STATE_CONTRACT): rv32im_armwrestler.c \
+		rv32im_frontend_shim.h $(ROOT)/cpu_threaded.c \
+		$(ROOT)/riscv/riscv_runtime.c $(ROOT)/riscv/riscv_emit.h \
+		$(ROOT)/riscv/riscv_codegen.h \
+		$(ROOT)/riscv/riscv_runtime_test_shim.h
+	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) \
+		-DRISCV_RUNTIME_STANDALONE_TEST -DHAVE_DYNAREC -DRISCV_ARCH \
+		-DMMAP_JIT_CACHE -DRISCV_RUNTIME_ENABLE_FAST_RAM_READS \
+		-DRISCV_RUNTIME_ENABLE_FAST_RAM_STORES \
+		-DRISCV_RUNTIME_TEST_POISON_MAPPED_REGS \
+		-I. -I$(ROOT) -I$(ROOT)/riscv \
+		-include rv32im_frontend_shim.h \
+		-o $@ rv32im_armwrestler.c $(ROOT)/cpu_threaded.c \
+		$(ROOT)/riscv/riscv_runtime.c
+
 $(ARMWRESTLER_PERF_BASELINE): rv32im_armwrestler.c rv32im_frontend_shim.h \
 		$(ROOT)/cpu_threaded.c $(ROOT)/riscv/riscv_runtime.c \
 		$(ROOT)/riscv/riscv_emit.h $(ROOT)/riscv/riscv_codegen.h \
@@ -883,7 +902,26 @@ $(FRONTEND_CONTROL_JIT): rv32im_armwrestler.c \
 	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) \
 		-DRISCV_RUNTIME_STANDALONE_TEST -DHAVE_DYNAREC -DRISCV_ARCH \
 		-DMMAP_JIT_CACHE -DRV32IM_FRONTEND_CONTROL_ONLY \
+		-DRISCV_RUNTIME_TEST_POISON_MAPPED_REGS \
 		-DRISCV_RUNTIME_ENABLE_FAST_RAM_READS \
+		-DRISCV_RUNTIME_ENABLE_FAST_RAM_STORES \
+		-I. -I$(ROOT) -I$(ROOT)/riscv \
+		-include rv32im_frontend_shim.h \
+		-o $@ rv32im_armwrestler.c $(ROOT)/cpu_threaded.c \
+		$(ROOT)/riscv/riscv_runtime.c
+
+$(FRONTEND_CONTROL_DISPATCH): rv32im_armwrestler.c \
+		rv32im_frontend_control_cases.h rv32im_frontend_shim.h \
+		$(ROOT)/cpu_threaded.c $(ROOT)/riscv/riscv_runtime.c \
+		$(ROOT)/riscv/riscv_emit.h $(ROOT)/riscv/riscv_codegen.h \
+		$(ROOT)/riscv/riscv_runtime_test_shim.h
+	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) \
+		-DRISCV_RUNTIME_STANDALONE_TEST -DHAVE_DYNAREC -DRISCV_ARCH \
+		-DMMAP_JIT_CACHE -DRV32IM_FRONTEND_CONTROL_ONLY \
+		-DRV32IM_FRONTEND_CONTROL_FORCE_DISPATCH \
+		-DRISCV_RUNTIME_TEST_POISON_MAPPED_REGS \
+		-DRISCV_RUNTIME_ENABLE_FAST_RAM_READS \
+		-DRISCV_RUNTIME_ENABLE_FAST_RAM_STORES \
 		-I. -I$(ROOT) -I$(ROOT)/riscv \
 		-include rv32im_frontend_shim.h \
 		-o $@ rv32im_armwrestler.c $(ROOT)/cpu_threaded.c \
@@ -1046,13 +1084,17 @@ codegen: $(CODEGEN) $(CODEGEN_REF_BIN) | $(OUT_DIR)
 frontend: $(FRONTEND_OBJ)
 
 frontend-control: $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CONTROL_JIT) \
+		$(FRONTEND_CONTROL_DISPATCH) \
 		rv32im_frontend_control_compare.awk | $(OUT_DIR)
 	timeout 20s ./$(FRONTEND_CONTROL_INTERP) > $(FRONTEND_CONTROL_INTERP_LOG)
 	cat $(FRONTEND_CONTROL_INTERP_LOG)
 	timeout 20s $(QEMU_RISCV32) ./$(FRONTEND_CONTROL_JIT) > $(FRONTEND_CONTROL_JIT_LOG)
 	cat $(FRONTEND_CONTROL_JIT_LOG)
-	awk -v expected_cases=14 -f rv32im_frontend_control_compare.awk \
+	timeout 20s $(QEMU_RISCV32) ./$(FRONTEND_CONTROL_DISPATCH) > $(FRONTEND_CONTROL_DISPATCH_LOG)
+	cat $(FRONTEND_CONTROL_DISPATCH_LOG)
+	awk -v expected_cases=19 -f rv32im_frontend_control_compare.awk \
 		$(FRONTEND_CONTROL_INTERP_LOG) $(FRONTEND_CONTROL_JIT_LOG) \
+		$(FRONTEND_CONTROL_DISPATCH_LOG) \
 		> $(FRONTEND_CONTROL_COMPARE_LOG)
 	cat $(FRONTEND_CONTROL_COMPARE_LOG)
 
@@ -1216,6 +1258,20 @@ armwrestler-jit: $(ARMWRESTLER) | $(OUT_DIR)
 	test "$$thumb_total" -le "$(ARMWRESTLER_THUMB_CODE_BYTES_MAX)" && \
 	test "$$thumb_helpers" -le "$(ARMWRESTLER_THUMB_HELPERS_MAX)"
 	grep -q 'harness_mode=armwrestler_frontend_jit_only reason=armwrestler_all_jit_only_passed' $(ARMWRESTLER_LOG)
+
+armwrestler-state-contract: $(ARMWRESTLER_STATE_CONTRACT) | $(OUT_DIR)
+	timeout $(ARMWRESTLER_PERF_TIMEOUT_SECONDS)s \
+		$(QEMU_RISCV32) ./$(ARMWRESTLER_STATE_CONTRACT) | \
+		tee $(ARMWRESTLER_STATE_CONTRACT_LOG)
+	grep -q 'result=PASS command=armwrestler test=all' \
+		$(ARMWRESTLER_STATE_CONTRACT_LOG)
+	grep -q 'observed_results=79 failure_mask=0x00000000' \
+		$(ARMWRESTLER_STATE_CONTRACT_LOG)
+	grep -q 'fallbacks=0 fallback_events=0 execute_arm_calls=0' \
+		$(ARMWRESTLER_STATE_CONTRACT_LOG)
+	grep -q 'native_blocks=[1-9][0-9]*' \
+		$(ARMWRESTLER_STATE_CONTRACT_LOG)
+	@echo 'result=PASS command=armwrestler-state-contract cases=79 poison=all-declared-mapped-clobbers isa=rv32imc reason=helper_boundary_contract_preserved'
 
 armwrestler-interp: $(ARMWRESTLER_INTERP) | $(OUT_DIR)
 	./$(ARMWRESTLER_INTERP) | tee $(ARMWRESTLER_INTERP_LOG)
@@ -1706,7 +1762,8 @@ armwrestler-validated-entry-perf: perf-env-check \
 	grep -q 'observed_results=79 failure_mask=0x00000000 fallbacks=0 fallback_events=0 execute_arm_calls=0' \
 		$(ARMWRESTLER_VALIDATED_ENTRY_PERF_REPORT)
 
-armwrestler: armwrestler-interp armwrestler-jit armwrestler-perf \
+armwrestler: armwrestler-interp armwrestler-jit \
+		armwrestler-state-contract armwrestler-perf \
 		armwrestler-store-perf armwrestler-entry-perf \
 		armwrestler-state-helper-perf armwrestler-validated-entry-perf \
 		gba-memory-diff
@@ -2143,7 +2200,7 @@ perf: perf-env-check $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP) | $
 test: codegen abi exec runtime control-flow lookup-control-flow perf frontend frontend-control frontend-cache backend-compare gba-memory-diff core-build rejects compare mixed smoke
 
 clean:
-	rm -f $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_STORE_PERF_BASELINE) $(ARMWRESTLER_STORE_PERF_OPTIMIZED) $(ARMWRESTLER_ENTRY_PERF_BASELINE) $(ARMWRESTLER_ENTRY_PERF_OPTIMIZED) $(ARMWRESTLER_STATE_HELPER_PERF_BASELINE) $(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED) $(ARMWRESTLER_VALIDATED_ENTRY_PERF_BASELINE) $(ARMWRESTLER_VALIDATED_ENTRY_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(FRONTEND_CONTROL_JIT) $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CACHE_JIT) $(BACKEND_COMPARE_RV32) $(BACKEND_COMPARE_MIPS) $(GBA_MEMORY_DIFF_RV32) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(CONTROL_FLOW_TEST) $(LOOKUP_CONTROL_FLOW_TEST) $(MAPPED_ALU_INTERP)
+	rm -f $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_STATE_CONTRACT) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_STORE_PERF_BASELINE) $(ARMWRESTLER_STORE_PERF_OPTIMIZED) $(ARMWRESTLER_ENTRY_PERF_BASELINE) $(ARMWRESTLER_ENTRY_PERF_OPTIMIZED) $(ARMWRESTLER_STATE_HELPER_PERF_BASELINE) $(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED) $(ARMWRESTLER_VALIDATED_ENTRY_PERF_BASELINE) $(ARMWRESTLER_VALIDATED_ENTRY_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(FRONTEND_CONTROL_JIT) $(FRONTEND_CONTROL_DISPATCH) $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CACHE_JIT) $(BACKEND_COMPARE_RV32) $(BACKEND_COMPARE_MIPS) $(GBA_MEMORY_DIFF_RV32) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(CONTROL_FLOW_TEST) $(LOOKUP_CONTROL_FLOW_TEST) $(MAPPED_ALU_INTERP)
 	rm -rf $(OUT_DIR)
 
-.PHONY: all full-runner-toolchain-check p-gba p-gba-dialogue codegen abi exec runtime control-flow lookup-control-flow perf perf-env-check frontend frontend-control frontend-cache backend-compare backend-compare-env-check gba-memory-diff core-build smoke compare mixed rejects armwrestler-jit armwrestler-interp armwrestler-perf armwrestler-store-perf armwrestler-entry-perf armwrestler-state-helper-perf armwrestler-validated-entry-perf armwrestler armwrestler-report test clean
+.PHONY: all full-runner-toolchain-check p-gba p-gba-dialogue codegen abi exec runtime control-flow lookup-control-flow perf perf-env-check frontend frontend-control frontend-cache backend-compare backend-compare-env-check gba-memory-diff core-build smoke compare mixed rejects armwrestler-jit armwrestler-state-contract armwrestler-interp armwrestler-perf armwrestler-store-perf armwrestler-entry-perf armwrestler-state-helper-perf armwrestler-validated-entry-perf armwrestler armwrestler-report test clean

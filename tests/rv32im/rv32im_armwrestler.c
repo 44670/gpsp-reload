@@ -1325,6 +1325,12 @@ static int run_thumbwrestler_test(u32 test_id, u32 expected_results)
 extern void rv32im_frontend_control_set_update_slot(u32 index, u32 value);
 extern u32 rv32im_frontend_control_get_update_slot(u32 index);
 
+#if defined(RV32IM_FRONTEND_CONTROL_FORCE_DISPATCH)
+#define FRONTEND_CONTROL_BACKEND "rv32im-dispatch"
+#else
+#define FRONTEND_CONTROL_BACKEND "rv32im"
+#endif
+
 static void install_frontend_control_case(
   const rv32im_frontend_control_case *item)
 {
@@ -1381,6 +1387,11 @@ static int run_frontend_control_case(
   reset_frontend_control_observations();
   reset_dynarec_for_armwrestler();
   init_emitter(false);
+#if defined(RV32IM_FRONTEND_CONTROL_FORCE_DISPATCH)
+  riscv_set_runtime_debug_force_dispatch(true);
+#else
+  riscv_set_runtime_debug_force_dispatch(false);
+#endif
   before_code_bytes = (u32)(rom_translation_ptr - rom_translation_cache);
 
   if (item->stale_update_index_plus_one != 0u)
@@ -1416,10 +1427,24 @@ static int run_frontend_control_case(
   put_raw(passed ? "PASS" : "FAIL");
   put_raw(" command=frontend-control case=");
   put_raw(item->name);
-  put_raw(" backend=rv32im state_hash=");
+  put_raw(" backend=" FRONTEND_CONTROL_BACKEND " state_hash=");
   put_u32_hex(state_hash);
   put_raw(" r0=");
   put_u32_hex(reg[0]);
+  put_raw(" r1=");
+  put_u32_hex(reg[1]);
+  put_raw(" r2=");
+  put_u32_hex(reg[2]);
+  put_raw(" r3=");
+  put_u32_hex(reg[3]);
+  put_raw(" r4=");
+  put_u32_hex(reg[4]);
+  put_raw(" r5=");
+  put_u32_hex(reg[5]);
+  put_raw(" r8=");
+  put_u32_hex(reg[8]);
+  put_raw(" r10=");
+  put_u32_hex(reg[10]);
   put_raw(" lr=");
   put_u32_hex(reg[REG_LR]);
   put_raw(" pc=");
@@ -1470,7 +1495,8 @@ static int run_frontend_control_cases(void)
       return 0;
   }
 
-  put_raw("result=PASS command=frontend-control case=all backend=rv32im "
+  put_raw("result=PASS command=frontend-control case=all backend="
+          FRONTEND_CONTROL_BACKEND " "
           "cases=");
   put_u32_dec((u32)RV32IM_FRONTEND_CONTROL_CASE_COUNT);
   put_raw(" harness_mode=cpu_threaded_frontend "
