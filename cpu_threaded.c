@@ -102,6 +102,13 @@ typedef struct
   u32 branch_target;
   u8 *branch_source;
   u8 branch_patch_short;
+#if defined(RISCV_ARCH)
+  /* One-based block_data slot for a Thumb BLH that the scan pass treated as
+   * the second half of a direct BL pair.  A backward edge discovered later in
+   * the scan can still turn that BLH into a shared/standalone entry; emission
+   * then uses this tag to consume the now-nonpatchable scan exit slot. */
+  u16 riscv_thumb_blh_slot;
+#endif
 } block_exit_type;
 
 // Div (6) and DivArm (7)
@@ -239,6 +246,52 @@ typedef struct
   #include "x86/x86_emit.h"
 #endif
 
+#if defined(RISCV_ARCH)
+static bool riscv_thumb_scan_bl_pair_allowed(const block_exit_type *exits,
+                                              u32 exit_count,
+                                              u32 blh_pc)
+{
+  u32 i;
+
+  /* A previously scanned edge can enter this BLH without executing the
+   * linearly preceding prefix.  Such a halfword is an indirect LR-based
+   * exit, not a direct pair target. */
+  for(i = 0; i < exit_count; i++)
+  {
+    if(exits[i].branch_target == blh_pc)
+      return false;
+  }
+  return true;
+}
+
+#define thumb_scan_bl_pair_allowed(blh_pc)                                   \
+  riscv_thumb_scan_bl_pair_allowed(block_exits, block_exit_position,         \
+                                    (blh_pc))
+#define arm_scan_record_direct_exit(exit)                                    \
+  do                                                                          \
+  {                                                                           \
+    (exit).riscv_thumb_blh_slot = 0;                                          \
+  } while(0)
+#define thumb_scan_record_direct_exit(exit)                                  \
+  do                                                                          \
+  {                                                                           \
+    (exit).riscv_thumb_blh_slot =                                             \
+      ((opcode >= 0xf800u) && (last_opcode >= 0xf000u) &&                    \
+       (last_opcode < 0xf800u)) ?                                             \
+      (u16)(block_data_position + 1) : 0;                                    \
+  } while(0)
+#define scan_record_swi_exit(exit)                                           \
+  do                                                                          \
+  {                                                                           \
+    (exit).riscv_thumb_blh_slot = 0;                                          \
+  } while(0)
+#else
+#define thumb_scan_bl_pair_allowed(blh_pc) 1
+#define arm_scan_record_direct_exit(exit)
+#define thumb_scan_record_direct_exit(exit)
+#define scan_record_swi_exit(exit)
+#endif
+
 #ifndef arm_load_pc_pool_const
 #define arm_load_pc_pool_const(rd, value)                                     \
   do                                                                          \
@@ -331,14 +384,93 @@ void translate_icache_sync() {
   riscv_arm_condition_known_check()
 #define arm_backend_emit_instruction()                                        \
   (!riscv_arm_skip_instruction)
+#define arm_backend_skip_instruction()                                        \
+  do                                                                          \
+  {                                                                           \
+    /* scan_block() assigns one slot to every direct B/BL/SWI before the      \
+       RISC-V constant-condition pass runs.  A compile-time-false exit emits  \
+       no patch site, but it must still consume its scan slot or the next     \
+       branch will be paired with this instruction's target. */               \
+    if(riscv_arm_skip_instruction && arm_exit_point &&                        \
+       (arm_opcode_branch || arm_opcode_swi))                                 \
+    {                                                                         \
+      block_exits[block_exit_position].branch_source = NULL;                  \
+      block_exits[block_exit_position].branch_patch_short = 0;                \
+      block_exit_position++;                                                  \
+    }                                                                         \
+  } while(0)
 #define arm_backend_close_conditional_block(dest, offset)                     \
-  riscv_emit_arm_conditional_block_close(&translation_ptr, (dest))
+  do                                                                          \
+  {                                                                           \
+    /* Deferred load latency belongs to the taken body.  Emit it before the  \
+       false-path branch is patched to the merge point, then clear the       \
+       frontend accumulator so it cannot leak into the next predicate run. */ \
+    riscv_emit_arm_conditional_block_close_cycles(                            \
+      &translation_ptr, (dest), riscv_arm_conditional_deferred_cycles);       \
+    riscv_arm_conditional_deferred_cycles = 0;                                \
+  } while(0)
+#define arm_backend_cycle_update_join()                                       \
+  do                                                                          \
+  {                                                                           \
+    if((last_condition & 0x0F) != 0x0E)                                      \
+    {                                                                         \
+      arm_backend_close_conditional_block(backpatch_address, translation_ptr); \
+      last_condition = 0x0E;                                                  \
+    }                                                                         \
+  } while(0)
+#define arm_backend_mark_condition_boundary()                                 \
+  do                                                                          \
+  {                                                                           \
+    u32 arm_backend_op_class = (opcode >> 20) & 0xffu;                       \
+    u32 arm_backend_psr_field = ((opcode >> 16) & 1u) |                      \
+                                ((opcode >> 18) & 2u);                       \
+    bool arm_backend_single_store =                                          \
+      ((opcode & 0x0c000000u) == 0x04000000u) &&                            \
+      (((opcode >> 20) & 1u) == 0);                                         \
+    bool arm_backend_extra_store =                                           \
+      ((opcode & 0x0e000090u) == 0x00000090u) &&                            \
+      (((opcode >> 5) & 3u) != 0) &&                                        \
+      (((opcode >> 20) & 1u) == 0);                                         \
+    bool arm_backend_block_terminal =                                        \
+      ((opcode & 0x0e000000u) == 0x08000000u) &&                            \
+      ((((opcode >> 20) & 1u) == 0) ||                                      \
+       (((opcode >> 22) & 1u) != 0) ||                                      \
+       (((opcode >> 16) & 0x0fu) == REG_PC));                               \
+    bool arm_backend_swap =                                                  \
+      (opcode & 0x0fb00ff0u) == 0x01000090u;                                \
+    bool arm_backend_psr_terminal =                                          \
+      (arm_backend_op_class == 0x12u ||                                     \
+       arm_backend_op_class == 0x16u ||                                     \
+       arm_backend_op_class == 0x32u ||                                     \
+       arm_backend_op_class == 0x36u) &&                                    \
+      (((opcode >> 12) & 0x0fu) == REG_PC) &&                               \
+      arm_backend_psr_field != 2u;                                          \
+    bool arm_backend_runtime_boundary =                                      \
+      arm_backend_single_store || arm_backend_extra_store ||                 \
+      arm_backend_block_terminal || arm_backend_swap ||                      \
+      arm_backend_psr_terminal;                                              \
+    if(arm_backend_runtime_boundary)                                         \
+    {                                                                         \
+      /* Reuse the scan exit-boundary bit.  Translation gives every marked   \
+         instruction its own predicate gate: a taken terminal operation must \
+         not prepay its successor, while a false predicate must still charge \
+         that successor's architectural fetch cycle. */                      \
+      block_data[block_data_position].condition |= 0x10u;                    \
+      /* These helpers can expose state to the scheduler before the next     \
+         guest instruction.  A later flag overwrite does not make the flags \
+         at this boundary dead, especially when an IRQ saves them to SPSR. */ \
+      block_data[block_data_position].flag_data |= 0x0f00u;                  \
+    }                                                                         \
+  } while(0)
 #else
 #define arm_backend_condition_known_check()
 #define arm_backend_emit_instruction()                                        \
   1
+#define arm_backend_skip_instruction()
 #define arm_backend_close_conditional_block(dest, offset)                     \
   generate_branch_patch_conditional((dest), (offset))
+#define arm_backend_cycle_update_join()
+#define arm_backend_mark_condition_boundary()
 #endif
 
 #define translate_arm_instruction()                                           \
@@ -350,7 +482,7 @@ void translate_icache_sync() {
   arm_backend_condition_known_check();                                        \
                                                                               \
   if(arm_backend_emit_instruction() &&                                        \
-   ((condition != last_condition) || (condition >= 0x20)))                    \
+   ((condition != last_condition) || ((condition & 0x70) != 0)))              \
   {                                                                           \
     if((last_condition & 0x0F) != 0x0E)                                       \
     {                                                                         \
@@ -366,7 +498,10 @@ void translate_icache_sync() {
       arm_conditional_block_header();                                         \
     }                                                                         \
   }                                                                           \
-  emit_trace_arm_instruction(pc);                                             \
+  if(arm_backend_emit_instruction())                                          \
+    emit_trace_arm_instruction(pc);                                           \
+  else                                                                        \
+    arm_backend_skip_instruction();                                           \
                                                                               \
   if(arm_backend_emit_instruction())                                          \
   switch((opcode >> 20) & 0xFF)                                               \
@@ -2049,6 +2184,15 @@ void translate_icache_sync() {
 
 #endif
 
+#ifndef thumb_bl_prefix
+#define thumb_bl_prefix()                                                     \
+
+#endif
+
+#ifndef thumb_bl_pair_allowed
+#define thumb_bl_pair_allowed() 1
+#endif
+
 #define translate_thumb_instruction()                                         \
   flag_status = block_data[block_data_position].flag_data;                    \
   check_pc_region(pc);                                                        \
@@ -2625,8 +2769,9 @@ void translate_icache_sync() {
     case 0xF0 ... 0xF7:                                                       \
     {                                                                         \
       /* (low word) BL label */                                               \
-      /* This should possibly generate code if not in conjunction with a BLH  \
-         next, but I don't think anyone will do that. */                      \
+      /* Native backends may keep the usual adjacent-pair fast path, but a   \
+         standalone prefix or a BLH with another entry must publish LR. */    \
+      thumb_bl_prefix();                                                      \
       break;                                                                  \
     }                                                                         \
                                                                               \
@@ -2635,7 +2780,8 @@ void translate_icache_sync() {
       /* (high word) BL label */                                              \
       /* This might not be preceeding a BL low word (Golden Sun 2), if so     \
          it must be handled like an indirect branch. */                       \
-      if((last_opcode >= 0xF000) && (last_opcode < 0xF800))                   \
+      if((last_opcode >= 0xF000) && (last_opcode < 0xF800) &&                 \
+         thumb_bl_pair_allowed())                                             \
       {                                                                       \
         thumb_bl();                                                           \
       }                                                                       \
@@ -2759,12 +2905,26 @@ void translate_icache_sync() {
                                                                               \
     /* TST, NEG, CMP, CMN */                                                  \
     case 0x42:                                                                \
-      thumb_flag_modifies_all();                                              \
+      if(((opcode >> 6) & 0x03) == 0)                                         \
+      {                                                                       \
+        /* TST changes N/Z and preserves C/V. */                              \
+        thumb_flag_modifies_zn();                                             \
+      }                                                                       \
+      else                                                                    \
+      {                                                                       \
+        thumb_flag_modifies_all();                                            \
+      }                                                                       \
       break;                                                                  \
                                                                               \
     /* ORR, MUL, BIC, MVN */                                                  \
     case 0x43:                                                                \
       thumb_flag_modifies_zn();                                               \
+      break;                                                                  \
+                                                                              \
+    case 0x44:                                                                \
+      /* ADD pc,rs exits before any scanned fallthrough can publish flags. */ \
+      if((opcode & 0xFF87) == 0x4487)                                         \
+        thumb_flag_requires_all();                                            \
       break;                                                                  \
                                                                               \
     case 0x45:                                                                \
@@ -2785,6 +2945,7 @@ void translate_icache_sync() {
       thumb_flag_requires_all();                                              \
       break;                                                                  \
   }                                                                           \
+  thumb_backend_mark_runtime_boundary();                                     \
   block_data[block_data_position].flag_data = flag_status;                    \
 }                                                                             \
 
@@ -3136,15 +3297,23 @@ enum
       block_data[block_data_position].condition |= 0x20;                      \
     break;                                                                    \
   }                                                                           \
+  arm_backend_mark_condition_boundary();                                     \
 
 #define arm_instruction_width 4
 
+#if defined(RISCV_ARCH)
+#define arm_base_cycles()                                                     \
+  riscv_arm_base_cycles()                                                     \
+
+#else
 #define arm_base_cycles()                                                     \
   cycle_count += def_seq_cycles[pc >> 24][1]                                  \
 
+#endif
+
 // The following Thumb instructions can exit:
-// b, bl, bx, swi, pop {... pc}, and mov pc, ..., the latter being a hireg
-// op only. Rather simpler to identify than the ARM set.
+// b, bl, bx, swi, pop {... pc}, and high-register add/mov to pc. Rather
+// simpler to identify than the ARM set.
 
 #define thumb_exit_point                                                      \
   (((opcode >= 0xD000) && (opcode < 0xDF00)) ||                               \
@@ -3153,6 +3322,7 @@ enum
    ((opcode >= 0xE000) && (opcode < 0xE800)) ||                               \
    ((opcode & 0xFF00) == 0x4700) ||                                           \
    ((opcode & 0xFF00) == 0xBD00) ||                                           \
+   ((opcode & 0xFF87) == 0x4487) ||                                           \
    ((opcode & 0xFF87) == 0x4687) ||                                           \
    ((opcode >= 0xF800)))                                                      \
 
@@ -3186,7 +3356,8 @@ enum
   }                                                                           \
   else                                                                        \
   {                                                                           \
-    if((last_opcode >= 0xF000) && (last_opcode < 0xF800))                     \
+    if((last_opcode >= 0xF000) && (last_opcode < 0xF800) &&                   \
+       thumb_scan_bl_pair_allowed(block_end_pc - 2u))                         \
     {                                                                         \
       branch_target =                                                         \
        (block_end_pc + ((s32)((last_opcode & 0x07FF) << 21) >> 9) +           \
@@ -3199,6 +3370,23 @@ enum
   }                                                                           \
 
 #if defined(RISCV_ARCH)
+
+#define thumb_backend_mark_runtime_boundary()                                \
+  do                                                                          \
+  {                                                                           \
+    u32 thumb_backend_hi = opcode >> 8;                                      \
+    bool thumb_backend_store =                                               \
+      ((thumb_backend_hi >= 0x50u && thumb_backend_hi <= 0x5fu) &&          \
+       (((opcode >> 9) & 7u) < 3u)) ||                                      \
+      (thumb_backend_hi >= 0x60u && thumb_backend_hi <= 0x67u) ||           \
+      (thumb_backend_hi >= 0x70u && thumb_backend_hi <= 0x77u) ||           \
+      (thumb_backend_hi >= 0x80u && thumb_backend_hi <= 0x87u) ||           \
+      (thumb_backend_hi >= 0x90u && thumb_backend_hi <= 0x97u) ||           \
+      thumb_backend_hi == 0xb4u || thumb_backend_hi == 0xb5u ||             \
+      (thumb_backend_hi >= 0xc0u && thumb_backend_hi <= 0xc7u);             \
+    if(thumb_backend_store)                                                   \
+      flag_status |= 0x0f00u;                                                \
+  } while(0)
 
 #define thumb_pc_base_status()                                                \
   do                                                                          \
@@ -3233,6 +3421,8 @@ enum
   } while(0)
 
 #else
+
+#define thumb_backend_mark_runtime_boundary()
 
 #define thumb_pc_base_status()                                                \
 
@@ -3361,7 +3551,10 @@ u32 rv32im_frontend_control_get_update_slot(u32 index)
         __label__ no_direct_branch;                                           \
         type##_branch_target();                                               \
         block_exits[block_exit_position].branch_target = branch_target;       \
+        block_exits[block_exit_position].branch_source = NULL;                \
         block_exits[block_exit_position].branch_patch_short = 0;              \
+        type##_scan_record_direct_exit(                                       \
+          block_exits[block_exit_position]);                                  \
         block_exit_position++;                                                \
                                                                               \
         /* Give the branch target macro somewhere to bail if it turns out to  \
@@ -3374,7 +3567,9 @@ u32 rv32im_frontend_control_get_update_slot(u32 index)
       if(type##_opcode_swi)                                                   \
       {                                                                       \
         block_exits[block_exit_position].branch_target = 0x00000008;          \
+        block_exits[block_exit_position].branch_source = NULL;                \
         block_exits[block_exit_position].branch_patch_short = 0;              \
+        scan_record_swi_exit(block_exits[block_exit_position]);               \
         block_exit_position++;                                                \
       }                                                                       \
                                                                               \
@@ -3520,8 +3715,14 @@ bool translate_block_arm(u32 pc, bool ram_region)
     if((branch_target > block_start_pc) &&
      (branch_target < block_end_pc))
     {
-      block_data[(branch_target - block_start_pc) /
-       arm_instruction_width].update_cycles = 1;
+      u32 target_index = (branch_target - block_start_pc) /
+       arm_instruction_width;
+      block_data[target_index].update_cycles = 1;
+#if defined(RISCV_ARCH)
+      /* This checkpoint may call update_gba before the target executes, so
+         the predecessor's flags remain architecturally observable. */
+      block_data[target_index].flag_data |= 0x0f00u;
+#endif
     }
   }
 
@@ -3571,7 +3772,9 @@ bool translate_block_arm(u32 pc, bool ram_region)
         block_data[block_data_position].update_cycles)
     {
 #if defined(RISCV_ARCH)
+      arm_backend_cycle_update_join();
       riscv_arm_const_mask = 0;
+      riscv_arm_clear_known_flags();
 #endif
       generate_cycle_update();
     }
@@ -3581,6 +3784,13 @@ bool translate_block_arm(u32 pc, bool ram_region)
   if ((last_condition & 0x0F) != 0x0E) {
     arm_backend_close_conditional_block(backpatch_address, translation_ptr);
   }
+
+#if defined(RISCV_ARCH)
+  /* A fixed-size/gated block can end after constant folding removed its last
+     ARM body.  No terminal emitter remains to publish the accumulated fetch
+     debit, so emit the block-end scheduler checkpoint explicitly. */
+  generate_cycle_update();
+#endif
 
   /* Unconditionally generate translation targets. In case we hit one or
      in the unlikely case that block was too big (and not finalized) */
@@ -3596,6 +3806,13 @@ bool translate_block_arm(u32 pc, bool ram_region)
 
   for(i = 0; i < block_exit_position; i++)
   {
+#if defined(RISCV_ARCH)
+    /* A compile-time-false ARM exit consumes its scan slot to keep the two
+       passes aligned, but has no patch site and must not recursively translate
+       an unreachable external target. */
+    if(block_exits[i].branch_source == NULL)
+      continue;
+#endif
     branch_target = block_exits[i].branch_target;
 
     if((branch_target >= block_start_pc) && (branch_target < block_end_pc))
@@ -3691,6 +3908,7 @@ bool translate_block_thumb(u32 pc, bool ram_region)
    */
   u32 block_pc_base_load_count = RISCV_PC_BASE_INITIAL_LOAD_COUNT;
   bool block_needs_pc_base = false;
+  u32 riscv_scanned_block_exit_count = 0;
 #endif
   generate_block_extra_vars_thumb();
   thumb_fix_pc();
@@ -3734,6 +3952,10 @@ bool translate_block_thumb(u32 pc, bool ram_region)
     scan_block(thumb, no);
   }
 
+#if defined(RISCV_ARCH)
+  riscv_scanned_block_exit_count = block_exit_position;
+#endif
+
   for(i = 0; i < block_exit_position; i++)
   {
     branch_target = block_exits[i].branch_target;
@@ -3741,8 +3963,12 @@ bool translate_block_thumb(u32 pc, bool ram_region)
     if((branch_target > block_start_pc) &&
      (branch_target < block_end_pc))
     {
-      block_data[(branch_target - block_start_pc) /
-       thumb_instruction_width].update_cycles = 1;
+      u32 target_index = (branch_target - block_start_pc) /
+       thumb_instruction_width;
+      block_data[target_index].update_cycles = 1;
+#if defined(RISCV_ARCH)
+      block_data[target_index].flag_data |= 0x0f00u;
+#endif
     }
   }
 
@@ -3798,6 +4024,13 @@ bool translate_block_thumb(u32 pc, bool ram_region)
     }
   }
 
+#if defined(RISCV_ARCH)
+  /* Thumb ALU fast paths intentionally accumulate cycles.  When scanning
+     stops at a size or translation-gate boundary rather than an exit, flush
+     that residual debit before the generic fallthrough helper. */
+  generate_cycle_update();
+#endif
+
   /* Unconditionally generate translation targets. In case we hit one or
      in the unlikely case that block was too big (and not finalized) */
   generate_translation_gate(thumb);
@@ -3812,6 +4045,13 @@ bool translate_block_thumb(u32 pc, bool ram_region)
 
   for(i = 0; i < block_exit_position; i++)
   {
+#if defined(RISCV_ARCH)
+    /* A Thumb BL pair returns through the dispatcher and therefore consumes
+       its scan exit slot without leaving an in-cache patch site.  Do not
+       recursively translate its otherwise-unused target. */
+    if(block_exits[i].branch_source == NULL)
+      continue;
+#endif
     branch_target = block_exits[i].branch_target;
 
     if((branch_target >= block_start_pc) && (branch_target < block_end_pc))

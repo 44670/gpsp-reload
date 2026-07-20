@@ -23,6 +23,9 @@ FRONTEND_CONTROL_JIT := rv32im_frontend_control_jit
 FRONTEND_CONTROL_DISPATCH := rv32im_frontend_control_dispatch
 FRONTEND_CONTROL_INTERP := rv32im_frontend_control_interp
 FRONTEND_CACHE_JIT := rv32im_frontend_cache_jit
+BIOS_JIT_AUDIT := rv32im_bios_jit_audit
+BIOS_SWI_JIT := rv32im_bios_swi_jit
+BIOS_SWI_INTERP := rv32im_bios_swi_interp
 BACKEND_COMPARE_RV32 := rv32im_backend_compare
 BACKEND_LOOKUP_BASELINE_RV32 := rv32im_backend_compare_lookup_baseline
 BACKEND_COMPARE_MIPS := mips_backend_compare
@@ -56,6 +59,16 @@ P_GBA_DIALOGUE_ARGS := \
 	--button-event b 2450 2
 P_GBA_DIALOGUE_JIT_LOG := $(OUT_DIR)/p_gba_dialogue_jit.log
 P_GBA_DIALOGUE_INTERP_LOG := $(OUT_DIR)/p_gba_dialogue_interp.log
+P_GBA_GAMEPLAY_FRAMES ?= 24000
+P_GBA_GAMEPLAY_TIMEOUT_SECONDS ?= 180
+P_GBA_GAMEPLAY_CALLBACK ?= 0x080857c5
+P_GBA_GAMEPLAY_HASH ?= 0x76c2451a
+P_GBA_GAMEPLAY_ARGS := \
+	--auto-a-until-callback $(P_GBA_GAMEPLAY_CALLBACK) 2250
+P_GBA_GAMEPLAY_JIT_LOG := $(OUT_DIR)/p_gba_gameplay_jit.log
+P_GBA_GAMEPLAY_INTERP_LOG := $(OUT_DIR)/p_gba_gameplay_interp.log
+P_GBA_GAMEPLAY_JIT_PPM := $(OUT_DIR)/p_gba_gameplay_jit.ppm
+P_GBA_GAMEPLAY_INTERP_PPM := $(OUT_DIR)/p_gba_gameplay_interp.ppm
 SMOKE_PNG := $(OUT_DIR)/rv32im_harness.png
 SMOKE_RUNTIME_PNG := $(OUT_DIR)/rv32im_harness_runtime.png
 SMOKE_PNG_SIG := $(OUT_DIR)/png_signature.bin
@@ -72,6 +85,10 @@ FRONTEND_CONTROL_DISPATCH_LOG := $(OUT_DIR)/rv32im_frontend_control_dispatch.log
 FRONTEND_CONTROL_INTERP_LOG := $(OUT_DIR)/rv32im_frontend_control_interp.log
 FRONTEND_CONTROL_COMPARE_LOG := $(OUT_DIR)/rv32im_frontend_control_compare.log
 FRONTEND_CACHE_JIT_LOG := $(OUT_DIR)/rv32im_frontend_cache_jit.log
+BIOS_JIT_AUDIT_LOG := $(OUT_DIR)/rv32im_bios_jit_audit.log
+BIOS_SWI_JIT_LOG := $(OUT_DIR)/rv32im_bios_swi_jit.log
+BIOS_SWI_INTERP_LOG := $(OUT_DIR)/rv32im_bios_swi_interp.log
+BIOS_SWI_COMPARE_LOG := $(OUT_DIR)/rv32im_bios_swi_compare.log
 BACKEND_COMPARE_RV32_LOG := $(OUT_DIR)/rv32im_backend_compare.log
 BACKEND_COMPARE_MIPS_LOG := $(OUT_DIR)/mips_backend_compare.log
 BACKEND_COMPARE_RV32_COUNTS := $(OUT_DIR)/rv32im_backend_compare_counts.log
@@ -224,6 +241,8 @@ BACKEND_LOOKUP_GAP_MIN_CLOSURE_PERCENT_X100 ?= 1000
 BACKEND_LOOKUP_COLD_REGRESSION_MAX_PERCENT_X100 ?= 600
 BACKEND_COMPARE_TIMEOUT_SECONDS := 30
 ARMWRESTLER_ROM := /home/john/ref/armwrestler-gba-fixed/armwrestler-gba-fixed.gba
+OPEN_GBA_BIOS := $(abspath $(ROOT)/bios/open_gba_bios.bin)
+OPEN_GBA_BIOS_SHA256 := 661a9afb93624f2c5e77d07dab137bd8d23cff79e8639c62fe621b49bb064749
 ARMWRESTLER_PERF_BASELINE_SPEC := rv32im_armwrestler_perf_baseline.txt
 ARMWRESTLER_PERF_BENCHMARK_ID := rv32im-armwrestler-fast-ram-v2
 ARMWRESTLER_PERF_EXPECTED_ROM_SHA256 := 9f08d807c03ef296d38ef73e9b827a3d8c77cead9ced44b07d64c10f5f7d0746
@@ -263,16 +282,16 @@ ARMWRESTLER_VALIDATED_ENTRY_PERF_THUMB_WARM_MIN_REDUCTION_INSNS ?= 100
 # These exact totals include eight-byte internal-edge patch slots.  A hot edge
 # still executes one JAL, while an out-of-range edge can be repatched to
 # AUIPC/JALR instead of wrapping the signed JAL displacement.
-ARMWRESTLER_ARM0_CODE_BYTES_MAX ?= 14444
-ARMWRESTLER_ARM1_CODE_BYTES_MAX ?= 13620
-ARMWRESTLER_ARM2_CODE_BYTES_MAX ?= 22280
-ARMWRESTLER_ARM3_CODE_BYTES_MAX ?= 13388
-ARMWRESTLER_ARM4_CODE_BYTES_MAX ?= 30764
-ARMWRESTLER_THUMB0_CODE_BYTES_MAX ?= 24464
-ARMWRESTLER_THUMB1_CODE_BYTES_MAX ?= 11040
-ARMWRESTLER_THUMB2_CODE_BYTES_MAX ?= 9200
-ARMWRESTLER_ARM_CODE_BYTES_MAX ?= 94496
-ARMWRESTLER_THUMB_CODE_BYTES_MAX ?= 44704
+ARMWRESTLER_ARM0_CODE_BYTES_MAX ?= 14488
+ARMWRESTLER_ARM1_CODE_BYTES_MAX ?= 13664
+ARMWRESTLER_ARM2_CODE_BYTES_MAX ?= 22324
+ARMWRESTLER_ARM3_CODE_BYTES_MAX ?= 13432
+ARMWRESTLER_ARM4_CODE_BYTES_MAX ?= 34400
+ARMWRESTLER_THUMB0_CODE_BYTES_MAX ?= 26248
+ARMWRESTLER_THUMB1_CODE_BYTES_MAX ?= 11044
+ARMWRESTLER_THUMB2_CODE_BYTES_MAX ?= 9272
+ARMWRESTLER_ARM_CODE_BYTES_MAX ?= 98308
+ARMWRESTLER_THUMB_CODE_BYTES_MAX ?= 46564
 ARMWRESTLER_THUMB_HELPERS_MAX ?= 0
 PERF_MAPPED_ALU_BASELINE_WARM_EXEC_INSNS := 169890
 PERF_MAPPED_ALU_BASELINE_BYTES := 3760
@@ -539,17 +558,65 @@ p-gba-dialogue: $(FULL_RUNNER)
 			exit 1; \
 		fi; \
 		if ! grep -q "frame_hash=$(P_GBA_DIALOGUE_HASH)" "$$log" || \
-		   ! grep -q 'input_events=3 input_event_active_frames=6' "$$log"; then \
+		   ! grep -Eq 'input_events=3 .*input_event_active_frames=6' "$$log"; then \
 			echo "result=FAIL command=p-gba-dialogue backend=$$backend reason=dialogue_checkpoint_mismatch expected_hash=$(P_GBA_DIALOGUE_HASH)"; \
 			exit 1; \
 		fi; \
 	done; \
-	if ! grep -Eq 'native_blocks=[1-9][0-9]* .*fallbacks=0 ' \
+	if ! grep -Eq 'native_blocks=[1-9][0-9]* bios_native_blocks=[1-9][0-9]* .*bios_blocks_emitted=[1-9][0-9]* bios_fallbacks=0 .*fallbacks=0 ' \
 		$(P_GBA_DIALOGUE_JIT_LOG); then \
-		echo "result=FAIL command=p-gba-dialogue backend=rv32im reason=missing_native_evidence"; \
+		echo "result=FAIL command=p-gba-dialogue backend=rv32im reason=missing_native_or_bios_jit_evidence"; \
 		exit 1; \
 	fi; \
 	echo "result=PASS command=p-gba-dialogue hash=$(P_GBA_DIALOGUE_HASH) input_events=3 interpreter_match=1 native_match=1"
+
+p-gba-gameplay: $(FULL_RUNNER)
+	@rom="$(P_GBA)"; \
+	if test -z "$$rom"; then \
+		echo "result=FAIL command=p-gba-gameplay reason=missing_rom_argument hint='set P_GBA=/path/to/p.gba'"; \
+		exit 2; \
+	fi; \
+	if ! test -f "$$rom"; then \
+		echo "result=FAIL command=p-gba-gameplay reason=rom_not_found path=$$rom"; \
+		exit 2; \
+	fi; \
+	for backend in rv32im interp; do \
+		if test "$$backend" = rv32im; then \
+			log="$(P_GBA_GAMEPLAY_JIT_LOG)"; \
+			ppm="$(P_GBA_GAMEPLAY_JIT_PPM)"; \
+		else \
+			log="$(P_GBA_GAMEPLAY_INTERP_LOG)"; \
+			ppm="$(P_GBA_GAMEPLAY_INTERP_PPM)"; \
+		fi; \
+		timeout --signal=TERM --kill-after=5s \
+			$(P_GBA_GAMEPLAY_TIMEOUT_SECONDS)s \
+			$(QEMU_RISCV32) ./$(FULL_RUNNER) --rom "$$rom" \
+			--frames $(P_GBA_GAMEPLAY_FRAMES) --backend "$$backend" \
+			$(P_GBA_GAMEPLAY_ARGS) --ppm "$$ppm" > "$$log"; \
+		rc=$$?; \
+		cat "$$log"; \
+		if test $$rc -ne 0; then \
+			echo "result=FAIL command=p-gba-gameplay backend=$$backend reason=qemu_runner_failed exit_code=$$rc"; \
+			exit $$rc; \
+		fi; \
+		if ! grep -q "^result=PASS command=p-gba backend=$$backend harness_mode=full_gpSP " "$$log"; then \
+			echo "result=FAIL command=p-gba-gameplay backend=$$backend reason=missing_pass_summary"; \
+			exit 1; \
+		fi; \
+		if ! grep -q 'frame_hash=$(P_GBA_GAMEPLAY_HASH)' "$$log" || \
+		   ! grep -Eq 'main_callback2=$(P_GBA_GAMEPLAY_CALLBACK) input_events=0 auto_a_reached_frame=[0-9]+ input_event_active_frames=0' "$$log" || \
+		   grep -q 'auto_a_reached_frame=4294967295' "$$log"; then \
+			echo "result=FAIL command=p-gba-gameplay backend=$$backend reason=gameplay_checkpoint_mismatch expected_callback=$(P_GBA_GAMEPLAY_CALLBACK) expected_hash=$(P_GBA_GAMEPLAY_HASH)"; \
+			exit 1; \
+		fi; \
+	done; \
+	cmp $(P_GBA_GAMEPLAY_JIT_PPM) $(P_GBA_GAMEPLAY_INTERP_PPM); \
+	if ! grep -Eq 'native_blocks=[1-9][0-9]* bios_native_blocks=[1-9][0-9]* .*bios_blocks_emitted=[1-9][0-9]* bios_fallbacks=0 .*fallbacks=0 ' \
+		$(P_GBA_GAMEPLAY_JIT_LOG); then \
+		echo "result=FAIL command=p-gba-gameplay reason=missing_native_or_bios_jit_evidence"; \
+		exit 1; \
+	fi; \
+	echo "result=PASS command=p-gba-gameplay callback=$(P_GBA_GAMEPLAY_CALLBACK) hash=$(P_GBA_GAMEPLAY_HASH) framebuffer_match=1 bios_jit=1 native=1 fallbacks=0"
 
 $(HARNESS): rv32im_harness.c $(ROOT)/riscv/riscv_runtime.c \
 		$(ROOT)/riscv/riscv_emit.h $(ROOT)/riscv/riscv_codegen.h \
@@ -949,6 +1016,50 @@ $(FRONTEND_CACHE_JIT): rv32im_armwrestler.c rv32im_frontend_shim.h \
 		-o $@ rv32im_armwrestler.c $(ROOT)/cpu_threaded.c \
 		$(ROOT)/riscv/riscv_runtime.c
 
+$(BIOS_JIT_AUDIT): rv32im_armwrestler.c rv32im_frontend_shim.h \
+		$(OPEN_GBA_BIOS) $(ROOT)/cpu_threaded.c \
+		$(ROOT)/riscv/riscv_runtime.c $(ROOT)/riscv/riscv_emit.h \
+		$(ROOT)/riscv/riscv_codegen.h \
+		$(ROOT)/riscv/riscv_runtime_test_shim.h
+	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) \
+		-DRISCV_RUNTIME_STANDALONE_TEST -DHAVE_DYNAREC -DRISCV_ARCH \
+		-DMMAP_JIT_CACHE -DRV32IM_BIOS_JIT_AUDIT_ONLY \
+		-DOPEN_GBA_BIOS=\"$(OPEN_GBA_BIOS)\" \
+		-DRISCV_RUNTIME_ENABLE_FAST_RAM_READS \
+		-DRISCV_RUNTIME_ENABLE_FAST_RAM_STORES \
+		-I. -I$(ROOT) -I$(ROOT)/riscv \
+		-include rv32im_frontend_shim.h \
+		-o $@ rv32im_armwrestler.c $(ROOT)/cpu_threaded.c \
+		$(ROOT)/riscv/riscv_runtime.c
+
+$(BIOS_SWI_JIT): rv32im_armwrestler.c rv32im_bios_swi_cases.h \
+		rv32im_frontend_shim.h $(OPEN_GBA_BIOS) \
+		$(ROOT)/cpu_threaded.c $(ROOT)/riscv/riscv_runtime.c \
+		$(ROOT)/riscv/riscv_emit.h $(ROOT)/riscv/riscv_codegen.h \
+		$(ROOT)/riscv/riscv_runtime_test_shim.h
+	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) \
+		-DRISCV_RUNTIME_STANDALONE_TEST -DHAVE_DYNAREC -DRISCV_ARCH \
+		-DMMAP_JIT_CACHE -DRV32IM_BIOS_SWI_ONLY \
+		-DOPEN_GBA_BIOS=\"$(OPEN_GBA_BIOS)\" \
+		-DRISCV_RUNTIME_TEST_POISON_MAPPED_REGS \
+		-DRISCV_RUNTIME_ENABLE_FAST_RAM_READS \
+		-DRISCV_RUNTIME_ENABLE_FAST_RAM_STORES \
+		-I. -I$(ROOT) -I$(ROOT)/riscv \
+		-include rv32im_frontend_shim.h \
+		-o $@ rv32im_armwrestler.c $(ROOT)/cpu_threaded.c \
+		$(ROOT)/riscv/riscv_runtime.c
+
+$(BIOS_SWI_INTERP): rv32im_armwrestler_interp.cc \
+		rv32im_bios_swi_cases.h $(OPEN_GBA_BIOS) \
+		$(ROOT)/cpu.cc $(ROOT)/cpu.h $(ROOT)/gba_memory.h $(ROOT)/common.h
+	$(HOST_CXX) -std=c++11 -O2 -Wall -Wextra \
+		-DRV32IM_BIOS_SWI_ONLY \
+		-DOPEN_GBA_BIOS=\"$(OPEN_GBA_BIOS)\" \
+		-DHAVE_STRINGS_H -DHAVE_STDINT_H -DHAVE_INTTYPES_H \
+		-I$(ROOT) -I$(ROOT)/libretro \
+		-I$(ROOT)/libretro/libretro-common/include \
+		-o $@ rv32im_armwrestler_interp.cc $(ROOT)/cpu.cc
+
 $(BACKEND_COMPARE_RV32): rv32im_backend_compare.c \
 		backend_compare_frontend_shim.h $(ROOT)/cpu_threaded.c \
 		$(ROOT)/riscv/riscv_runtime.c $(ROOT)/riscv/riscv_emit.h \
@@ -1092,7 +1203,7 @@ frontend-control: $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CONTROL_JIT) \
 	cat $(FRONTEND_CONTROL_JIT_LOG)
 	timeout 20s $(QEMU_RISCV32) ./$(FRONTEND_CONTROL_DISPATCH) > $(FRONTEND_CONTROL_DISPATCH_LOG)
 	cat $(FRONTEND_CONTROL_DISPATCH_LOG)
-	awk -v expected_cases=19 -f rv32im_frontend_control_compare.awk \
+	awk -v expected_cases=69 -f rv32im_frontend_control_compare.awk \
 		$(FRONTEND_CONTROL_INTERP_LOG) $(FRONTEND_CONTROL_JIT_LOG) \
 		$(FRONTEND_CONTROL_DISPATCH_LOG) \
 		> $(FRONTEND_CONTROL_COMPARE_LOG)
@@ -1102,6 +1213,33 @@ frontend-cache: $(FRONTEND_CACHE_JIT) | $(OUT_DIR)
 	timeout 30s $(QEMU_RISCV32) ./$(FRONTEND_CACHE_JIT) \
 		> $(FRONTEND_CACHE_JIT_LOG)
 	cat $(FRONTEND_CACHE_JIT_LOG)
+
+bios-jit-audit: $(BIOS_JIT_AUDIT) | $(OUT_DIR)
+	@bios_sha=`sha256sum $(OPEN_GBA_BIOS) | awk '{ print $$1 }'`; \
+	if test "$$bios_sha" != "$(OPEN_GBA_BIOS_SHA256)"; then \
+		echo "result=FAIL command=bios-jit-audit bios_sha256=$$bios_sha expected_bios_sha256=$(OPEN_GBA_BIOS_SHA256) reason=bios_changed"; \
+		exit 1; \
+	fi
+	timeout 30s $(QEMU_RISCV32) ./$(BIOS_JIT_AUDIT) \
+		> $(BIOS_JIT_AUDIT_LOG)
+	cat $(BIOS_JIT_AUDIT_LOG)
+	grep -Eq 'result=PASS command=bios-jit-audit .*invalid_table_entries=0 missing_roots=0 unsupported_roots=0 .*fallbacks=0 bios_fallbacks=0 ' $(BIOS_JIT_AUDIT_LOG)
+
+bios-swi: $(BIOS_SWI_INTERP) $(BIOS_SWI_JIT) \
+		rv32im_bios_swi_compare.awk | $(OUT_DIR)
+	@bios_sha=`sha256sum $(OPEN_GBA_BIOS) | awk '{ print $$1 }'`; \
+	if test "$$bios_sha" != "$(OPEN_GBA_BIOS_SHA256)"; then \
+		echo "result=FAIL command=bios-swi bios_sha256=$$bios_sha expected_bios_sha256=$(OPEN_GBA_BIOS_SHA256) reason=bios_changed"; \
+		exit 1; \
+	fi
+	timeout 30s ./$(BIOS_SWI_INTERP) > $(BIOS_SWI_INTERP_LOG)
+	cat $(BIOS_SWI_INTERP_LOG)
+	timeout 30s $(QEMU_RISCV32) ./$(BIOS_SWI_JIT) > $(BIOS_SWI_JIT_LOG)
+	cat $(BIOS_SWI_JIT_LOG)
+	awk -v expected_cases=23 -f rv32im_bios_swi_compare.awk \
+		$(BIOS_SWI_INTERP_LOG) $(BIOS_SWI_JIT_LOG) \
+		> $(BIOS_SWI_COMPARE_LOG)
+	cat $(BIOS_SWI_COMPARE_LOG)
 
 core-build:
 	$(MAKE) -C $(ROOT) $(CORE_BUILD_FLAGS) $(CORE_BUILD_TARGET)
@@ -2197,10 +2335,10 @@ perf: perf-env-check $(PERF_TEST) $(PERF_BASELINE_TEST) $(MAPPED_ALU_INTERP) | $
 	awk -f rv32im_mapped_alu_parity.awk \
 		$(MAPPED_ALU_INTERP_LOG) $(MAPPED_ALU_JIT_LOG)
 
-test: codegen abi exec runtime control-flow lookup-control-flow perf frontend frontend-control frontend-cache backend-compare gba-memory-diff core-build rejects compare mixed smoke
+test: codegen abi exec runtime control-flow lookup-control-flow perf frontend frontend-control frontend-cache bios-jit-audit bios-swi backend-compare gba-memory-diff core-build rejects compare mixed smoke
 
 clean:
-	rm -f $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_STATE_CONTRACT) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_STORE_PERF_BASELINE) $(ARMWRESTLER_STORE_PERF_OPTIMIZED) $(ARMWRESTLER_ENTRY_PERF_BASELINE) $(ARMWRESTLER_ENTRY_PERF_OPTIMIZED) $(ARMWRESTLER_STATE_HELPER_PERF_BASELINE) $(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED) $(ARMWRESTLER_VALIDATED_ENTRY_PERF_BASELINE) $(ARMWRESTLER_VALIDATED_ENTRY_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(FRONTEND_CONTROL_JIT) $(FRONTEND_CONTROL_DISPATCH) $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CACHE_JIT) $(BACKEND_COMPARE_RV32) $(BACKEND_COMPARE_MIPS) $(GBA_MEMORY_DIFF_RV32) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(CONTROL_FLOW_TEST) $(LOOKUP_CONTROL_FLOW_TEST) $(MAPPED_ALU_INTERP)
+	rm -f $(HARNESS) $(CODEGEN) $(ARMWRESTLER) $(ARMWRESTLER_STATE_CONTRACT) $(ARMWRESTLER_PERF_BASELINE) $(ARMWRESTLER_PERF_OPTIMIZED) $(ARMWRESTLER_STORE_PERF_BASELINE) $(ARMWRESTLER_STORE_PERF_OPTIMIZED) $(ARMWRESTLER_ENTRY_PERF_BASELINE) $(ARMWRESTLER_ENTRY_PERF_OPTIMIZED) $(ARMWRESTLER_STATE_HELPER_PERF_BASELINE) $(ARMWRESTLER_STATE_HELPER_PERF_OPTIMIZED) $(ARMWRESTLER_VALIDATED_ENTRY_PERF_BASELINE) $(ARMWRESTLER_VALIDATED_ENTRY_PERF_OPTIMIZED) $(ARMWRESTLER_INTERP) $(FRONTEND_CONTROL_JIT) $(FRONTEND_CONTROL_DISPATCH) $(FRONTEND_CONTROL_INTERP) $(FRONTEND_CACHE_JIT) $(BIOS_JIT_AUDIT) $(BIOS_SWI_JIT) $(BIOS_SWI_INTERP) $(BACKEND_COMPARE_RV32) $(BACKEND_COMPARE_MIPS) $(GBA_MEMORY_DIFF_RV32) $(ABI_TEST) $(EXEC_TEST) $(RUNTIME_TEST) $(PERF_TEST) $(PERF_BASELINE_TEST) $(CONTROL_FLOW_TEST) $(LOOKUP_CONTROL_FLOW_TEST) $(MAPPED_ALU_INTERP)
 	rm -rf $(OUT_DIR)
 
-.PHONY: all full-runner-toolchain-check p-gba p-gba-dialogue codegen abi exec runtime control-flow lookup-control-flow perf perf-env-check frontend frontend-control frontend-cache backend-compare backend-compare-env-check gba-memory-diff core-build smoke compare mixed rejects armwrestler-jit armwrestler-state-contract armwrestler-interp armwrestler-perf armwrestler-store-perf armwrestler-entry-perf armwrestler-state-helper-perf armwrestler-validated-entry-perf armwrestler armwrestler-report test clean
+.PHONY: all full-runner-toolchain-check p-gba p-gba-dialogue p-gba-gameplay codegen abi exec runtime control-flow lookup-control-flow perf perf-env-check frontend frontend-control frontend-cache bios-jit-audit bios-swi backend-compare backend-compare-env-check gba-memory-diff core-build smoke compare mixed rejects armwrestler-jit armwrestler-state-contract armwrestler-interp armwrestler-perf armwrestler-store-perf armwrestler-entry-perf armwrestler-state-helper-perf armwrestler-validated-entry-perf armwrestler armwrestler-report test clean

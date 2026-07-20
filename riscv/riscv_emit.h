@@ -43,6 +43,11 @@ typedef struct riscv_runtime_stats
 {
   u32 blocks_emitted;
   u32 blocks_executed;
+  /* BIOS execution is reported separately so a run cannot satisfy the native
+   * evidence gate using ROM blocks while silently interpreting SWI/IRQ code. */
+  u32 bios_native_blocks_emitted;
+  u32 bios_native_blocks_executed;
+  u32 bios_interpreter_fallbacks;
   u32 interpreter_fallbacks;
   u32 initial_lookup_fallbacks;
   u32 relookup_fallbacks;
@@ -113,6 +118,7 @@ void riscv_emit_block_finalize(riscv_jit_block_meta *meta,
                                bool thumb_mode);
 void riscv_mark_block_unsupported(riscv_jit_block_meta *meta);
 void riscv_mark_block_no_fallthrough(riscv_jit_block_meta *meta);
+bool riscv_block_is_native_supported(const riscv_jit_block_meta *meta);
 bool riscv_emit_native_arm_data_proc(u8 **translation_ptr,
                                      riscv_jit_block_meta *meta,
                                      u32 opcode,
@@ -401,6 +407,10 @@ bool riscv_emit_native_thumb_bl_pair(u8 **translation_ptr,
                                      u32 second_opcode,
                                      u32 pc,
                                      u32 cycles);
+bool riscv_emit_native_thumb_bl_prefix(u8 **translation_ptr,
+                                       riscv_jit_block_meta *meta,
+                                       u32 opcode,
+                                       u32 pc);
 bool riscv_emit_native_thumb_blh(u8 **translation_ptr,
                                  riscv_jit_block_meta *meta,
                                  u32 opcode,
@@ -513,6 +523,9 @@ void riscv_get_runtime_debug_arm_probe(riscv_runtime_debug_arm_probe *probe);
 void riscv_emit_debug_arm_instruction_probe(u8 **translation_ptr, u32 pc);
 void riscv_emit_arm_conditional_block_close(u8 **translation_ptr,
                                             u8 *branch_source);
+void riscv_emit_arm_conditional_block_close_cycles(u8 **translation_ptr,
+                                                   u8 *branch_source,
+                                                   u32 cycles);
 void riscv_arm_const_update_data_proc(u32 opcode, u32 pc, u32 condition,
                                       u32 *const_mask, u32 *const_values);
 bool riscv_arm_const_data_proc_test_flags(u32 opcode, u32 pc,
@@ -528,7 +541,7 @@ bool riscv_arm_const_data_proc_flags(u32 opcode, u32 pc, u32 const_mask,
                                      u32 *flags_out);
 bool riscv_arm_const_condition_passed(u32 flag_mask, u32 flags,
                                       u32 condition, bool *passed_out);
-void riscv_arm_const_update_access_memory(u32 opcode, u32 pc,
+void riscv_arm_const_update_access_memory(u32 opcode, u32 pc, u32 condition,
                                           u32 *const_mask,
                                           u32 *const_values);
 void riscv_arm_const_update_block_memory(u32 opcode, u32 *const_mask);
@@ -551,6 +564,8 @@ void riscv_thumb_const_update(u32 opcode,
   u32 riscv_arm_const_values[16];                                             \
   u32 riscv_arm_known_flag_mask = 0;                                          \
   u32 riscv_arm_known_flags = 0;                                              \
+  u32 riscv_arm_prepaid_base_instructions = 0;                                \
+  u32 riscv_arm_conditional_deferred_cycles = 0;                              \
   bool riscv_arm_skip_instruction = false
 
 #define generate_block_extra_vars_arm()                                       \
@@ -566,6 +581,8 @@ void riscv_thumb_const_update(u32 opcode,
     (void)riscv_arm_const_values;                                             \
     (void)riscv_arm_known_flag_mask;                                          \
     (void)riscv_arm_known_flags;                                              \
+    (void)riscv_arm_prepaid_base_instructions;                                \
+    (void)riscv_arm_conditional_deferred_cycles;                              \
     (void)riscv_arm_skip_instruction;                                         \
     riscv_emit_block_prologue(&translation_ptr, &riscv_block_meta);           \
     if (block_needs_pc_base)                                                  \
@@ -620,9 +637,18 @@ void riscv_thumb_const_update(u32 opcode,
 #define riscv_block_kind_thumb true
 
 #define generate_translation_gate(type)                                       \
-  riscv_emit_block_finalize(riscv_block_meta, &translation_ptr,              \
-                            block_start_pc, block_end_pc,                    \
-                            riscv_block_kind_##type)
+  do                                                                          \
+  {                                                                           \
+    riscv_emit_block_finalize(riscv_block_meta, &translation_ptr,            \
+                              block_start_pc, block_end_pc,                  \
+                              riscv_block_kind_##type);                      \
+    /* Finalization rewinds an unsupported block to a small interpreter      \
+     * helper.  Any direct-exit sites emitted before the unsupported          \
+     * instruction now point into reusable cache space; patching them after  \
+     * recursive target translation would corrupt the new target block. */   \
+    if (!riscv_block_is_native_supported(riscv_block_meta))                  \
+      block_exit_position = 0;                                               \
+  } while (0)
 
 #define riscv_emit_current_arm_instruction()                                  \
   do                                                                          \
@@ -648,6 +674,26 @@ void riscv_thumb_const_update(u32 opcode,
 #define arm_conditional_block_header()                                        \
   do                                                                          \
   {                                                                           \
+    /* ARM pays the sequential fetch cost even when a predicate fails.        \
+     * Prepay every instruction in this same-condition run before branching   \
+     * over its bodies.  Body emitters can then debit only executed memory or \
+     * multiply latency without accidentally hiding later base cycles on the  \
+     * false path. */                                                          \
+    if ((last_condition & 0x70u) == 0)                                        \
+    {                                                                         \
+      u32 riscv_arm_group_index = (u32)block_data_position + 1u;              \
+      u32 riscv_arm_group_pc = pc + arm_instruction_width;                   \
+      while (riscv_arm_group_pc < block_end_pc &&                             \
+             !block_data[riscv_arm_group_index].update_cycles &&              \
+             block_data[riscv_arm_group_index].condition == last_condition && \
+             (block_data[riscv_arm_group_index].condition & 0x70u) == 0)      \
+      {                                                                       \
+        cycle_count += def_seq_cycles[riscv_arm_group_pc >> 24][1];           \
+        riscv_arm_prepaid_base_instructions++;                                \
+        riscv_arm_group_index++;                                               \
+        riscv_arm_group_pc += arm_instruction_width;                          \
+      }                                                                       \
+    }                                                                         \
     if (riscv_emit_arm_conditional_block_header(                              \
           &translation_ptr, riscv_block_meta, condition,                      \
           cycle_count, &backpatch_address))                                  \
@@ -658,6 +704,15 @@ void riscv_thumb_const_update(u32 opcode,
     {                                                                         \
       riscv_mark_block_unsupported(riscv_block_meta);                         \
     }                                                                         \
+  } while (0)
+
+#define riscv_arm_base_cycles()                                               \
+  do                                                                          \
+  {                                                                           \
+    if (riscv_arm_prepaid_base_instructions)                                  \
+      riscv_arm_prepaid_base_instructions--;                                  \
+    else                                                                      \
+      cycle_count += def_seq_cycles[pc >> 24][1];                             \
   } while (0)
 
 #define emit_trace_arm_instruction(pc)                                        \
@@ -693,8 +748,8 @@ void riscv_thumb_const_update(u32 opcode,
           (condition) & 0x0f, &riscv_arm_condition_pass))                     \
     {                                                                         \
       if ((last_condition & 0x0f) != 0x0e)                                    \
-        riscv_emit_arm_conditional_block_close(&translation_ptr,              \
-                                               backpatch_address);            \
+        arm_backend_close_conditional_block(backpatch_address,                \
+                                            translation_ptr);                 \
       last_condition = 0x0e;                                                  \
       condition &= 0x0f;                                                      \
       if (!riscv_arm_condition_pass)                                          \
@@ -860,17 +915,29 @@ void riscv_thumb_const_update(u32 opcode,
   {                                                                           \
     bool riscv_arm_cycles_emitted = false;                                    \
     u32 riscv_arm_emitted_opcode = riscv_arm_effective_opcode();             \
+    bool riscv_arm_memory_load =                                              \
+      ((riscv_arm_emitted_opcode >> 20) & 1u) != 0;                          \
+    bool riscv_arm_memory_must_emit_cycles =                                  \
+      !riscv_arm_memory_load ||                                               \
+      (((riscv_arm_emitted_opcode >> 12) & 0x0fu) == REG_PC);                \
     if (riscv_emit_native_arm_access_memory_ex_const(                         \
           &translation_ptr, riscv_block_meta, riscv_arm_emitted_opcode,       \
-          pc, cycle_count, riscv_arm_emit_cycles_here(),                      \
+          pc, cycle_count, riscv_arm_memory_must_emit_cycles,                  \
           &riscv_arm_cycles_emitted, riscv_arm_const_mask,                   \
           riscv_arm_const_values))                                            \
     {                                                                         \
       riscv_arm_const_update_access_memory(                                   \
-        riscv_arm_emitted_opcode, pc, &riscv_arm_const_mask,                 \
+        riscv_arm_emitted_opcode, pc, condition, &riscv_arm_const_mask,      \
         riscv_arm_const_values);                                              \
       if (riscv_arm_cycles_emitted)                                           \
         cycle_count = 0;                                                      \
+      else if (riscv_arm_memory_load)                                         \
+      {                                                                       \
+        if ((condition & 0x0fu) != 0x0eu)                                    \
+          riscv_arm_conditional_deferred_cycles += 2u;                        \
+        else                                                                  \
+          cycle_count += 2u;                                                  \
+      }                                                                       \
     }                                                                         \
     else                                                                      \
     {                                                                         \
@@ -882,9 +949,10 @@ void riscv_thumb_const_update(u32 opcode,
   do                                                                          \
   {                                                                           \
     bool riscv_arm_cycles_emitted = false;                                    \
+    bool riscv_arm_pool_must_emit_cycles = ((rd) == REG_PC);                 \
     if (riscv_emit_native_arm_load_pc_pool_const(                             \
           &translation_ptr, riscv_block_meta, (rd), (value),                 \
-          cycle_count, riscv_arm_emit_cycles_here(),                         \
+          cycle_count, riscv_arm_pool_must_emit_cycles,                       \
           &riscv_arm_cycles_emitted))                                         \
     {                                                                         \
       if ((rd) < REG_PC)                                                      \
@@ -899,6 +967,10 @@ void riscv_thumb_const_update(u32 opcode,
       }                                                                       \
       if (riscv_arm_cycles_emitted)                                           \
         cycle_count = 0;                                                      \
+      else if ((condition & 0x0fu) != 0x0eu)                                 \
+        riscv_arm_conditional_deferred_cycles += 2u;                          \
+      else                                                                    \
+        cycle_count += 2u;                                                    \
     }                                                                         \
     else                                                                      \
     {                                                                         \
@@ -1168,6 +1240,13 @@ void riscv_thumb_const_update(u32 opcode,
     {                                                                         \
       riscv_emit_current_thumb_instruction();                                 \
     }                                                                         \
+    else                                                                      \
+    {                                                                         \
+      /* Folding the ROM access removes host work, not the guest LDR          \
+       * latency.  Keep it in the frontend accumulator so every exit and      \
+       * internal cycle gate observes the same timing as a normal load. */    \
+      cycle_count += 2u;                                                      \
+    }                                                                         \
   } while (0)
 
 #define thumb_load_pc(...)                                                    \
@@ -1227,6 +1306,8 @@ void riscv_thumb_const_update(u32 opcode,
       block_exits[block_exit_position].branch_patch_short =                   \
         riscv_short_patch;                                                    \
       block_exit_position++;                                                  \
+      /* The native condition gate emitted the complete accumulated debit. */ \
+      cycle_count = 0;                                                        \
     }                                                                         \
     else                                                                      \
     {                                                                         \
@@ -1276,9 +1357,45 @@ void riscv_thumb_const_update(u32 opcode,
     }                                                                         \
   } while (0)
 
+#define thumb_bl_prefix()                                                     \
+  do                                                                          \
+  {                                                                           \
+    /* The old two-half fast path is valid only when no other edge can enter \
+     * BLH.  At an internal entry the first half must publish LR so the       \
+     * linear path can cross the scheduler gate, while an edge that skips the\
+     * prefix must retain its own architectural LR.  Also preserve standalone\
+     * prefixes and conservatively handle a 32 KiB map boundary. */           \
+    bool riscv_thumb_prefix_required =                                       \
+      (pc + 2u >= block_end_pc) ||                                            \
+      block_data[block_data_position + 1].update_cycles ||                    \
+      ((pc & 0x7fffu) == 0x7ffeu) ||                                         \
+      address16(pc_address_block, ((pc + 2u) & 0x7fffu)) < 0xf800u;           \
+    if (riscv_thumb_prefix_required &&                                       \
+        !riscv_emit_native_thumb_bl_prefix(                                  \
+          &translation_ptr, riscv_block_meta, opcode, pc))                    \
+    {                                                                         \
+      riscv_emit_current_thumb_instruction();                                \
+    }                                                                         \
+  } while (0)
+
+#define thumb_bl_pair_allowed()                                               \
+  (!block_data[block_data_position].update_cycles)
+
 #define thumb_blh()                                                           \
   do                                                                          \
   {                                                                           \
+    /* The scan is single-pass.  A backward edge encountered after this BLH  \
+     * can make it a shared entry even though the scan already allocated a   \
+     * direct-pair exit.  The standalone emitter has no patch site, but must \
+     * consume that tagged slot so every following branch stays aligned. */  \
+    if (block_exit_position < riscv_scanned_block_exit_count &&               \
+        block_exits[block_exit_position].riscv_thumb_blh_slot ==              \
+          (u16)(block_data_position + 1))                                     \
+    {                                                                         \
+      block_exits[block_exit_position].branch_source = NULL;                  \
+      block_exits[block_exit_position].branch_patch_short = 0;                \
+      block_exit_position++;                                                  \
+    }                                                                         \
     if (riscv_emit_native_thumb_blh(&translation_ptr, riscv_block_meta,       \
                                     opcode, pc, cycle_count))                 \
     {                                                                         \

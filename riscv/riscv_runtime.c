@@ -475,6 +475,9 @@ void riscv_jit_indirect_lookup_tail(void)
 static s32 riscv_cycles_remaining;
 static u32 riscv_blocks_emitted;
 static u32 riscv_blocks_executed;
+static u32 riscv_bios_native_blocks_emitted;
+static u32 riscv_bios_native_blocks_executed;
+static u32 riscv_bios_interpreter_fallbacks;
 static u32 riscv_interpreter_fallbacks;
 static u32 riscv_initial_lookup_fallbacks;
 static u32 riscv_relookup_fallbacks;
@@ -2108,6 +2111,7 @@ static bool riscv_arm_memory_reg_offset_const(u32 opcode,
 
 void riscv_arm_const_update_access_memory(u32 opcode,
                                           u32 pc,
+                                          u32 condition,
                                           u32 *const_mask,
                                           u32 *const_values)
 {
@@ -2122,6 +2126,20 @@ void riscv_arm_const_update_access_memory(u32 opcode,
   bool offset_valid = false;
   bool writeback_address = writeback || !pre_index;
   bool writeback_overwritten_by_load = load && rd == rn;
+
+  /* The native emitter receives an AL-rewritten opcode because its runtime
+   * condition gate surrounds the emitted body.  Constant propagation still
+   * has to merge the executed and skipped paths.  A conditional access may
+   * change rd/rn, but it may not invent the post-writeback value as though the
+   * access were unconditional. */
+  if ((condition & 0x0fu) != 0x0eu)
+  {
+    if (load)
+      riscv_arm_const_clear_reg(const_mask, rd);
+    if (writeback_address)
+      riscv_arm_const_clear_reg(const_mask, rn);
+    return;
+  }
 
   if ((opcode & 0x0c000000u) == 0x04000000u)
   {
@@ -2377,19 +2395,23 @@ static void riscv_thumb_const_set_flags(u32 flag_status,
 
   computed_mask &= live_mask;
   computed_flags &= computed_mask;
-  *known_flag_mask = computed_mask;
-  *known_flags = computed_flags;
+  /* Only flags in live_mask are written by this instruction.  Thumb logical
+   * operations such as TST/MOV/AND update N/Z while architecturally preserving
+   * C/V; replacing the whole lattice here loses those preserved constants and
+   * can make a following condition use the wrong producer. */
+  *known_flag_mask = (*known_flag_mask & ~live_mask) | computed_mask;
+  *known_flags = (*known_flags & ~live_mask) | computed_flags;
+  *known_flags &= *known_flag_mask;
 }
 
 static void riscv_thumb_const_clear_live_flags(u32 flag_status,
                                                u32 *known_flag_mask,
                                                u32 *known_flags)
 {
-  if (flag_status & 0x0fu)
-  {
-    *known_flag_mask = 0;
-    *known_flags = 0;
-  }
+  u32 live_mask = flag_status & 0x0fu;
+
+  *known_flag_mask &= ~live_mask;
+  *known_flags &= *known_flag_mask;
 }
 
 static void riscv_thumb_const_update_data_proc(u32 opcode,
@@ -2738,11 +2760,22 @@ void riscv_thumb_const_update(u32 opcode,
     bool load = false;
 
     if (hi < 0x60u)
-      load = ((opcode >> 11) & 1u) != 0;
+    {
+      /* Register-offset access types 0..2 are stores; 3 is LDRSB and
+       * 4..7 are the other loads.  Testing only bit 11 misses LDRSB and
+       * leaves a stale compile-time constant attached to its destination. */
+      load = ((opcode >> 9) & 7u) >= 3u;
+    }
     else if (hi < 0x90u)
       load = (hi & 0x08u) != 0;
     else
+    {
+      /* SP-relative transfers encode rd in the high byte; the low byte is
+       * entirely the scaled offset.  Using opcode & 7 here leaves the real
+       * LDR destination carrying a stale compile-time constant. */
       load = hi >= 0x98u;
+      rd = hi & 7u;
+    }
 
     if (load)
       riscv_arm_const_clear_reg(const_mask, rd);
@@ -3677,7 +3710,10 @@ static void riscv_emit_cpu_alert_branch(u8 **ptr_ref,
 
   riscv_emit_li(&ptr, riscv_reg_a0, (u32)(uintptr_t)&riscv_cpu_alert);
   translation_ptr = ptr;
-  riscv_emit_lw(riscv_reg_a0, riscv_reg_a0, 0);
+  /* cpu_alert_type is one byte.  A word load is both misaligned for the
+   * current object placement and aliases adjacent emitter globals, making a
+   * zero alert look nonzero once (for example) terminal-helper size is set. */
+  riscv_emit_lbu(riscv_reg_a0, riscv_reg_a0, 0);
   ptr = translation_ptr;
 
   riscv_emit_store_alert_branch(&ptr, meta);
@@ -3875,9 +3911,16 @@ bool riscv_emit_arm_conditional_block_header(u8 **translation_ptr_ref,
   return true;
 }
 
-void riscv_emit_arm_conditional_block_close(u8 **ptr_ref,
-                                            u8 *branch_source)
+void riscv_emit_arm_conditional_block_close_cycles(u8 **ptr_ref,
+                                                   u8 *branch_source,
+                                                   u32 cycles)
 {
+  /* This point is still inside the predicate's taken body.  Charging deferred
+   * load latency here keeps the skipped path at fetch-only cost while avoiding
+   * a load/store of the global cycle counter after every conditional LDR. */
+  if (cycles)
+    riscv_emit_adjust_cycles(ptr_ref, cycles);
+
   if (riscv_arm_conditional_block_active)
   {
     u32 restore_mask = riscv_arm_conditional_entry_valid_mask &
@@ -3896,6 +3939,12 @@ void riscv_emit_arm_conditional_block_close(u8 **ptr_ref,
   }
   riscv_arm_conditional_block_active = false;
   riscv_patch_unconditional_branch(branch_source, *ptr_ref);
+}
+
+void riscv_emit_arm_conditional_block_close(u8 **ptr_ref,
+                                            u8 *branch_source)
+{
+  riscv_emit_arm_conditional_block_close_cycles(ptr_ref, branch_source, 0);
 }
 
 bool riscv_emit_cycle_update(u8 **translation_ptr_ref,
@@ -3977,7 +4026,10 @@ riscv_store_u8(u32 address, u32 value)
 #endif
     alert = write_memory8(address, (u8)value);
   riscv_cpu_alert |= alert;
-  return alert;
+  /* Block stores issue several helper calls before they may leave the guest
+   * instruction.  Return the accumulated alert state so the final transfer
+   * can test a0 directly even when an earlier transfer raised the alert. */
+  return riscv_cpu_alert;
 }
 
 static u32 function_cc RISCV_STORE_SLOW_ATTR
@@ -4008,7 +4060,7 @@ riscv_store_u16(u32 address, u32 value)
 #endif
     alert = write_memory16(address, (u16)value);
   riscv_cpu_alert |= alert;
-  return alert;
+  return riscv_cpu_alert;
 }
 
 static u32 function_cc RISCV_STORE_SLOW_ATTR
@@ -4039,7 +4091,7 @@ riscv_store_u32(u32 address, u32 value)
 #endif
     alert = write_memory32(address, value);
   riscv_cpu_alert |= alert;
-  return alert;
+  return riscv_cpu_alert;
 }
 
 #undef RISCV_STORE_SLOW_ATTR
@@ -4550,6 +4602,8 @@ static u8 *riscv_lookup_or_fallback(riscv_control_lookup_kind kind)
       RISCV_CONTROL_COUNT(riscv_control_fallthrough_lookup_misses);
     riscv_interpreter_fallbacks++;
     riscv_relookup_fallbacks++;
+    if (pc < 0x00004000u)
+      riscv_bios_interpreter_fallbacks++;
     riscv_note_runtime_fallback(RISCV_RUNTIME_FALLBACK_RELOOKUP,
                                 pc, thumb,
                                 riscv_lookup_result_from_entry(entry),
@@ -5769,6 +5823,8 @@ static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta)
 
     riscv_interpreter_fallbacks++;
     riscv_unsupported_fallbacks++;
+    if (pc < 0x00004000u)
+      riscv_bios_interpreter_fallbacks++;
     riscv_note_runtime_fallback(RISCV_RUNTIME_FALLBACK_UNSUPPORTED,
                                 pc, thumb,
                                 RISCV_RUNTIME_LOOKUP_UNSUPPORTED,
@@ -5777,6 +5833,8 @@ static u8 *riscv_jit_run_block(const riscv_jit_block_meta *meta)
     return NULL;
   }
 
+  if (meta->start_pc < 0x00004000u)
+    riscv_bios_native_blocks_executed++;
   riscv_note_runtime_block_execute(meta->start_pc,
                                    riscv_block_meta_end_pc(meta),
                                    riscv_block_meta_thumb(meta));
@@ -5859,6 +5917,11 @@ void riscv_mark_block_no_fallthrough(riscv_jit_block_meta *meta)
 {
   if (meta)
     meta->flags |= RISCV_BLOCK_NO_FALLTHROUGH;
+}
+
+bool riscv_block_is_native_supported(const riscv_jit_block_meta *meta)
+{
+  return meta != NULL && (meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED) != 0u;
 }
 
 static void riscv_emit_arm_cpsr_c_load(u8 **ptr_ref, riscv_reg_number rd);
@@ -6399,26 +6462,6 @@ static void riscv_emit_arm_cpsr_store_selected_nzc_const_c_preserve_v(
   }
 
   riscv_emit_live_nzcv_update_begin(ptr_ref, flag_mask, true);
-  riscv_emit_live_nzcv_or_result_nz(ptr_ref, flag_mask, result_reg);
-  if ((flag_mask & 0x02u) && carry)
-  {
-    translation_ptr = *ptr_ref;
-    riscv_emit_ori(riscv_mapped_host_regs[RISCV_MAPPED_NZCV_SLOT],
-                   riscv_mapped_host_regs[RISCV_MAPPED_NZCV_SLOT], 0x02u);
-    *ptr_ref = translation_ptr;
-  }
-}
-
-static void riscv_emit_arm_cpsr_store_selected_nzc_const_c_dead_flags(
-  u8 **ptr_ref, u32 flag_mask, riscv_reg_number result_reg, u32 carry)
-{
-  u8 *translation_ptr;
-
-  flag_mask &= 0x0eu;
-  if (!flag_mask)
-    return;
-
-  riscv_emit_live_nzcv_update_begin(ptr_ref, flag_mask, false);
   riscv_emit_live_nzcv_or_result_nz(ptr_ref, flag_mask, result_reg);
   if ((flag_mask & 0x02u) && carry)
   {
@@ -7182,7 +7225,6 @@ static bool riscv_emit_native_arm_data_proc_with_pc_ex2(
   u32 logical_carry = 0;
   riscv_reg_number result_reg = riscv_reg_t2;
   bool writes_pc;
-  bool can_clobber_dead_logical_flags;
   bool known_generated_flags;
   u32 immediate = 0;
 
@@ -7249,8 +7291,6 @@ static bool riscv_emit_native_arm_data_proc_with_pc_ex2(
     generated_flag_mask &= ~0x02u;
   }
   live_flags = generated_flag_mask != 0;
-  can_clobber_dead_logical_flags = clobber_dead_arithmetic_flags &&
-    ((live_flag_mask & ~generated_flag_mask) == 0);
   known_flag_mask &= 0x0fu;
   known_flags &= known_flag_mask;
   known_generated_flags = live_flags &&
@@ -7525,8 +7565,7 @@ static bool riscv_emit_native_arm_data_proc_with_pc_ex2(
   {
     riscv_emit_arm_cpsr_store_const_selected_nzcv(
       &ptr, generated_flag_mask, known_flags,
-      arithmetic_flags ? clobber_dead_arithmetic_flags :
-                         can_clobber_dead_logical_flags);
+      arithmetic_flags ? clobber_dead_arithmetic_flags : false);
   }
   else if (addsub_zero_flags)
   {
@@ -7544,7 +7583,7 @@ static bool riscv_emit_native_arm_data_proc_with_pc_ex2(
         &ptr, generated_flag_mask, result_reg);
     else
     {
-      if (can_clobber_dead_logical_flags)
+      if (clobber_dead_arithmetic_flags)
         riscv_emit_arm_cpsr_store_arithmetic_selected_nzcv(
           &ptr, generated_flag_mask, result_reg);
       else
@@ -7556,10 +7595,6 @@ static bool riscv_emit_native_arm_data_proc_with_pc_ex2(
   {
     if (logical_const_c)
     {
-      if (can_clobber_dead_logical_flags)
-        riscv_emit_arm_cpsr_store_selected_nzc_const_c_dead_flags(
-          &ptr, generated_flag_mask, result_reg, logical_carry);
-      else
         riscv_emit_arm_cpsr_store_selected_nzc_const_c_preserve_v(
           &ptr, generated_flag_mask, result_reg, logical_carry);
     }
@@ -7588,6 +7623,14 @@ static bool riscv_emit_native_arm_data_proc_with_pc_ex2(
     riscv_emit_adjust_cycles(&ptr, cycles);
     if (cycles_emitted)
       *cycles_emitted = true;
+  }
+  if (writes_pc)
+  {
+    /* scan_block() may retain instructions after a conditional PC writer, or
+     * after an unconditional writer that a forward edge jumps over.  The
+     * taken path must leave at this instruction instead of falling through
+     * until the block finalizer happens to observe PC_WRITTEN. */
+    riscv_emit_terminal_helper_call(&ptr, meta);
   }
 
   *translation_ptr_ref = ptr;
@@ -7692,7 +7735,6 @@ static bool riscv_emit_native_arm_data_proc_test_with_pc_ex2(
   bool flags_stored = false;
   bool logical_const_c = false;
   u32 logical_carry = 0;
-  bool can_clobber_dead_logical_flags;
   bool known_generated_flags;
 
   if (cycles_emitted)
@@ -7714,8 +7756,6 @@ static bool riscv_emit_native_arm_data_proc_test_with_pc_ex2(
     generated_flag_mask &= ~0x02u;
   }
   live_flags = generated_flag_mask != 0;
-  can_clobber_dead_logical_flags = clobber_dead_arithmetic_flags &&
-    ((live_flag_mask & ~generated_flag_mask) == 0);
   known_flag_mask &= 0x0fu;
   known_flags &= known_flag_mask;
   known_generated_flags = live_flags &&
@@ -7738,8 +7778,7 @@ static bool riscv_emit_native_arm_data_proc_test_with_pc_ex2(
   {
     riscv_emit_arm_cpsr_store_const_selected_nzcv(
       &ptr, generated_flag_mask, known_flags,
-      logical_test ? can_clobber_dead_logical_flags :
-                     clobber_dead_arithmetic_flags);
+      logical_test ? false : clobber_dead_arithmetic_flags);
     if (emit_cycles)
     {
       riscv_emit_adjust_cycles(&ptr, cycles);
@@ -7870,21 +7909,13 @@ static bool riscv_emit_native_arm_data_proc_test_with_pc_ex2(
     {
       if (logical_const_c)
       {
-        if (can_clobber_dead_logical_flags)
-          riscv_emit_arm_cpsr_store_selected_nzc_const_c_dead_flags(
-            &ptr, generated_flag_mask, riscv_reg_t2, logical_carry);
-        else
-          riscv_emit_arm_cpsr_store_selected_nzc_const_c_preserve_v(
-            &ptr, generated_flag_mask, riscv_reg_t2, logical_carry);
+        riscv_emit_arm_cpsr_store_selected_nzc_const_c_preserve_v(
+          &ptr, generated_flag_mask, riscv_reg_t2, logical_carry);
       }
       else
       {
-        if (can_clobber_dead_logical_flags)
-          riscv_emit_arm_cpsr_store_arithmetic_selected_nzcv(
-            &ptr, generated_flag_mask, riscv_reg_t2);
-        else
-          riscv_emit_arm_cpsr_store_selected_nzcv(
-            &ptr, generated_flag_mask, riscv_reg_t2);
+        riscv_emit_arm_cpsr_store_selected_nzcv(
+          &ptr, generated_flag_mask, riscv_reg_t2);
       }
     }
     else if (clobber_dead_arithmetic_flags)
@@ -7995,6 +8026,10 @@ static bool riscv_emit_native_arm_multiply2(u8 **translation_ptr_ref,
   u8 *ptr = *translation_ptr_ref;
   u8 *translation_ptr;
 
+  /* MUL writes N/Z only; C/V remain architectural state even when their
+   * producers are outside this block. */
+  (void)clobber_dead_flags;
+
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
     return false;
 
@@ -8057,14 +8092,8 @@ static bool riscv_emit_native_arm_multiply2(u8 **translation_ptr_ref,
 
   riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_t2);
   if (live_flag_mask)
-  {
-    if (clobber_dead_flags)
-      riscv_emit_arm_cpsr_store_arithmetic_selected_nzcv(
-        &ptr, live_flag_mask, riscv_reg_t2);
-    else
-      riscv_emit_arm_cpsr_store_selected_nzcv(
-        &ptr, live_flag_mask, riscv_reg_t2);
-  }
+    riscv_emit_arm_cpsr_store_selected_nzcv(
+      &ptr, live_flag_mask, riscv_reg_t2);
   riscv_emit_adjust_cycles(&ptr, cycles);
 
   *translation_ptr_ref = ptr;
@@ -8113,6 +8142,9 @@ static bool riscv_emit_native_arm_multiply_long2(u8 **translation_ptr_ref,
   u8 *ptr = *translation_ptr_ref;
   u8 *translation_ptr;
 
+  /* Long multiply has the same N/Z-only flag contract as MUL. */
+  (void)clobber_dead_flags;
+
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
     return false;
 
@@ -8148,14 +8180,8 @@ static bool riscv_emit_native_arm_multiply_long2(u8 **translation_ptr_ref,
   riscv_emit_arm_reg_store(&ptr, rdlo, riscv_reg_t2);
   riscv_emit_arm_reg_store(&ptr, rdhi, riscv_reg_t3);
   if (live_flag_mask)
-  {
-    if (clobber_dead_flags)
-      riscv_emit_arm_cpsr_store_long_selected_nz(
-        &ptr, live_flag_mask, true);
-    else
-      riscv_emit_arm_cpsr_store_long_selected_nz(
-        &ptr, live_flag_mask, false);
-  }
+    riscv_emit_arm_cpsr_store_long_selected_nz(
+      &ptr, live_flag_mask, false);
   riscv_emit_adjust_cycles(&ptr, cycles);
 
   *translation_ptr_ref = ptr;
@@ -8410,6 +8436,10 @@ static bool riscv_emit_native_arm_direct_branch(u8 **translation_ptr_ref,
   else
   {
     meta->flags |= RISCV_BLOCK_PC_WRITTEN;
+    /* The non-patchable API still describes a terminal guest branch.  Emit
+     * its scheduler/lookup tail here so block finalization can reserve its
+     * generic tail exclusively for paths that really fall through. */
+    riscv_emit_terminal_helper_call(&ptr, meta);
   }
 
   *translation_ptr_ref = ptr;
@@ -8990,7 +9020,10 @@ bool riscv_emit_native_arm_block_memory(u8 **translation_ptr_ref,
   }
   else if (!load)
   {
-    riscv_emit_cpu_alert_branch(&ptr, meta);
+    /* riscv_store_u32 returns the accumulated alert state.  In particular,
+     * the last transfer still reports an alert raised by an earlier transfer
+     * in this STM, so a0 can feed the normal store-alert branch directly. */
+    riscv_emit_store_alert_branch(&ptr, meta);
   }
 
   *translation_ptr_ref = ptr;
@@ -9202,6 +9235,8 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
       if (cycles_emitted)
         *cycles_emitted = true;
     }
+    if (rd == REG_PC)
+      riscv_emit_terminal_helper_call(&ptr, meta);
     riscv_native_load_insns++;
   }
   else
@@ -9576,6 +9611,8 @@ bool riscv_emit_native_arm_access_memory_ex_const(
       if (cycles_emitted)
         *cycles_emitted = true;
     }
+    if (rd == REG_PC)
+      riscv_emit_terminal_helper_call(&ptr, meta);
     riscv_native_load_insns++;
   }
   else
@@ -11204,6 +11241,15 @@ bool riscv_emit_native_thumb_block_memory(u8 **translation_ptr_ref,
 
   if (has_pc)
     riscv_emit_terminal_helper_call(&ptr, meta);
+  else if (!load && count != 0u)
+  {
+    /* STM/PUSH helpers accumulate CPU_ALERT_SMC/IRQ/HALT just like the ARM
+     * block-store path.  Stop before the next translated Thumb instruction;
+     * otherwise stale RAM code or post-HALT guest state can execute before
+     * the dispatcher flushes/handles the alert.  riscv_store_u32 returns the
+     * accumulated state, including an alert raised before the last transfer. */
+    riscv_emit_store_alert_branch(&ptr, meta);
+  }
 
   if (load)
     riscv_native_load_insns++;
@@ -11440,6 +11486,25 @@ bool riscv_emit_native_thumb_swi_patchable(u8 **translation_ptr_ref,
   return true;
 }
 
+static bool riscv_thumb_instruction_may_store(u32 opcode)
+{
+  u32 hi = opcode >> 8;
+
+  if (hi >= 0x50u && hi <= 0x5fu)
+    return ((opcode >> 9) & 7u) < 3u;
+  if ((hi >= 0x60u && hi <= 0x67u) ||
+      (hi >= 0x70u && hi <= 0x77u) ||
+      (hi >= 0x80u && hi <= 0x87u) ||
+      (hi >= 0x90u && hi <= 0x97u) ||
+      hi == 0xb4u || hi == 0xb5u ||
+      (hi >= 0xc0u && hi <= 0xc7u))
+  {
+    return true;
+  }
+
+  return false;
+}
+
 bool riscv_emit_native_thumb_instruction(u8 **translation_ptr_ref,
                                          riscv_jit_block_meta *meta,
                                          u32 opcode,
@@ -11489,6 +11554,13 @@ bool riscv_emit_native_thumb_instruction(u8 **translation_ptr_ref,
   {
     meta->flags |= RISCV_BLOCK_PC_WRITTEN;
     riscv_emit_terminal_helper_call(&ptr, meta);
+  }
+  else if (riscv_thumb_instruction_may_store(opcode))
+  {
+    /* The helper-backed debug/deopt path has the same SMC/IRQ contract as
+     * direct store emitters.  Resume at pc+2 before any following translated
+     * instruction when the helper latched an alert. */
+    riscv_emit_cpu_alert_branch(&ptr, meta);
   }
 
   *translation_ptr_ref = ptr;
@@ -11605,6 +11677,31 @@ bool riscv_emit_native_thumb_bl_pair(u8 **translation_ptr_ref,
   return true;
 }
 
+bool riscv_emit_native_thumb_bl_prefix(u8 **translation_ptr_ref,
+                                       riscv_jit_block_meta *meta,
+                                       u32 opcode,
+                                       u32 pc)
+{
+  u32 hi = opcode >> 8;
+  s32 high_offset;
+  u8 *ptr = *translation_ptr_ref;
+
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED) ||
+      hi < 0xf0u || hi >= 0xf8u)
+  {
+    return false;
+  }
+
+  high_offset = (s32)((opcode & 0x07ffu) << 21) >> 9;
+  riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_t0,
+                           pc + 4u + (u32)high_offset);
+  riscv_emit_arm_reg_store(&ptr, REG_LR, riscv_reg_t0);
+
+  *translation_ptr_ref = ptr;
+  riscv_native_branch_insns++;
+  return true;
+}
+
 bool riscv_emit_native_thumb_blh(u8 **translation_ptr_ref,
                                  riscv_jit_block_meta *meta,
                                  u32 opcode,
@@ -11683,12 +11780,13 @@ void riscv_emit_block_finalize(riscv_jit_block_meta *meta,
     }
     else
     {
-      if (!(meta->flags & RISCV_BLOCK_PC_WRITTEN))
-      {
-        riscv_emit_guest_pc_load_existing_base(&ptr, meta, riscv_reg_t0,
-                                               block_end_pc);
-        riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
-      }
+      /* PC_WRITTEN is block-wide metadata, but a conditional PC writer only
+       * updates PC on its taken path and exits through its own terminal tail.
+       * Any path that reaches this fallthrough tail therefore still needs the
+       * sequential block-end PC, regardless of what another path emitted. */
+      riscv_emit_guest_pc_load_existing_base(&ptr, meta, riscv_reg_t0,
+                                             block_end_pc);
+      riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
 
       helper_tail = ptr;
       riscv_emit_helper_call(&ptr, meta);
@@ -11710,6 +11808,11 @@ void riscv_emit_block_finalize(riscv_jit_block_meta *meta,
   riscv_note_runtime_block_emit(block_start_pc, block_end_pc,
                                 thumb_mode ? 1u : 0u,
                                 (u32)(*translation_ptr - (u8 *)meta));
+  if (block_start_pc < 0x00004000u &&
+      (meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
+  {
+    riscv_bios_native_blocks_emitted++;
+  }
   riscv_blocks_emitted++;
 }
 
@@ -11733,6 +11836,9 @@ void init_emitter(bool must_swap)
   riscv_cycles_remaining = 0;
   riscv_blocks_emitted = 0;
   riscv_blocks_executed = 0;
+  riscv_bios_native_blocks_emitted = 0;
+  riscv_bios_native_blocks_executed = 0;
+  riscv_bios_interpreter_fallbacks = 0;
   riscv_interpreter_fallbacks = 0;
   riscv_initial_lookup_fallbacks = 0;
   riscv_relookup_fallbacks = 0;
@@ -11777,6 +11883,9 @@ void riscv_get_runtime_stats(riscv_runtime_stats *stats)
 
   stats->blocks_emitted = riscv_blocks_emitted;
   stats->blocks_executed = riscv_blocks_executed;
+  stats->bios_native_blocks_emitted = riscv_bios_native_blocks_emitted;
+  stats->bios_native_blocks_executed = riscv_bios_native_blocks_executed;
+  stats->bios_interpreter_fallbacks = riscv_bios_interpreter_fallbacks;
   stats->interpreter_fallbacks = riscv_interpreter_fallbacks;
   stats->initial_lookup_fallbacks = riscv_initial_lookup_fallbacks;
   stats->relookup_fallbacks = riscv_relookup_fallbacks;
@@ -11859,6 +11968,8 @@ u32 execute_arm_translate_internal(u32 cycles, void *regptr)
   {
     riscv_interpreter_fallbacks++;
     riscv_initial_lookup_fallbacks++;
+    if (pc < 0x00004000u)
+      riscv_bios_interpreter_fallbacks++;
     riscv_note_runtime_fallback(RISCV_RUNTIME_FALLBACK_INITIAL_LOOKUP,
                                 pc, thumb,
                                 riscv_lookup_result_from_entry(entry_data),

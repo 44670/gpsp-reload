@@ -49,6 +49,10 @@ value("command") == "frontend-control" {
     failed = 1
   }
   state_hash[backend, case_name] = value("state_hash")
+  r1[backend, case_name] = value("r1")
+  r8[backend, case_name] = value("r8")
+  pc[backend, case_name] = value("pc")
+  update_cycles[backend, case_name] = value("update_cycles")
   generated_words[backend, case_name] = value("generated_words")
   trace_count[backend, case_name] = value("trace_count") + 0
   cases[case_name] = 1
@@ -66,6 +70,127 @@ END {
              seen["rv32im", case_name],
              seen["rv32im-dispatch", case_name])
       failed = 1
+    } else if (case_name == "arm_conditional_load_skipped_cycle_loop") {
+      # The threaded frontend uses a coarser ROM fetch model than cpu.cc, so
+      # compare its two native dispatch policies directly.  Two iterations
+      # prove the skipped LDR did not leak its taken-only +2 latency.
+      if (state_hash["rv32im", case_name] != state_hash["rv32im-dispatch", case_name] ||
+          r1["rv32im", case_name] != "0x00000002" ||
+          r1["rv32im-dispatch", case_name] != "0x00000002") {
+        printf("frontend control skipped conditional-load cycle mismatch: rv32im_state=%s dispatch_state=%s rv32im_r1=%s dispatch_r1=%s rv32im_cycles=%s dispatch_cycles=%s\n",
+               state_hash["rv32im", case_name],
+               state_hash["rv32im-dispatch", case_name],
+               r1["rv32im", case_name], r1["rv32im-dispatch", case_name],
+               update_cycles["rv32im", case_name],
+               update_cycles["rv32im-dispatch", case_name])
+        failed = 1
+      }
+    } else if (case_name == "arm_conditional_exit_group_cycle_boundary") {
+      if (state_hash["rv32im", case_name] != state_hash["rv32im-dispatch", case_name] ||
+          r8["rv32im", case_name] != "0x00000001" ||
+          r8["rv32im-dispatch", case_name] != "0x00000001") {
+        printf("frontend control conditional-exit cycle mismatch: rv32im_state=%s dispatch_state=%s rv32im_r8=%s dispatch_r8=%s rv32im_cycles=%s dispatch_cycles=%s\n",
+               state_hash["rv32im", case_name],
+               state_hash["rv32im-dispatch", case_name],
+               r8["rv32im", case_name], r8["rv32im-dispatch", case_name],
+               update_cycles["rv32im", case_name],
+               update_cycles["rv32im-dispatch", case_name])
+        failed = 1
+      }
+    } else if (case_name == "arm_conditional_exit_group_false_cycles") {
+      # cpu.cc and cpu_threaded use different absolute branch costs.  Lock the
+      # native model to two independently charged false exit markers: sharing
+      # their gate leaves update_cycles at -6 instead of the correct -18.
+      if (state_hash["rv32im", case_name] != state_hash["rv32im-dispatch", case_name] ||
+          r8["rv32im", case_name] != "0x00000002" ||
+          r8["rv32im-dispatch", case_name] != "0x00000002" ||
+          update_cycles["rv32im", case_name] != "0xffffffee" ||
+          update_cycles["rv32im-dispatch", case_name] != "0xffffffee") {
+        printf("frontend control false conditional-exit cycle mismatch: rv32im_state=%s dispatch_state=%s rv32im_r8=%s dispatch_r8=%s rv32im_cycles=%s dispatch_cycles=%s\n",
+               state_hash["rv32im", case_name],
+               state_hash["rv32im-dispatch", case_name],
+               r8["rv32im", case_name], r8["rv32im-dispatch", case_name],
+               update_cycles["rv32im", case_name],
+               update_cycles["rv32im-dispatch", case_name])
+        failed = 1
+      }
+    } else if (case_name == "arm_conditional_swap_cycle_boundary") {
+      if (state_hash["rv32im", case_name] != state_hash["rv32im-dispatch", case_name] ||
+          r8["rv32im", case_name] != "0x00000001" ||
+          r8["rv32im-dispatch", case_name] != "0x00000001") {
+        printf("frontend control conditional SWP cycle mismatch: rv32im_state=%s dispatch_state=%s rv32im_r8=%s dispatch_r8=%s rv32im_cycles=%s dispatch_cycles=%s\n",
+               state_hash["rv32im", case_name],
+               state_hash["rv32im-dispatch", case_name],
+               r8["rv32im", case_name], r8["rv32im-dispatch", case_name],
+               update_cycles["rv32im", case_name],
+               update_cycles["rv32im-dispatch", case_name])
+        failed = 1
+      }
+    } else if (case_name == "thumb_block_tail_cycles") {
+      if (state_hash["rv32im", case_name] != state_hash["rv32im-dispatch", case_name] ||
+          pc["rv32im", case_name] != "0x08010800" ||
+          pc["rv32im-dispatch", case_name] != "0x08010800" ||
+          update_cycles["rv32im", case_name] !~ /^0xffff/ ||
+          update_cycles["rv32im-dispatch", case_name] !~ /^0xffff/) {
+        printf("frontend control Thumb tail cycle mismatch: rv32im_state=%s dispatch_state=%s rv32im_pc=%s dispatch_pc=%s rv32im_cycles=%s dispatch_cycles=%s\n",
+               state_hash["rv32im", case_name],
+               state_hash["rv32im-dispatch", case_name],
+               pc["rv32im", case_name], pc["rv32im-dispatch", case_name],
+               update_cycles["rv32im", case_name],
+               update_cycles["rv32im-dispatch", case_name])
+        failed = 1
+      }
+    } else if (case_name == "arm_known_false_block_tail_cycles") {
+      # A dynarec scheduler checkpoint is block-granular, so its final PC need
+      # not match the interpreter's instruction-granular stop. It must still
+      # publish the tail debit instead of reaching the idle check with zero.
+      if (state_hash["rv32im", case_name] != state_hash["rv32im-dispatch", case_name] ||
+          pc["rv32im", case_name] != "0x08011000" ||
+          pc["rv32im-dispatch", case_name] != "0x08011000" ||
+          update_cycles["rv32im", case_name] !~ /^0xffff/ ||
+          update_cycles["rv32im-dispatch", case_name] !~ /^0xffff/) {
+        printf("frontend control folded-tail cycle mismatch: rv32im_state=%s dispatch_state=%s rv32im_pc=%s dispatch_pc=%s rv32im_cycles=%s dispatch_cycles=%s\n",
+               state_hash["rv32im", case_name],
+               state_hash["rv32im-dispatch", case_name],
+               pc["rv32im", case_name], pc["rv32im-dispatch", case_name],
+               update_cycles["rv32im", case_name],
+               update_cycles["rv32im-dispatch", case_name])
+        failed = 1
+      }
+    } else if (case_name == "thumb_pc_pool_conditional_cycle_loop") {
+      # cpu.cc and cpu_threaded.c intentionally use different absolute cycle
+      # costs. This case locks the native frontend model: the folded LDR is
+      # charged and the condition gate is not charged again by its successor.
+      if (state_hash["rv32im", case_name] != state_hash["rv32im-dispatch", case_name] ||
+          r1["rv32im", case_name] != "0x00000003" ||
+          r1["rv32im-dispatch", case_name] != "0x00000003" ||
+          update_cycles["rv32im", case_name] != "0xfffffffe" ||
+          update_cycles["rv32im-dispatch", case_name] != "0xfffffffe") {
+        printf("frontend control Thumb cycle accounting mismatch: rv32im_state=%s dispatch_state=%s rv32im_r1=%s dispatch_r1=%s rv32im_cycles=%s dispatch_cycles=%s\n",
+               state_hash["rv32im", case_name],
+               state_hash["rv32im-dispatch", case_name],
+               r1["rv32im", case_name], r1["rv32im-dispatch", case_name],
+               update_cycles["rv32im", case_name],
+               update_cycles["rv32im-dispatch", case_name])
+        failed = 1
+      }
+    } else if (case_name == "thumb_empty_stm_does_not_take_store_alert") {
+      # No helper ran, so a0 still contains the nonzero block-entry pointer.
+      # Testing it as an alert result causes a phantom dispatcher exit before
+      # ADD.  Architectural state eventually converges, so lock the execution
+      # boundary too: the internal self-loop must stay in the original block.
+      if (state_hash["interp", case_name] != state_hash["rv32im", case_name] ||
+          state_hash["interp", case_name] != state_hash["rv32im-dispatch", case_name] ||
+          trace_count["rv32im", case_name] != 1 ||
+          trace_count["rv32im-dispatch", case_name] != 1) {
+        printf("frontend control empty STM phantom exit: interp_state=%s rv32im_state=%s dispatch_state=%s rv32im_trace=%u dispatch_trace=%u\n",
+               state_hash["interp", case_name],
+               state_hash["rv32im", case_name],
+               state_hash["rv32im-dispatch", case_name],
+               trace_count["rv32im", case_name],
+               trace_count["rv32im-dispatch", case_name])
+        failed = 1
+      }
     } else if (state_hash["interp", case_name] != state_hash["rv32im", case_name] ||
                state_hash["interp", case_name] != state_hash["rv32im-dispatch", case_name]) {
       printf("frontend control state mismatch: case=%s interp=%s rv32im=%s dispatch=%s\n",
