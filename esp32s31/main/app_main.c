@@ -30,6 +30,9 @@
 #if GPSP_ESP32S31_DYNAREC
 #include "common.h"
 #include "jit_platform.h"
+#if GPSP_ESP32S31_PSRAM_FAULT_TRACE
+#include "psram_fault_trace.h"
+#endif
 #include "riscv/riscv_emit.h"
 #include "uart_debug.h"
 #endif
@@ -731,6 +734,16 @@ void app_main(void)
          "unicore=1 boot_mode=%s\n",
          CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
          CONFIG_FREERTOS_NUMBER_OF_CORES, GPSP_ESP32S31_BOOT_NAME);
+
+#if GPSP_ESP32S31_DYNAREC && GPSP_ESP32S31_PSRAM_FAULT_TRACE
+  const bool psram_fault_trace_ready =
+      esp32s31_psram_fault_trace_init();
+  printf("result=%s command=psram_fault_trace ready=%u "
+         "capture=axi_addr+jit_lookup+cache_state\n",
+         psram_fault_trace_ready ? "PASS" : "FAIL",
+         (unsigned)psram_fault_trace_ready);
+  fflush(stdout);
+#endif
 
   g_lcd_ready = esp32s31_korvo1_lcd_init();
   printf("result=%s command=lcd_init ready=%u\n",

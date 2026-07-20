@@ -8,10 +8,16 @@ set(GPSP_ESP32S31_PROFILE "0" CACHE BOOL
     "Enable detailed gpSP phase profiling")
 set(GPSP_ESP32S31_PC_PROFILE "0" CACHE BOOL
     "Enable the 1 kHz interrupted-PC sampler during phase profiling")
+set(GPSP_ESP32S31_PSRAM_FAULT_TRACE "0" CACHE BOOL
+    "Capture JIT and AXI state before the ESP32-S31 PSRAM error ISR clears it")
 set(GPSP_ESP32S31_LTO "0" CACHE BOOL
     "Enable link-time optimization for gpSP core sources only")
 set(GPSP_ESP32S31_DYNAREC "1" CACHE BOOL
     "Enable the native RV32IM gpSP dynarec")
+if(GPSP_ESP32S31_PSRAM_FAULT_TRACE AND NOT GPSP_ESP32S31_DYNAREC)
+    message(FATAL_ERROR
+        "GPSP_ESP32S31_PSRAM_FAULT_TRACE requires GPSP_ESP32S31_DYNAREC")
+endif()
 set(GPSP_ESP32S31_BOOT_MODE "menu" CACHE STRING
     "ROM boot source: menu (TF card) or flash (direct gamepak mmap)")
 set_property(CACHE GPSP_ESP32S31_BOOT_MODE PROPERTY STRINGS

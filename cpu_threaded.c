@@ -22,6 +22,10 @@
 // - block memory needs psr swapping and user mode reg swapping
 
 #include "common.h"
+#if defined(GPSP_ESP32S31_PSRAM_FAULT_TRACE) && \
+    GPSP_ESP32S31_PSRAM_FAULT_TRACE
+#include "esp32s31/psram_fault_trace.h"
+#endif
 #if defined(VITA)
 #include <psp2/kernel/sysmem.h>
 #include <stdio.h>
@@ -4129,6 +4133,11 @@ void init_bios_hooks(void)
 
 void flush_translation_cache_ram(void)
 {
+#if defined(GPSP_ESP32S31_PSRAM_FAULT_TRACE) && \
+    GPSP_ESP32S31_PSRAM_FAULT_TRACE
+  u8 *old_translation_ptr = ram_translation_ptr;
+#endif
+
   /* Flushes RAM caches avoiding doing too much work (ie. wiping unused memory) */
   flush_ram_count++;
   /*printf("ram flush %d (pc %x), %x to %x, %x to %x\n",
@@ -4137,6 +4146,12 @@ void flush_translation_cache_ram(void)
 
   last_ram_translation_ptr = ram_translation_cache;
   ram_translation_ptr = ram_translation_cache;
+#if defined(GPSP_ESP32S31_PSRAM_FAULT_TRACE) && \
+    GPSP_ESP32S31_PSRAM_FAULT_TRACE
+  esp32s31_psram_fault_trace_note_cache_flush(
+      ESP32S31_PSRAM_FAULT_CACHE_RAM,
+      (uintptr_t)old_translation_ptr, (uintptr_t)ram_translation_ptr);
+#endif
 
   // Proceed to clean the SMC area if needed
   // (also try to memset as little as possible for performance)
@@ -4173,9 +4188,20 @@ void flush_translation_cache_ram(void)
 
 void flush_translation_cache_rom(void)
 {
+#if defined(GPSP_ESP32S31_PSRAM_FAULT_TRACE) && \
+    GPSP_ESP32S31_PSRAM_FAULT_TRACE
+  u8 *old_translation_ptr = rom_translation_ptr;
+#endif
+
   /* We flush the generated code except for everything below the watermark. */
   last_rom_translation_ptr = &rom_translation_cache[rom_cache_watermark];
   rom_translation_ptr      = &rom_translation_cache[rom_cache_watermark];
+#if defined(GPSP_ESP32S31_PSRAM_FAULT_TRACE) && \
+    GPSP_ESP32S31_PSRAM_FAULT_TRACE
+  esp32s31_psram_fault_trace_note_cache_flush(
+      ESP32S31_PSRAM_FAULT_CACHE_ROM,
+      (uintptr_t)old_translation_ptr, (uintptr_t)rom_translation_ptr);
+#endif
 
   memset(rom_branch_hash, 0, sizeof(rom_branch_hash));
 #if defined(RISCV_RUNTIME_HAS_INDIRECT_LOOKUP_CACHE)

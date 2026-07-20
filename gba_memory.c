@@ -20,6 +20,11 @@
 #include "common.h"
 #include "streams/file_stream.h"
 
+#if defined(GPSP_ESP32S31_PSRAM_FAULT_TRACE) && \
+    GPSP_ESP32S31_PSRAM_FAULT_TRACE
+#include "esp32s31/psram_fault_trace.h"
+#endif
+
 #ifndef USE_DEBUG
 #define USE_DEBUG 0
 #endif
@@ -2324,6 +2329,11 @@ u8 *load_gamepak_page(u32 physical_index)
   if (page == NULL)
     return NULL;
 
+#if defined(GPSP_ESP32S31_PSRAM_FAULT_TRACE) && \
+    GPSP_ESP32S31_PSRAM_FAULT_TRACE
+  esp32s31_psram_fault_trace_note_gamepak_page(physical_index, page);
+#endif
+
   map_rom_entry(read, physical_index, (u8 *)page, rom_blocks);
   return (u8 *)page;
 }
@@ -2741,6 +2751,10 @@ static s32 load_gamepak_raw_memory(const struct retro_game_info *info)
       gamepak_size = 0u;
       return -1;
     }
+#if defined(GPSP_ESP32S31_PSRAM_FAULT_TRACE) && \
+    GPSP_ESP32S31_PSRAM_FAULT_TRACE
+    esp32s31_psram_fault_trace_note_gamepak_page(physical_index, page);
+#endif
     map_rom_entry(read, physical_index, (u8 *)page, rom_blocks);
   }
   return 0;

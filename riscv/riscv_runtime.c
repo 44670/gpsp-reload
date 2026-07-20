@@ -21,6 +21,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#if defined(GPSP_ESP32S31_PSRAM_FAULT_TRACE) && \
+    GPSP_ESP32S31_PSRAM_FAULT_TRACE
+#include "esp_attr.h"
+#include "esp32s31/psram_fault_trace.h"
+#endif
+
 #if defined(__riscv) && defined(__riscv_xlen) && (__riscv_xlen == 32) && \
     (!defined(RISCV_RUNTIME_STANDALONE_TEST) || \
      defined(RISCV_RUNTIME_ENABLE_FAST_RAM_READS))
@@ -127,6 +133,16 @@ enum
 static uintptr_t riscv_helper_table[RISCV_HELPER_COUNT];
 typedef char riscv_helper_state_size_check[
   (REG_USERDEF + RISCV_HELPER_COUNT <= REG_MAX) ? 1 : -1];
+#if defined(GPSP_ESP32S31_PSRAM_FAULT_TRACE) && \
+    GPSP_ESP32S31_PSRAM_FAULT_TRACE
+typedef char riscv_fault_trace_slots_must_follow_helper_state[
+  REG_USERDEF + RISCV_HELPER_COUNT <=
+    ESP32S31_PSRAM_FAULT_TRACE_REG_LOOKUP_ENTRY ? 1 : -1];
+typedef char riscv_fault_trace_entry_offset_must_be_248[
+  ESP32S31_PSRAM_FAULT_TRACE_REG_LOOKUP_ENTRY * sizeof(u32) == 248 ? 1 : -1];
+typedef char riscv_fault_trace_key_offset_must_be_252[
+  ESP32S31_PSRAM_FAULT_TRACE_REG_LOOKUP_KEY * sizeof(u32) == 252 ? 1 : -1];
+#endif
 
 enum
 {
@@ -416,6 +432,17 @@ __asm__(
   "  lw t1, 0(t0)\n"
   "  addi t1, t1, 1\n"
   "  sw t1, 0(t0)\n"
+#endif
+#if defined(GPSP_ESP32S31_PSRAM_FAULT_TRACE) && \
+    GPSP_ESP32S31_PSRAM_FAULT_TRACE
+  /* Publish the pair only after every generation/key check passed. If the
+   * following JALR fetches through a stale PSRAM/MMU mapping, the fault ISR
+   * sees the exact cached key and entry that triggered it. Bit 31 marks this
+   * as a fast-tail hit; real GBA guest PCs never use that bit. */
+  "  sw t6, 248(s0)\n"
+  "  li t0, -2147483648\n"
+  "  or t0, t0, t2\n"
+  "  sw t0, 252(s0)\n"
 #endif
   "  jalr zero, t6, 0\n"
   ".Lriscv_jit_tail_slow:\n"
@@ -4632,6 +4659,12 @@ static u8 *riscv_lookup_or_fallback(riscv_control_lookup_kind kind)
   }
 #endif
 
+#if defined(GPSP_ESP32S31_PSRAM_FAULT_TRACE) && \
+    GPSP_ESP32S31_PSRAM_FAULT_TRACE
+  esp32s31_psram_fault_trace_note_jit_lookup(
+      pc | (thumb ? 1u : 0u), entry);
+#endif
+
   return entry;
 }
 
@@ -4654,6 +4687,25 @@ void riscv_invalidate_indirect_lookup_cache(void)
   riscv_indirect_lookup_cache.generation = generation;
 #endif
 }
+
+#if defined(GPSP_ESP32S31_PSRAM_FAULT_TRACE) && \
+    GPSP_ESP32S31_PSRAM_FAULT_TRACE
+void IRAM_ATTR esp32s31_psram_fault_trace_get_indirect_snapshot(
+    uint32_t key, esp32s31_psram_fault_indirect_snapshot_t *snapshot)
+{
+  const u32 index = (key >> 1) & RISCV_INDIRECT_LOOKUP_CACHE_MASK;
+  volatile const riscv_indirect_lookup_cache_entry *entry =
+      &riscv_indirect_lookup_cache.entries[index];
+
+  if (snapshot == NULL)
+    return;
+  snapshot->requested_key = key;
+  snapshot->global_generation = riscv_indirect_lookup_cache.generation;
+  snapshot->slot_key = entry->key;
+  snapshot->slot_entry = entry->entry;
+  snapshot->slot_generation = entry->generation;
+}
+#endif
 
 #if defined(RISCV_RUNTIME_STANDALONE_TEST) && \
     defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
@@ -11980,6 +12032,12 @@ u32 execute_arm_translate_internal(u32 cycles, void *regptr)
     riscv_cycles_remaining = 0;
     return 0;
   }
+
+#if defined(GPSP_ESP32S31_PSRAM_FAULT_TRACE) && \
+    GPSP_ESP32S31_PSRAM_FAULT_TRACE
+  esp32s31_psram_fault_trace_note_jit_lookup(
+      pc | (thumb ? 1u : 0u), entry_data);
+#endif
 
   if (!optimized_entry_setup)
     riscv_init_helper_table();
