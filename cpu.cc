@@ -858,6 +858,7 @@ const u32 spsr_masks[4] = { 0x00000000, 0x000000EF, 0xF0000000, 0xF00000EF };
   if (                                                                        \
      (((_address >> 24) == 0) && (reg[REG_PC] >= 0x4000)) ||  /* BIOS read */ \
      (_address & aligned_address_mask##size) ||      /* Unaligned access */   \
+     gamepak_direct_gpio_read_needed(_address, (size) / 8u) ||                \
      !(map = memory_map_read[_address >> 15])        /* Unmapped memory */    \
   )                                                                           \
   {                                                                           \
@@ -894,7 +895,8 @@ const u32 spsr_masks[4] = { 0x00000000, 0x000000EF, 0xF0000000, 0xF00000EF };
     cycles_remaining -= ws_cyc_seq[region][1];                                \
     STATS_MEMORY_ACCESS(read, u32, region);                                   \
   }                                                                           \
-  if(_address < 0x10000000 && map)                                            \
+  if(_address < 0x10000000 && map &&                                          \
+     !gamepak_direct_gpio_read_needed(_address, sizeof(u32)))                 \
   {                                                                           \
     dest = readaddress32(map, _address & 0x7FFF);                             \
   }                                                                           \

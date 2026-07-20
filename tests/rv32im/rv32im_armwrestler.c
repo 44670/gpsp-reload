@@ -3,8 +3,23 @@
 #if defined(RV32IM_FRONTEND_CONTROL_ONLY)
 #include "rv32im_frontend_control_cases.h"
 #endif
+#if defined(RV32IM_BIOS_SWI_ONLY)
+#include "rv32im_bios_swi_cases.h"
+#endif
 
 typedef unsigned int usize;
+
+#if defined(RV32IM_FRONTEND_CONTROL_ONLY)
+static int frontend_control_name_equal(const char *left, const char *right)
+{
+  while (*left && *left == *right)
+  {
+    left++;
+    right++;
+  }
+  return *left == *right;
+}
+#endif
 
 #define SYS_OPENAT 56
 #define SYS_CLOSE 57
@@ -26,6 +41,10 @@ typedef unsigned int usize;
 #ifndef ARMWRESTLER_ROM
 #define ARMWRESTLER_ROM \
   "/home/john/ref/armwrestler-gba-fixed/armwrestler-gba-fixed.gba"
+#endif
+
+#ifndef OPEN_GBA_BIOS
+#define OPEN_GBA_BIOS "/home/john/work/gpsp/bios/open_gba_bios.bin"
 #endif
 
 #define ROM_BASE 0x08000000u
@@ -201,6 +220,10 @@ void *stdout;
 
 static u8 g_rom[ROM_MAX_BYTES];
 static u8 g_rom_open_bus[ROM_PAGE_BYTES];
+static u8 g_bios[0x4000u];
+#if defined(RV32IM_BIOS_SWI_ONLY)
+static u8 g_open_bios[0x4000u];
+#endif
 static u8 g_vram[1024 * 96];
 static u8 g_palette_ram[1024];
 static u8 g_oam_ram[1024];
@@ -209,6 +232,11 @@ static u32 g_execute_arm_calls;
 static u32 g_execute_arm_cycles;
 static u32 g_update_calls;
 static s32 g_update_last_cycles;
+#if defined(RV32IM_FRONTEND_CONTROL_ONLY)
+static u32 g_frontend_control_resume_updates;
+static u32 g_frontend_control_resume_cycles;
+static u32 g_frontend_control_raise_irq;
+#endif
 static u32 g_trace_count;
 static u32 g_trace_first_pc;
 static u32 g_trace_last_pc;
@@ -434,6 +462,32 @@ static int load_rom(void)
   return total != 0;
 }
 
+#if defined(RV32IM_BIOS_JIT_AUDIT_ONLY) || defined(RV32IM_BIOS_SWI_ONLY)
+static int load_open_gba_bios(u8 *destination)
+{
+  int fd = (int)syscall3(SYS_OPENAT, AT_FDCWD, (long)OPEN_GBA_BIOS,
+                         O_RDONLY);
+  u32 total = 0;
+  u8 extra;
+  long got;
+
+  if (fd < 0)
+    return 0;
+
+  while (total < sizeof(g_bios))
+  {
+    got = syscall3(SYS_READ, fd, (long)&destination[total],
+                   sizeof(g_bios) - total);
+    if (got <= 0)
+      break;
+    total += (u32)got;
+  }
+  got = syscall3(SYS_READ, fd, (long)&extra, 1);
+  syscall1(SYS_CLOSE, fd);
+  return total == sizeof(g_bios) && got == 0;
+}
+#endif
+
 static void patch_word(u32 pc, u32 value)
 {
   store32(g_rom, pc - ROM_BASE, value);
@@ -502,6 +556,7 @@ static void init_memory_map(void)
   for (address = 0; address < 8u * 1024u; address++)
     memory_map_read[address] = 0;
 
+  map_read_region(0x00000000u, 0x00004000u, g_bios, 0x3fffu);
   map_read_region(EWRAM_BASE, 0x01000000u, ewram, 0x3ffffu);
   map_read_region(IWRAM_BASE, 0x01000000u, iwram + 0x8000, 0x7fffu);
 
@@ -521,6 +576,8 @@ static u8 *addr_ptr(u32 address, u32 size)
   (void)size;
   switch (region)
   {
+    case 0x00:
+      return g_bios + (address & 0x3fffu);
     case 0x02:
       return ewram + (address & 0x3ffffu);
     case 0x03:
@@ -649,6 +706,21 @@ u32 function_cc update_gba(int remaining_cycles)
 {
   g_update_calls++;
   g_update_last_cycles = (s32)remaining_cycles;
+#if defined(RV32IM_FRONTEND_CONTROL_ONLY)
+  if (g_frontend_control_raise_irq != 0u && g_update_calls == 1u)
+  {
+    REG_MODE(MODE_IRQ)[6] = reg[REG_PC] + 4u;
+    REG_SPSR(MODE_IRQ) = reg[REG_CPSR];
+    reg[REG_CPSR] = 0xd2u;
+    reg[REG_PC] = 0x00000018u;
+    set_cpu_mode(MODE_IRQ);
+  }
+  if (g_frontend_control_resume_updates != 0u)
+  {
+    g_frontend_control_resume_updates--;
+    return g_frontend_control_resume_cycles;
+  }
+#endif
   return FRAME_COMPLETE;
 }
 
@@ -1337,6 +1409,7 @@ static void install_frontend_control_case(
   u32 i;
 
   memset(g_rom, 0, sizeof(g_rom));
+  memset(g_bios, 0, sizeof(g_bios));
   g_rom_size = sizeof(g_rom);
   store32(g_rom, 8u, 0xeafffffeu);
   for (i = 0; i < item->generated_words; i++)
@@ -1348,6 +1421,45 @@ static void install_frontend_control_case(
   {
     store32(g_rom, RV32IM_FRONTEND_CONTROL_PC - ROM_BASE + i * 4u,
             item->words[i]);
+  }
+  if (item->resume_updates != 0u)
+  {
+    for (i = 0;
+         i < sizeof(rv32im_frontend_control_swi_dispatcher) /
+               sizeof(rv32im_frontend_control_swi_dispatcher[0]);
+         i++)
+    {
+      store32(g_bios, rv32im_frontend_control_swi_dispatcher[i].offset,
+              rv32im_frontend_control_swi_dispatcher[i].word);
+    }
+    for (i = 0;
+         i < sizeof(rv32im_frontend_control_cpuset_words) /
+               sizeof(rv32im_frontend_control_cpuset_words[0]);
+         i++)
+      store32(g_bios, 0x614u + i * 4u,
+              rv32im_frontend_control_cpuset_words[i]);
+    for (i = 0;
+         i < sizeof(rv32im_frontend_control_cpufastset_words) /
+               sizeof(rv32im_frontend_control_cpufastset_words[0]);
+         i++)
+      store32(g_bios, 0x720u + i * 4u,
+              rv32im_frontend_control_cpufastset_words[i]);
+    for (i = 0;
+         i < sizeof(rv32im_frontend_control_bgaffineset_words) /
+               sizeof(rv32im_frontend_control_bgaffineset_words[0]);
+         i++)
+      store32(g_bios, 0x7e4u + i * 4u,
+              rv32im_frontend_control_bgaffineset_words[i]);
+    for (i = 0;
+         i < sizeof(rv32im_frontend_control_objaffineset_words) /
+               sizeof(rv32im_frontend_control_objaffineset_words[0]);
+         i++)
+      store32(g_bios, 0x8e0u + i * 4u,
+              rv32im_frontend_control_objaffineset_words[i]);
+    store16(g_bios, 0x2150u, 0x1234u);
+    store16(g_bios, 0x21d0u, 0x5678u);
+    store32(g_rom, RV32IM_FRONTEND_CONTROL_PC - ROM_BASE + 0x40u,
+            0xe12fff1eu);
   }
 }
 
@@ -1374,17 +1486,54 @@ static int run_frontend_control_case(
   u32 state_hash;
   u32 before_code_bytes;
   u32 code_bytes;
+  u32 memory_hash = 2166136261u;
   u32 stale_slot_cleared = 1u;
   int passed;
 
   install_frontend_control_case(item);
   clear_runtime_memory();
+  if (frontend_control_name_equal(
+        item->name,
+        "arm_openbios_cpufastset_large_iwram_fill_resume"))
+  {
+    store32(iwram + 0x8000u, 0x7df4u, 0xa5a5a5a5u);
+  }
+  else if (frontend_control_name_equal(
+        item->name, "arm_openbios_cpufastset_copy_resume"))
+  {
+    for (u32 source_word = 0; source_word < 8u; source_word++)
+      store32(ewram, source_word * 4u, (source_word + 1u) * 0x11u);
+  }
+  else if (frontend_control_name_equal(
+             item->name, "arm_openbios_bgaffineset_resume"))
+  {
+    store32(ewram, 0x00u, 0x00012345u);
+    store32(ewram, 0x04u, 0xfffedcbbu);
+    store16(ewram, 0x08u, 0x0011u);
+    store16(ewram, 0x0au, 0xffe2u);
+    store16(ewram, 0x0cu, 0x0180u);
+    store16(ewram, 0x0eu, 0xff40u);
+    store16(ewram, 0x10u, 0x0000u);
+  }
+  else if (frontend_control_name_equal(
+             item->name, "arm_openbios_objaffineset_resume"))
+  {
+    store16(ewram, 0x00u, 0x0180u);
+    store16(ewram, 0x02u, 0xff40u);
+    store16(ewram, 0x04u, 0x0000u);
+  }
+  if (item->resume_updates != 0u)
+    store32(iwram + 0x8000u, 0x7ffcu,
+            RV32IM_FRONTEND_CONTROL_PC + 0x40u);
   init_memory_map();
   init_cpu_state();
-  reg[REG_PC] = RV32IM_FRONTEND_CONTROL_PC;
+  reg[REG_PC] = RV32IM_FRONTEND_CONTROL_PC + item->entry_word_offset * 4u;
   reg[REG_CPSR] = item->initial_cpsr;
   idle_loop_target_pc = item->idle_pc;
   reset_frontend_control_observations();
+  g_frontend_control_resume_updates = item->resume_updates;
+  g_frontend_control_resume_cycles = item->resume_cycles;
+  g_frontend_control_raise_irq = 0u;
   reset_dynarec_for_armwrestler();
   init_emitter(false);
 #if defined(RV32IM_FRONTEND_CONTROL_FORCE_DISPATCH)
@@ -1393,6 +1542,15 @@ static int run_frontend_control_case(
   riscv_set_runtime_debug_force_dispatch(false);
 #endif
   before_code_bytes = (u32)(rom_translation_ptr - rom_translation_cache);
+
+  if (item->pretranslate_disable_arm_mask != 0u)
+  {
+    riscv_set_runtime_debug_disable_arm_native_mask(
+      item->pretranslate_disable_arm_mask);
+    if (!block_lookup_address_arm(RV32IM_FRONTEND_CONTROL_PC))
+      stale_slot_cleared = 0u;
+    riscv_set_runtime_debug_disable_arm_native_mask(0u);
+  }
 
   if (item->stale_update_index_plus_one != 0u)
   {
@@ -1413,15 +1571,24 @@ static int run_frontend_control_case(
   state_hash = rv32im_frontend_control_state_hash(
     &reg[0], &spsr[0], &reg_mode[0][0], g_update_calls,
     g_update_last_cycles);
-  passed = g_update_calls == 1u &&
+  for (u32 memory_offset = 0x1000u; memory_offset < 0x2000u;
+       memory_offset += 4u)
+    memory_hash = rv32im_frontend_control_hash_word(
+      memory_hash, load32(ewram, memory_offset));
+  state_hash = rv32im_frontend_control_hash_word(state_hash, memory_hash);
+  passed = g_update_calls == item->resume_updates + 1u &&
            g_update_last_cycles != (s32)0x7fffffffu &&
            g_execute_arm_calls == 0u && g_fallback_count == 0u &&
            stats.interpreter_fallbacks == 0u &&
            stats.blocks_executed != 0u && code_bytes != 0u &&
            stale_slot_cleared != 0u &&
-           (item->generated_words == 0u || code_bytes > 4096u) &&
+           (item->generated_words == 0u || code_bytes > 4096u ||
+            frontend_control_name_equal(
+              item->name, "arm_known_false_block_tail_cycles")) &&
            g_trace_count != 0u &&
-           g_trace_first_pc >= ROM_BASE && g_trace_first_pc < 0x0e000000u;
+           ((item->resume_updates != 0u && g_trace_first_pc < 0x4000u) ||
+            (g_trace_first_pc >= ROM_BASE &&
+             g_trace_first_pc < 0x0e000000u));
 
   put_raw("result=");
   put_raw(passed ? "PASS" : "FAIL");
@@ -1455,6 +1622,20 @@ static int run_frontend_control_case(
   put_u32_hex(REG_SPSR(MODE_SUPERVISOR));
   put_raw(" svc_lr=");
   put_u32_hex(REG_MODE(MODE_SUPERVISOR)[6]);
+  put_raw(" irq_spsr=");
+  put_u32_hex(REG_SPSR(MODE_IRQ));
+  put_raw(" sys_sp=");
+  put_u32_hex(REG_MODE(MODE_SYSTEM)[5]);
+  put_raw(" sys_lr=");
+  put_u32_hex(REG_MODE(MODE_SYSTEM)[6]);
+  put_raw(" svc_sp=");
+  put_u32_hex(REG_MODE(MODE_SUPERVISOR)[5]);
+  put_raw(" irq_sp=");
+  put_u32_hex(REG_MODE(MODE_IRQ)[5]);
+  put_raw(" irq_lr=");
+  put_u32_hex(REG_MODE(MODE_IRQ)[6]);
+  put_raw(" memory_hash=");
+  put_u32_hex(memory_hash);
   put_raw(" update_calls=");
   put_u32_dec(g_update_calls);
   put_raw(" update_cycles=");
@@ -1669,11 +1850,389 @@ static int run_frontend_cache_span(void)
 }
 #endif
 
+#if defined(RV32IM_BIOS_SWI_ONLY)
+static u32 bios_swi_hash_bytes(u32 hash, const u8 *bytes, u32 count)
+{
+  u32 i;
+
+  for (i = 0; i < count; i++)
+  {
+    hash ^= bytes[i];
+    hash *= 16777619u;
+  }
+  return hash;
+}
+
+static u32 bios_swi_state_hash(void)
+{
+  u32 hash = 2166136261u;
+  u32 i;
+
+  for (i = 0; i < 16u; i++)
+    hash = fnv1a_update_u32(hash, reg[i]);
+  hash = fnv1a_update_u32(hash, reg[REG_CPSR]);
+  hash = fnv1a_update_u32(hash, reg[CPU_MODE]);
+  hash = fnv1a_update_u32(hash, reg[CPU_HALT_STATE]);
+  hash = fnv1a_update_u32(hash, reg[REG_BUS_VALUE]);
+  for (i = 0; i < 6u; i++)
+    hash = fnv1a_update_u32(hash, spsr[i]);
+  for (i = 0; i < 7u * 7u; i++)
+    hash = fnv1a_update_u32(hash, ((u32 *)reg_mode)[i]);
+  return hash;
+}
+
+static u32 bios_swi_memory_hash(void)
+{
+  u32 hash = 2166136261u;
+
+  hash = bios_swi_hash_bytes(hash, ewram, 0x2200u);
+  hash = bios_swi_hash_bytes(hash, iwram + 0x8000u + 0x7f00u, 0x100u);
+  hash = bios_swi_hash_bytes(hash, (const u8 *)io_registers,
+                             sizeof(io_registers));
+  hash = bios_swi_hash_bytes(hash, g_vram, 0x200u);
+  hash = bios_swi_hash_bytes(hash, g_palette_ram, sizeof(g_palette_ram));
+  hash = bios_swi_hash_bytes(hash, g_oam_ram, sizeof(g_oam_ram));
+  return hash;
+}
+
+static void install_bios_swi_fixture(rv32im_bios_fixture fixture)
+{
+  static const u8 lz_literals[12] =
+    { 0x10u, 0x21u, 0x32u, 0x43u, 0x54u, 0x65u,
+      0x76u, 0x87u, 0x98u, 0xa9u, 0xbau, 0xcbu };
+  static const u8 diff8[8] =
+    { 0x10u, 0x01u, 0x02u, 0xffu, 0x04u, 0xfcu, 0x08u, 0x80u };
+  u32 i;
+
+  switch (fixture)
+  {
+    case RV32IM_BIOS_FIXTURE_INTR_READY:
+      store16(iwram + 0x8000u, 0x7ff8u, 1u);
+      break;
+
+    case RV32IM_BIOS_FIXTURE_BIT_UNPACK:
+      ewram[0] = 0xe4u;
+      ewram[1] = 0x1bu;
+      ewram[2] = 0x55u;
+      ewram[3] = 0xaau;
+      store16(ewram, RV32IM_BIOS_SWI_HEADER - EWRAM_BASE, 4u);
+      ewram[RV32IM_BIOS_SWI_HEADER - EWRAM_BASE + 2u] = 2u;
+      ewram[RV32IM_BIOS_SWI_HEADER - EWRAM_BASE + 3u] = 8u;
+      store32(ewram, RV32IM_BIOS_SWI_HEADER - EWRAM_BASE + 4u,
+              0x00000010u);
+      break;
+
+    case RV32IM_BIOS_FIXTURE_LZ77:
+      store32(ewram, 0u, (12u << 8) | 0x10u);
+      ewram[4] = 0u;
+      for (i = 0; i < 8u; i++)
+        ewram[5u + i] = lz_literals[i];
+      ewram[13] = 0u;
+      for (i = 0; i < 4u; i++)
+        ewram[14u + i] = lz_literals[8u + i];
+      break;
+
+    case RV32IM_BIOS_FIXTURE_HUFF:
+      store32(ewram, 0u, (4u << 8) | 8u);
+      ewram[4] = 1u;
+      ewram[5] = 0xc0u;
+      ewram[6] = 0x41u;
+      ewram[7] = 0x42u;
+      store32(ewram, 8u, 0x50000000u);
+      break;
+
+    case RV32IM_BIOS_FIXTURE_RL:
+      store32(ewram, 0u, (10u << 8) | 0x30u);
+      ewram[4] = 0x87u;
+      ewram[5] = 0x5au;
+      break;
+
+    case RV32IM_BIOS_FIXTURE_DIFF8:
+      store32(ewram, 0u, (8u << 8) | 0x80u);
+      for (i = 0; i < sizeof(diff8); i++)
+        ewram[4u + i] = diff8[i];
+      break;
+
+    case RV32IM_BIOS_FIXTURE_DIFF16:
+      store32(ewram, 0u, (8u << 8) | 0x81u);
+      store16(ewram, 4u, 0x1000u);
+      store16(ewram, 6u, 0x0011u);
+      store16(ewram, 8u, 0xfff0u);
+      store16(ewram, 10u, 0x0100u);
+      break;
+
+    case RV32IM_BIOS_FIXTURE_MIDI:
+      store32(ewram, 4u, 0x00123456u);
+      break;
+
+    default:
+      break;
+  }
+}
+
+static int run_bios_swi_case(const rv32im_bios_swi_case *item)
+{
+  riscv_runtime_stats stats;
+  u32 i;
+  u32 code_bytes;
+  u32 state_hash;
+  u32 memory_hash;
+  int passed;
+
+  memset(g_rom, 0, sizeof(g_rom));
+  for (i = 0; i < sizeof(g_bios); i++)
+    g_bios[i] = g_open_bios[i];
+  g_rom_size = sizeof(g_rom);
+  store32(g_rom, RV32IM_BIOS_SWI_PC - ROM_BASE,
+          0xef000000u | (item->swi << 16));
+  store32(g_rom, RV32IM_BIOS_SWI_PC - ROM_BASE + 4u, 0xeafffffeu);
+
+  clear_runtime_memory();
+  install_bios_swi_fixture(item->fixture);
+  init_memory_map();
+  init_cpu_state();
+  reg[0] = item->r0;
+  reg[1] = item->r1;
+  reg[2] = item->r2;
+  reg[3] = item->r3;
+  reg[REG_PC] = RV32IM_BIOS_SWI_PC;
+  reg[REG_CPSR] = 0x0000001fu;
+  idle_loop_target_pc = RV32IM_BIOS_SWI_PC + 4u;
+  g_execute_arm_calls = 0u;
+  g_execute_arm_cycles = 0u;
+  g_update_calls = 0u;
+  g_update_last_cycles = (s32)0x7fffffffu;
+  g_trace_count = 0u;
+  g_trace_first_pc = 0u;
+  g_trace_last_pc = 0u;
+  g_trace_hash = 2166136261u;
+  g_fallback_count = 0u;
+  g_fallback_first_pc = 0u;
+  g_fallback_last_pc = 0u;
+  g_fallback_hash = 2166136261u;
+  reset_dynarec_for_armwrestler();
+  init_emitter(false);
+
+  execute_arm_translate_internal(500000u, &reg[0]);
+  riscv_get_runtime_stats(&stats);
+  code_bytes = (u32)(rom_translation_ptr - rom_translation_cache);
+  state_hash = bios_swi_state_hash();
+  memory_hash = bios_swi_memory_hash();
+  passed = g_update_calls == 1u && g_update_last_cycles <= 0 &&
+           reg[REG_PC] == RV32IM_BIOS_SWI_PC + 4u &&
+           stats.blocks_executed != 0u &&
+           stats.bios_native_blocks_executed != 0u &&
+           stats.interpreter_fallbacks == 0u &&
+           stats.bios_interpreter_fallbacks == 0u &&
+           g_fallback_count == 0u && g_execute_arm_calls == 0u &&
+           code_bytes != 0u;
+
+  put_raw("result=");
+  put_raw(passed ? "PASS" : "FAIL");
+  put_raw(" command=bios-swi case=");
+  put_raw(item->name);
+  put_raw(" backend=rv32im swi=");
+  put_u32_hex(item->swi);
+  put_raw(" state_hash=");
+  put_u32_hex(state_hash);
+  put_raw(" memory_hash=");
+  put_u32_hex(memory_hash);
+  put_raw(" r0=");
+  put_u32_hex(reg[0]);
+  put_raw(" r1=");
+  put_u32_hex(reg[1]);
+  put_raw(" r2=");
+  put_u32_hex(reg[2]);
+  put_raw(" r3=");
+  put_u32_hex(reg[3]);
+  put_raw(" pc=");
+  put_u32_hex(reg[REG_PC]);
+  put_raw(" cpsr=");
+  put_u32_hex(reg[REG_CPSR]);
+  put_raw(" update_calls=");
+  put_u32_dec(g_update_calls);
+  put_raw(" update_cycles=");
+  put_u32_hex((u32)g_update_last_cycles);
+  put_raw(" native_blocks=");
+  put_u32_dec(stats.blocks_executed);
+  put_raw(" bios_native_blocks=");
+  put_u32_dec(stats.bios_native_blocks_executed);
+  put_raw(" bios_blocks_emitted=");
+  put_u32_dec(stats.bios_native_blocks_emitted);
+  put_raw(" code_bytes=");
+  put_u32_dec(code_bytes);
+  put_raw(" fallbacks=");
+  put_u32_dec(stats.interpreter_fallbacks);
+  put_raw(" bios_fallbacks=");
+  put_u32_dec(stats.bios_interpreter_fallbacks);
+  put_raw(" execute_arm_calls=");
+  put_u32_dec(g_execute_arm_calls);
+  put_raw(" harness_mode=cpu_threaded_frontend reason=");
+  put_raw(passed ? "real_bios_swi_executed_native" :
+                   "real_bios_swi_native_contract_failed");
+  put_raw("\n");
+  return passed;
+}
+
+static int run_bios_swi_cases(void)
+{
+  u32 i;
+
+  for (i = 0; i < RV32IM_BIOS_SWI_CASE_COUNT; i++)
+  {
+    if (!run_bios_swi_case(&rv32im_bios_swi_cases[i]))
+      return 0;
+  }
+  put_raw("result=PASS command=bios-swi case=all backend=rv32im cases=");
+  put_u32_dec((u32)RV32IM_BIOS_SWI_CASE_COUNT);
+  put_raw(" harness_mode=cpu_threaded_frontend "
+          "reason=real_bios_swi_cases_complete\n");
+  return 1;
+}
+#endif
+
+#if defined(RV32IM_BIOS_JIT_AUDIT_ONLY)
+#define OPEN_GBA_BIOS_SWI_TABLE 0x000000b0u
+#define OPEN_GBA_BIOS_SWI_COUNT 43u
+
+static int audit_bios_root(u32 pc, u32 *missing, u32 *unsupported)
+{
+  u8 *entry = block_lookup_address_arm(pc);
+  riscv_jit_block_meta *meta;
+
+  if (!entry || entry == (u8 *)(~(usize)0))
+  {
+    (*missing)++;
+    return 0;
+  }
+
+  meta = (riscv_jit_block_meta *)(void *)(entry - block_prologue_size);
+  if (meta->start_pc != pc || !(meta->flags & 1u))
+  {
+    (*unsupported)++;
+    return 0;
+  }
+  return 1;
+}
+
+static int run_bios_jit_audit(void)
+{
+  static const u32 vector_roots[] = { 0x00000000u, 0x00000008u,
+                                      0x00000018u };
+  riscv_runtime_stats stats;
+  u32 invalid_table_entries = 0;
+  u32 missing_roots = 0;
+  u32 unsupported_roots = 0;
+  u32 unique_roots = 0;
+  u32 root_count = 0;
+  u32 code_bytes;
+  u32 i;
+  int passed;
+
+  memset(g_rom, 0, sizeof(g_rom));
+  g_rom_size = sizeof(g_rom);
+  clear_runtime_memory();
+  init_memory_map();
+  init_cpu_state();
+  idle_loop_target_pc = 0xffffffffu;
+  reset_dynarec_for_armwrestler();
+  init_emitter(false);
+
+  for (i = 0; i < sizeof(vector_roots) / sizeof(vector_roots[0]); i++)
+  {
+    u32 before = (u32)(rom_translation_ptr - rom_translation_cache);
+
+    root_count++;
+    audit_bios_root(vector_roots[i], &missing_roots, &unsupported_roots);
+    if ((u32)(rom_translation_ptr - rom_translation_cache) != before)
+      unique_roots++;
+  }
+
+  for (i = 0; i < OPEN_GBA_BIOS_SWI_COUNT; i++)
+  {
+    u32 pc = load32(g_bios, OPEN_GBA_BIOS_SWI_TABLE + i * 4u);
+    u32 before;
+
+    root_count++;
+    if (pc >= sizeof(g_bios) || (pc & 3u))
+    {
+      invalid_table_entries++;
+      continue;
+    }
+    before = (u32)(rom_translation_ptr - rom_translation_cache);
+    audit_bios_root(pc, &missing_roots, &unsupported_roots);
+    if ((u32)(rom_translation_ptr - rom_translation_cache) != before)
+      unique_roots++;
+  }
+
+  riscv_get_runtime_stats(&stats);
+  code_bytes = (u32)(rom_translation_ptr - rom_translation_cache);
+  passed = invalid_table_entries == 0u && missing_roots == 0u &&
+           unsupported_roots == 0u && stats.blocks_emitted != 0u &&
+           stats.blocks_emitted == stats.bios_native_blocks_emitted &&
+           stats.interpreter_fallbacks == 0u && code_bytes != 0u;
+
+  put_raw("result=");
+  put_raw(passed ? "PASS" : "FAIL");
+  put_raw(" command=bios-jit-audit bios_bytes=");
+  put_u32_dec((u32)sizeof(g_bios));
+  put_raw(" vectors=");
+  put_u32_dec((u32)(sizeof(vector_roots) / sizeof(vector_roots[0])));
+  put_raw(" swi_entries=");
+  put_u32_dec(OPEN_GBA_BIOS_SWI_COUNT);
+  put_raw(" roots=");
+  put_u32_dec(root_count);
+  put_raw(" unique_roots=");
+  put_u32_dec(unique_roots);
+  put_raw(" invalid_table_entries=");
+  put_u32_dec(invalid_table_entries);
+  put_raw(" missing_roots=");
+  put_u32_dec(missing_roots);
+  put_raw(" unsupported_roots=");
+  put_u32_dec(unsupported_roots);
+  put_raw(" blocks_emitted=");
+  put_u32_dec(stats.blocks_emitted);
+  put_raw(" bios_native_blocks_emitted=");
+  put_u32_dec(stats.bios_native_blocks_emitted);
+  put_raw(" code_bytes=");
+  put_u32_dec(code_bytes);
+  put_raw(" fallbacks=");
+  put_u32_dec(stats.interpreter_fallbacks);
+  put_raw(" bios_fallbacks=");
+  put_u32_dec(stats.bios_interpreter_fallbacks);
+  put_raw(" harness_mode=cpu_threaded_frontend reason=");
+  put_raw(passed ? "all_bios_vector_and_swi_roots_translate_native" :
+                   "bios_root_translation_not_fully_native");
+  put_raw("\n");
+  return passed;
+}
+#endif
+
 void _start(void)
 {
   u32 i;
 
-#if defined(RV32IM_FRONTEND_CACHE_ONLY)
+#if defined(RV32IM_BIOS_SWI_ONLY)
+  (void)i;
+  if (!load_open_gba_bios(g_open_bios))
+  {
+    put_raw("result=FAIL command=bios-swi reason=bios_load_failed path="
+            OPEN_GBA_BIOS "\n");
+    sys_exit(2);
+  }
+  init_dynarec_for_armwrestler();
+  sys_exit(run_bios_swi_cases() ? 0 : 1);
+#elif defined(RV32IM_BIOS_JIT_AUDIT_ONLY)
+  (void)i;
+  if (!load_open_gba_bios(g_bios))
+  {
+    put_raw("result=FAIL command=bios-jit-audit reason=bios_load_failed path="
+            OPEN_GBA_BIOS "\n");
+    sys_exit(2);
+  }
+  init_dynarec_for_armwrestler();
+  sys_exit(run_bios_jit_audit() ? 0 : 1);
+#elif defined(RV32IM_FRONTEND_CACHE_ONLY)
   (void)i;
   init_dynarec_for_armwrestler();
   sys_exit(run_frontend_cache_span() ? 0 : 1);

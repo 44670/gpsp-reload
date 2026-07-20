@@ -1,0 +1,4 @@
+dependencies:
+  idf:
+    version: ">=6.1.0"
+  usb_host_hid: "^1.0.1"

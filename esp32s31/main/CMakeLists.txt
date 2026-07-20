@@ -21,6 +21,16 @@ set(GPSP_CORE_SOURCES
     "${GPSP_ROOT}/cpu.cc"
 )
 
+if(GPSP_ESP32S31_DYNAREC)
+    list(APPEND GPSP_CORE_SOURCES
+        "${GPSP_ROOT}/cpu_threaded.c"
+        "${GPSP_ROOT}/riscv/riscv_runtime.c"
+    )
+    set(GPSP_ESP32S31_DATA_ONLY 0)
+else()
+    set(GPSP_ESP32S31_DATA_ONLY 1)
+endif()
+
 set(GPSP_SOURCES
     "${GPSP_ROOT}/bios_data.S"
     ${GPSP_CORE_SOURCES}
@@ -36,17 +46,58 @@ set(GPSP_SOURCES
     "${GPSP_COMMON}/vfs/vfs_implementation.c"
     "${GPSP_ROOT}/esp32s31/korvo1_lcd.c"
     "${GPSP_ROOT}/esp32s31/korvo1_scaler.c"
-    "${GPSP_ROOT}/esp32s31/korvo1_touch.c"
+    "${GPSP_ROOT}/esp32s31/korvo1_usb_gamepad.c"
+    "${GPSP_ROOT}/esp32s31/korvo1_usb_xinput.c"
     "${GPSP_ROOT}/esp32s31/rgb565_scale3x.c"
-    "${GPSP_ROOT}/esp32s31/gt1151_protocol.c"
     "app_main.c"
 )
+
+if(GPSP_ESP32S31_MENU_BOOT)
+    list(APPEND GPSP_SOURCES
+        "${GPSP_ROOT}/esp32s31/game_menu.c"
+        "${GPSP_ROOT}/esp32s31/gamepak_runtime.c"
+        "${GPSP_ROOT}/esp32s31/gamepak_runtime_plan.c"
+        "${GPSP_ROOT}/esp32s31/korvo1_sd.c"
+        "${GPSP_ROOT}/esp32s31/menu_ui.c"
+    )
+else()
+    list(APPEND GPSP_SOURCES
+        "${GPSP_ROOT}/esp32s31/gamepak_container.c"
+    )
+endif()
+
+if(GPSP_ESP32S31_DYNAREC)
+    list(APPEND GPSP_SOURCES
+        "${GPSP_ROOT}/esp32s31/jit_platform.c"
+        "${GPSP_ROOT}/esp32s31/uart_debug.c"
+    )
+endif()
 
 if(GPSP_ESP32S31_PROFILE)
     list(APPEND GPSP_SOURCES
         "${GPSP_ROOT}/esp32s31/gpsp_profile.c"
     )
 endif()
+
+set(GPSP_COMPONENT_REQUIRES
+    esp_partition
+    esp_driver_gpio
+    esp_driver_i2c
+    esp_driver_uart
+    esp_driver_dma
+    esp_driver_ppa
+    esp_lcd
+    esp_mm
+    esp_psram
+    esp_hw_support
+    esp_timer
+    heap
+    fatfs
+    esp_driver_sdmmc
+    spi_flash
+    usb_host_hid
+    vfs
+)
 
 idf_component_register(
     SRCS ${GPSP_SOURCES}
@@ -56,18 +107,7 @@ idf_component_register(
       "${GPSP_ROOT}/libretro"
       "${GPSP_ROOT}/esp32s31"
       "${GPSP_COMMON}/include"
-    REQUIRES
-      esp_partition
-      esp_driver_gpio
-      esp_driver_i2c
-      esp_driver_dma
-      esp_driver_ppa
-      esp_lcd
-      esp_mm
-      esp_psram
-      esp_hw_support
-      esp_timer
-      heap
+    REQUIRES ${GPSP_COMPONENT_REQUIRES}
 )
 
 if(GPSP_ESP32S31_LTO)
@@ -93,7 +133,14 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     NDEBUG=1
     FRONTEND_SUPPORTS_RGB565
     SMALL_TRANSLATION_CACHE
-    ROM_BUFFER_SIZE=1
+    GPSP_DIRECT_MMAP_GAMEPAK=1
+    GPSP_ESP32S31_DYNAREC=$<BOOL:${GPSP_ESP32S31_DYNAREC}>
+    GPSP_ESP32S31_MENU_BOOT=${GPSP_ESP32S31_MENU_BOOT}
+    GPSP_ESP32S31_FLASH_SPILL=$<BOOL:${GPSP_ESP32S31_FLASH_SPILL}>
+    GPSP_ESP32S31_MENU_AUTOROM_NAME="${GPSP_ESP32S31_MENU_AUTOROM_NAME}"
+    ESP32S31_GAMEPAK_STATIC_BYTES=${ESP32S31_GAMEPAK_STATIC_BYTES}
+    ROM_TRANSLATION_CACHE_SIZE=${ESP32S31_ROM_JIT_CACHE_BYTES}
+    RAM_TRANSLATION_CACHE_SIZE=${ESP32S31_RAM_JIT_CACHE_BYTES}
     GPSP_ESP32S31_PROFILE=$<BOOL:${GPSP_ESP32S31_PROFILE}>
     GPSP_ESP32S31_PC_PROFILE=$<BOOL:${GPSP_ESP32S31_PC_PROFILE}>
     ESP32S31_LCD_BOUNCE_MODE=${ESP32S31_LCD_BOUNCE_MODE}
@@ -112,13 +159,21 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     GPSP_OBJ_PRIORITY_LINKED=1
     ESP32S31_OBJ_LIST_INTERNAL=${ESP32S31_OBJ_LIST_INTERNAL}
     ESP32S31_HOT_HELPERS_INTERNAL=${ESP32S31_HOT_HELPERS_INTERNAL}
-    GPSP_EWRAM_DATA_ONLY=1
-    GPSP_IWRAM_DATA_ONLY=1
+    GPSP_EWRAM_DATA_ONLY=${GPSP_ESP32S31_DATA_ONLY}
+    GPSP_IWRAM_DATA_ONLY=${GPSP_ESP32S31_DATA_ONLY}
     GPSP_FIXED_CORE_OPTIONS=1
     ESP32S31_SCALER_MODE=${ESP32S31_SCALER_MODE}
     ESP32S31_KORVO1_LCD_COMPAT_18MHZ=$<BOOL:${KORVO1_LCD_COMPAT_18MHZ}>
     ESP32S31_KORVO1_LCD_USE_GPIO38_DISP=$<BOOL:${KORVO1_LCD_GPIO38_DISP}>
 )
+
+if(GPSP_ESP32S31_DYNAREC)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE
+        HAVE_DYNAREC
+        ESP32S31_JIT
+        GPSP_GAMEPAK_WRITE_TRACE=1
+    )
+endif()
 
 target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-error

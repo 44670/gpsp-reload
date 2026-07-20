@@ -4,7 +4,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "gamepak_container.h"
+#include "gamepak_runtime_plan.h"
 #include "gt1151_protocol.h"
+#include "menu_ui.h"
 #include "rgb565_scale3x.h"
 
 #define SOURCE_PITCH_PIXELS 256u
@@ -21,6 +24,219 @@ static uint64_t fnv1a64(const void *data, size_t size)
     hash *= UINT64_C(1099511628211);
   }
   return hash;
+}
+
+static void write_le32(uint8_t *data, size_t offset, uint32_t value)
+{
+  data[offset + 0u] = (uint8_t)value;
+  data[offset + 1u] = (uint8_t)(value >> 8);
+  data[offset + 2u] = (uint8_t)(value >> 16);
+  data[offset + 3u] = (uint8_t)(value >> 24);
+}
+
+static void update_container_header_crc(uint8_t *image)
+{
+  write_le32(image, ESP32S31_GAMEPAK_OFF_HEADER_CRC32, 0u);
+  write_le32(image, ESP32S31_GAMEPAK_OFF_HEADER_CRC32,
+             esp32s31_gamepak_crc32(
+                 image, ESP32S31_GAMEPAK_HEADER_BYTES));
+}
+
+static void test_gamepak_container(void)
+{
+  const uint32_t stored_pages = 2u;
+  const size_t image_bytes = ESP32S31_GAMEPAK_HEADER_BYTES +
+      stored_pages * ESP32S31_GAMEPAK_PAGE_BYTES;
+  uint8_t *image = calloc(1u, image_bytes);
+  assert(image != NULL);
+
+  memcpy(image + ESP32S31_GAMEPAK_OFF_MAGIC, ESP32S31_GAMEPAK_MAGIC,
+         ESP32S31_GAMEPAK_MAGIC_BYTES);
+  write_le32(image, ESP32S31_GAMEPAK_OFF_VERSION,
+             ESP32S31_GAMEPAK_VERSION);
+  write_le32(image, ESP32S31_GAMEPAK_OFF_HEADER_BYTES,
+             ESP32S31_GAMEPAK_HEADER_BYTES);
+  write_le32(image, ESP32S31_GAMEPAK_OFF_PAGE_BYTES,
+             ESP32S31_GAMEPAK_PAGE_BYTES);
+  write_le32(image, ESP32S31_GAMEPAK_OFF_ROM_BYTES,
+             2u * ESP32S31_GAMEPAK_PAGE_BYTES + 17u);
+  write_le32(image, ESP32S31_GAMEPAK_OFF_PAGE_COUNT, 3u);
+  write_le32(image, ESP32S31_GAMEPAK_OFF_STORED_PAGE_COUNT, stored_pages);
+  write_le32(image, ESP32S31_GAMEPAK_OFF_DATA_OFFSET,
+             ESP32S31_GAMEPAK_HEADER_BYTES);
+  write_le32(image, ESP32S31_GAMEPAK_OFF_IMAGE_BYTES,
+             (uint32_t)image_bytes);
+  write_le32(image, ESP32S31_GAMEPAK_OFF_TABLE_OFFSET,
+             ESP32S31_GAMEPAK_TABLE_OFFSET);
+  write_le32(image, ESP32S31_GAMEPAK_OFF_TABLE_ENTRY_BYTES,
+             ESP32S31_GAMEPAK_TABLE_ENTRY_BYTES);
+  write_le32(image, ESP32S31_GAMEPAK_OFF_ROM_CRC32, UINT32_C(0x12345678));
+  write_le32(image, ESP32S31_GAMEPAK_OFF_FLAGS,
+             ESP32S31_GAMEPAK_FLAG_DEDUP);
+
+  const uint32_t page0_offset = ESP32S31_GAMEPAK_HEADER_BYTES;
+  const uint32_t page1_offset =
+      ESP32S31_GAMEPAK_HEADER_BYTES + ESP32S31_GAMEPAK_PAGE_BYTES;
+  write_le32(image, ESP32S31_GAMEPAK_TABLE_OFFSET + 0u, page0_offset);
+  write_le32(image, ESP32S31_GAMEPAK_TABLE_OFFSET + 4u, page1_offset);
+  write_le32(image, ESP32S31_GAMEPAK_TABLE_OFFSET + 8u, page0_offset);
+  memset(image + page0_offset, 0xa5, ESP32S31_GAMEPAK_PAGE_BYTES);
+  memset(image + page1_offset, 0xff, ESP32S31_GAMEPAK_PAGE_BYTES);
+  update_container_header_crc(image);
+
+  esp32s31_gamepak_container_t container;
+  char error[128];
+  assert(esp32s31_gamepak_container_probe(image, image_bytes));
+  assert(esp32s31_gamepak_container_open(
+      image, image_bytes, &container, error, sizeof(error)));
+  assert(container.rom_bytes ==
+         2u * ESP32S31_GAMEPAK_PAGE_BYTES + 17u);
+  assert(container.page_count == 3u);
+  assert(container.stored_page_count == stored_pages);
+  assert(esp32s31_gamepak_container_page(&container, 0u) ==
+         image + page0_offset);
+  assert(esp32s31_gamepak_container_page(&container, 1u) ==
+         image + page1_offset);
+  assert(esp32s31_gamepak_container_page(&container, 2u) ==
+         image + page0_offset);
+  assert(esp32s31_gamepak_container_page(&container, 3u) == NULL);
+
+  image[0x80u] ^= 1u;
+  assert(!esp32s31_gamepak_container_open(
+      image, image_bytes, &container, error, sizeof(error)));
+  image[0x80u] ^= 1u;
+
+  write_le32(image, ESP32S31_GAMEPAK_TABLE_OFFSET + 4u,
+             page1_offset + 1u);
+  update_container_header_crc(image);
+  assert(!esp32s31_gamepak_container_open(
+      image, image_bytes, &container, error, sizeof(error)));
+
+  free(image);
+}
+
+static void test_runtime_page_plan(void)
+{
+  uint8_t *left = malloc(ESP32S31_RUNTIME_PAGE_BYTES);
+  uint8_t *right = malloc(ESP32S31_RUNTIME_PAGE_BYTES);
+  assert(left != NULL && right != NULL);
+  memset(left, 0xa5, ESP32S31_RUNTIME_PAGE_BYTES);
+  memcpy(right, left, ESP32S31_RUNTIME_PAGE_BYTES);
+  const uint32_t left_hash = esp32s31_runtime_page_hash(
+      left, ESP32S31_RUNTIME_PAGE_BYTES);
+  const uint32_t right_hash = esp32s31_runtime_page_hash(
+      right, ESP32S31_RUNTIME_PAGE_BYTES);
+  assert(left_hash == right_hash);
+  assert(esp32s31_runtime_pages_equal(
+      left_hash, left, right_hash, right, ESP32S31_RUNTIME_PAGE_BYTES));
+  right[ESP32S31_RUNTIME_PAGE_BYTES - 1u] ^= 1u;
+  assert(esp32s31_runtime_page_hash(
+      right, ESP32S31_RUNTIME_PAGE_BYTES) != left_hash);
+  assert(!esp32s31_runtime_pages_equal(
+      left_hash, left, left_hash, right, ESP32S31_RUNTIME_PAGE_BYTES));
+  assert(esp32s31_runtime_page_hash(NULL, 1u) == 0u);
+  assert(esp32s31_runtime_pages_equal(7u, NULL, 7u, NULL, 0u));
+  assert(!esp32s31_runtime_pages_equal(7u, NULL, 7u, NULL, 1u));
+  free(right);
+  free(left);
+
+  const uint16_t canonical_page[] = {0u, 0u, 2u, 3u, 2u, 5u};
+  esp32s31_runtime_page_plan_t plan;
+  assert(esp32s31_runtime_plan_pages(
+             canonical_page, 6u, 2u, 2u, true, &plan) ==
+         ESP32S31_RUNTIME_PLAN_OK);
+  assert(plan.page_count == 6u);
+  assert(plan.unique_pages == 4u);
+  assert(plan.duplicate_pages == 2u);
+  assert(plan.psram_pages == 2u);
+  assert(plan.flash_pages == 2u);
+  assert(plan.kind[0u] == ESP32S31_RUNTIME_PAGE_PSRAM);
+  assert(plan.slot[0u] == 0u);
+  assert(plan.kind[1u] == ESP32S31_RUNTIME_PAGE_PSRAM);
+  assert(plan.slot[1u] == 0u);
+  assert(plan.kind[2u] == ESP32S31_RUNTIME_PAGE_PSRAM);
+  assert(plan.slot[2u] == 1u);
+  assert(plan.kind[3u] == ESP32S31_RUNTIME_PAGE_FLASH);
+  assert(plan.slot[3u] == 0u);
+  assert(plan.kind[4u] == ESP32S31_RUNTIME_PAGE_PSRAM);
+  assert(plan.slot[4u] == 1u);
+  assert(plan.kind[5u] == ESP32S31_RUNTIME_PAGE_FLASH);
+  assert(plan.slot[5u] == 1u);
+
+  memset(&plan, 0xa5, sizeof(plan));
+  assert(esp32s31_runtime_plan_pages(
+             canonical_page, 6u, 2u, 10u, false, &plan) ==
+         ESP32S31_RUNTIME_PLAN_NO_SPACE);
+  assert(plan.page_count == 0u);
+  assert(plan.unique_pages == 0u);
+  assert(plan.duplicate_pages == 0u);
+  assert(plan.psram_pages == 0u);
+  assert(plan.flash_pages == 0u);
+
+  assert(esp32s31_runtime_plan_pages(
+             canonical_page, 6u, 4u, 0u, false, &plan) ==
+         ESP32S31_RUNTIME_PLAN_OK);
+  assert(plan.psram_pages == 4u);
+  assert(plan.flash_pages == 0u);
+  assert(esp32s31_runtime_plan_pages(
+             NULL, 6u, 4u, 0u, false, &plan) ==
+         ESP32S31_RUNTIME_PLAN_INVALID);
+  assert(esp32s31_runtime_plan_pages(
+             canonical_page, 0u, 4u, 0u, false, &plan) ==
+         ESP32S31_RUNTIME_PLAN_INVALID);
+
+  const uint16_t invalid_forward[] = {0u, 2u, 2u};
+  assert(esp32s31_runtime_plan_pages(
+             invalid_forward, 3u, 3u, 0u, false, &plan) ==
+         ESP32S31_RUNTIME_PLAN_INVALID);
+}
+
+static void test_menu_ui(void)
+{
+  const size_t framebuffer_bytes =
+      ESP32S31_MENU_WIDTH * ESP32S31_MENU_HEIGHT * sizeof(uint16_t);
+  uint8_t *allocation = malloc(framebuffer_bytes + GUARD_BYTES * 2u);
+  assert(allocation != NULL);
+  memset(allocation, 0xa5, framebuffer_bytes + GUARD_BYTES * 2u);
+  uint16_t *pixels = (uint16_t *)(allocation + GUARD_BYTES);
+
+  esp32s31_menu_fill(pixels, 0x1234u);
+  assert(pixels[0u] == 0x1234u);
+  assert(pixels[ESP32S31_MENU_WIDTH * ESP32S31_MENU_HEIGHT - 1u] ==
+         0x1234u);
+  esp32s31_menu_fill_rect(pixels, -4, -3, 8, 6, 0xf800u);
+  assert(pixels[0u] == 0xf800u);
+  assert(pixels[2u * ESP32S31_MENU_WIDTH + 3u] == 0xf800u);
+  assert(pixels[3u * ESP32S31_MENU_WIDTH + 3u] == 0x1234u);
+  esp32s31_menu_fill_rect(
+      pixels, (int)ESP32S31_MENU_WIDTH - 2,
+      (int)ESP32S31_MENU_HEIGHT - 2, 8, 8, 0x07e0u);
+  assert(pixels[ESP32S31_MENU_WIDTH * ESP32S31_MENU_HEIGHT - 1u] ==
+         0x07e0u);
+
+  esp32s31_menu_draw_text(pixels, 5, 10, 24, "Ab9.", 0xffffu, 0u);
+  unsigned foreground_pixels = 0u;
+  for (unsigned y = 10u; y < 17u; y++)
+  {
+    for (unsigned x = 5u; x < 29u; x++)
+      foreground_pixels +=
+          pixels[y * ESP32S31_MENU_WIDTH + x] == 0xffffu;
+  }
+  assert(foreground_pixels > 20u);
+
+  esp32s31_menu_draw_progress(
+      pixels, 10, 30, 102, 8, 1u, 4u, 0x001fu, 0u, 0xffffu);
+  assert(pixels[30u * ESP32S31_MENU_WIDTH + 10u] == 0xffffu);
+  assert(pixels[31u * ESP32S31_MENU_WIDTH + 11u] == 0x001fu);
+  assert(pixels[31u * ESP32S31_MENU_WIDTH + 35u] == 0x001fu);
+  assert(pixels[31u * ESP32S31_MENU_WIDTH + 36u] == 0u);
+
+  for (unsigned i = 0u; i < GUARD_BYTES; i++)
+  {
+    assert(allocation[i] == 0xa5u);
+    assert(allocation[GUARD_BYTES + framebuffer_bytes + i] == 0xa5u);
+  }
+  free(allocation);
 }
 
 static void test_scaler(void)
@@ -303,6 +519,9 @@ static void test_gt1151_decoder(void)
 
 int main(void)
 {
+  test_gamepak_container();
+  test_runtime_page_plan();
+  test_menu_ui();
   test_scaler();
   test_fps_overlay();
   test_fused_fps_overlay();

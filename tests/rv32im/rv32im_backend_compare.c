@@ -1620,6 +1620,9 @@ static int verify_bios_cpuset_block(void)
   u8 *dest = iwram + 0x8000u + (dest_pc & 0x7fffu);
   u32 expected_hash = HASH_INIT;
   u32 actual_hash = HASH_INIT;
+  u32 half_copy_hash = HASH_INIT;
+  u32 half_fill_hash = HASH_INIT;
+  u32 word_fill_hash = HASH_INIT;
   u32 i;
   int passed = 1;
 
@@ -1655,15 +1658,87 @@ static int verify_bios_cpuset_block(void)
     if (actual != expected)
       passed = 0;
   }
+
+  /* Exercise the three remaining CpuSet modes.  The 16-bit copy path is
+     especially important because OpenBIOS uses an indexed STRH loop, while
+     both fill paths use post-index stores. */
+  clear_cpu_and_memory();
+  memset(dest, 0, 32u);
+  for (i = 0; i < 8u; i++)
+    store16(g_rom, source_pc - ROM_BASE + i * 2u,
+            (u16)(0x1200u + i * 0x0111u));
+  reg[0] = source_pc;
+  reg[1] = dest_pc;
+  reg[2] = 8u;
+  reg[REG_LR] = idle_pc;
+  reg[REG_PC] = WORKLOAD_PC;
+  idle_loop_target_pc = idle_pc;
+  g_restart_pc = idle_pc;
+  execute_arm_translate_internal(RUN_CYCLE_BUDGET, &reg[0]);
+  for (i = 0; i < 8u; i++)
+  {
+    u16 actual = load16(dest, i * 2u);
+    u16 expected = load16(g_rom, source_pc - ROM_BASE + i * 2u);
+
+    half_copy_hash = hash_word(half_copy_hash, actual);
+    if (actual != expected)
+      passed = 0;
+  }
+
+  clear_cpu_and_memory();
+  memset(dest, 0, 32u);
+  store16(ewram, 0, 0x5aa5u);
+  reg[0] = EWRAM_BASE;
+  reg[1] = dest_pc;
+  reg[2] = 0x01000008u;
+  reg[REG_LR] = idle_pc;
+  reg[REG_PC] = WORKLOAD_PC;
+  idle_loop_target_pc = idle_pc;
+  g_restart_pc = idle_pc;
+  execute_arm_translate_internal(RUN_CYCLE_BUDGET, &reg[0]);
+  for (i = 0; i < 8u; i++)
+  {
+    u16 actual = load16(dest, i * 2u);
+
+    half_fill_hash = hash_word(half_fill_hash, actual);
+    if (actual != 0x5aa5u)
+      passed = 0;
+  }
+
+  clear_cpu_and_memory();
+  memset(dest, 0, 32u);
+  store32(ewram, 0, 0x5aa5c33cu);
+  reg[0] = EWRAM_BASE;
+  reg[1] = dest_pc;
+  reg[2] = 0x05000008u;
+  reg[REG_LR] = idle_pc;
+  reg[REG_PC] = WORKLOAD_PC;
+  idle_loop_target_pc = idle_pc;
+  g_restart_pc = idle_pc;
+  execute_arm_translate_internal(RUN_CYCLE_BUDGET, &reg[0]);
+  for (i = 0; i < 8u; i++)
+  {
+    u32 actual = load32(dest, i * 4u);
+
+    word_fill_hash = hash_word(word_fill_hash, actual);
+    if (actual != 0x5aa5c33cu)
+      passed = 0;
+  }
   passed &= g_execute_arm_calls == 0u;
 
   put_raw("result=");
   put_raw(passed ? "PASS" : "FAIL");
-  put_raw(" command=backend-compare-bios-cpuset backend=rv32im words=8 ");
+  put_raw(" command=backend-compare-bios-cpuset backend=rv32im modes=4 ");
   put_raw("expected_hash=");
   put_u32_hex(expected_hash);
   put_raw(" actual_hash=");
   put_u32_hex(actual_hash);
+  put_raw(" half_copy_hash=");
+  put_u32_hex(half_copy_hash);
+  put_raw(" half_fill_hash=");
+  put_u32_hex(half_fill_hash);
+  put_raw(" word_fill_hash=");
+  put_u32_hex(word_fill_hash);
   put_raw(" r0=");
   put_u32_hex(reg[0]);
   put_raw(" r1=");
@@ -1677,8 +1752,8 @@ static int verify_bios_cpuset_block(void)
   put_raw(" execute_arm_calls=");
   put_u32_dec(g_execute_arm_calls);
   put_raw(" harness_mode=cpu_threaded_frontend_rv32im reason=");
-  put_raw(passed ? "openbios_cpuset_copy_matches" :
-                   "openbios_cpuset_copy_mismatch");
+  put_raw(passed ? "openbios_cpuset_modes_match" :
+                   "openbios_cpuset_mode_mismatch");
   put_raw("\n");
   return passed;
 }

@@ -24,6 +24,19 @@
 #define USE_DEBUG 0
 #endif
 
+#ifndef GPSP_GAMEPAK_WRITE_TRACE
+#define GPSP_GAMEPAK_WRITE_TRACE 0
+#endif
+
+#if GPSP_GAMEPAK_WRITE_TRACE
+void gpsp_debug_trace_gamepak_write(u32 pc, u32 address, u32 bits,
+                                    u32 value);
+#define trace_gamepak_write(bits)                                             \
+  gpsp_debug_trace_gamepak_write(reg[REG_PC], address, (bits), (u32)value)
+#else
+#define trace_gamepak_write(bits) ((void)0)
+#endif
+
 #if defined(ESP_PLATFORM) && !defined(XTENSA_ARCH)
 #include "esp_heap_caps.h"
 #endif
@@ -357,13 +370,19 @@ GPSP_EXT_RAM_BSS u8 gamepak_backup[1024 * 128];
 u32 dma_bus_val;
 dma_transfer_type dma[4];
 
+u32 gamepak_size;           /* Size of the ROM in bytes */
+
+#if GPSP_DIRECT_MMAP_GAMEPAK
+static gamepak_direct_page_resolver_t gamepak_direct_resolver;
+static void *gamepak_direct_context;
+static u32 gamepak_direct_rom_bytes;
+#else
 // ROM memory is allocated in blocks of 1MB to better map the native block
 // mapping system. We will try to allocate 32 of them to allow loading
 // ROMs up to 32MB, but we might fail on memory constrained systems.
 
 u8 *gamepak_buffers[32];    /* Pointers to ROM paging blocks */
 u32 gamepak_buffer_count;   /* Value between 1 and 32 */
-u32 gamepak_size;           /* Size of the ROM in bytes */
 // We allocate in 1MB chunks.
 const unsigned gamepak_buffer_blocksize = 1024*1024;
 
@@ -392,6 +411,7 @@ u32 gamepak_sticky_bit[1024/32];
 // a lot.
 RFILE *gamepak_file_large = NULL;
 static const u8 *gamepak_mem_large = NULL;
+#endif
 
 // Writes to these respective locations should trigger an update
 // so the related subsystem may react to it.
@@ -579,6 +599,24 @@ void function_cc write_eeprom(u32 unused_address, u32 value)
   }
 }
 
+#if GPSP_DIRECT_MMAP_GAMEPAK
+#define read_memory_gamepak(type)                                             \
+  do                                                                          \
+  {                                                                           \
+    if (gamepak_direct_gpio_read_needed(address, (type) / 8u))                \
+    {                                                                         \
+      value = gamepak_direct_gpio_read(address, (type) / 8u);                 \
+    }                                                                         \
+    else                                                                      \
+    {                                                                         \
+      u32 gamepak_index = address >> 15;                                      \
+      u8 *map = memory_map_read[gamepak_index];                               \
+      if (!map)                                                               \
+        map = load_gamepak_page(gamepak_index & 0x3ffu);                      \
+      value = readaddress##type(map, address & 0x7fffu);                     \
+    }                                                                         \
+  } while (0)
+#else
 #define read_memory_gamepak(type)                                             \
   u32 gamepak_index = address >> 15;                                          \
   u8 *map = memory_map_read[gamepak_index];                                   \
@@ -586,7 +624,8 @@ void function_cc write_eeprom(u32 unused_address, u32 value)
   if(!map)                                                                    \
     map = load_gamepak_page(gamepak_index & 0x3FF);                           \
                                                                               \
-  value = readaddress##type(map, address & 0x7FFF)                            \
+  value = readaddress##type(map, address & 0x7FFF)
+#endif
 
 
 #define unmapped_rom_read8(addr)                                              \
@@ -1281,7 +1320,48 @@ static u8 encode_bcd(u8 value)
   return h * 16 + l;
 }
 
+#if GPSP_DIRECT_MMAP_GAMEPAK
+uint32_t gamepak_direct_gpio_read(uint32_t address, unsigned width_bytes)
+{
+  if (width_bytes == 0u || width_bytes > sizeof(uint32_t))
+    return 0u;
+
+  u8 *map = memory_map_read[address >> 15];
+  uint32_t value = 0u;
+  for (unsigned byte_index = 0; byte_index < width_bytes; byte_index++)
+  {
+    const uint32_t byte_address = address + byte_index;
+    const uint32_t rom_offset = byte_address & UINT32_C(0x01ffffff);
+    uint8_t byte_value = map != NULL ? map[byte_address & 0x7fffu] : 0u;
+
+    if ((rtc_enabled || rumble_enabled) &&
+        rom_offset >= 0xc4u && rom_offset <= 0xc9u)
+    {
+      if (gpio_regs[2] != 0u && (rom_offset & 1u) == 0u)
+        byte_value = gpio_regs[(rom_offset - 0xc4u) >> 1];
+      else
+        byte_value = 0u;
+    }
+    value |= (uint32_t)byte_value << (byte_index * 8u);
+  }
+  return value;
+}
+
+void gamepak_set_direct_mmap_source(
+    gamepak_direct_page_resolver_t resolver, void *context,
+    uint32_t rom_bytes)
+{
+  gamepak_direct_resolver = resolver;
+  gamepak_direct_context = context;
+  gamepak_direct_rom_bytes = rom_bytes;
+}
+#endif
+
 void update_gpio_romregs() {
+#if GPSP_DIRECT_MMAP_GAMEPAK
+  /* The immutable flash mapping is overlaid by gamepak_direct_gpio_read(). */
+  return;
+#else
   if (rtc_enabled || rumble_enabled) {
     // Update the registers in the ROM mapped buffer.
     u8 *map = memory_map_read[0x8000000 >> 15];
@@ -1299,6 +1379,7 @@ void update_gpio_romregs() {
       }
     }
   }
+#endif
 }
 
 #define GPIO_RTC_CLK   0x1
@@ -1507,6 +1588,7 @@ void function_cc write_gpio(u32 address, u32 value) {
                                                                               \
     case 0x08:                                                                \
       /* gamepak ROM or RTC */                                                \
+      trace_gamepak_write(type);                                              \
       write_gpio##type();                                                     \
       break;                                                                  \
                                                                               \
@@ -1515,6 +1597,7 @@ void function_cc write_gpio(u32 address, u32 value) {
     case 0x0B:                                                                \
     case 0x0C:                                                                \
       /* gamepak ROM space */                                                 \
+      trace_gamepak_write(type);                                              \
       break;                                                                  \
                                                                               \
     case 0x0D:                                                                \
@@ -1796,10 +1879,20 @@ const dma_region_type dma_region_map[17] =
 #define dma_read_ewram(type, tfsize)                                          \
   read_value = readaddress##tfsize(ewram, type##_ptr & 0x3FFFF)               \
 
+#if GPSP_DIRECT_MMAP_GAMEPAK
+#define dma_read_gamepak(type, tfsize)                                        \
+  dma_gamepak_check_region(type);                                             \
+  if (gamepak_direct_gpio_read_needed(type##_ptr, (tfsize) / 8u))             \
+    read_value = gamepak_direct_gpio_read(type##_ptr, (tfsize) / 8u);         \
+  else                                                                        \
+    read_value = readaddress##tfsize(type##_address_block,                    \
+      type##_ptr & 0x7fffu)
+#else
 #define dma_read_gamepak(type, tfsize)                                        \
   dma_gamepak_check_region(type);                                             \
   read_value = readaddress##tfsize(type##_address_block,                      \
-   type##_ptr & 0x7FFF)                                                       \
+   type##_ptr & 0x7FFF)
+#endif
 
 // DMAing from the BIOS/open zone causes previous DMA values to be read
 
@@ -2219,6 +2312,32 @@ cpu_alert_type dma_transfer(unsigned dma_chan, int *usedcycles)
   }                                                                           \
 
 
+#if GPSP_DIRECT_MMAP_GAMEPAK
+u8 *load_gamepak_page(u32 physical_index)
+{
+  const u32 rom_blocks = gamepak_size >> 15;
+  if (gamepak_direct_resolver == NULL || physical_index >= rom_blocks)
+    return NULL;
+
+  const u8 *page = gamepak_direct_resolver(
+      gamepak_direct_context, physical_index);
+  if (page == NULL)
+    return NULL;
+
+  map_rom_entry(read, physical_index, (u8 *)page, rom_blocks);
+  return (u8 *)page;
+}
+
+void init_gamepak_buffer(void)
+{
+  gamepak_size = 0u;
+}
+
+bool gamepak_must_swap(void)
+{
+  return false;
+}
+#else
 static u32 evict_gamepak_page(void)
 {
   u32 ret;
@@ -2324,6 +2443,7 @@ bool gamepak_must_swap(void)
   // the full gamepak ROM. In these cases the device must swap.
   return gamepak_buffer_count * gamepak_buffer_blocksize < gamepak_size;
 }
+#endif
 
 void init_memory(void)
 {
@@ -2390,6 +2510,7 @@ void init_memory(void)
 
 void memory_term(void)
 {
+#if !GPSP_DIRECT_MMAP_GAMEPAK
   if (gamepak_file_large)
   {
     filestream_close(gamepak_file_large);
@@ -2405,6 +2526,9 @@ void memory_term(void)
   {
     free(gamepak_buffers[--gamepak_buffer_count]);
   }
+#endif
+#else
+  gamepak_size = 0u;
 #endif
 }
 
@@ -2588,6 +2712,40 @@ unsigned memory_write_savestate(u8 *dst)
   return (unsigned int)(dst - startp);
 }
 
+#if GPSP_DIRECT_MMAP_GAMEPAK
+static s32 load_gamepak_raw(const char *name)
+{
+  (void)name;
+  return -1;
+}
+
+static s32 load_gamepak_raw_memory(const struct retro_game_info *info)
+{
+  if (info == NULL || info->data == NULL || info->size == 0u ||
+      gamepak_direct_resolver == NULL || gamepak_direct_rom_bytes == 0u ||
+      gamepak_direct_rom_bytes > 32u * 1024u * 1024u ||
+      info->size != gamepak_direct_rom_bytes)
+    return -1;
+
+  gamepak_size = (gamepak_direct_rom_bytes + 0x7fffu) & ~0x7fffu;
+  const u32 rom_blocks = gamepak_size >> 15;
+  map_null(read, 0x8000000, 0xD000000);
+
+  for (u32 physical_index = 0; physical_index < rom_blocks; physical_index++)
+  {
+    const u8 *page = gamepak_direct_resolver(
+        gamepak_direct_context, physical_index);
+    if (page == NULL)
+    {
+      map_null(read, 0x8000000, 0xD000000);
+      gamepak_size = 0u;
+      return -1;
+    }
+    map_rom_entry(read, physical_index, (u8 *)page, rom_blocks);
+  }
+  return 0;
+}
+#else
 static s32 load_gamepak_raw(const char *name)
 {
   unsigned i, j;
@@ -2677,14 +2835,17 @@ static s32 load_gamepak_raw_memory(const struct retro_game_info *info)
 
   return 0;
 }
+#endif
 
 u32 load_gamepak(const struct retro_game_info* info, const char *name,
                  int force_rtc, int force_rumble, int force_serial)
 {
    char game_code[5] = {0,0,0,0,0};
 
+#if !GPSP_DIRECT_MMAP_GAMEPAK
    if (gamepak_buffer_count == 0 || !gamepak_buffers[0])
       return -1;
+#endif
 
    if (info && info->data && info->size > 0)
    {
@@ -2694,8 +2855,11 @@ u32 load_gamepak(const struct retro_game_info* info, const char *name,
    else if (load_gamepak_raw(name))
       return -1;
 
-   // Buffer 0 always has the first 1MB chunk of the ROM
-   memcpy(game_code,  &gamepak_buffers[0][0xAC],  4);
+   // The first mapped 32 KiB page always contains the cartridge header.
+   const u8 *first_page = memory_map_read[0x8000000 >> 15];
+   if (first_page == NULL)
+      return -1;
+   memcpy(game_code, first_page + 0xAC, 4);
 
    idle_loop_target_pc = 0xFFFFFFFF;
    translation_gate_targets = 0;

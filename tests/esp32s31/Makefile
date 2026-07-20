@@ -14,7 +14,10 @@ test: $(TEST_BIN)
 	$(TEST_BIN)
 
 $(TEST_BIN): board_driver_test.c ../../esp32s31/rgb565_scale3x.c \
-             ../../esp32s31/gt1151_protocol.c | $(BUILD_DIR)
+             ../../esp32s31/gt1151_protocol.c \
+             ../../esp32s31/gamepak_container.c \
+             ../../esp32s31/gamepak_runtime_plan.c \
+             ../../esp32s31/menu_ui.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -I../../esp32s31 $^ -o $@ $(LDFLAGS)
 
 $(BUILD_DIR):

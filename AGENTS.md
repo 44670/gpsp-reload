@@ -155,6 +155,67 @@
 - The commit message should name the validated behavior, not just the files
   touched.
 
+## ESP32-S31 Release Build
+
+- The ESP32-S31-Korvo-1 firmware app lives in `esp32s31/`. Build it from that
+  directory and keep all generated files in `esp32s31/build/`; do not create a
+  separate `build-release/` or another ESP32-S31 build directory.
+- The release configuration uses the native RV32IM dynarec and the
+  performance-optimized ESP-IDF configuration from `sdkconfig.defaults`. It
+  explicitly disables phase profiling, interrupted-PC sampling, and gpSP-only
+  LTO. Do not use `CMAKE_BUILD_TYPE=Release`; that is not the release selector
+  for this ESP-IDF app.
+- ESP-IDF CMake options are sticky in `build/CMakeCache.txt`. In particular, a
+  prior profiling build can leave `GPSP_ESP32S31_PROFILE=1`. For a clean,
+  reproducible release build, use:
+
+  ```sh
+  source /home/john/esp-idf/export.sh
+  cd /home/john/work/gpsp/esp32s31
+  idf.py -B build fullclean
+  idf.py -B build \
+    -DGPSP_ESP32S31_DYNAREC=1 \
+    -DGPSP_ESP32S31_PROFILE=0 \
+    -DGPSP_ESP32S31_PC_PROFILE=0 \
+    -DGPSP_ESP32S31_LTO=0 \
+    -DGPSP_ESP32S31_BOOT_MODE=menu \
+    -DGPSP_ESP32S31_FLASH_SPILL=1 \
+    -DGPSP_ESP32S31_MENU_AUTOROM_NAME= \
+    -DESP32S31_GAMEPAK_STATIC_MB=12 \
+    -DESP32S31_ROM_JIT_CACHE_KB=1536 \
+    -DESP32S31_RAM_JIT_CACHE_KB=384 \
+    build
+  ```
+
+- For an incremental release rebuild, pass the same ten `-D` options to
+  `idf.py -B build build`; never rely on the source defaults to override an
+  existing cache. In particular, keep `GPSP_ESP32S31_MENU_AUTOROM_NAME` empty;
+  a non-empty value exists only for automated hardware loader tests.
+- Both boot modes use USB XInput only and do not link, initialize, or poll
+  touch. Menu mode renders into gpSP's existing 240x160 RGB565 render buffer.
+  In the menu, physical Xbox A confirms/opens and physical Xbox B goes back;
+  gameplay retains the existing Retropad/Nintendo geometry mapping.
+  The 12 MiB gamepak container is a link-time static PSRAM array. It reserves
+  two 32 KiB work pages. The loader hashes every logical page and, after every
+  hash match, confirms all 32 KiB byte-for-byte before sharing a mapping. It
+  assigns unique pages to the remaining 382 PSRAM pages before considering SPI
+  flash; there is no special-case fill-byte page detection.
+- SPI-flash overflow is compare-before-write. An unequal 32 KiB logical page
+  is erased as eight 4 KiB physical sectors, written, and verified. Set
+  `GPSP_ESP32S31_FLASH_SPILL=0` to reject ROMs that do not fit PSRAM without
+  writing flash. Overflow owns the `gamepak` partition starting at offset zero,
+  so a nonzero `flash_write_blocks` invalidates a previously packed direct-boot
+  image; run `esp32s31/flash_gba.sh` again before using direct mode.
+- To bypass the menu for debugging and boot the existing `gamepak` partition
+  directly, pass the same release options but change
+  `GPSP_ESP32S31_BOOT_MODE=flash`; use
+  `ESP32S31_ROM_JIT_CACHE_KB=2048` in that mode. Direct mode omits the menu
+  sources and static PSRAM ROM container.
+- The release firmware artifact is
+  `esp32s31/build/gpsp_esp32s31.bin`. A firmware-only flash should write the
+  app partition without overwriting the `gamepak` partition; use
+  `esp32s31/flash_gba.sh` separately for ROM data.
+
 ## Current ESP32-S3 Phase
 
 - Target board: M5Stack CoreS3 SE.

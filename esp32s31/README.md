@@ -1,6 +1,7 @@
 # gpSP on ESP32-S31-Korvo-1
 
-This ESP-IDF app runs the gpSP ARM interpreter and sends its raw 240x160
+This ESP-IDF app runs gpSP with the native RV32IM dynarec enabled by default
+and sends its raw 240x160
 RGB565 framebuffer to the Korvo-1 800x480 RGB panel. The direct driver scales
 the image exactly 3x, keeps 40-pixel black side bars, and fuses measured FPS at
 the top-left of the scaled GBA image. The default path renders into a 240x161
@@ -24,6 +25,57 @@ The firmware is compile-time locked to one HP core with
 `CONFIG_FREERTOS_UNICORE=y`; a build fails if
 `CONFIG_FREERTOS_NUMBER_OF_CORES` is not one. The active core runs at the
 configured 320 MHz, and dynamic power management is disabled.
+
+## TF-card ROM menu and direct boot
+
+The default release boot mode is `menu`. It mounts the Korvo-1 TF slot at
+`/sdcard` through 4-bit SDMMC (D0..D3 GPIO20..23, CLK GPIO24, CMD GPIO25, and
+active-low power enable GPIO39), then draws the file browser directly into
+gpSP's existing 240x160 RGB565 render buffer. There is no second menu
+framebuffer. The menu build does not initialize or poll touch.
+
+Menu input comes only from the USB XInput path. The D-pad moves by one item,
+Left/Right moves by a page, physical Xbox A opens a directory or selects a
+`.gba`, and physical Xbox B returns to the parent directory. Gameplay keeps
+the existing Retropad/Nintendo geometry mapping independently.
+
+After selection, the loader scans the exact ROM length in 32 KiB pages and
+computes a 32-bit FNV-1a hash for each page. A hash match is only a candidate:
+the full 32 KiB is read again and compared byte-for-byte before the pages share
+one mapping. There is no special handling for `0xff`, zero, or another fill
+byte. Each unique page is assigned to the static PSRAM container first. The
+default container is 12 MiB and includes two scan/compare work pages, leaving
+382 pages, or 11.94 MiB, for ROM data. Flash compare/write/verify uses a static
+4 KiB internal staging buffer so the SPI1 driver never has to read PSRAM while
+cache is disabled. Menu mode uses a 1.5 MiB ROM JIT cache and a 384 KiB RAM JIT
+cache so the 12 MiB pool fits safely. The linked release menu image ends
+external BSS at `0x50fc90a0`, leaving 225,120 contiguous bytes below the end of
+the 16 MiB PSRAM aperture; hardware exposes 219 KiB of that region to the heap.
+
+If unique pages exceed the PSRAM pool and
+`GPSP_ESP32S31_FLASH_SPILL=1`, overflow pages use the `gamepak` partition. The
+loader reads and compares each 32 KiB logical block first. Equal blocks are
+left untouched; a different block is erased and rewritten as eight physical
+4 KiB SPI-flash sectors, then read back and verified. A duplicate logical page
+never consumes another flash slot. While processing flash, the progress screen
+shows the cumulative 32 KiB `SKIP` and `WRITE` block counts. Set
+`GPSP_ESP32S31_FLASH_SPILL=0` to prohibit all runtime flash writes; the menu
+reports a capacity error instead.
+
+The `gamepak` partition holds 462 unique-page slots. Together with the 382
+PSRAM slots, a ROM may contain at most 844 distinct page contents (26.375 MiB);
+duplicate logical pages do not count toward that limit. A denser image fails
+with a capacity message before any page is loaded or erased.
+
+Flash-overflow slots start at offset zero of the `gamepak` partition. The
+partition remains untouched when a ROM fits PSRAM, but the first overflow
+write repurposes it and invalidates any previously packed direct-boot image.
+Run `flash_gba.sh` again before switching to direct boot after a menu load that
+reported nonzero `flash_write_blocks`.
+
+For debugging, `GPSP_ESP32S31_BOOT_MODE=flash` completely omits the menu,
+SD-card loader, and static ROM pool, then boots the raw or packed ROM already
+in the `gamepak` partition through `esp_partition_mmap()`.
 
 In the default bounce mode,
 `ESP32S31_LCD_BOUNCE_SOURCE_ROWS` controls its strip height and must divide 160
@@ -103,31 +155,51 @@ stack was reduced from 16 KiB to 6 KiB. These changes recover HP SRAM without
 measurable Goodboy frame-time regressions.
 
 The board's PSRAM is 16 MiB octal x8 at 250 MHz with fixed 18-cycle read
-latency. Static external BSS is 663,712 bytes: 256 KiB EWRAM, 96 KiB VRAM, a
-32 KiB read map, a 16 KiB writable BIOS, about 25 KiB cold state, 20 KiB
-compact OBJ links, 128 KiB backup storage, and the 76,800-byte LCD snapshot.
-The interpreter build omits the unused 256 KiB EWRAM and 32 KiB IWRAM dynarec
-SMC mirrors. A 1 MiB cartridge paging window is allocated dynamically; app
-text and read-only data use PSRAM XIP. Hardware reported 14,587,848 bytes of
-PSRAM free after full boot, with a 14,417,920-byte largest block.
+latency. In menu release mode, ROM storage is the 12 MiB static container;
+there is no dynamic cartridge paging window. Other external BSS includes the
+1.5 MiB ROM and 384 KiB RAM JIT caches, guest RAM and lookup tables, backup
+storage, and the LCD snapshot. Direct-flash mode omits the 12 MiB container and
+normally uses a 2 MiB ROM JIT cache instead.
 
 A zero-PSRAM build is not feasible without a larger architectural change. GBA
 EWRAM + IWRAM + VRAM already total 384 KiB; adding only the 77,280-byte render
 target leaves roughly 42 KiB for the entire app, IDF, stacks, and LCD DMA.
 
-The ROM lives in the `gamepak` SPI-flash partition as raw `.gba` bytes. There
-is no wrapper, metadata header, manifest, or sidecar partition. Since the
-firmware and ROM share the board's 16 MiB flash, the partition accepts at most
-`0xe70000` bytes (14.44 MiB). At boot the firmware infers the used ROM length
-from the erased `0xff` tail, rounds it to gpSP's 32 KiB paging unit, and keeps
-the cartridge mapped with `esp_partition_mmap()`.
-
-Build the interpreter firmware:
+Build a clean menu-mode release firmware:
 
 ```sh
 source /home/john/esp-idf/export.sh
 cd /home/john/work/gpsp/esp32s31
-idf.py -B build build
+idf.py -B build fullclean
+idf.py -B build \
+  -DGPSP_ESP32S31_DYNAREC=1 \
+  -DGPSP_ESP32S31_PROFILE=0 \
+  -DGPSP_ESP32S31_PC_PROFILE=0 \
+  -DGPSP_ESP32S31_LTO=0 \
+  -DGPSP_ESP32S31_BOOT_MODE=menu \
+  -DGPSP_ESP32S31_FLASH_SPILL=1 \
+  -DGPSP_ESP32S31_MENU_AUTOROM_NAME= \
+  -DESP32S31_GAMEPAK_STATIC_MB=12 \
+  -DESP32S31_ROM_JIT_CACHE_KB=1536 \
+  -DESP32S31_RAM_JIT_CACHE_KB=384 \
+  build
+```
+
+Build the direct-from-SPI-flash debug mode in the same build directory:
+
+```sh
+idf.py -B build \
+  -DGPSP_ESP32S31_DYNAREC=1 \
+  -DGPSP_ESP32S31_PROFILE=0 \
+  -DGPSP_ESP32S31_PC_PROFILE=0 \
+  -DGPSP_ESP32S31_LTO=0 \
+  -DGPSP_ESP32S31_BOOT_MODE=flash \
+  -DGPSP_ESP32S31_FLASH_SPILL=1 \
+  -DGPSP_ESP32S31_MENU_AUTOROM_NAME= \
+  -DESP32S31_GAMEPAK_STATIC_MB=12 \
+  -DESP32S31_ROM_JIT_CACHE_KB=2048 \
+  -DESP32S31_RAM_JIT_CACHE_KB=384 \
+  build
 ```
 
 For a routine firmware-only update, fully write and verify the app partition;
@@ -147,9 +219,8 @@ Flash a raw GBA cartridge image independently of the firmware:
 ./flash_gba.sh -p /dev/ttyUSB0 path/to/game.gba
 ```
 
-The current frontend discards audio and reports touch samples over UART; touch
-is not yet mapped to GBA controls. LCD and touch initialization remain
-independent, so a missing peripheral does not prevent UART diagnostics.
+The current frontend discards audio. Both boot modes use USB XInput only;
+touch is neither linked into the firmware, initialized, nor polled.
 
 The default display profile is the hardware-tested factory 26 MHz timing.
 The older 18 MHz profile and ambiguous GPIO38 DISP route remain explicit build
@@ -160,7 +231,8 @@ idf.py -B build -DKORVO1_LCD_COMPAT_18MHZ=1 build
 idf.py -B build -DKORVO1_LCD_GPIO38_DISP=1 build
 ```
 
-Run the host-side scaler, FPS overlay, and GT1151 report tests with:
+Run the host-side scaler, menu renderer, 32 KiB page planner, packed-ROM, FPS
+overlay, and GT1151 report tests with:
 
 ```sh
 make -C tests/esp32s31
@@ -186,7 +258,7 @@ from 15.294 to 15.426 ms/frame (+0.87%) and `cpu_backend` from 14.379 to
 14.507 ms/frame (+0.89%). LTO also added 1,404 image bytes and grew the
 SRAM-resident `execute_arm` loop by 712 bytes.
 
-The active one-snapshot display/touch path was hardware-tested on 2026-07-18
+The active one-snapshot display path was hardware-tested on 2026-07-18
 with the factory timing, 16 MiB octal PSRAM at 250 MHz, and 16 MiB QIO flash at
 80 MHz. Three reset windows reported 62.5--66.1 FPS. Copying 76,800 bytes from
 SRAM to PSRAM took about 0.455 ms/frame including ISR preemption; scaling a full

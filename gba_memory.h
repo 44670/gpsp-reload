@@ -21,6 +21,7 @@
 #define MEMORY_H
 
 #include "libretro.h"
+#include "gamepak_direct_mmap.h"
 
 #define FEAT_AUTODETECT  -1
 #define FEAT_DISABLE      0
@@ -333,6 +334,16 @@ extern u32 eeprom_size;
 extern u8 gamepak_backup[1024 * 128];
 
 // Page sticky bit routines
+#if GPSP_DIRECT_MMAP_GAMEPAK
+static inline void touch_gamepak_page(u32 physical_index)
+{
+  (void)physical_index;
+}
+
+static inline void clear_gamepak_stickybits(void)
+{
+}
+#else
 extern u32 gamepak_sticky_bit[1024/32];
 static inline void touch_gamepak_page(u32 physical_index)
 {
@@ -346,6 +357,7 @@ static inline void clear_gamepak_stickybits(void)
 {
   memset(gamepak_sticky_bit, 0, sizeof(gamepak_sticky_bit));
 }
+#endif
 
 bool memory_check_savestate(const u8*src);
 bool memory_read_savestate(const u8*src);

@@ -10,6 +10,22 @@ set(GPSP_ESP32S31_PC_PROFILE "0" CACHE BOOL
     "Enable the 1 kHz interrupted-PC sampler during phase profiling")
 set(GPSP_ESP32S31_LTO "0" CACHE BOOL
     "Enable link-time optimization for gpSP core sources only")
+set(GPSP_ESP32S31_DYNAREC "1" CACHE BOOL
+    "Enable the native RV32IM gpSP dynarec")
+set(GPSP_ESP32S31_BOOT_MODE "menu" CACHE STRING
+    "ROM boot source: menu (TF card) or flash (direct gamepak mmap)")
+set_property(CACHE GPSP_ESP32S31_BOOT_MODE PROPERTY STRINGS
+    menu flash)
+set(GPSP_ESP32S31_FLASH_SPILL "1" CACHE BOOL
+    "Allow unique TF ROM pages that do not fit PSRAM to use gamepak flash")
+set(GPSP_ESP32S31_MENU_AUTOROM_NAME "" CACHE STRING
+    "Hardware-test-only root TF .gba filename to select without XInput")
+set(ESP32S31_GAMEPAK_STATIC_MB "12" CACHE STRING
+    "Static PSRAM gamepak container size in MiB, including two work pages")
+set(ESP32S31_ROM_JIT_CACHE_KB "1536" CACHE STRING
+    "ESP32-S31 ROM dynarec cache size in KiB")
+set(ESP32S31_RAM_JIT_CACHE_KB "384" CACHE STRING
+    "ESP32-S31 RAM dynarec cache size in KiB")
 set(ESP32S31_LCD_MODE "bounce" CACHE STRING
     "LCD scanout: framebuffer or bounce")
 set_property(CACHE ESP32S31_LCD_MODE PROPERTY STRINGS
@@ -66,6 +82,39 @@ set(ESP32S31_SCALER "cpu" CACHE STRING
     "RGB565 scaler: auto, cpu, sram_gdma, or ppa")
 set_property(CACHE ESP32S31_SCALER PROPERTY STRINGS
     auto cpu sram_gdma ppa)
+
+if(GPSP_ESP32S31_BOOT_MODE STREQUAL "menu")
+    set(GPSP_ESP32S31_MENU_BOOT 1)
+elseif(GPSP_ESP32S31_BOOT_MODE STREQUAL "flash")
+    set(GPSP_ESP32S31_MENU_BOOT 0)
+else()
+    message(FATAL_ERROR
+        "GPSP_ESP32S31_BOOT_MODE must be menu or flash")
+endif()
+
+if(NOT ESP32S31_GAMEPAK_STATIC_MB MATCHES "^[1-9][0-9]*$")
+    message(FATAL_ERROR
+        "ESP32S31_GAMEPAK_STATIC_MB must be a positive integer")
+endif()
+math(EXPR ESP32S31_GAMEPAK_STATIC_BYTES
+    "${ESP32S31_GAMEPAK_STATIC_MB} * 1024 * 1024")
+if(ESP32S31_GAMEPAK_STATIC_BYTES LESS 131072)
+    message(FATAL_ERROR
+        "ESP32S31_GAMEPAK_STATIC_MB must leave at least one ROM page")
+endif()
+
+foreach(cache_name ROM RAM)
+    if(NOT ESP32S31_${cache_name}_JIT_CACHE_KB MATCHES "^[1-9][0-9]*$")
+        message(FATAL_ERROR
+            "ESP32S31_${cache_name}_JIT_CACHE_KB must be a positive integer")
+    endif()
+    math(EXPR ESP32S31_${cache_name}_JIT_CACHE_BYTES
+        "${ESP32S31_${cache_name}_JIT_CACHE_KB} * 1024")
+    if(ESP32S31_${cache_name}_JIT_CACHE_BYTES LESS 65536)
+        message(FATAL_ERROR
+            "ESP32S31_${cache_name}_JIT_CACHE_KB must be at least 64")
+    endif()
+endforeach()
 
 if(ESP32S31_SCALER STREQUAL "auto")
     set(ESP32S31_SCALER_MODE 0)

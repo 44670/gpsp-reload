@@ -54,6 +54,10 @@ static uint16_t g_last_irq_flag_value;
 static uint16_t g_last_sampled_irq_flags;
 static uint16_t g_current_input_mask;
 static unsigned g_input_event_active_frames;
+static u32 g_auto_a_until_callback;
+static unsigned g_auto_a_start_frame;
+static unsigned g_auto_a_period = 60u;
+static unsigned g_auto_a_reached_frame = UINT32_MAX;
 
 typedef struct scheduled_input_event
 {
@@ -62,7 +66,7 @@ typedef struct scheduled_input_event
   uint16_t mask;
 } scheduled_input_event;
 
-enum { INPUT_EVENT_CAPACITY = 32 };
+enum { INPUT_EVENT_CAPACITY = 128 };
 static scheduled_input_event g_input_events[INPUT_EVENT_CAPACITY];
 static unsigned g_input_event_count;
 
@@ -77,6 +81,7 @@ typedef struct block_trace_entry
 enum { BLOCK_TRACE_CAPACITY = 256 };
 static block_trace_entry g_block_trace[BLOCK_TRACE_CAPACITY];
 static unsigned g_block_trace_total;
+static unsigned g_bios_native_blocks;
 static unsigned g_irq_dispatch_blocks;
 static unsigned g_vblank_callback_blocks;
 static unsigned g_vcount_callback_blocks;
@@ -138,6 +143,9 @@ void riscv_note_runtime_block_execute(u32 start_pc, u32 end_pc, u32 thumb)
   fault_entry->r3 = reg[3];
   fault_entry->cpsr = reg[REG_CPSR];
   g_fault_block_trace_total++;
+
+  if (start_pc < 0x00004000u)
+    g_bios_native_blocks++;
 
   /*
    * A translated block must leave the guest PC in the GBA address space.
@@ -439,6 +447,7 @@ static size_t audio_batch_cb(const int16_t *data, size_t frames)
 static void input_poll_cb(void)
 {
   uint16_t mask = 0u;
+  u32 callback = 0u;
 
   if (g_current_frame >= g_start_frame &&
       g_current_frame - g_start_frame < g_start_duration)
@@ -459,6 +468,17 @@ static void input_poll_cb(void)
       mask |= event->mask;
       g_input_event_active_frames++;
     }
+  }
+  if (g_auto_a_until_callback != 0u &&
+      g_auto_a_reached_frame == UINT32_MAX)
+  {
+    memcpy(&callback, GPSP_IWRAM_DATA + 0x2364u, sizeof(callback));
+    if (callback == g_auto_a_until_callback)
+      g_auto_a_reached_frame = g_current_frame;
+    else if (g_current_frame >= g_auto_a_start_frame &&
+             (g_current_frame - g_auto_a_start_frame) %
+               g_auto_a_period < 2u)
+      mask |= UINT16_C(1) << RETRO_DEVICE_ID_JOYPAD_A;
   }
   g_current_input_mask = mask;
 }
@@ -636,6 +656,7 @@ int main(int argc, char **argv)
   bool progress_passed;
   const char *reason;
   uint32_t main_callback2 = 0u;
+  uint32_t expected_callback = 0x0802f315u;
 
   for (i = 1; i < argc; i++)
   {
@@ -726,6 +747,12 @@ int main(int argc, char **argv)
         return finish_process(2);
       }
     }
+    else if (strcmp(argv[i], "--auto-a-until-callback") == 0 &&
+             i + 2 < argc)
+    {
+      g_auto_a_until_callback = (u32)strtoul(argv[++i], NULL, 0);
+      g_auto_a_start_frame = (unsigned)strtoul(argv[++i], NULL, 0);
+    }
     else if (strcmp(argv[i], "--input-event") == 0 && i + 3 < argc)
     {
       char *mask_end = NULL;
@@ -773,6 +800,7 @@ int main(int argc, char **argv)
              "[--button-event name frame duration] "
              "[--input-event mask frame duration] [--switch-frame n] "
              "[--switch-backend rv32im|interp] [--force-dispatch] "
+             "[--auto-a-until-callback pc frame] "
              "[--disable-mapped-alu] [--disable-fast-reads] "
              "[--disable-fast-stores] [--disable-entry-setup] "
              "[--disable-state-helpers] [--disable-validated-entry] "
@@ -883,6 +911,8 @@ int main(int argc, char **argv)
   riscv_get_runtime_stats(&stats);
   memcpy(&main_callback2, GPSP_IWRAM_DATA + 0x2364u,
          sizeof(main_callback2));
+  if (g_auto_a_until_callback != 0u)
+    expected_callback = g_auto_a_until_callback;
   if (arm_probe_pc != 0u)
   {
     riscv_runtime_debug_arm_probe probe;
@@ -992,7 +1022,11 @@ int main(int argc, char **argv)
   if (g_use_dynarec)
     basic_passed = basic_passed && stats.blocks_executed != 0u &&
                    stats.blocks_emitted != 0u &&
-                   stats.interpreter_fallbacks == 0u;
+                   stats.interpreter_fallbacks == 0u &&
+                   stats.bios_native_blocks_emitted != 0u &&
+                   stats.bios_native_blocks_executed != 0u &&
+                   stats.bios_interpreter_fallbacks == 0u &&
+                   stats.bios_native_blocks_executed == g_bios_native_blocks;
 
   {
     unsigned progress_start = g_third_start_frame != UINT32_MAX ?
@@ -1000,7 +1034,9 @@ int main(int argc, char **argv)
         g_second_start_frame : g_start_frame);
 
     progress_passed = progress_start < frames && post_start_frames >= 300u &&
-                      main_callback2 == 0x0802f315u;
+                      main_callback2 == expected_callback &&
+                      (g_auto_a_until_callback == 0u ||
+                       g_auto_a_reached_frame != UINT32_MAX);
   }
   passed = basic_passed && progress_passed;
   if (!basic_passed)
@@ -1010,8 +1046,10 @@ int main(int argc, char **argv)
                                                   g_start_frame)) >= frames ||
            post_start_frames < 300u)
     reason = "insufficient_post_start_window";
-  else if (main_callback2 != 0x0802f315u)
-    reason = "title_start_transition_not_reached";
+  else if (main_callback2 != expected_callback ||
+           (g_auto_a_until_callback != 0u &&
+            g_auto_a_reached_frame == UINT32_MAX))
+    reason = "requested_callback_not_reached";
   else
     reason = g_use_dynarec ? "post_start_native_progress" :
                              "post_start_interpreter_progress";
@@ -1019,12 +1057,19 @@ int main(int argc, char **argv)
   {
     uint32_t irq_flags = 0u;
     unsigned stable_frames = frames - 1u - g_last_frame_hash_change;
+    const uint32_t palette_hash = fnv1a(palette_ram, sizeof(palette_ram));
+    const uint32_t vram_hash = fnv1a(vram, sizeof(vram));
+    const uint32_t oam_hash = fnv1a(oam_ram, sizeof(oam_ram));
+    const uint32_t io_hash = fnv1a(io_registers, sizeof(io_registers));
 
     memcpy(&irq_flags, GPSP_IWRAM_DATA + 0x237cu, sizeof(irq_flags));
 
     printf("result=%s command=p-gba backend=%s harness_mode=full_gpSP "
            "frames=%u video_frames=%u pc=0x%08x cpsr=0x%08x "
-           "frame_hash=0x%08x stable_frames=%u start_frame=%u "
+           "frame_hash=0x%08x palette_hash=0x%08x vram_hash=0x%08x "
+           "oam_hash=0x%08x io_hash=0x%08x dispcnt=0x%04x "
+           "bgcnt=0x%04x,0x%04x,0x%04x,0x%04x "
+           "stable_frames=%u start_frame=%u "
            "start_duration=%u second_start_frame=%u "
            "second_start_duration=%u second_start_hash=0x%08x "
            "second_start_auto=%u second_start_hash_streak=%u "
@@ -1042,14 +1087,21 @@ int main(int argc, char **argv)
            "vcount_callback_blocks=%u vblank_wait_blocks=%u "
            "post_wait_entries=%u post_vblank_tail_blocks=%u "
            "main_callback2=0x%08x input_events=%u "
+           "auto_a_reached_frame=%u "
            "input_event_active_frames=%u "
            "mapped_alu=%u fast_reads=%u fast_stores=%u entry_setup=%u "
            "state_helpers=%u validated_entry=%u indirect_cache=%u "
            "thumb_native_disable=0x%08x arm_native_disable=0x%08x "
-           "native_blocks=%u blocks_emitted=%u generated_code_bytes=%lu "
+           "native_blocks=%u bios_native_blocks=%u bios_hook_blocks=%u "
+           "bios_blocks_emitted=%u bios_fallbacks=%u blocks_emitted=%u "
+           "generated_code_bytes=%lu "
            "fallbacks=%u reason=%s\n",
            passed ? "PASS" : "FAIL", g_use_dynarec ? "rv32im" : "interp",
            frames, g_video_frames, reg[REG_PC], reg[REG_CPSR], g_frame_hash,
+           palette_hash, vram_hash, oam_hash, io_hash,
+           io_registers[REG_DISPCNT], io_registers[REG_BG0CNT],
+           io_registers[REG_BG1CNT], io_registers[REG_BG2CNT],
+           io_registers[REG_BG3CNT],
            stable_frames, g_start_frame, g_start_duration,
            g_second_start_frame, g_second_start_duration,
            g_second_start_hash, g_second_start_auto_triggered ? 1u : 0u,
@@ -1070,6 +1122,7 @@ int main(int argc, char **argv)
            g_post_start_wait_entry_blocks,
            g_post_start_vblank_tail_blocks,
            main_callback2, g_input_event_count,
+           g_auto_a_reached_frame,
            g_input_event_active_frames,
            !riscv_runtime_perf_disable_mapped_alu_fastpath,
            !riscv_runtime_perf_disable_fast_ram_reads,
@@ -1080,6 +1133,10 @@ int main(int argc, char **argv)
            !riscv_runtime_perf_disable_indirect_lookup_cache,
            g_thumb_native_disable_mask, g_arm_native_disable_mask,
            stats.blocks_executed,
+           stats.bios_native_blocks_executed,
+           g_bios_native_blocks,
+           stats.bios_native_blocks_emitted,
+           stats.bios_interpreter_fallbacks,
            stats.blocks_emitted,
            (unsigned long)((rom_translation_ptr - rom_translation_cache) +
                            (ram_translation_ptr - ram_translation_cache)),

@@ -206,10 +206,11 @@ BEGIN {
 
 /result=PASS command=runtime/ {
 	seen = 1;
-	# One deliberately helper-backed Thumb BLH drives the warm indirect-cache
-	# mapped-register invalidation regression. Any additional helper remains a
-	# hard failure.
-	require_eq("final_thumb_helpers", 1);
+	# Two deliberately helper-backed sites are exercised: BLH drives the warm
+	# indirect-cache mapped-register invalidation regression, and STM verifies
+	# that debug/deopt stores honor the same SMC/IRQ early-exit contract as the
+	# direct emitter. Any additional helper remains a hard failure.
+	require_eq("final_thumb_helpers", 2);
 	require_eq("first_exec_fallbacks", 0);
 	require_positive("jit_sticky_preserve_checks");
 	require_positive("interpreter_sticky_clear_checks");

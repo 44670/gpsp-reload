@@ -211,6 +211,12 @@ typedef unsigned int usize;
 #define THUMB_BLOCK_PUSH_END_PC (THUMB_BLOCK_PUSH_START_PC + 2u)
 #define THUMB_BLOCK_POP_PC_START_PC 0x02001140u
 #define THUMB_BLOCK_POP_PC_END_PC (THUMB_BLOCK_POP_PC_START_PC + 2u)
+#define THUMB_BLOCK_STORE_ALERT_START_PC 0x02001160u
+#define THUMB_BLOCK_STORE_ALERT_END_PC \
+  (THUMB_BLOCK_STORE_ALERT_START_PC + 4u)
+#define THUMB_GENERIC_STORE_ALERT_START_PC 0x02001180u
+#define THUMB_GENERIC_STORE_ALERT_END_PC \
+  (THUMB_GENERIC_STORE_ALERT_START_PC + 4u)
 #define THUMB_BLOCK_BASE_CYCLES 1u
 #define THUMB_BLOCK_STORE_TOTAL_CYCLES (THUMB_BLOCK_BASE_CYCLES + 2u)
 #define THUMB_BLOCK_LOAD_TOTAL_CYCLES (THUMB_BLOCK_BASE_CYCLES + 3u)
@@ -220,6 +226,7 @@ typedef unsigned int usize;
 #define THUMB_BLOCK_LOAD_OPCODE 0xccc2u
 #define THUMB_BLOCK_PUSH_OPCODE 0xb503u
 #define THUMB_BLOCK_POP_PC_OPCODE 0xbd42u
+#define THUMB_BLOCK_STORE_ALERT_POISON_OPCODE 0x2777u
 #define THUMB_BLOCK_BASE 0x02003000u
 #define THUMB_BLOCK_PUSH_SP_START (THUMB_BLOCK_BASE + 0x40u)
 #define THUMB_BLOCK_PUSH_ADDR (THUMB_BLOCK_PUSH_SP_START - 12u)
@@ -1713,6 +1720,8 @@ typedef unsigned int usize;
 #define MAPPED_NZCV_BLOCK_OFFSET 204800u
 #define THUMB_HELPER_EXIT_BLOCK_OFFSET 208896u
 #define THUMB_HELPER_EXIT_TARGET_BLOCK_OFFSET 212992u
+#define THUMB_BLOCK_STORE_ALERT_BLOCK_OFFSET 217088u
+#define THUMB_GENERIC_STORE_ALERT_BLOCK_OFFSET 221184u
 #define RANGE_STORE_BLOCK_OFFSET 262144u
 #define RANGE_CONDITIONAL_BLOCK_OFFSET 524288u
 #define RANGE_LONG_PATCH_BLOCK_OFFSET 900000u
@@ -1758,6 +1767,8 @@ static u8 *g_thumb_block_store_entry;
 static u8 *g_thumb_block_load_entry;
 static u8 *g_thumb_block_push_entry;
 static u8 *g_thumb_block_pop_pc_entry;
+static u8 *g_thumb_block_store_alert_entry;
+static u8 *g_thumb_generic_store_alert_entry;
 static u8 *g_thumb_branch_target_entry;
 static u8 *g_thumb_cond_branch_entry;
 static u8 *g_thumb_b_entry;
@@ -3421,6 +3432,102 @@ static u32 build_thumb_block_memory_single(u8 *code,
   riscv_emit_block_finalize(meta, &translation_ptr, start_pc, end_pc, true);
   code_bytes = (u32)(translation_ptr - code);
   syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code, (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_thumb_block_store_alert_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  bool cycles_emitted = true;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_thumb_block_store_alert_entry =
+    ((u8 *)meta) + block_prologue_size;
+
+  emit_thumb_block_memory_checked(&translation_ptr, meta,
+                                  THUMB_BLOCK_STORE_OPCODE,
+                                  THUMB_BLOCK_STORE_ALERT_START_PC,
+                                  "thumb_block_store_alert");
+
+  /* If the STM raises an alert this instruction must remain unexecuted and
+   * REG_PC must stay at the instruction immediately after the store. */
+  if (!riscv_emit_native_thumb_instruction(
+        &translation_ptr, meta, THUMB_BLOCK_STORE_ALERT_POISON_OPCODE,
+        THUMB_BLOCK_STORE_ALERT_START_PC + 2u, 0u, false,
+        &cycles_emitted) || cycles_emitted)
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=thumb_block_store_alert_poison_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_cycle_update(&translation_ptr, meta,
+                               THUMB_BLOCK_STORE_ALERT_END_PC, 1u))
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=thumb_block_store_alert_cycle_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            THUMB_BLOCK_STORE_ALERT_START_PC,
+                            THUMB_BLOCK_STORE_ALERT_END_PC, true);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code,
+           (long)(code + code_bytes), 0);
+  return code_bytes;
+}
+
+static u32 build_thumb_generic_store_alert_block(u8 *code)
+{
+  u8 *translation_ptr = code;
+  riscv_jit_block_meta *meta;
+  bool cycles_emitted = false;
+  u32 code_bytes;
+
+  riscv_emit_block_prologue(&translation_ptr, &meta);
+  g_thumb_generic_store_alert_entry =
+    ((u8 *)meta) + block_prologue_size;
+
+  /* Feed STM through the helper-backed instruction emitter to cover forced
+   * debug/deopt execution, not the direct block-memory emitter above. */
+  if (!riscv_emit_native_thumb_instruction(
+        &translation_ptr, meta, THUMB_BLOCK_STORE_OPCODE,
+        THUMB_GENERIC_STORE_ALERT_START_PC, THUMB_BLOCK_BASE_CYCLES,
+        false, &cycles_emitted) || !cycles_emitted)
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=thumb_generic_store_alert_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  cycles_emitted = true;
+  if (!riscv_emit_native_thumb_instruction(
+        &translation_ptr, meta, THUMB_BLOCK_STORE_ALERT_POISON_OPCODE,
+        THUMB_GENERIC_STORE_ALERT_START_PC + 2u, 0u, false,
+        &cycles_emitted) || cycles_emitted)
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=thumb_generic_store_alert_poison_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  if (!riscv_emit_cycle_update(&translation_ptr, meta,
+                               THUMB_GENERIC_STORE_ALERT_END_PC, 1u))
+  {
+    put_raw("result=FAIL command=runtime "
+            "reason=thumb_generic_store_alert_cycle_emit_rejected\n");
+    sys_exit(1);
+  }
+
+  riscv_emit_block_finalize(meta, &translation_ptr,
+                            THUMB_GENERIC_STORE_ALERT_START_PC,
+                            THUMB_GENERIC_STORE_ALERT_END_PC, true);
+  code_bytes = (u32)(translation_ptr - code);
+  syscall3(SYS_RISCV_FLUSH_ICACHE, (long)code,
+           (long)(code + code_bytes), 0);
   return code_bytes;
 }
 
@@ -7443,6 +7550,153 @@ static void run_thumb_block_store_case(void)
   expect_runtime_fallback_delta("thumb_block_store_stats",
                                 &stats_before, 1, 0, 0, 0, 0);
   expect_stickybits_match_execution_mode("thumb_block_store");
+}
+
+static void run_thumb_block_store_smc_irq_alert_case(void)
+{
+  const u32 extra_cycles = 4u;
+
+  reset_runtime_observations(THUMB_BLOCK_STORE_ALERT_START_PC);
+  reg[REG_CPSR] = CPSR_T_BIT | CPSR_LOW_VALUE;
+  reg[0] = THUMB_BLOCK_STORE_R0_VALUE;
+  reg[2] = THUMB_BLOCK_STORE_R2_VALUE;
+  reg[3] = THUMB_BLOCK_BASE;
+  reg[7] = 0x11u;
+  g_store_alert = CPU_ALERT_SMC | CPU_ALERT_IRQ;
+  /* Only the first of two transfers raises the alert.  The final helper
+   * return must retain it until the complete STM can branch to the scheduler. */
+  g_store_alert_after_call = 1u;
+  g_thumb_lookup_entry = g_thumb_block_store_alert_entry;
+  g_thumb_lookup_entry_pc = THUMB_BLOCK_STORE_ALERT_START_PC;
+
+  execute_arm_translate_internal(THUMB_BLOCK_STORE_TOTAL_CYCLES + 1u +
+                                 extra_cycles, &reg[0]);
+
+  if (g_block_write_count != 2u)
+    fail_u32("thumb_block_store_smc_irq", "write_count",
+             g_block_write_count, 2u);
+  expect_thumb_block_write("thumb_block_store_smc_irq", 0,
+                           THUMB_BLOCK_BASE,
+                           THUMB_BLOCK_STORE_R0_VALUE);
+  expect_thumb_block_write("thumb_block_store_smc_irq", 1,
+                           THUMB_BLOCK_BASE + 4u,
+                           THUMB_BLOCK_STORE_R2_VALUE);
+  if (reg[3] != THUMB_BLOCK_BASE + 8u)
+    fail_u32("thumb_block_store_smc_irq", "r3", reg[3],
+             THUMB_BLOCK_BASE + 8u);
+  if (reg[7] != 0x11u)
+    fail_u32("thumb_block_store_smc_irq", "poison_r7", reg[7], 0x11u);
+  if (reg[REG_PC] != THUMB_BLOCK_STORE_ALERT_START_PC + 2u)
+    fail_u32("thumb_block_store_smc_irq", "pc", reg[REG_PC],
+             THUMB_BLOCK_STORE_ALERT_START_PC + 2u);
+  if (g_flush_calls != 1u)
+    fail_u32("thumb_block_store_smc_irq", "flush_calls",
+             g_flush_calls, 1u);
+  if (g_irq_check_calls != 1u)
+    fail_u32("thumb_block_store_smc_irq", "irq_calls",
+             g_irq_check_calls, 1u);
+  if (g_update_calls != 0u)
+    fail_u32("thumb_block_store_smc_irq", "update_calls",
+             g_update_calls, 0u);
+  if (g_execute_calls != 1u)
+    fail_u32("thumb_block_store_smc_irq", "execute_calls",
+             g_execute_calls, 1u);
+  if (g_execute_cycles != extra_cycles + 1u)
+    fail_u32("thumb_block_store_smc_irq", "execute_cycles",
+             g_execute_cycles, extra_cycles + 1u);
+  if (g_execute_pc != THUMB_BLOCK_STORE_ALERT_START_PC + 2u)
+    fail_u32("thumb_block_store_smc_irq", "execute_pc", g_execute_pc,
+             THUMB_BLOCK_STORE_ALERT_START_PC + 2u);
+  expect_stickybits_match_execution_mode("thumb_block_store_smc_irq");
+}
+
+static void run_thumb_generic_store_smc_irq_alert_case(void)
+{
+  const u32 extra_cycles = 4u;
+
+  reset_runtime_observations(THUMB_GENERIC_STORE_ALERT_START_PC);
+  reg[REG_CPSR] = CPSR_T_BIT | CPSR_LOW_VALUE;
+  reg[0] = THUMB_BLOCK_STORE_R0_VALUE;
+  reg[2] = THUMB_BLOCK_STORE_R2_VALUE;
+  reg[3] = THUMB_BLOCK_BASE;
+  reg[7] = 0x11u;
+  g_store_alert = CPU_ALERT_SMC | CPU_ALERT_IRQ;
+  g_thumb_lookup_entry = g_thumb_generic_store_alert_entry;
+  g_thumb_lookup_entry_pc = THUMB_GENERIC_STORE_ALERT_START_PC;
+
+  execute_arm_translate_internal(THUMB_BLOCK_STORE_TOTAL_CYCLES + 1u +
+                                 extra_cycles, &reg[0]);
+
+  if (g_block_write_count != 2u)
+    fail_u32("thumb_generic_store_smc_irq", "write_count",
+             g_block_write_count, 2u);
+  expect_thumb_block_write("thumb_generic_store_smc_irq", 0,
+                           THUMB_BLOCK_BASE,
+                           THUMB_BLOCK_STORE_R0_VALUE);
+  expect_thumb_block_write("thumb_generic_store_smc_irq", 1,
+                           THUMB_BLOCK_BASE + 4u,
+                           THUMB_BLOCK_STORE_R2_VALUE);
+  if (reg[3] != THUMB_BLOCK_BASE + 8u)
+    fail_u32("thumb_generic_store_smc_irq", "r3", reg[3],
+             THUMB_BLOCK_BASE + 8u);
+  if (reg[7] != 0x11u)
+    fail_u32("thumb_generic_store_smc_irq", "poison_r7", reg[7], 0x11u);
+  if (reg[REG_PC] != THUMB_GENERIC_STORE_ALERT_START_PC + 2u)
+    fail_u32("thumb_generic_store_smc_irq", "pc", reg[REG_PC],
+             THUMB_GENERIC_STORE_ALERT_START_PC + 2u);
+  if (g_flush_calls != 1u)
+    fail_u32("thumb_generic_store_smc_irq", "flush_calls",
+             g_flush_calls, 1u);
+  if (g_irq_check_calls != 1u)
+    fail_u32("thumb_generic_store_smc_irq", "irq_calls",
+             g_irq_check_calls, 1u);
+  if (g_update_calls != 0u)
+    fail_u32("thumb_generic_store_smc_irq", "update_calls",
+             g_update_calls, 0u);
+  if (g_execute_calls != 1u)
+    fail_u32("thumb_generic_store_smc_irq", "execute_calls",
+             g_execute_calls, 1u);
+  if (g_execute_cycles != extra_cycles + 1u)
+    fail_u32("thumb_generic_store_smc_irq", "execute_cycles",
+             g_execute_cycles, extra_cycles + 1u);
+  if (g_execute_pc != THUMB_GENERIC_STORE_ALERT_START_PC + 2u)
+    fail_u32("thumb_generic_store_smc_irq", "execute_pc", g_execute_pc,
+             THUMB_GENERIC_STORE_ALERT_START_PC + 2u);
+  expect_stickybits_match_execution_mode("thumb_generic_store_smc_irq");
+}
+
+static void run_thumb_generic_store_no_alert_case(void)
+{
+  reset_runtime_observations(THUMB_GENERIC_STORE_ALERT_START_PC);
+  reg[REG_CPSR] = CPSR_T_BIT | CPSR_LOW_VALUE;
+  reg[0] = THUMB_BLOCK_STORE_R0_VALUE;
+  reg[2] = THUMB_BLOCK_STORE_R2_VALUE;
+  reg[3] = THUMB_BLOCK_BASE;
+  reg[7] = 0x11u;
+  g_thumb_lookup_entry = g_thumb_generic_store_alert_entry;
+  g_thumb_lookup_entry_pc = THUMB_GENERIC_STORE_ALERT_START_PC;
+
+  execute_arm_translate_internal(THUMB_BLOCK_STORE_TOTAL_CYCLES + 1u,
+                                 &reg[0]);
+
+  if (g_block_write_count != 2u)
+    fail_u32("thumb_generic_store_no_alert", "write_count",
+             g_block_write_count, 2u);
+  if (reg[7] != 0x77u)
+    fail_u32("thumb_generic_store_no_alert", "poison_r7", reg[7], 0x77u);
+  if (reg[REG_PC] != THUMB_GENERIC_STORE_ALERT_END_PC)
+    fail_u32("thumb_generic_store_no_alert", "pc", reg[REG_PC],
+             THUMB_GENERIC_STORE_ALERT_END_PC);
+  if (g_flush_calls != 0u || g_irq_check_calls != 0u)
+    fail_u32("thumb_generic_store_no_alert", "spurious_alert",
+             g_flush_calls | g_irq_check_calls, 0u);
+  if (g_update_calls != 1u || (u32)g_update_cycles != 0u)
+    fail_u32("thumb_generic_store_no_alert", "update",
+             g_update_calls, 1u);
+  if (g_execute_calls != 0u)
+    fail_u32("thumb_generic_store_no_alert", "execute_calls",
+             g_execute_calls, 0u);
+  expect_stickybits_match_execution_mode("thumb_generic_store_no_alert");
 }
 
 static void run_thumb_block_load_case(void)
@@ -14513,6 +14767,10 @@ void _start(void)
                                     THUMB_BLOCK_POP_PC_END_PC,
                                     &g_thumb_block_pop_pc_entry,
                                     "thumb_block_pop_pc");
+  (void)build_thumb_block_store_alert_block(
+    code + THUMB_BLOCK_STORE_ALERT_BLOCK_OFFSET);
+  (void)build_thumb_generic_store_alert_block(
+    code + THUMB_GENERIC_STORE_ALERT_BLOCK_OFFSET);
   thumb_branch_target_code_bytes =
     build_thumb_branch_target_block(code + THUMB_CONTROL_TARGET_BLOCK_OFFSET);
   thumb_cond_branch_code_bytes =
@@ -15163,6 +15421,9 @@ void _start(void)
   run_thumb_alu_edge_case();
   run_thumb_add_edge_case();
   run_thumb_block_store_case();
+  run_thumb_block_store_smc_irq_alert_case();
+  run_thumb_generic_store_smc_irq_alert_case();
+  run_thumb_generic_store_no_alert_case();
   run_thumb_block_load_case();
   run_thumb_block_push_case();
   run_thumb_block_pop_pc_case();
