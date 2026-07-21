@@ -2166,7 +2166,7 @@ static int verify_indirect_lookup_miss_counter(void)
 #endif
     fallthrough_lookup_hits == 0u && fallthrough_lookup_misses == 0u &&
     scheduler_updates == 0u && lookup_stub_entries == 1u &&
-    slow_path_entries == 0u && g_lookup_calls == 2u &&
+    slow_path_entries == 1u && g_lookup_calls == 2u &&
     g_terminal_calls == 1u && g_update_calls == 0u &&
     g_fallbacks == 1u && g_initial_lookup_fallbacks == 0u &&
     g_relookup_fallbacks == 1u && g_unsupported_fallbacks == 0u &&

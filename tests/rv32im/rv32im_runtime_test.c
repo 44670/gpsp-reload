@@ -452,6 +452,7 @@ typedef unsigned int usize;
   (MAPPED_GPR_MOV_CYCLES + MAPPED_GPR_ADD_CYCLES)
 #define MAPPED_GPR_OLD_R0_VALUE 0x00000011u
 #define MAPPED_GPR_NEW_R0_VALUE 0x0000005au
+#define MAPPED_GPR_R1_VALUE 0x00000022u
 #define MAPPED_MOV_R0_0X5A 0xe3a0005au
 #define MAPPED_ADD_R2_R0_0 0xe2802000u
 #define MAPPED_HELPER_START_PC 0x08001240u
@@ -987,7 +988,7 @@ typedef unsigned int usize;
 #define STORE_ALERT_CHAIN_TOTAL_CYCLES \
   (STORE_TOTAL_CYCLES + STORE_ALERT_CHAIN_CYCLES)
 #define RANGE_STORE_START_PC 0x08010000u
-#define RANGE_STORE_SITE_COUNT 1024u
+#define RANGE_STORE_SITE_COUNT 1536u
 #define RANGE_STORE_PAD_NOPS 16u
 #define RANGE_STORE_END_PC \
   (RANGE_STORE_START_PC + RANGE_STORE_SITE_COUNT * 4u)
@@ -2363,14 +2364,17 @@ static void run_mapped_gpr_case(void)
   reset_runtime_observations(MAPPED_GPR_START_PC);
   g_lookup_entry = g_mapped_gpr_entry;
   reg[0] = MAPPED_GPR_OLD_R0_VALUE;
+  reg[1] = MAPPED_GPR_R1_VALUE;
 
   execute_arm_translate_internal(MAPPED_GPR_TOTAL_CYCLES, &reg[0]);
 
   if (reg[0] != MAPPED_GPR_NEW_R0_VALUE)
     fail_u32("mapped_gpr", "r0", reg[0], MAPPED_GPR_NEW_R0_VALUE);
-  if (reg[1] != MAPPED_GPR_OLD_R0_VALUE)
-    fail_u32("mapped_gpr", "stale_state_r1",
-             reg[1], MAPPED_GPR_OLD_R0_VALUE);
+  /* Fixed mapped registers are authoritative until a publishing boundary.
+   * A raw state-array write cannot replace a still-live host mapping. */
+  if (reg[1] != MAPPED_GPR_R1_VALUE)
+    fail_u32("mapped_gpr", "resident_r1",
+             reg[1], MAPPED_GPR_R1_VALUE);
   if (reg[2] != MAPPED_GPR_NEW_R0_VALUE)
     fail_u32("mapped_gpr", "live_r2",
              reg[2], MAPPED_GPR_NEW_R0_VALUE);
@@ -3764,10 +3768,9 @@ static u32 build_thumb_helper_exit_block(u8 *code)
   riscv_emit_block_prologue(&translation_ptr, &meta);
   g_thumb_helper_exit_entry = ((u8 *)meta) + block_prologue_size;
 
-  /* Deliberately use the generic helper for BLH.  It updates state-backed LR
-   * and PC, invalidates all mapped registers, and emits a terminal indirect
-   * lookup -- the exact composition that a warm lookup-cache hit must not
-   * chain across without reloading the mappings. */
+  /* Deliberately use the generic helper for BLH. It updates state-backed LR
+   * and PC, then the shared stateful veneer must reload the fixed mapping
+   * before a warm indirect-cache hit chains directly into the target. */
   if (!riscv_emit_native_thumb_instruction(
         &translation_ptr, meta, THUMB_HELPER_EXIT_BLH,
         THUMB_HELPER_EXIT_START_PC, THUMB_HELPER_EXIT_CYCLES, true,
@@ -8070,7 +8073,8 @@ static void prepare_thumb_helper_exit_run(void)
   g_execute_pc = 0;
 }
 
-static void expect_thumb_helper_exit_run(const char *test_name)
+static void expect_thumb_helper_exit_run(const char *test_name,
+                                         u32 expected_thumb_lookups)
 {
   if (reg[0] != THUMB_HELPER_EXIT_LINK)
     fail_u32(test_name, "r0_from_reloaded_lr", reg[0],
@@ -8086,8 +8090,9 @@ static void expect_thumb_helper_exit_run(const char *test_name)
              CPSR_T_BIT | CPSR_LOW_VALUE);
   if (g_lookup_calls != 0)
     fail_u32(test_name, "arm_lookup_calls", g_lookup_calls, 0);
-  if (g_thumb_lookup_calls != 2u)
-    fail_u32(test_name, "thumb_lookup_calls", g_thumb_lookup_calls, 2u);
+  if (g_thumb_lookup_calls != expected_thumb_lookups)
+    fail_u32(test_name, "thumb_lookup_calls", g_thumb_lookup_calls,
+             expected_thumb_lookups);
   if (g_update_calls != 1u)
     fail_u32(test_name, "update_calls", g_update_calls, 1u);
   if ((u32)g_update_cycles != 0u)
@@ -8108,7 +8113,7 @@ static void run_thumb_helper_exit_warm_cache_case(void)
   execute_arm_translate_internal(THUMB_HELPER_EXIT_CYCLES +
                                  THUMB_HELPER_EXIT_TARGET_CYCLES,
                                  &reg[0]);
-  expect_thumb_helper_exit_run("thumb_helper_exit_cache_cold");
+  expect_thumb_helper_exit_run("thumb_helper_exit_cache_cold", 2u);
 
   /* Keep the indirect cache populated by the cold run.  A hit used to jump
    * directly into the target with stale mapped state after the helper had
@@ -8117,7 +8122,7 @@ static void run_thumb_helper_exit_warm_cache_case(void)
   execute_arm_translate_internal(THUMB_HELPER_EXIT_CYCLES +
                                  THUMB_HELPER_EXIT_TARGET_CYCLES,
                                  &reg[0]);
-  expect_thumb_helper_exit_run("thumb_helper_exit_cache_warm");
+  expect_thumb_helper_exit_run("thumb_helper_exit_cache_warm", 1u);
 }
 
 static void run_initial_lookup_fallback_case(const char *test_name,
@@ -14700,7 +14705,7 @@ void _start(void)
     code + MAPPED_HELPER_BLOCK_OFFSET, mapped_helper_code_bytes,
     ((RV32_HELPER_STORE32_STATE_OFFSET & 0xfffu) << 20) |
     ((u32)riscv_reg_s0 << 15) | (2u << 12) |
-    ((u32)riscv_reg_t0 << 7) | 0x03u);
+    ((u32)riscv_reg_t2 << 7) | 0x03u);
   if (state_helper_loads != 1u)
     fail_u32("helper_state", "store32_load_sites", state_helper_loads, 1u);
   mapped_nzcv_code_bytes =

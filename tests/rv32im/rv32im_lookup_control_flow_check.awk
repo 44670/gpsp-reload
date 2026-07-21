@@ -101,7 +101,7 @@ BEGIN {
       (field("indirect_cache_attempts") + 0) != 1 ||
       (field("indirect_cache_hits") + 0) != 0 ||
       (field("lookup_stub_entries") + 0) != 1 ||
-      (field("slow_path_entries") + 0) != 0 ||
+      (field("slow_path_entries") + 0) != 1 ||
       (field("lookups") + 0) != 2 ||
       (field("terminal_calls") + 0) != 1 ||
       (field("fallbacks") + 0) != 1 ||

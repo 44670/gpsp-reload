@@ -46,8 +46,8 @@ function require_gt(field, minimum, value) {
 }
 
 BEGIN {
-	arm_tracked_total_max = 18000;
-	thumb_direct_total_max = 5600;
+	arm_tracked_total_max = 13332;
+	thumb_direct_total_max = 3644;
 
 	track("mapped_gpr_code_bytes", 176, "mapped_contract");
 	track("mapped_helper_code_bytes", 208, "mapped_contract");
@@ -214,7 +214,7 @@ BEGIN {
 	require_eq("first_exec_fallbacks", 0);
 	require_positive("jit_sticky_preserve_checks");
 	require_positive("interpreter_sticky_clear_checks");
-	require_eq("range_store_alert_sites", 1024);
+	require_eq("range_store_alert_sites", 1536);
 	require_gt("range_store_max_alert_span", 65535);
 	require_gt("range_conditional_span", 65535);
 	require_eq("range_long_patch_cases", 11);

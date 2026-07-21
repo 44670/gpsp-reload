@@ -57,13 +57,29 @@ typedef u8 *(*riscv_jit_block_fn)(void);
 extern u32 rom_cache_watermark;
 
 static u8 *riscv_jit_control_slow(const riscv_jit_block_meta *meta);
+static u8 *riscv_jit_cycle_slow(const riscv_jit_block_meta *meta,
+                                s32 cycles);
+static u8 *riscv_jit_lookup_miss_slow(const riscv_jit_block_meta *meta,
+                                      const u8 *miss_entry);
+static u8 *riscv_jit_lookup_published(const riscv_jit_block_meta *meta,
+                                      s32 cycles);
+static u8 *riscv_jit_lookup_caller_published(
+  const riscv_jit_block_meta *meta, s32 cycles);
 u8 *riscv_jit_lookup_fallthrough(const riscv_jit_block_meta *meta,
                                  s32 cycles);
 u8 *riscv_jit_lookup_indirect(const riscv_jit_block_meta *meta,
                               s32 cycles);
 void riscv_jit_control_slow_tail(void);
+void riscv_jit_callee_live_control_tail(void);
+void riscv_jit_control_published_tail(void);
+void riscv_jit_lookup_miss_tail(void);
+void riscv_jit_callee_live_lookup_miss_tail(void);
 void riscv_jit_fallthrough_tail(void);
 void riscv_jit_indirect_lookup_tail(void);
+void riscv_jit_caller_published_lookup_tail(void);
+void riscv_jit_published_lookup_tail(void);
+void riscv_jit_helper_call_published(void);
+void riscv_jit_helper_call_stateful(void);
 static u32 function_cc riscv_thumb_execute(u32 opcode, u32 pc);
 static void function_cc riscv_thumb_execute_bl_pair(u32 first_opcode,
                                                     u32 second_opcode,
@@ -258,11 +274,195 @@ __asm__(
   ".globl riscv_jit_control_slow_tail\n"
   ".type riscv_jit_control_slow_tail, @function\n"
   "riscv_jit_control_slow_tail:\n"
+  /* Scheduler and fallback C code observes canonical guest state. Keep the
+   * spill in one shared stub instead of cloning dirty-register stores into
+   * every translated block exit. */
+  "  sw a3, 0(s0)\n"
+  "  sw a4, 4(s0)\n"
+  "  sw a5, 8(s0)\n"
+  "  sw a6, 12(s0)\n"
+  "  sw a7, 16(s0)\n"
+  /* Read-only helpers publish a3-a7 before invalidating those mappings. A
+   * cycle checkpoint can enter here and publish only the callee-saved half
+   * that is still live, instead of first reloading and then spilling a3-a7. */
+  ".globl riscv_jit_callee_live_control_tail\n"
+  ".type riscv_jit_callee_live_control_tail, @function\n"
+  "riscv_jit_callee_live_control_tail:\n"
+  "  sw s1, 20(s0)\n"
+  "  sw s2, 24(s0)\n"
+  "  sw s3, 28(s0)\n"
+  "  sw s4, 32(s0)\n"
+  "  sw s5, 36(s0)\n"
+  "  sw s6, 40(s0)\n"
+  "  sw s7, 44(s0)\n"
+  "  sw s8, 48(s0)\n"
+  "  sw s9, 52(s0)\n"
+  /* RV32 gpSP is little-endian. Preserve CPSR Q/reserved bits in the low
+   * nibble of its most-significant byte and replace only NZCV. */
+  "  lbu t5, 67(s0)\n"
+  "  andi t5, t5, 15\n"
+  "  slli t6, s11, 4\n"
+  "  or t5, t5, t6\n"
+  "  sb t5, 67(s0)\n"
+  /* The live-state tail is reached only by supported native blocks.  Split
+   * the overwhelmingly common exhausted-cycle case after the one shared
+   * publication sequence. Pass the resident budget directly so the cycle
+   * path does not store and immediately reload a global. */
+  "  bge zero, s10, .Lriscv_jit_cycle_slow\n"
   "  lla t5, riscv_cycles_remaining\n"
   "  sw s10, 0(t5)\n"
   "  lw ra, 8(sp)\n"
   "  tail riscv_jit_control_slow\n"
-  ".size riscv_jit_control_slow_tail, .-riscv_jit_control_slow_tail\n");
+  ".Lriscv_jit_cycle_slow:\n"
+  "  mv a1, s10\n"
+  "  lw ra, 8(sp)\n"
+  "  tail riscv_jit_cycle_slow\n"
+  ".size riscv_jit_callee_live_control_tail, "
+  ".-riscv_jit_callee_live_control_tail\n"
+  ".size riscv_jit_control_slow_tail, .-riscv_jit_control_slow_tail\n"
+
+  /* A preceding stateful helper has already published every guest register.
+   * Its host mappings are deliberately invalid, so do not spill stale values. */
+  ".globl riscv_jit_control_published_tail\n"
+  ".type riscv_jit_control_published_tail, @function\n"
+  "riscv_jit_control_published_tail:\n"
+  "  lla t5, riscv_cycles_remaining\n"
+  "  sw s10, 0(t5)\n"
+  "  lw ra, 8(sp)\n"
+  "  tail riscv_jit_control_slow\n"
+  ".size riscv_jit_control_published_tail, .-riscv_jit_control_published_tail\n"
+
+  /* A live lookup miss restored a3-a7 before arriving here. Publish the same
+   * fixed mapping once, then let the miss-only C path run the interpreter. */
+  ".globl riscv_jit_lookup_miss_tail\n"
+  ".type riscv_jit_lookup_miss_tail, @function\n"
+  "riscv_jit_lookup_miss_tail:\n"
+  "  sw a3, 0(s0)\n"
+  "  sw a4, 4(s0)\n"
+  "  sw a5, 8(s0)\n"
+  "  sw a6, 12(s0)\n"
+  "  sw a7, 16(s0)\n"
+  ".globl riscv_jit_callee_live_lookup_miss_tail\n"
+  ".type riscv_jit_callee_live_lookup_miss_tail, @function\n"
+  "riscv_jit_callee_live_lookup_miss_tail:\n"
+  "  sw s1, 20(s0)\n"
+  "  sw s2, 24(s0)\n"
+  "  sw s3, 28(s0)\n"
+  "  sw s4, 32(s0)\n"
+  "  sw s5, 36(s0)\n"
+  "  sw s6, 40(s0)\n"
+  "  sw s7, 44(s0)\n"
+  "  sw s8, 48(s0)\n"
+  "  sw s9, 52(s0)\n"
+  "  lbu t5, 67(s0)\n"
+  "  andi t5, t5, 15\n"
+  "  slli t6, s11, 4\n"
+  "  or t5, t5, t6\n"
+  "  sb t5, 67(s0)\n"
+  "  lla t5, riscv_cycles_remaining\n"
+  "  sw s10, 0(t5)\n"
+  "  lw ra, 8(sp)\n"
+  "  tail riscv_jit_lookup_miss_slow\n"
+  ".size riscv_jit_callee_live_lookup_miss_tail, "
+  ".-riscv_jit_callee_live_lookup_miss_tail\n"
+  ".size riscv_jit_lookup_miss_tail, .-riscv_jit_lookup_miss_tail\n");
+
+/* Generic C helpers use one MIPS-style state-publication veneer. The helper
+ * address arrives in t2, while a0-a2 retain their normal arguments. */
+__asm__(
+  ".text\n"
+  ".align 2\n"
+  ".globl riscv_jit_helper_call_published\n"
+  ".type riscv_jit_helper_call_published, @function\n"
+  "riscv_jit_helper_call_published:\n"
+  "  sw a3, 0(s0)\n"
+  "  sw a4, 4(s0)\n"
+  "  sw a5, 8(s0)\n"
+  "  sw a6, 12(s0)\n"
+  "  sw a7, 16(s0)\n"
+  "  sw s1, 20(s0)\n"
+  "  sw s2, 24(s0)\n"
+  "  sw s3, 28(s0)\n"
+  "  sw s4, 32(s0)\n"
+  "  sw s5, 36(s0)\n"
+  "  sw s6, 40(s0)\n"
+  "  sw s7, 44(s0)\n"
+  "  sw s8, 48(s0)\n"
+  "  sw s9, 52(s0)\n"
+  "  lw t5, 64(s0)\n"
+  "  slli t5, t5, 4\n"
+  "  srli t5, t5, 4\n"
+  "  slli t6, s11, 28\n"
+  "  or t5, t5, t6\n"
+  "  sw t5, 64(s0)\n"
+  "  addi sp, sp, -16\n"
+  "  sw ra, 12(sp)\n"
+  "  jalr ra, t2, 0\n"
+  "  lw a3, 0(s0)\n"
+  "  lw a4, 4(s0)\n"
+  "  lw a5, 8(s0)\n"
+  "  lw a6, 12(s0)\n"
+  "  lw a7, 16(s0)\n"
+  "  lw ra, 12(sp)\n"
+  "  addi sp, sp, 16\n"
+  "  ret\n"
+  ".size riscv_jit_helper_call_published, "
+  ".-riscv_jit_helper_call_published\n");
+
+/* Stateful helpers may replace banked guest registers and CPSR. Publish the
+ * incoming fixed mapping, call C, then install the helper's canonical state
+ * back into the same mapping before native lookup continues. */
+__asm__(
+  ".text\n"
+  ".align 2\n"
+  ".globl riscv_jit_helper_call_stateful\n"
+  ".type riscv_jit_helper_call_stateful, @function\n"
+  "riscv_jit_helper_call_stateful:\n"
+  "  sw a3, 0(s0)\n"
+  "  sw a4, 4(s0)\n"
+  "  sw a5, 8(s0)\n"
+  "  sw a6, 12(s0)\n"
+  "  sw a7, 16(s0)\n"
+  "  sw s1, 20(s0)\n"
+  "  sw s2, 24(s0)\n"
+  "  sw s3, 28(s0)\n"
+  "  sw s4, 32(s0)\n"
+  "  sw s5, 36(s0)\n"
+  "  sw s6, 40(s0)\n"
+  "  sw s7, 44(s0)\n"
+  "  sw s8, 48(s0)\n"
+  "  sw s9, 52(s0)\n"
+  "  lw t5, 64(s0)\n"
+  "  slli t5, t5, 4\n"
+  "  srli t5, t5, 4\n"
+  "  slli t6, s11, 28\n"
+  "  or t5, t5, t6\n"
+  "  sw t5, 64(s0)\n"
+  "  addi sp, sp, -16\n"
+  "  sw ra, 12(sp)\n"
+  "  jalr ra, t2, 0\n"
+  "  lw a3, 0(s0)\n"
+  "  lw a4, 4(s0)\n"
+  "  lw a5, 8(s0)\n"
+  "  lw a6, 12(s0)\n"
+  "  lw a7, 16(s0)\n"
+  "  lw s1, 20(s0)\n"
+  "  lw s2, 24(s0)\n"
+  "  lw s3, 28(s0)\n"
+  "  lw s4, 32(s0)\n"
+  "  lw s5, 36(s0)\n"
+  "  lw s6, 40(s0)\n"
+  "  lw s7, 44(s0)\n"
+  "  lw s8, 48(s0)\n"
+  "  lw s9, 52(s0)\n"
+  "  lw s11, 64(s0)\n"
+  "  srli s11, s11, 28\n"
+  "  andi s11, s11, 15\n"
+  "  lw ra, 12(sp)\n"
+  "  addi sp, sp, 16\n"
+  "  ret\n"
+  ".size riscv_jit_helper_call_stateful, "
+  ".-riscv_jit_helper_call_stateful\n");
 
 /* Fast fallthrough and indirect misses call only a block-lookup helper. They
  * preserve the resident cycle budget in s10 and jump directly to the returned
@@ -284,9 +484,19 @@ __asm__(
   "  lw t0, 0(t0)\n"
   "  lw t1, 60(s0)\n"
   "  beq t1, t0, .Lriscv_jit_fallthrough_control\n"
+  /* C may clobber a3-a7, while s1-s9/s11 are psABI callee-saved. Preserve the
+   * five caller-saved guest mappings on the outer JIT stack instead of
+   * publishing and reloading all fifteen mappings on every lookup hit. */
+  "  sw a0, 4(sp)\n"
+  "  addi sp, sp, -32\n"
+  "  sw a3, 0(sp)\n"
+  "  sw a4, 4(sp)\n"
+  "  sw a5, 8(sp)\n"
+  "  sw a6, 12(sp)\n"
+  "  sw a7, 16(sp)\n"
   "  mv a1, s10\n"
   "  call riscv_jit_lookup_fallthrough\n"
-  "  j .Lriscv_jit_lookup_return\n"
+  "  j .Lriscv_jit_live_lookup_return\n"
   ".Lriscv_jit_fallthrough_control:\n"
   "  j riscv_jit_control_slow_tail\n"
   ".size riscv_jit_fallthrough_tail, .-riscv_jit_fallthrough_tail\n"
@@ -365,12 +575,91 @@ __asm__(
   ".Lriscv_jit_indirect_miss:\n"
 #endif
   "  mv a1, s10\n"
+  "  sw a0, 4(sp)\n"
+  "  addi sp, sp, -32\n"
+  "  sw a3, 0(sp)\n"
+  "  sw a4, 4(sp)\n"
+  "  sw a5, 8(sp)\n"
+  "  sw a6, 12(sp)\n"
+  "  sw a7, 16(sp)\n"
   "  call riscv_jit_lookup_indirect\n"
-  ".Lriscv_jit_lookup_return:\n"
-  "  beqz a0, .Lriscv_jit_lookup_exit\n"
-  /* A C lookup preserves s0/s1-s11 by psABI, but reloading the canonical
-   * mapping also covers paths whose preceding instruction helper deliberately
-   * invalidated caller- or callee-mapped guest state. */
+  ".Lriscv_jit_live_lookup_return:\n"
+  "  lw a3, 0(sp)\n"
+  "  lw a4, 4(sp)\n"
+  "  lw a5, 8(sp)\n"
+  "  lw a6, 12(sp)\n"
+  "  lw a7, 16(sp)\n"
+  "  addi sp, sp, 32\n"
+  "  beqz a0, .Lriscv_jit_live_lookup_miss\n"
+  "  li t0, -1\n"
+  "  bne a0, t0, .Lriscv_jit_live_lookup_hit\n"
+  ".Lriscv_jit_live_lookup_miss:\n"
+  "  mv a1, a0\n"
+  "  lw a0, 4(sp)\n"
+  "  j riscv_jit_lookup_miss_tail\n"
+  ".Lriscv_jit_live_lookup_hit:\n"
+  "  jalr zero, a0, 0\n"
+  ".Lriscv_jit_indirect_control:\n"
+  "  j riscv_jit_control_slow_tail\n"
+  ".size riscv_jit_indirect_lookup_tail, .-riscv_jit_indirect_lookup_tail\n"
+
+  /* A read-only helper has already published the caller-saved mappings that
+   * C may clobber, while s1-s9/s11 still carry the current guest state. A
+   * native lookup hit therefore reloads only a3-a7; scheduler and miss edges
+   * enter shared stubs after their caller-saved publication prefix. */
+  ".globl riscv_jit_caller_published_lookup_tail\n"
+  ".type riscv_jit_caller_published_lookup_tail, @function\n"
+  "riscv_jit_caller_published_lookup_tail:\n"
+  "  bge zero, s10, .Lriscv_jit_caller_published_control\n"
+  "  lla t0, riscv_cpu_alert\n"
+  "  lbu t0, 0(t0)\n"
+  "  bnez t0, .Lriscv_jit_caller_published_control\n"
+  "  lw t0, 72(s0)\n"
+  "  bnez t0, .Lriscv_jit_caller_published_control\n"
+  "  lla t0, idle_loop_target_pc\n"
+  "  lw t0, 0(t0)\n"
+  "  lw t1, 60(s0)\n"
+  "  beq t1, t0, .Lriscv_jit_caller_published_control\n"
+  "  sw a0, 4(sp)\n"
+  "  mv a1, s10\n"
+  "  call riscv_jit_lookup_caller_published\n"
+  "  beqz a0, .Lriscv_jit_caller_published_miss\n"
+  "  li t0, -1\n"
+  "  beq a0, t0, .Lriscv_jit_caller_published_miss\n"
+  "  lw a3, 0(s0)\n"
+  "  lw a4, 4(s0)\n"
+  "  lw a5, 8(s0)\n"
+  "  lw a6, 12(s0)\n"
+  "  lw a7, 16(s0)\n"
+  "  jalr zero, a0, 0\n"
+  ".Lriscv_jit_caller_published_miss:\n"
+  "  mv a1, a0\n"
+  "  lw a0, 4(sp)\n"
+  "  j riscv_jit_callee_live_lookup_miss_tail\n"
+  ".Lriscv_jit_caller_published_control:\n"
+  "  j riscv_jit_callee_live_control_tail\n"
+  ".size riscv_jit_caller_published_lookup_tail, "
+  ".-riscv_jit_caller_published_lookup_tail\n"
+
+  /* Partially invalid mappings mean a previous helper has already published
+   * canonical state. Use the old reload-on-hit shape only for this uncommon
+   * boundary; normal blocks use the live tails above. */
+  ".globl riscv_jit_published_lookup_tail\n"
+  ".type riscv_jit_published_lookup_tail, @function\n"
+  "riscv_jit_published_lookup_tail:\n"
+  "  bge zero, s10, .Lriscv_jit_published_control\n"
+  "  lla t0, riscv_cpu_alert\n"
+  "  lbu t0, 0(t0)\n"
+  "  bnez t0, .Lriscv_jit_published_control\n"
+  "  lw t0, 72(s0)\n"
+  "  bnez t0, .Lriscv_jit_published_control\n"
+  "  lla t0, idle_loop_target_pc\n"
+  "  lw t0, 0(t0)\n"
+  "  lw t1, 60(s0)\n"
+  "  beq t1, t0, .Lriscv_jit_published_control\n"
+  "  mv a1, s10\n"
+  "  call riscv_jit_lookup_published\n"
+  "  beqz a0, .Lriscv_jit_published_exit\n"
   "  lw a3, 0(s0)\n"
   "  lw a4, 4(s0)\n"
   "  lw a5, 8(s0)\n"
@@ -389,12 +678,12 @@ __asm__(
   "  srli s11, s11, 28\n"
   "  andi s11, s11, 15\n"
   "  jalr zero, a0, 0\n"
-  ".Lriscv_jit_lookup_exit:\n"
+  ".Lriscv_jit_published_exit:\n"
   "  lw ra, 8(sp)\n"
   "  ret\n"
-  ".Lriscv_jit_indirect_control:\n"
-  "  j riscv_jit_control_slow_tail\n"
-  ".size riscv_jit_indirect_lookup_tail, .-riscv_jit_indirect_lookup_tail\n");
+  ".Lriscv_jit_published_control:\n"
+  "  j riscv_jit_control_published_tail\n"
+  ".size riscv_jit_published_lookup_tail, .-riscv_jit_published_lookup_tail\n");
 #else
 static u8 *riscv_enter_jit(u8 *entry_data, void *reg_base)
 {
@@ -413,11 +702,43 @@ void riscv_jit_control_slow_tail(void)
 {
 }
 
+void riscv_jit_callee_live_control_tail(void)
+{
+}
+
+void riscv_jit_control_published_tail(void)
+{
+}
+
+void riscv_jit_lookup_miss_tail(void)
+{
+}
+
+void riscv_jit_callee_live_lookup_miss_tail(void)
+{
+}
+
 void riscv_jit_fallthrough_tail(void)
 {
 }
 
 void riscv_jit_indirect_lookup_tail(void)
+{
+}
+
+void riscv_jit_caller_published_lookup_tail(void)
+{
+}
+
+void riscv_jit_published_lookup_tail(void)
+{
+}
+
+void riscv_jit_helper_call_published(void)
+{
+}
+
+void riscv_jit_helper_call_stateful(void)
 {
 }
 #endif
@@ -548,6 +869,8 @@ static u32 riscv_arm_conditional_entry_valid_mask;
 #define RISCV_MAPPED_REGS_MASK ((1u << RISCV_MAPPED_REG_COUNT) - 1u)
 #define RISCV_MAPPED_NZCV_MASK (1u << RISCV_MAPPED_NZCV_SLOT)
 #define RISCV_MAPPED_CALLER_SAVED_MASK ((1u << 5) - 1u)
+#define RISCV_MAPPED_CALLEE_LIVE_MASK \
+  (RISCV_MAPPED_REGS_MASK & ~RISCV_MAPPED_CALLER_SAVED_MASK)
 #define RISCV_CYCLES_REG riscv_reg_s10
 
 static const riscv_reg_number riscv_mapped_host_regs[RISCV_MAPPED_REG_COUNT] =
@@ -652,34 +975,12 @@ static void riscv_emit_control_counter_increment(u8 **ptr, u32 *counter)
 }
 #endif
 
-static void riscv_emit_control_tail_jump(
-  u8 **ptr, const riscv_jit_block_meta *meta)
+static void riscv_emit_tail_jump(u8 **ptr, uintptr_t tail)
 {
   u8 *translation_ptr;
-  uintptr_t tail = (uintptr_t)riscv_jit_fallthrough_tail;
   u32 offset;
   s32 lower;
   u32 upper;
-
-  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
-    tail = (uintptr_t)riscv_jit_control_slow_tail;
-
-#if !defined(RISCV_RUNTIME_DISABLE_INDIRECT_LOOKUP_CACHE) || \
-    defined(RISCV_RUNTIME_INDIRECT_LOOKUP_PROFILE_SWITCH)
-  /* The cache-hit tail jumps straight into the next generated block, so all
-   * mapped guest registers must still be live.  An exiting C helper updates
-   * the state array and deliberately skips its reload because the normal
-   * dispatcher return reloads at the outer loop.  Sending that block through
-   * the cache-hit tail would bypass the reload and execute with stale mapped
-   * guest values. */
-  if (meta && (meta->flags & RISCV_BLOCK_PC_WRITTEN) &&
-      (riscv_mapped_valid_mask & RISCV_MAPPED_REGS_MASK) ==
-        RISCV_MAPPED_REGS_MASK)
-    tail = (uintptr_t)riscv_jit_indirect_lookup_tail;
-#else
-  if (meta && (meta->flags & RISCV_BLOCK_PC_WRITTEN))
-    tail = (uintptr_t)riscv_jit_indirect_lookup_tail;
-#endif
 
   translation_ptr = *ptr;
   offset = (u32)tail - (u32)(uintptr_t)translation_ptr;
@@ -692,6 +993,39 @@ static void riscv_emit_control_tail_jump(
   riscv_emit_auipc(riscv_reg_t0, upper);
   riscv_emit_jalr(riscv_reg_zero, riscv_reg_t0, lower);
   *ptr = translation_ptr;
+}
+
+static void riscv_emit_control_tail_jump(
+  u8 **ptr, const riscv_jit_block_meta *meta)
+{
+  u32 valid_mask = riscv_mapped_valid_mask & RISCV_MAPPED_REGS_MASK;
+  bool mappings_live = valid_mask == RISCV_MAPPED_REGS_MASK;
+  uintptr_t tail;
+
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
+  {
+    tail = (uintptr_t)riscv_jit_control_published_tail;
+  }
+  else if (valid_mask == RISCV_MAPPED_CALLEE_LIVE_MASK)
+  {
+    tail = (uintptr_t)riscv_jit_caller_published_lookup_tail;
+  }
+  else if (!mappings_live)
+  {
+    /* The caller published its remaining dirty mappings before choosing this
+     * tail. Reload canonical state only if lookup finds another native block. */
+    tail = (uintptr_t)riscv_jit_published_lookup_tail;
+  }
+  else if (meta->flags & RISCV_BLOCK_PC_WRITTEN)
+  {
+    tail = (uintptr_t)riscv_jit_indirect_lookup_tail;
+  }
+  else
+  {
+    tail = (uintptr_t)riscv_jit_fallthrough_tail;
+  }
+
+  riscv_emit_tail_jump(ptr, tail);
 }
 
 static bool riscv_i12_fits(u32 value)
@@ -1027,28 +1361,6 @@ static void riscv_emit_reg_move(u8 **ptr_ref, riscv_reg_number rd,
   *ptr_ref = translation_ptr;
 }
 
-static void riscv_emit_mapped_regs_reload(u8 **ptr_ref)
-{
-  u8 *translation_ptr = *ptr_ref;
-  u32 i;
-
-  for (i = 0; i < RISCV_MAPPED_GPR_COUNT; i++)
-  {
-    riscv_emit_lw(riscv_mapped_host_regs[i], riscv_reg_s0,
-                  (u32)riscv_mapped_state_regs[i] * 4u);
-  }
-  *ptr_ref = translation_ptr;
-  riscv_emit_lw(riscv_mapped_host_regs[RISCV_MAPPED_NZCV_SLOT],
-                riscv_reg_s0, REG_CPSR * 4u);
-  *ptr_ref = translation_ptr;
-  riscv_emit_cpsr_pack_nzcv(
-    ptr_ref, riscv_mapped_host_regs[RISCV_MAPPED_NZCV_SLOT],
-    riscv_mapped_host_regs[RISCV_MAPPED_NZCV_SLOT]);
-
-  riscv_mapped_valid_mask = RISCV_MAPPED_REGS_MASK;
-  riscv_mapped_dirty_mask &= ~RISCV_MAPPED_REGS_MASK;
-}
-
 static void riscv_note_mapped_regs_reloaded(void)
 {
   riscv_mapped_valid_mask = RISCV_MAPPED_REGS_MASK;
@@ -1199,9 +1511,14 @@ static void riscv_emit_mapped_regs_flush_mask(u8 **ptr_ref, u32 dirty_mask)
   riscv_mapped_dirty_mask &= ~dirty_mask;
 }
 
-static void riscv_emit_mapped_regs_flush_dirty(u8 **ptr_ref)
+/* A direct chain can enter a block with newer guest values than the state
+ * array even when that target's compiler-side dirty mask is clear.  Any path
+ * that is about to let C observe guest state, or invalidate host mappings,
+ * must therefore publish every live mapping rather than trusting a
+ * path-local dirty mask. */
+static void riscv_emit_mapped_regs_publish_live(u8 **ptr_ref)
 {
-  riscv_emit_mapped_regs_flush_mask(ptr_ref, riscv_mapped_dirty_mask);
+  riscv_emit_mapped_regs_flush_mask(ptr_ref, RISCV_MAPPED_REGS_MASK);
   riscv_mapped_dirty_mask = 0;
 }
 
@@ -1259,7 +1576,6 @@ static void riscv_emit_arm_reg_store(u8 **ptr, u32 reg_index,
   {
     riscv_emit_sw(rs, riscv_reg_s0, reg_index * 4u);
     *ptr = translation_ptr;
-    riscv_emit_mapped_regs_flush_dirty(ptr);
     return;
   }
 
@@ -2958,6 +3274,31 @@ static void riscv_emit_c_call_address_raw(u8 **ptr, uintptr_t target)
   *ptr = translation_ptr;
 }
 
+static void riscv_emit_abi_helper_call_published(u8 **ptr,
+                                                 u32 helper_index)
+{
+  u8 *translation_ptr = *ptr;
+
+  /* t2 survives the PC-relative call sequence and carries the real helper
+   * target into the shared state-publication veneer. */
+  riscv_emit_lw(riscv_reg_t2, riscv_reg_s0,
+                riscv_helper_state_offset(helper_index));
+  *ptr = translation_ptr;
+  riscv_emit_c_call_address_raw(
+    ptr, (uintptr_t)riscv_jit_helper_call_published);
+}
+
+static void riscv_emit_abi_helper_call_stateful(u8 **ptr, u32 helper_index)
+{
+  u8 *translation_ptr = *ptr;
+
+  riscv_emit_lw(riscv_reg_t2, riscv_reg_s0,
+                riscv_helper_state_offset(helper_index));
+  *ptr = translation_ptr;
+  riscv_emit_c_call_address_raw(
+    ptr, (uintptr_t)riscv_jit_helper_call_stateful);
+}
+
 static void riscv_emit_abi_helper_call_raw(u8 **ptr, u32 helper_index)
 {
   u8 *translation_ptr = *ptr;
@@ -2978,15 +3319,11 @@ static void riscv_emit_abi_helper_call_raw(u8 **ptr, u32 helper_index)
 
 static void riscv_emit_abi_helper_call(u8 **ptr, u32 helper_index)
 {
-  riscv_emit_mapped_regs_flush_dirty(ptr);
-  riscv_emit_abi_helper_call_raw(ptr, helper_index);
-  riscv_emit_test_poison_mapped_regs(ptr, RISCV_MAPPED_CALLER_SAVED_MASK);
-#if defined(RISCV_RUNTIME_PERF_COUNTERS)
-  riscv_perf_mapped_invalidate_sites++;
-#endif
-  riscv_mapped_valid_mask &= ~RISCV_MAPPED_CALLER_SAVED_MASK;
-  riscv_mapped_dirty_mask &= ~RISCV_MAPPED_CALLER_SAVED_MASK;
-  riscv_emit_mapped_regs_reload_mask(ptr, RISCV_MAPPED_CALLER_SAVED_MASK);
+  riscv_emit_abi_helper_call_published(ptr, helper_index);
+  /* The veneer publishes all mappings and restores a3-a7 after the C ABI
+   * call; s1-s9/s11 are callee-saved by psABI. */
+  riscv_mapped_valid_mask = RISCV_MAPPED_REGS_MASK;
+  riscv_mapped_dirty_mask = 0;
 }
 
 #if defined(RISCV_RUNTIME_DISABLE_READ_HELPER_OPT)
@@ -3002,6 +3339,12 @@ static void riscv_emit_read_helper_call(u8 **ptr, u32 helper_index)
 
   riscv_emit_sw(riscv_reg_a1, riscv_reg_s0, REG_PC * 4u);
   *ptr = translation_ptr;
+  /* A read helper observes memory and the explicitly published PC, but not
+   * guest r0-r14.  Publish only caller-saved mappings that may be newer than
+   * state, then invalidate them instead of paying a full publish-and-restore
+   * veneer for every load.  Block entry marks all mappings dirty because an
+   * external direct chain may arrive with state older than host registers;
+   * after this first boundary, the ordinary dirty mask is exact again. */
   riscv_emit_mapped_regs_flush_mask(
     ptr, riscv_mapped_dirty_mask & RISCV_MAPPED_CALLER_SAVED_MASK);
   riscv_emit_abi_helper_call_raw(ptr, helper_index);
@@ -3059,12 +3402,9 @@ static void riscv_emit_memory_store_helper(u8 **ptr, u32 helper_index)
 {
   if (riscv_fast_ram_stores_enabled())
   {
-    /* A store can raise SMC/IRQ/HALT and leave the block immediately. Publish
-     * only the mappings dirtied since the preceding boundary, then keep every
-     * host mapping live across the shared RAM/VRAM leaf or preserving C tail.
-     * This also gives internal branch joins the same clean-state invariant as
-     * the generic helper ABI without caller-saved invalidation/reloads. */
-    riscv_emit_mapped_regs_flush_dirty(ptr);
+    /* The shared veneer preserves every guest mapping. An alert branches to
+     * the block's shared exit stub, which publishes all mappings before C
+     * handles SMC/IRQ/HALT; the normal store path needs no state spill. */
     riscv_emit_abi_helper_call_raw(ptr, helper_index);
     return;
   }
@@ -3074,15 +3414,12 @@ static void riscv_emit_memory_store_helper(u8 **ptr, u32 helper_index)
 static void riscv_emit_stateful_helper_call(u8 **ptr, u32 helper_index,
                                             bool reload_after)
 {
-  riscv_emit_mapped_regs_flush_dirty(ptr);
-  riscv_emit_abi_helper_call_raw(ptr, helper_index);
-  riscv_emit_test_poison_mapped_regs(ptr, RISCV_MAPPED_REGS_MASK);
-#if defined(RISCV_RUNTIME_PERF_COUNTERS)
-  riscv_perf_mapped_invalidate_sites++;
-#endif
-  riscv_note_c_call_clobbers_mapped_regs();
-  if (reload_after)
-    riscv_emit_mapped_regs_reload(ptr);
+  (void)reload_after;
+  riscv_emit_abi_helper_call_stateful(ptr, helper_index);
+  /* The shared veneer always reloads the complete fixed mapping. This keeps
+   * terminal SWI/PSR paths eligible for normal native lookup as well as
+   * eliminating two per-site spill/reload implementations. */
+  riscv_note_mapped_regs_reloaded();
 }
 
 static u32 riscv_encode_i(riscv_opcode opcode,
@@ -3143,6 +3480,8 @@ static bool riscv_jal_delta_fits(u32 delta)
 static void riscv_patch_local_branch(u8 *source, const u8 *target);
 static void riscv_emit_helper_call_no_flush(
   u8 **ptr, const riscv_jit_block_meta *meta);
+static void riscv_emit_cycle_slow_call_no_flush(
+  u8 **ptr, const riscv_jit_block_meta *meta);
 static void riscv_emit_terminal_helper_call(u8 **ptr,
                                             riscv_jit_block_meta *meta);
 static void riscv_emit_terminal_helper_call_no_flush(
@@ -3156,7 +3495,7 @@ static u8 *riscv_emit_unconditional_branch_patch_site(u8 **ptr_ref,
                                                       bool flush_before_patch)
 {
   if (flush_before_patch)
-    riscv_emit_mapped_regs_flush_dirty(ptr_ref);
+    riscv_emit_mapped_regs_publish_live(ptr_ref);
 
   u8 *translation_ptr = *ptr_ref;
   u8 *source = translation_ptr;
@@ -3172,7 +3511,7 @@ static u8 *riscv_emit_unconditional_branch_patch_site_short(
   u8 **ptr_ref, bool flush_before_patch)
 {
   if (flush_before_patch)
-    riscv_emit_mapped_regs_flush_dirty(ptr_ref);
+    riscv_emit_mapped_regs_publish_live(ptr_ref);
 
   u8 *translation_ptr = *ptr_ref;
   u8 *source = translation_ptr;
@@ -3198,16 +3537,13 @@ static u8 *riscv_emit_branch_patch_site_with_cycle_exit(
   u32 continuation_valid_mask;
   u32 continuation_dirty_mask;
 
-  if (flush_before_patch)
-  {
-    riscv_emit_mapped_regs_flush_dirty(&ptr);
-    /* Every patched edge enters code compiled from the target's canonical
-     * all-mappings-live state.  This applies to internal joins as well as
-     * separately translated block entries: a helper on only one predecessor
-     * may have invalidated caller-saved mappings in the source path. */
-    riscv_emit_mapped_regs_reload_mask(
-      &ptr, RISCV_MAPPED_REGS_MASK & ~riscv_mapped_valid_mask);
-  }
+  (void)flush_before_patch;
+  /* Patched blocks share one fixed register mapping, just like the MIPS
+   * backend. Reload only mappings invalidated by a preceding C helper; keep
+   * live values resident across the hot edge. State-observing helpers and
+   * slow exits publish all live mappings themselves. */
+  riscv_emit_mapped_regs_reload_mask(
+    &ptr, RISCV_MAPPED_REGS_MASK & ~riscv_mapped_valid_mask);
 
   continuation_valid_mask = riscv_mapped_valid_mask;
   continuation_dirty_mask = riscv_mapped_dirty_mask;
@@ -3231,9 +3567,6 @@ static u8 *riscv_emit_branch_patch_site_with_cycle_exit(
 
   riscv_patch_local_branch(cycle_exit_branch, ptr);
 
-  if (!flush_before_patch)
-    riscv_emit_mapped_regs_flush_dirty(&ptr);
-  riscv_invalidate_mapped_regs();
   riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_t0, target_pc);
   riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
   riscv_emit_helper_call_no_flush(&ptr, meta);
@@ -3258,13 +3591,12 @@ static u8 *riscv_emit_terminal_branch_patch_site_with_cycle_exit(
   u8 *cycle_exit_branch;
   u8 *translation_ptr;
 
-  /* The caller has already published REG_PC, which also flushes dirty mapped
-   * state. Keep the explicit flush for the helper's contract, but put the
-   * external-entry reload on the hot chain only: the scheduler path returns
-   * through the outer entry stub and must not pay for registers it will not
-   * consume. */
-  if (flush_before_patch)
-    riscv_emit_mapped_regs_flush_dirty(&ptr);
+  (void)flush_before_patch;
+  /* The caller already published REG_PC. Make the fixed mapping complete,
+   * then preserve it across the patched edge; the shared scheduler stub owns
+   * the cold state spill. */
+  riscv_emit_mapped_regs_reload_mask(
+    &ptr, RISCV_MAPPED_REGS_MASK & ~riscv_mapped_valid_mask);
 
 #if defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
   riscv_emit_control_counter_increment(
@@ -3279,11 +3611,6 @@ static u8 *riscv_emit_terminal_branch_patch_site_with_cycle_exit(
   riscv_emit_control_counter_increment(&ptr,
                                        &riscv_control_direct_chain_hits);
 #endif
-  if (flush_before_patch)
-  {
-    riscv_emit_mapped_regs_reload_mask(
-      &ptr, RISCV_MAPPED_REGS_MASK & ~riscv_mapped_valid_mask);
-  }
   branch_source = short_patch_site ?
     riscv_emit_unconditional_branch_patch_site_short(&ptr, false) :
     riscv_emit_unconditional_branch_patch_site(&ptr, false);
@@ -3793,14 +4120,22 @@ bool riscv_emit_cycle_update(u8 **translation_ptr_ref,
   u8 *ptr;
   u8 *translation_ptr;
   u8 *continue_branch;
+  u32 continuation_valid_mask;
+  u32 continuation_dirty_mask;
 
   if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
     return false;
 
-  riscv_emit_mapped_regs_flush_dirty(translation_ptr_ref);
-  riscv_invalidate_mapped_regs();
+  /* A translation-gate checkpoint is not a state boundary on its hot path.
+   * Test the resident cycle budget before reloading mappings invalidated by a
+   * read helper. Its caller-saved values are already canonical in state, so
+   * the exhausted edge can publish only the still-live callee-saved half. The
+   * continuing edge reloads missing mappings after the branch; live mappings
+   * are never reloaded, preserving loop-carried values on internal back-edges. */
   riscv_emit_adjust_cycles(translation_ptr_ref, cycles);
   ptr = *translation_ptr_ref;
+  continuation_valid_mask = riscv_mapped_valid_mask;
+  continuation_dirty_mask = riscv_mapped_dirty_mask;
 
   translation_ptr = ptr;
   continue_branch = translation_ptr;
@@ -3808,8 +4143,16 @@ bool riscv_emit_cycle_update(u8 **translation_ptr_ref,
   ptr = translation_ptr;
   riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_t0, pc);
   riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
-  riscv_emit_helper_call_no_flush(&ptr, meta);
+  riscv_emit_cycle_slow_call_no_flush(&ptr, meta);
   riscv_patch_local_branch(continue_branch, ptr);
+
+  /* Slow-edge publication does not execute on the continuing path. Restore
+   * its compiler model, then install only mappings a preceding helper made
+   * canonical. */
+  riscv_mapped_valid_mask = continuation_valid_mask;
+  riscv_mapped_dirty_mask = continuation_dirty_mask;
+  riscv_emit_mapped_regs_reload_mask(
+    &ptr, RISCV_MAPPED_REGS_MASK & ~riscv_mapped_valid_mask);
 
   *translation_ptr_ref = ptr;
   return true;
@@ -4535,8 +4878,9 @@ typedef enum riscv_control_lookup_kind
   RISCV_CONTROL_LOOKUP_INDIRECT
 } riscv_control_lookup_kind;
 
-static u8 *riscv_lookup_or_fallback(riscv_control_lookup_kind kind,
-                                    s32 cycles)
+static u8 *riscv_lookup_block(riscv_control_lookup_kind kind,
+                              s32 cycles,
+                              bool fallback_on_miss)
 {
   u8 *entry;
   u32 pc;
@@ -4548,6 +4892,11 @@ static u8 *riscv_lookup_or_fallback(riscv_control_lookup_kind kind,
   entry = riscv_lookup_current_block(&pc, &thumb);
   if (!entry || entry == RISCV_INVALID_BLOCK_ENTRY)
   {
+    /* Live lookup tails still hold guest state in host registers. Return to
+     * their shared spill stub before interpreter fallback can observe state. */
+    if (!fallback_on_miss)
+      return entry;
+
     if (kind == RISCV_CONTROL_LOOKUP_INDIRECT)
       RISCV_CONTROL_COUNT(riscv_control_indirect_lookup_misses);
     else
@@ -4594,6 +4943,12 @@ static u8 *riscv_lookup_or_fallback(riscv_control_lookup_kind kind,
 #endif
 
   return entry;
+}
+
+static u8 *riscv_lookup_or_fallback(riscv_control_lookup_kind kind,
+                                    s32 cycles)
+{
+  return riscv_lookup_block(kind, cycles, true);
 }
 
 void riscv_invalidate_indirect_lookup_cache(void)
@@ -5754,9 +6109,51 @@ static void riscv_emit_helper_call_no_flush(u8 **ptr,
   riscv_emit_control_tail_jump(ptr, meta);
 }
 
+/* Cycle checkpoints prove s10 <= 0 before reaching this edge, so they do not
+ * need a lookup-capable terminal tail. A read-only C helper leaves a3-a7
+ * canonical in state and every callee-saved mapping resident; enter the
+ * shared spill after its caller-saved stores. Other partial states remain on
+ * the conservative fully-published control path. */
+static void riscv_emit_cycle_slow_call_no_flush(
+  u8 **ptr, const riscv_jit_block_meta *meta)
+{
+  u32 valid_mask = riscv_mapped_valid_mask & RISCV_MAPPED_REGS_MASK;
+  uintptr_t tail;
+
+#if defined(RISCV_RUNTIME_PERF_COUNTERS)
+  riscv_perf_terminal_call_sites++;
+#endif
+
+  if (valid_mask == RISCV_MAPPED_REGS_MASK)
+  {
+    tail = (uintptr_t)riscv_jit_control_slow_tail;
+  }
+  else if (valid_mask == RISCV_MAPPED_CALLEE_LIVE_MASK)
+  {
+    tail = (uintptr_t)riscv_jit_callee_live_control_tail;
+  }
+  else
+  {
+    riscv_emit_mapped_regs_publish_live(ptr);
+    tail = (uintptr_t)riscv_jit_control_published_tail;
+  }
+
+  riscv_emit_li(ptr, riscv_reg_a0, (u32)(uintptr_t)meta);
+  riscv_emit_tail_jump(ptr, tail);
+}
+
 static void riscv_emit_helper_call(u8 **ptr, const riscv_jit_block_meta *meta)
 {
-  riscv_emit_mapped_regs_flush_dirty(ptr);
+  u32 valid_mask = riscv_mapped_valid_mask & RISCV_MAPPED_REGS_MASK;
+
+  /* Fully live mappings are published only by the shared scheduler/miss stub.
+   * The common read-helper state has its caller-saved half canonical and can
+   * retain the callee-saved half through a dedicated shared lookup tail. For
+   * any other partial state, publish every remaining live mapping before the
+   * conservative fully-published tail. */
+  if (valid_mask != RISCV_MAPPED_REGS_MASK &&
+      valid_mask != RISCV_MAPPED_CALLEE_LIVE_MASK)
+    riscv_emit_mapped_regs_publish_live(ptr);
   riscv_emit_helper_call_no_flush(ptr, meta);
 }
 
@@ -5810,7 +6207,7 @@ u8 *riscv_jit_lookup_fallthrough(const riscv_jit_block_meta *meta,
   RISCV_CONTROL_COUNT(riscv_control_lookup_stub_entries);
   riscv_count_control_stub_entry();
   riscv_note_supported_block_exit(meta);
-  return riscv_lookup_or_fallback(RISCV_CONTROL_LOOKUP_FALLTHROUGH, cycles);
+  return riscv_lookup_block(RISCV_CONTROL_LOOKUP_FALLTHROUGH, cycles, false);
 }
 
 __attribute__((used, noinline))
@@ -5826,7 +6223,78 @@ u8 *riscv_jit_lookup_indirect(const riscv_jit_block_meta *meta,
   RISCV_CONTROL_COUNT(riscv_control_lookup_stub_entries);
   riscv_count_control_stub_entry();
   riscv_note_supported_block_exit(meta);
-  return riscv_lookup_or_fallback(RISCV_CONTROL_LOOKUP_INDIRECT, cycles);
+  return riscv_lookup_block(RISCV_CONTROL_LOOKUP_INDIRECT, cycles, false);
+}
+
+/* The live lookup helper already accounted for the source block. Its NULL
+ * result reaches this function only after the assembly miss tail has published
+ * every mapped register and the resident cycle budget. */
+static u8 * __attribute__((used, noinline))
+riscv_jit_lookup_miss_slow(const riscv_jit_block_meta *meta,
+                           const u8 *miss_entry)
+{
+  riscv_control_lookup_kind kind =
+    (meta && (meta->flags & RISCV_BLOCK_PC_WRITTEN)) ?
+      RISCV_CONTROL_LOOKUP_INDIRECT : RISCV_CONTROL_LOOKUP_FALLTHROUGH;
+  u32 pc;
+  u32 thumb;
+
+  RISCV_CONTROL_COUNT(riscv_control_slow_path_entries);
+  riscv_current_lookup_state(&pc, &thumb);
+  if (kind == RISCV_CONTROL_LOOKUP_INDIRECT)
+    RISCV_CONTROL_COUNT(riscv_control_indirect_lookup_misses);
+  else
+    RISCV_CONTROL_COUNT(riscv_control_fallthrough_lookup_misses);
+  riscv_interpreter_fallbacks++;
+  riscv_relookup_fallbacks++;
+  if (pc < 0x00004000u)
+    riscv_bios_interpreter_fallbacks++;
+  riscv_note_runtime_fallback(RISCV_RUNTIME_FALLBACK_RELOOKUP,
+                              pc, thumb,
+                              riscv_lookup_result_from_entry(miss_entry),
+                              (u32)riscv_cycles_remaining);
+  riscv_run_interpreter_remainder();
+  return NULL;
+}
+
+/* A preceding stateful helper has already made the CPU-state array canonical.
+ * This uncommon path keeps the old reload-on-hit contract without penalizing
+ * ordinary live-mapping lookups. */
+static u8 * __attribute__((used, noinline))
+riscv_jit_lookup_published(const riscv_jit_block_meta *meta, s32 cycles)
+{
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
+  {
+    riscv_cycles_remaining = cycles;
+    return riscv_jit_control_slow(meta);
+  }
+
+  RISCV_CONTROL_COUNT(riscv_control_lookup_stub_entries);
+  riscv_count_control_stub_entry();
+  riscv_note_supported_block_exit(meta);
+  return riscv_lookup_or_fallback(
+    (meta->flags & RISCV_BLOCK_PC_WRITTEN) ?
+      RISCV_CONTROL_LOOKUP_INDIRECT : RISCV_CONTROL_LOOKUP_FALLTHROUGH,
+    cycles);
+}
+
+/* Read-only helpers leave a3-a7 canonical in state and keep every
+ * callee-saved guest mapping resident. Perform lookup without interpreter
+ * fallback; a miss first publishes the resident half in assembly. */
+static u8 * __attribute__((used, noinline))
+riscv_jit_lookup_caller_published(const riscv_jit_block_meta *meta,
+                                  s32 cycles)
+{
+  if (!meta || !(meta->flags & RISCV_BLOCK_NATIVE_SUPPORTED))
+    return RISCV_INVALID_BLOCK_ENTRY;
+
+  RISCV_CONTROL_COUNT(riscv_control_lookup_stub_entries);
+  riscv_count_control_stub_entry();
+  riscv_note_supported_block_exit(meta);
+  return riscv_lookup_block(
+    (meta->flags & RISCV_BLOCK_PC_WRITTEN) ?
+      RISCV_CONTROL_LOOKUP_INDIRECT : RISCV_CONTROL_LOOKUP_FALLTHROUGH,
+    cycles, false);
 }
 
 /* Slow control path only: generated code reaches this after the assembly
@@ -5898,6 +6366,39 @@ static u8 *riscv_jit_control_slow(const riscv_jit_block_meta *meta)
     riscv_cycles_remaining);
 }
 
+/* The assembly tail selects this path only after a supported native block has
+ * exhausted s10.  Keep the MIPS-style update path narrow: state is already
+ * canonical, cycle exhaustion already proved, and an update is mandatory.
+ * Alerts still run first so SMC, IRQ, and HALT side effects retain the generic
+ * control path's ordering. */
+static u8 * __attribute__((used, noinline))
+riscv_jit_cycle_slow(const riscv_jit_block_meta *meta, s32 cycles)
+{
+  u32 update_ret;
+
+  RISCV_CONTROL_COUNT(riscv_control_slow_path_entries);
+  riscv_count_control_stub_entry();
+  riscv_note_supported_block_exit(meta);
+  RISCV_CONTROL_COUNT(riscv_control_cycle_exits);
+
+  if (riscv_cpu_alert != CPU_ALERT_NONE)
+    (void)riscv_handle_cpu_alert();
+
+  RISCV_CONTROL_COUNT(riscv_control_scheduler_updates);
+  update_ret = update_gba(cycles);
+  if (completed_frame(update_ret))
+  {
+    riscv_cycles_remaining = 0;
+    return NULL;
+  }
+
+  riscv_cycles_remaining = (s32)cycles_to_run(update_ret);
+  return riscv_lookup_or_fallback(
+    (meta->flags & RISCV_BLOCK_PC_WRITTEN) ?
+      RISCV_CONTROL_LOOKUP_INDIRECT : RISCV_CONTROL_LOOKUP_FALLTHROUGH,
+    riscv_cycles_remaining);
+}
+
 void riscv_emit_block_prologue(u8 **translation_ptr_ref,
                                riscv_jit_block_meta **meta)
 {
@@ -5919,6 +6420,12 @@ void riscv_emit_block_prologue(u8 **translation_ptr_ref,
 
   ptr += block_prologue_size;
   riscv_note_mapped_regs_reloaded();
+  /* A normal dispatcher entry is canonical, but the same body can later be
+   * reached by an external direct chain whose resident mapping is newer than
+   * memory.  Treat entry mappings as unpublished until the first C boundary;
+   * shared slow exits already publish all mappings, while read-only helpers
+   * can now publish just their caller-saved subset without losing chain state. */
+  riscv_mapped_dirty_mask = RISCV_MAPPED_REGS_MASK;
   *translation_ptr_ref = ptr;
 }
 
@@ -8564,16 +9071,14 @@ bool riscv_emit_native_arm_bx(u8 **translation_ptr_ref,
     riscv_emit_arm_reg_load(&ptr, riscv_reg_t0, rn);
 
   translation_ptr = ptr;
-  /* REG_PC publication flushes dirty mapped state and may use t0/t1 while
-   * packing NZCV.  Preserve the raw target's state bit before that flush. */
+  /* Preserve the raw target's state bit while separating the aligned PC. */
   riscv_emit_andi(riscv_reg_t3, riscv_reg_t0, 1);
   riscv_emit_slli(riscv_reg_t3, riscv_reg_t3, 5);
   riscv_emit_andi(riscv_reg_t1, riscv_reg_t0, -2);
   ptr = translation_ptr;
   riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t1);
-  /* BX changes only the low CPSR T bit.  REG_PC publication above has already
-   * flushed any dirty packed NZCV value; rebuilding and repacking all flags
-   * through the generic CPSR load/store path is redundant per-site work. */
+  /* BX changes only the low CPSR T bit. Keep packed NZCV resident; the shared
+   * exit stub combines it with this updated lower CPSR before C observes it. */
   translation_ptr = ptr;
   riscv_emit_lw(riscv_reg_t2, riscv_reg_s0, REG_CPSR * 4u);
   riscv_emit_andi(riscv_reg_t2, riscv_reg_t2, -33);
@@ -9685,188 +10190,8 @@ static void riscv_note_thumb_native_stat(u32 opcode)
 static void riscv_emit_thumb_cpsr_store_mov_imm_nz(u8 **ptr_ref,
                                                    bool zero_result)
 {
-  u8 *ptr = *ptr_ref;
-  u8 *translation_ptr;
-
-  riscv_emit_arm_reg_load(&ptr, riscv_reg_t4, REG_CPSR);
-  translation_ptr = ptr;
-  riscv_emit_slli(riscv_reg_t4, riscv_reg_t4, 2);
-  riscv_emit_srli(riscv_reg_t4, riscv_reg_t4, 2);
-  if (zero_result)
-  {
-    riscv_emit_lui(riscv_reg_t6, 0x40000u);
-    riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t6);
-  }
-  ptr = translation_ptr;
-
-  riscv_emit_arm_reg_store(&ptr, REG_CPSR, riscv_reg_t4);
-  *ptr_ref = ptr;
-}
-
-static void riscv_emit_thumb_cpsr_store_nz_preserve_cv(u8 **ptr_ref)
-{
-  u8 *ptr = *ptr_ref;
-  u8 *translation_ptr;
-
-  riscv_emit_arm_reg_load(&ptr, riscv_reg_t4, REG_CPSR);
-  translation_ptr = ptr;
-
-  riscv_emit_slli(riscv_reg_t4, riscv_reg_t4, 2);
-  riscv_emit_srli(riscv_reg_t4, riscv_reg_t4, 2);
-  riscv_emit_srli(riscv_reg_t5, riscv_reg_t2, 31);
-  riscv_emit_slli(riscv_reg_t5, riscv_reg_t5, 31);
-  riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
-  riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t2, 1);
-  riscv_emit_slli(riscv_reg_t5, riscv_reg_t5, 30);
-  riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
-  ptr = translation_ptr;
-
-  riscv_emit_arm_reg_store(&ptr, REG_CPSR, riscv_reg_t4);
-  *ptr_ref = ptr;
-}
-
-static void riscv_emit_thumb_cpsr_store_nzc_preserve_v(u8 **ptr_ref)
-{
-  u8 *ptr = *ptr_ref;
-  u8 *translation_ptr;
-
-  riscv_emit_arm_reg_load(&ptr, riscv_reg_t4, REG_CPSR);
-  translation_ptr = ptr;
-
-  riscv_emit_slli(riscv_reg_t4, riscv_reg_t4, 3);
-  riscv_emit_srli(riscv_reg_t4, riscv_reg_t4, 3);
-  riscv_emit_srli(riscv_reg_t5, riscv_reg_t2, 31);
-  riscv_emit_slli(riscv_reg_t5, riscv_reg_t5, 31);
-  riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
-  riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t2, 1);
-  riscv_emit_slli(riscv_reg_t5, riscv_reg_t5, 30);
-  riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
-  riscv_emit_slli(riscv_reg_t3, riscv_reg_t3, 29);
-  riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t3);
-  ptr = translation_ptr;
-
-  riscv_emit_arm_reg_store(&ptr, REG_CPSR, riscv_reg_t4);
-  *ptr_ref = ptr;
-}
-
-static void riscv_emit_thumb_cpsr_store_nzc_preserve_v_loaded(u8 **ptr_ref)
-{
-  u8 *ptr = *ptr_ref;
-  u8 *translation_ptr = ptr;
-
-  riscv_emit_slli(riscv_reg_t4, riscv_reg_t4, 3);
-  riscv_emit_srli(riscv_reg_t4, riscv_reg_t4, 3);
-  riscv_emit_srli(riscv_reg_t5, riscv_reg_t2, 31);
-  riscv_emit_slli(riscv_reg_t5, riscv_reg_t5, 31);
-  riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
-  riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t2, 1);
-  riscv_emit_slli(riscv_reg_t5, riscv_reg_t5, 30);
-  riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
-  riscv_emit_slli(riscv_reg_t3, riscv_reg_t3, 29);
-  riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t3);
-  ptr = translation_ptr;
-
-  riscv_emit_arm_reg_store(&ptr, REG_CPSR, riscv_reg_t4);
-  *ptr_ref = ptr;
-}
-
-static void riscv_emit_thumb_cpsr_store_selected_nzc_preserve_v(
-  u8 **ptr_ref, u32 flag_mask)
-{
-  u8 *ptr;
-  u8 *translation_ptr;
-
-  flag_mask &= 0x0eu;
-  if (!flag_mask)
-    return;
-
-  if (flag_mask == 0x0eu)
-  {
-    riscv_emit_thumb_cpsr_store_nzc_preserve_v(ptr_ref);
-    return;
-  }
-
-  if (flag_mask == 0x0cu)
-  {
-    riscv_emit_thumb_cpsr_store_nz_preserve_cv(ptr_ref);
-    return;
-  }
-
-  if (!(flag_mask & 0x02u))
-  {
-    riscv_emit_arm_cpsr_store_selected_nzcv(ptr_ref, flag_mask,
-                                           riscv_reg_t2);
-    return;
-  }
-
-  ptr = *ptr_ref;
-  riscv_emit_arm_reg_load(&ptr, riscv_reg_t4, REG_CPSR);
-  translation_ptr = ptr;
-
-  riscv_emit_slli(riscv_reg_t4, riscv_reg_t4, 3);
-  riscv_emit_srli(riscv_reg_t4, riscv_reg_t4, 3);
-  if (flag_mask & 0x08u)
-  {
-    riscv_emit_srli(riscv_reg_t5, riscv_reg_t2, 31);
-    riscv_emit_slli(riscv_reg_t5, riscv_reg_t5, 31);
-    riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
-  }
-  if (flag_mask & 0x04u)
-  {
-    riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t2, 1);
-    riscv_emit_slli(riscv_reg_t5, riscv_reg_t5, 30);
-    riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
-  }
-  riscv_emit_slli(riscv_reg_t5, riscv_reg_t3, 29);
-  riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
-  ptr = translation_ptr;
-
-  riscv_emit_arm_reg_store(&ptr, REG_CPSR, riscv_reg_t4);
-  *ptr_ref = ptr;
-}
-
-static void riscv_emit_thumb_cpsr_store_selected_nzc_preserve_v_loaded(
-  u8 **ptr_ref, u32 flag_mask)
-{
-  u8 *ptr;
-  u8 *translation_ptr;
-
-  flag_mask &= 0x0eu;
-  if (!flag_mask)
-    return;
-
-  if (flag_mask == 0x0eu)
-  {
-    riscv_emit_thumb_cpsr_store_nzc_preserve_v_loaded(ptr_ref);
-    return;
-  }
-
-  ptr = *ptr_ref;
-  translation_ptr = ptr;
-
-  riscv_emit_slli(riscv_reg_t4, riscv_reg_t4, 3);
-  riscv_emit_srli(riscv_reg_t4, riscv_reg_t4, 3);
-  if (flag_mask & 0x08u)
-  {
-    riscv_emit_srli(riscv_reg_t5, riscv_reg_t2, 31);
-    riscv_emit_slli(riscv_reg_t5, riscv_reg_t5, 31);
-    riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
-  }
-  if (flag_mask & 0x04u)
-  {
-    riscv_emit_sltiu(riscv_reg_t5, riscv_reg_t2, 1);
-    riscv_emit_slli(riscv_reg_t5, riscv_reg_t5, 30);
-    riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
-  }
-  if (flag_mask & 0x02u)
-  {
-    riscv_emit_slli(riscv_reg_t5, riscv_reg_t3, 29);
-    riscv_emit_or(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
-  }
-  ptr = translation_ptr;
-
-  riscv_emit_arm_reg_store(&ptr, REG_CPSR, riscv_reg_t4);
-  *ptr_ref = ptr;
+  riscv_emit_arm_cpsr_store_const_selected_nzcv(
+    ptr_ref, 0x0cu, zero_result ? 0x04u : 0u, false);
 }
 
 static bool riscv_emit_native_thumb_reg_shift_alu(u8 **translation_ptr_ref,
@@ -9966,7 +10291,8 @@ bool riscv_emit_native_thumb_shift(u8 **translation_ptr_ref,
   riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_t2);
 
   if (flag_mask)
-    riscv_emit_thumb_cpsr_store_selected_nzc_preserve_v(&ptr, flag_mask);
+    riscv_emit_arm_cpsr_store_selected_nzcv(&ptr, flag_mask,
+                                           riscv_reg_t2);
 
   *translation_ptr_ref = ptr;
   riscv_native_data_proc_insns++;
@@ -10014,8 +10340,9 @@ static bool riscv_emit_native_thumb_alu_flags(u8 **translation_ptr_ref,
 
     riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_t2);
     if (need_nz)
-      riscv_emit_thumb_cpsr_store_selected_nzc_preserve_v(
-        &ptr, flag_status & 0x0cu);
+      riscv_emit_arm_cpsr_store_selected_nzcv(&ptr,
+                                             flag_status & 0x0cu,
+                                             riscv_reg_t2);
 
     *translation_ptr_ref = ptr;
     riscv_native_data_proc_insns++;
@@ -10213,13 +10540,7 @@ static bool riscv_emit_native_thumb_reg_shift_alu(u8 **translation_ptr_ref,
   riscv_emit_arm_reg_load(&ptr, riscv_reg_t2, rd);
   riscv_emit_arm_reg_load(&ptr, riscv_reg_t1, rs);
   if (need_c)
-  {
-    riscv_emit_arm_reg_load(&ptr, riscv_reg_t4, REG_CPSR);
-    translation_ptr = ptr;
-    riscv_emit_srli(riscv_reg_t3, riscv_reg_t4, 29);
-    riscv_emit_andi(riscv_reg_t3, riscv_reg_t3, 1);
-    ptr = translation_ptr;
-  }
+    riscv_emit_arm_cpsr_c_load(&ptr, riscv_reg_t3);
 
   translation_ptr = ptr;
   riscv_emit_andi(riscv_reg_t1, riscv_reg_t1, 0xff);
@@ -10298,13 +10619,8 @@ static bool riscv_emit_native_thumb_reg_shift_alu(u8 **translation_ptr_ref,
   riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_t2);
 
   if (flag_mask)
-  {
-    if (need_c)
-      riscv_emit_thumb_cpsr_store_selected_nzc_preserve_v_loaded(
-        &ptr, flag_mask);
-    else
-      riscv_emit_thumb_cpsr_store_selected_nzc_preserve_v(&ptr, flag_mask);
-  }
+    riscv_emit_arm_cpsr_store_selected_nzcv(&ptr, flag_mask,
+                                           riscv_reg_t2);
 
   *translation_ptr_ref = ptr;
   riscv_native_data_proc_insns++;
@@ -11325,22 +11641,20 @@ bool riscv_emit_native_thumb_bx(u8 **translation_ptr_ref,
 
   riscv_emit_arm_reg_or_pc_load(&ptr, riscv_reg_t0, meta, hrs, pc + 4u);
   translation_ptr = ptr;
-  /* Storing REG_PC flushes dirty live flags through t0/t1.  Extract the
-   * interworking bit first so a flags-producing instruction before BX cannot
-   * accidentally switch a Thumb target into ARM state. */
+  /* Extract the interworking bit while separating the aligned target PC. */
   riscv_emit_andi(riscv_reg_t3, riscv_reg_t0, 1);
   riscv_emit_slli(riscv_reg_t3, riscv_reg_t3, 5);
   riscv_emit_andi(riscv_reg_t1, riscv_reg_t0, -2);
   ptr = translation_ptr;
   riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t1);
-  riscv_emit_arm_reg_load(&ptr, riscv_reg_t2, REG_CPSR);
-
+  /* BX preserves NZCV. Update only the memory-backed T bit and let the shared
+   * exit stub merge the resident packed flags when state becomes observable. */
   translation_ptr = ptr;
+  riscv_emit_lw(riscv_reg_t2, riscv_reg_s0, REG_CPSR * 4u);
   riscv_emit_andi(riscv_reg_t2, riscv_reg_t2, -33);
   riscv_emit_or(riscv_reg_t2, riscv_reg_t2, riscv_reg_t3);
+  riscv_emit_sw(riscv_reg_t2, riscv_reg_s0, REG_CPSR * 4u);
   ptr = translation_ptr;
-
-  riscv_emit_arm_reg_store(&ptr, REG_CPSR, riscv_reg_t2);
   riscv_emit_adjust_cycles(&ptr, cycles);
   meta->flags |= RISCV_BLOCK_PC_WRITTEN;
   riscv_emit_terminal_helper_call(&ptr, meta);
@@ -11534,7 +11848,7 @@ bool riscv_emit_native_thumb_bl_pair(u8 **translation_ptr_ref,
     riscv_emit_li(&ptr, riscv_reg_a0, first_opcode & 0xffffu);
     riscv_emit_li(&ptr, riscv_reg_a1, second_opcode & 0xffffu);
     riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_a2, pc);
-    riscv_emit_mapped_regs_flush_dirty(&ptr);
+    riscv_emit_mapped_regs_publish_live(&ptr);
     riscv_emit_c_call_address_raw(
       &ptr, (uintptr_t)riscv_thumb_execute_bl_pair);
     riscv_emit_test_poison_mapped_regs(&ptr, RISCV_MAPPED_REGS_MASK);

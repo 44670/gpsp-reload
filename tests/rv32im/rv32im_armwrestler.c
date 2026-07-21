@@ -76,6 +76,7 @@ static int frontend_control_name_equal(const char *left, const char *right)
 #define RUN_CYCLES 200000u
 #define RUN_CHUNKS 64u
 #define ARMWRESTLER_TOP_BLOCKS 8u
+#define ARMWRESTLER_TRACE_WINDOW 64u
 
 #if defined(RV32IM_FRONTEND_CACHE_ONLY)
 #define FRONTEND_CACHE_PC 0x08010000u
@@ -200,6 +201,7 @@ static u32 g_trace_count;
 static u32 g_trace_first_pc;
 static u32 g_trace_last_pc;
 static u32 g_trace_hash = 2166136261u;
+static u32 g_trace_window[ARMWRESTLER_TRACE_WINDOW];
 static u32 g_fallback_count;
 static u32 g_fallback_first_pc;
 static u32 g_fallback_last_pc;
@@ -708,8 +710,31 @@ void riscv_note_runtime_block_execute(u32 start_pc, u32 end_pc, u32 thumb)
   if (g_trace_count == 0)
     g_trace_first_pc = start_pc;
   g_trace_last_pc = start_pc;
+  g_trace_window[g_trace_count & (ARMWRESTLER_TRACE_WINDOW - 1u)] = start_pc;
   g_trace_count++;
   g_trace_hash = fnv1a_update_u32(g_trace_hash, start_pc);
+}
+
+static void print_trace_window(void)
+{
+  u32 count = g_trace_count < ARMWRESTLER_TRACE_WINDOW ?
+    g_trace_count : ARMWRESTLER_TRACE_WINDOW;
+  u32 first = g_trace_count - count;
+  u32 i;
+
+  put_raw(" trace_window=");
+  if (!count)
+  {
+    put_raw("none");
+    return;
+  }
+  for (i = 0; i < count; i++)
+  {
+    if (i)
+      put_raw(",");
+    put_u32_hex(g_trace_window[(first + i) &
+                              (ARMWRESTLER_TRACE_WINDOW - 1u)]);
+  }
 }
 
 static int block_hotspot_before(const armwrestler_block_hotspot *left,
@@ -973,6 +998,7 @@ static void print_summary(const char *result, const char *suite, u32 test_id,
   put_u32_hex(g_trace_last_pc);
   put_raw(" trace_hash=");
   put_u32_hex(g_trace_hash);
+  print_trace_window();
   put_raw(" fallback_first=");
   put_u32_hex(g_fallback_first_pc);
   put_raw(" fallback_last=");
