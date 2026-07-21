@@ -720,6 +720,28 @@ u32 function_cc update_gba(int remaining_cycles)
   return FRAME_COMPLETE;
 }
 
+#if defined(BACKEND_COMPARE_REAL_GBA_MEMORY)
+/* The real-memory differential links the production fast RAM assembly stubs
+ * without cpu_threaded.c.  The stubs share their object section with the JIT
+ * control tails, so provide the frontend boundary even though this fixture
+ * never enters generated control flow. */
+void flush_translation_cache_ram(void)
+{
+}
+
+u8 function_cc *block_lookup_address_arm(u32 pc)
+{
+  (void)pc;
+  return NULL;
+}
+
+u8 function_cc *block_lookup_address_thumb(u32 pc)
+{
+  (void)pc;
+  return NULL;
+}
+#endif
+
 static void clear_cpu_and_memory(void)
 {
   u32 i;
@@ -1028,8 +1050,8 @@ __asm__(
   ".-backend_compare_call_fast_read\n");
 
 /* Exercise the store stubs outside the JIT while preserving the psABI state
- * of this C caller.  The 128-byte frame deliberately leaves 104(sp) free for
- * the fast store stub's slow-tail return-address slot. */
+ * of this C caller.  Keep 4(sp) free: it is the compact outer JIT frame's
+ * fast-store slow-tail return-address slot. */
 __asm__(
   ".text\n"
   ".align 2\n"
@@ -1038,7 +1060,7 @@ __asm__(
   "backend_compare_call_fast_store:\n"
   "  addi sp, sp, -128\n"
   "  sw ra, 0(sp)\n"
-  "  sw s0, 4(sp)\n"
+  "  sw s0, 52(sp)\n"
   "  sw s1, 8(sp)\n"
   "  sw s2, 12(sp)\n"
   "  sw s3, 16(sp)\n"
@@ -1083,7 +1105,7 @@ __asm__(
   "  lw s3, 16(sp)\n"
   "  lw s2, 12(sp)\n"
   "  lw s1, 8(sp)\n"
-  "  lw s0, 4(sp)\n"
+  "  lw s0, 52(sp)\n"
   "  lw ra, 0(sp)\n"
   "  addi sp, sp, 128\n"
   "  ret\n"

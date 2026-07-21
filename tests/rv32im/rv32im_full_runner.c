@@ -116,9 +116,6 @@ static unsigned g_fault_block_trace_total;
 volatile u32 riscv_runtime_perf_disable_mapped_alu_fastpath;
 volatile u32 riscv_runtime_perf_disable_fast_ram_reads;
 volatile u32 riscv_runtime_perf_disable_fast_ram_stores;
-volatile u32 riscv_runtime_perf_disable_entry_setup_opt;
-volatile u32 riscv_runtime_perf_disable_state_helper_opt;
-volatile u32 riscv_runtime_perf_disable_validated_entry_opt;
 volatile u32 riscv_runtime_perf_disable_indirect_lookup_cache;
 
 static bool post_start_observation_active(void);
@@ -672,12 +669,6 @@ int main(int argc, char **argv)
       riscv_runtime_perf_disable_fast_ram_reads = 1u;
     else if (strcmp(argv[i], "--disable-fast-stores") == 0)
       riscv_runtime_perf_disable_fast_ram_stores = 1u;
-    else if (strcmp(argv[i], "--disable-entry-setup") == 0)
-      riscv_runtime_perf_disable_entry_setup_opt = 1u;
-    else if (strcmp(argv[i], "--disable-state-helpers") == 0)
-      riscv_runtime_perf_disable_state_helper_opt = 1u;
-    else if (strcmp(argv[i], "--disable-validated-entry") == 0)
-      riscv_runtime_perf_disable_validated_entry_opt = 1u;
     else if (strcmp(argv[i], "--disable-indirect-cache") == 0)
       riscv_runtime_perf_disable_indirect_lookup_cache = 1u;
     else if (strcmp(argv[i], "--disable-thumb-native") == 0 &&
@@ -802,8 +793,7 @@ int main(int argc, char **argv)
              "[--switch-backend rv32im|interp] [--force-dispatch] "
              "[--auto-a-until-callback pc frame] "
              "[--disable-mapped-alu] [--disable-fast-reads] "
-             "[--disable-fast-stores] [--disable-entry-setup] "
-             "[--disable-state-helpers] [--disable-validated-entry] "
+             "[--disable-fast-stores] "
              "[--disable-indirect-cache] [--disable-thumb-native mask] "
              "[--disable-arm-native] [--disable-arm-native-mask mask] "
              "[--dump-iwram offset length] [--dump-interest-trace] "
@@ -1089,8 +1079,7 @@ int main(int argc, char **argv)
            "main_callback2=0x%08x input_events=%u "
            "auto_a_reached_frame=%u "
            "input_event_active_frames=%u "
-           "mapped_alu=%u fast_reads=%u fast_stores=%u entry_setup=%u "
-           "state_helpers=%u validated_entry=%u indirect_cache=%u "
+           "mapped_alu=%u fast_reads=%u fast_stores=%u indirect_cache=%u "
            "thumb_native_disable=0x%08x arm_native_disable=0x%08x "
            "native_blocks=%u bios_native_blocks=%u bios_hook_blocks=%u "
            "bios_blocks_emitted=%u bios_fallbacks=%u blocks_emitted=%u "
@@ -1127,9 +1116,6 @@ int main(int argc, char **argv)
            !riscv_runtime_perf_disable_mapped_alu_fastpath,
            !riscv_runtime_perf_disable_fast_ram_reads,
            !riscv_runtime_perf_disable_fast_ram_stores,
-           !riscv_runtime_perf_disable_entry_setup_opt,
-           !riscv_runtime_perf_disable_state_helper_opt,
-           !riscv_runtime_perf_disable_validated_entry_opt,
            !riscv_runtime_perf_disable_indirect_lookup_cache,
            g_thumb_native_disable_mask, g_arm_native_disable_mask,
            stats.blocks_executed,

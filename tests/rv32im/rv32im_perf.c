@@ -2434,10 +2434,11 @@ void _start(void)
   g_perf_code = (u8 *)map_result;
 
   if (!run_rdinstret_probe() ||
-#if !defined(RV32IM_PERF_BASELINE_PROFILE)
+#if defined(RV32IM_PERF_BASELINE_PROFILE)
+      !run_workload(PERF_WORKLOAD_MAPPED_ALU)
+#else
       !verify_mapped_alu_encodings() ||
       !verify_mapped_alu_semantics() ||
-#endif
       !run_workload(PERF_WORKLOAD_MAPPED_ALU) ||
       !run_workload(PERF_WORKLOAD_MEMORY_READ) ||
       !run_workload(PERF_WORKLOAD_BRANCH_CHAIN) ||
@@ -2452,18 +2453,19 @@ void _start(void)
 #endif
       || !verify_indirect_lookup_miss_counter()
 #endif
+#endif
       )
   {
     sys_exit(1);
   }
 
   put_raw("result=PASS command=rv32im-perf workload=all phase=summary ");
-  put_raw("backend=rv32im workloads=6 cold=6 warm=6 repeatable=1 profile=");
 #if defined(RV32IM_PERF_BASELINE_PROFILE)
-  put_raw("mapped_alu_baseline ");
+  put_raw("backend=rv32im workloads=1 cold=1 warm=1 repeatable=1 ");
+  put_raw("profile=mapped_alu_baseline reason=perf_suite_complete\n");
 #else
-  put_raw("optimized ");
+  put_raw("backend=rv32im workloads=6 cold=6 warm=6 repeatable=1 ");
+  put_raw("profile=optimized reason=perf_suite_complete\n");
 #endif
-  put_raw("reason=perf_suite_complete\n");
   sys_exit(0);
 }

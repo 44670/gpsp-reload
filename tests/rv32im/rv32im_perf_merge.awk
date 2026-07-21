@@ -18,6 +18,13 @@ function keep_field(value, kv, name) {
     name != "counter_semantics"
 }
 
+BEGIN {
+  if (!expected_trace_windows)
+    expected_trace_windows = 14
+  if (!expected_reported_measurements)
+    expected_reported_measurements = 13
+}
+
 NR == FNR {
   if ($1 ~ /^window=/ && $2 ~ /^qemu_trace_raw=/) {
     split($1, a, "=")
@@ -87,12 +94,14 @@ NR == FNR {
 }
 
 END {
-  if (trace_windows != 14) {
-    print "expected 14 qemu trace counts, got " trace_windows > "/dev/stderr"
+  if (trace_windows != expected_trace_windows) {
+    print "expected " expected_trace_windows " qemu trace counts, got " \
+      trace_windows > "/dev/stderr"
     failed = 1
   }
-  if (measurement_index != 13) {
-    print "expected 13 reported measurements, got " measurement_index > "/dev/stderr"
+  if (measurement_index != expected_reported_measurements) {
+    print "expected " expected_reported_measurements \
+      " reported measurements, got " measurement_index > "/dev/stderr"
     failed = 1
   }
   if (failed)

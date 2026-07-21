@@ -1610,8 +1610,9 @@ typedef unsigned int usize;
   (RUNTIME_REG_OFFSET_BASE_ADDR + \
    ((RUNTIME_SHIFTED_REG_OFFSET_PC_ASR_WORD_START_PC + 8u) >> 2))
 #define RUNTIME_SHIFTED_REG_OFFSET_PC_ASR_WORD_STORE_ADDR \
-  (RUNTIME_REG_OFFSET_BASE_ADDR + \
-   ((RUNTIME_SHIFTED_REG_OFFSET_PC_ASR_WORD_STORE_START_PC + 8u) >> 2))
+  ((RUNTIME_REG_OFFSET_BASE_ADDR + \
+    ((RUNTIME_SHIFTED_REG_OFFSET_PC_ASR_WORD_STORE_START_PC + 8u) >> 2)) & \
+   ~3u)
 #define RUNTIME_SHIFTED_REG_OFFSET_PC_ROR_WORD_ADDR \
   (RUNTIME_REG_OFFSET_BASE_ADDR + \
    (((RUNTIME_SHIFTED_REG_OFFSET_PC_ROR_WORD_START_PC + 8u) >> 1) | \
@@ -2516,6 +2517,11 @@ static void *map_runtime_exec_page(void)
 static void reset_runtime_fixture_state(u32 pc)
 {
   unsigned i;
+
+  /* Each synthetic case mutates the block-lookup oracle and may reuse a
+   * guest PC for a different entry.  Model a real translation-cache reset so
+   * the native indirect cache cannot retain an entry from the prior case. */
+  riscv_invalidate_indirect_lookup_cache();
 
   /* Keep the backend-private helper vector installed by init_emitter(). */
   for (i = 0; i < REG_USERDEF; i++)

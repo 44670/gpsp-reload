@@ -91,15 +91,10 @@ static int frontend_control_name_equal(const char *left, const char *right)
 
 #if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
 #if !defined(ARMWRESTLER_PERF_DISABLE_MAPPED_ALU_FASTPATH) || \
-    !defined(ARMWRESTLER_PERF_DISABLE_FAST_RAM_READS) || \
-    !defined(ARMWRESTLER_PERF_DISABLE_STATE_HELPER_OPT) || \
-    !defined(ARMWRESTLER_PERF_DISABLE_VALIDATED_ENTRY_OPT)
+    !defined(ARMWRESTLER_PERF_DISABLE_FAST_RAM_READS)
 #error "Armwrestler perf builds must select each optimization independently"
 #endif
 #if (defined(ARMWRESTLER_PERF_FAST_STORE_AB) + \
-     defined(ARMWRESTLER_PERF_ENTRY_SETUP_AB) + \
-     defined(ARMWRESTLER_PERF_STATE_HELPER_AB) + \
-     defined(ARMWRESTLER_PERF_VALIDATED_ENTRY_AB) + \
      defined(ARMWRESTLER_PERF_INDIRECT_LOOKUP_AB)) > 1
 #error "Armwrestler perf builds must isolate exactly one optimization"
 #endif
@@ -109,12 +104,6 @@ volatile u32 riscv_runtime_perf_disable_mapped_alu_fastpath =
 __attribute__((section(".data")))
 volatile u32 riscv_runtime_perf_disable_fast_ram_reads =
   ARMWRESTLER_PERF_DISABLE_FAST_RAM_READS;
-__attribute__((section(".data")))
-volatile u32 riscv_runtime_perf_disable_state_helper_opt =
-  ARMWRESTLER_PERF_DISABLE_STATE_HELPER_OPT;
-__attribute__((section(".data")))
-volatile u32 riscv_runtime_perf_disable_validated_entry_opt =
-  ARMWRESTLER_PERF_DISABLE_VALIDATED_ENTRY_OPT;
 #if defined(RISCV_RUNTIME_ENABLE_FAST_RAM_STORES)
 #if !defined(ARMWRESTLER_PERF_DISABLE_FAST_RAM_STORES)
 #error "Perf builds with fast stores must select the store optimization"
@@ -127,44 +116,13 @@ volatile u32 riscv_runtime_perf_disable_fast_ram_stores =
 #if !defined(RISCV_RUNTIME_INDIRECT_LOOKUP_PROFILE_SWITCH)
 #error "Indirect-lookup A/B builds must enable the runtime selector"
 #endif
-#if !defined(ARMWRESTLER_PERF_DISABLE_INDIRECT_LOOKUP_CACHE) || \
-    !defined(ARMWRESTLER_PERF_DISABLE_ENTRY_SETUP_OPT)
+#if !defined(ARMWRESTLER_PERF_DISABLE_INDIRECT_LOOKUP_CACHE)
 #error "Indirect-lookup A/B builds must select and pin the profile"
 #endif
 __attribute__((section(".data")))
 volatile u32 riscv_runtime_perf_disable_indirect_lookup_cache =
   ARMWRESTLER_PERF_DISABLE_INDIRECT_LOOKUP_CACHE;
-__attribute__((section(".data")))
-volatile u32 riscv_runtime_perf_disable_entry_setup_opt =
-  ARMWRESTLER_PERF_DISABLE_ENTRY_SETUP_OPT;
 #define ARMWRESTLER_JIT_PROFILE "indirect_lookup_cache_ab"
-#elif defined(ARMWRESTLER_PERF_VALIDATED_ENTRY_AB)
-#if !defined(RISCV_RUNTIME_VALIDATED_ENTRY_PROFILE_SWITCH)
-#error "Validated-entry A/B builds must enable the runtime selector"
-#endif
-#if !defined(ARMWRESTLER_PERF_DISABLE_ENTRY_SETUP_OPT)
-#error "Validated-entry A/B builds must pin the entry-setup optimization"
-#endif
-__attribute__((section(".data")))
-volatile u32 riscv_runtime_perf_disable_entry_setup_opt =
-  ARMWRESTLER_PERF_DISABLE_ENTRY_SETUP_OPT;
-#define ARMWRESTLER_JIT_PROFILE "validated_entry_ab"
-#elif defined(ARMWRESTLER_PERF_STATE_HELPER_AB)
-#if !defined(ARMWRESTLER_PERF_DISABLE_ENTRY_SETUP_OPT)
-#error "State-helper A/B builds must pin the entry-setup optimization"
-#endif
-__attribute__((section(".data")))
-volatile u32 riscv_runtime_perf_disable_entry_setup_opt =
-  ARMWRESTLER_PERF_DISABLE_ENTRY_SETUP_OPT;
-#define ARMWRESTLER_JIT_PROFILE "state_helper_ab"
-#elif defined(ARMWRESTLER_PERF_ENTRY_SETUP_AB)
-#if !defined(ARMWRESTLER_PERF_DISABLE_ENTRY_SETUP_OPT)
-#error "Entry-setup A/B builds must select the entry optimization"
-#endif
-__attribute__((section(".data")))
-volatile u32 riscv_runtime_perf_disable_entry_setup_opt =
-  ARMWRESTLER_PERF_DISABLE_ENTRY_SETUP_OPT;
-#define ARMWRESTLER_JIT_PROFILE "entry_setup_ab"
 #elif defined(ARMWRESTLER_PERF_FAST_STORE_AB)
 #if !defined(RISCV_RUNTIME_ENABLE_FAST_RAM_STORES)
 #error "Fast-store A/B builds must enable the store optimization"
@@ -1029,20 +987,9 @@ static void print_summary(const char *result, const char *suite, u32 test_id,
   put_u32_dec(!riscv_runtime_perf_disable_mapped_alu_fastpath);
   put_raw(" fast_ram_reads_enabled=");
   put_u32_dec(!riscv_runtime_perf_disable_fast_ram_reads);
-  put_raw(" state_helpers_enabled=");
-  put_u32_dec(!riscv_runtime_perf_disable_state_helper_opt);
-  put_raw(" validated_entry_optimized=");
-  put_u32_dec(!riscv_runtime_perf_disable_validated_entry_opt);
 #if defined(RISCV_RUNTIME_ENABLE_FAST_RAM_STORES)
   put_raw(" fast_ram_stores_enabled=");
   put_u32_dec(!riscv_runtime_perf_disable_fast_ram_stores);
-#endif
-#if defined(ARMWRESTLER_PERF_ENTRY_SETUP_AB) || \
-    defined(ARMWRESTLER_PERF_VALIDATED_ENTRY_AB) || \
-    defined(ARMWRESTLER_PERF_STATE_HELPER_AB) || \
-    defined(ARMWRESTLER_PERF_INDIRECT_LOOKUP_AB)
-  put_raw(" entry_setup_optimized=");
-  put_u32_dec(!riscv_runtime_perf_disable_entry_setup_opt);
 #endif
 #if defined(ARMWRESTLER_PERF_INDIRECT_LOOKUP_AB)
   put_raw(" indirect_lookup_cache_enabled=");
@@ -1131,20 +1078,9 @@ static void print_aggregate_summary(const char *result, const char *reason)
   put_u32_dec(!riscv_runtime_perf_disable_mapped_alu_fastpath);
   put_raw(" fast_ram_reads_enabled=");
   put_u32_dec(!riscv_runtime_perf_disable_fast_ram_reads);
-  put_raw(" state_helpers_enabled=");
-  put_u32_dec(!riscv_runtime_perf_disable_state_helper_opt);
-  put_raw(" validated_entry_optimized=");
-  put_u32_dec(!riscv_runtime_perf_disable_validated_entry_opt);
 #if defined(RISCV_RUNTIME_ENABLE_FAST_RAM_STORES)
   put_raw(" fast_ram_stores_enabled=");
   put_u32_dec(!riscv_runtime_perf_disable_fast_ram_stores);
-#endif
-#if defined(ARMWRESTLER_PERF_ENTRY_SETUP_AB) || \
-    defined(ARMWRESTLER_PERF_VALIDATED_ENTRY_AB) || \
-    defined(ARMWRESTLER_PERF_STATE_HELPER_AB) || \
-    defined(ARMWRESTLER_PERF_INDIRECT_LOOKUP_AB)
-  put_raw(" entry_setup_optimized=");
-  put_u32_dec(!riscv_runtime_perf_disable_entry_setup_opt);
 #endif
 #if defined(ARMWRESTLER_PERF_INDIRECT_LOOKUP_AB)
   put_raw(" indirect_lookup_cache_enabled=");
