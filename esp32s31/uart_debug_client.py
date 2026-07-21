@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 import re
 import sys
 import time
@@ -70,14 +71,29 @@ def main() -> int:
     parser.add_argument(
         "--command",
         action="append",
-        required=True,
+        default=[],
         help="command to send; repeat this option to build a sequence",
+    )
+    parser.add_argument(
+        "--commands-file",
+        type=Path,
+        help="read additional commands one per line; use /dev/stdin for a pipe",
     )
     args = parser.parse_args()
 
+    commands = list(args.command)
+    if args.commands_file is not None:
+        commands.extend(
+            line.strip()
+            for line in args.commands_file.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        )
+    if not commands:
+        parser.error("at least one --command or --commands-file is required")
+
     with serial.Serial(args.port, args.baud, timeout=0.2) as uart:
         uart.reset_input_buffer()
-        for command in args.command:
+        for command in commands:
             if not command.strip() or not run_command(
                 uart, command.strip(), args.timeout
             ):
@@ -85,7 +101,7 @@ def main() -> int:
 
     print(
         "result=PASS command=uart_client "
-        f"commands={len(args.command)} port={args.port}",
+        f"commands={len(commands)} port={args.port}",
         flush=True,
     )
     return 0

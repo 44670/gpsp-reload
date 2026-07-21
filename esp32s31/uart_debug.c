@@ -29,6 +29,8 @@
 #define UART_DEBUG_JIT_MAX_WORDS 256u
 #define UART_DEBUG_FRAME_STEP_MAX 600u
 #define UART_DEBUG_INPUT_FRAME_MAX 3600u
+#define UART_DEBUG_MACRO_CAPACITY 512u
+#define UART_DEBUG_MACRO_DELAY_MAX 36000u
 #define U32_ARG(value) ((uint32_t)(value))
 
 typedef enum
@@ -54,6 +56,13 @@ typedef struct
   uint32_t value;
   uint32_t bits;
 } uart_rom_write_entry_t;
+
+typedef struct
+{
+  uint32_t frame;
+  uint16_t mask;
+  uint16_t reserved;
+} uart_macro_event_t;
 
 typedef struct
 {
@@ -84,6 +93,17 @@ static bool g_report_frame_step_complete;
 static uint32_t g_completed_frames;
 static uint16_t g_injected_joypad_mask;
 static uint32_t g_injected_joypad_frames;
+static bool g_macro_recording;
+static bool g_macro_replaying;
+static bool g_macro_have_mask;
+static bool g_macro_overflow;
+static uint32_t g_macro_record_start_frame;
+static uint32_t g_macro_replay_start_frame;
+static uint32_t g_macro_replay_index;
+static uint32_t g_macro_event_count;
+static uint16_t g_macro_last_mask;
+static uint16_t g_macro_replay_mask;
+static uart_macro_event_t g_macro_events[UART_DEBUG_MACRO_CAPACITY];
 
 static uart_trace_entry_t g_trace[UART_DEBUG_TRACE_CAPACITY];
 static volatile uint32_t g_trace_count;
@@ -196,6 +216,70 @@ static void clear_injected_joypad(void)
   g_injected_joypad_frames = 0u;
 }
 
+static void clear_macro_recorder(void)
+{
+  g_macro_recording = false;
+  g_macro_replaying = false;
+  g_macro_have_mask = false;
+  g_macro_overflow = false;
+  g_macro_record_start_frame = g_completed_frames;
+  g_macro_replay_start_frame = g_completed_frames;
+  g_macro_replay_index = 0u;
+  g_macro_event_count = 0u;
+  g_macro_last_mask = 0u;
+  g_macro_replay_mask = 0u;
+}
+
+static void stop_macro_activity(void)
+{
+  g_macro_recording = false;
+  g_macro_replaying = false;
+  g_macro_replay_mask = 0u;
+}
+
+static void print_macro_status(const char *action)
+{
+  uint32_t elapsed = 0u;
+  if (g_macro_recording)
+    elapsed = g_completed_frames - g_macro_record_start_frame;
+  else if (g_macro_replaying &&
+           g_completed_frames >= g_macro_replay_start_frame)
+    elapsed = g_completed_frames - g_macro_replay_start_frame;
+
+  printf("result=PASS command=macro action=%s recording=%u replaying=%u "
+         "version=1 record_start_frame=%" PRIu32
+         " replay_start_frame=%" PRIu32 " elapsed_frames=%" PRIu32
+         " events=%" PRIu32 " replay_index=%" PRIu32
+         " last_mask=0x%04" PRIx16 " replay_mask=0x%04" PRIx16
+         " overflow=%u capacity=%u\n",
+         action, (unsigned)g_macro_recording, (unsigned)g_macro_replaying,
+         g_macro_record_start_frame, g_macro_replay_start_frame, elapsed,
+         g_macro_event_count, g_macro_replay_index, g_macro_last_mask,
+         g_macro_replay_mask, (unsigned)g_macro_overflow,
+         (unsigned)UART_DEBUG_MACRO_CAPACITY);
+}
+
+static void dump_macro(uint32_t start, uint32_t count)
+{
+  if (start > g_macro_event_count)
+    start = g_macro_event_count;
+  const uint32_t available = g_macro_event_count - start;
+  if (count > available)
+    count = available;
+
+  printf("result=PASS command=macro action=dump version=1 start=%" PRIu32
+         " count=%" PRIu32 " total=%" PRIu32 "\n",
+         start, count, g_macro_event_count);
+  for (uint32_t i = 0u; i < count; i++)
+  {
+    const uint32_t index = start + i;
+    printf("result=PASS command=macro action=event version=1 index=%" PRIu32
+           " frame=%" PRIu32 " mask=0x%04" PRIx16 "\n",
+           index, g_macro_events[index].frame,
+           g_macro_events[index].mask);
+  }
+}
+
 static void set_injected_joypad(const char *command, uint16_t mask,
                                 uint32_t frames)
 {
@@ -210,7 +294,7 @@ static void print_help(void)
 {
   printf("result=PASS command=help commands=help status pause cont stepf "
          "reset boot regs framehash mem readprobe jit jitcode bp bpbad tracepc "
-         "romwrites key joy\n");
+         "romwrites key joy macro\n");
   printf("debug help='boot [frames] [trace_count] resets while paused, "
          "captures exact JIT block exits and gamepak writes'\n");
   printf("debug help='tracepc N [start length] | tracepc dump [start count] | "
@@ -225,6 +309,10 @@ static void print_help(void)
   printf("debug help='key NAME [frames] | joy MASK [frames] | key clear | "
          "key status; frames defaults to 2, zero holds until clear; "
          "names=up,down,left,right,a,b,x,y,l,r,select,start'\n");
+  printf("debug help='macro record|stop|status|clear|dump [start count]|"
+         "add FRAME MASK|play [delay]; records or replays final GBA joypad "
+         "mask changes on emulated-frame boundaries; capacity=%u'\n",
+         (unsigned)UART_DEBUG_MACRO_CAPACITY);
 }
 
 static void print_status(void)
@@ -237,7 +325,9 @@ static void print_status(void)
          " trace_remaining=%" PRIu32
          " rom_write_count=%" PRIu32 " rom_write_total=%" PRIu32
          " joypad_injected=0x%04" PRIx16
-         " joypad_frames=%" PRIu32 " joypad_hold=%u\n",
+         " joypad_frames=%" PRIu32 " joypad_hold=%u"
+         " macro_recording=%u macro_replaying=%u"
+         " macro_events=%" PRIu32 " macro_replay_index=%" PRIu32 "\n",
          (unsigned)g_paused, g_frame_budget, g_completed_frames,
          U32_ARG(reg[REG_PC]), U32_ARG(reg[REG_CPSR]),
          U32_ARG(reg[CPU_MODE]),
@@ -247,7 +337,9 @@ static void print_status(void)
          (uint32_t)g_rom_write_count, (uint32_t)g_rom_write_total,
          g_injected_joypad_mask, g_injected_joypad_frames,
          (unsigned)(g_injected_joypad_mask != 0u &&
-                    g_injected_joypad_frames == 0u));
+                    g_injected_joypad_frames == 0u),
+         (unsigned)g_macro_recording, (unsigned)g_macro_replaying,
+         g_macro_event_count, g_macro_replay_index);
 }
 
 static void print_regs(void)
@@ -683,6 +775,7 @@ static void handle_command(char *line)
     trace_cancel();
     clear_rom_writes();
     clear_injected_joypad();
+    stop_macro_activity();
     g_rom_write_capture = true;
     retro_reset();
     printf("result=PASS command=reset paused=1 pc=0x%08" PRIx32
@@ -912,6 +1005,118 @@ static void handle_command(char *line)
       set_injected_joypad("joy", (uint16_t)value0, value1);
     }
   }
+  else if (strcmp(command, "macro") == 0)
+  {
+    arg0 = next_token(&cursor);
+    arg1 = next_token(&cursor);
+    arg2 = next_token(&cursor);
+    if (arg0 != NULL && strcmp(arg0, "record") == 0)
+    {
+      clear_macro_recorder();
+      g_macro_recording = true;
+      g_macro_record_start_frame = g_completed_frames;
+      print_macro_status("record");
+    }
+    else if (arg0 != NULL && strcmp(arg0, "stop") == 0)
+    {
+      stop_macro_activity();
+      print_macro_status("stop");
+    }
+    else if (arg0 != NULL && strcmp(arg0, "status") == 0 && arg1 == NULL)
+    {
+      print_macro_status("status");
+    }
+    else if (arg0 != NULL && strcmp(arg0, "clear") == 0 && arg1 == NULL)
+    {
+      clear_macro_recorder();
+      print_macro_status("clear");
+    }
+    else if (arg0 != NULL && strcmp(arg0, "dump") == 0)
+    {
+      value0 = 0u;
+      value1 = g_macro_event_count;
+      if ((arg1 != NULL && !parse_u32(arg1, &value0)) ||
+          (arg2 != NULL && !parse_u32(arg2, &value1)))
+      {
+        printf("result=FAIL command=macro reason=usage "
+               "usage='macro dump [start count]'\n");
+      }
+      else
+      {
+        dump_macro(value0, value1);
+      }
+    }
+    else if (arg0 != NULL && strcmp(arg0, "add") == 0)
+    {
+      if (!parse_u32(arg1, &value0) || !parse_u32(arg2, &value1) ||
+          value1 > UINT16_MAX)
+      {
+        printf("result=FAIL command=macro reason=usage "
+               "usage='macro add FRAME MASK'\n");
+      }
+      else if (g_macro_recording || g_macro_replaying)
+      {
+        printf("result=FAIL command=macro reason=busy recording=%u "
+               "replaying=%u\n",
+               (unsigned)g_macro_recording, (unsigned)g_macro_replaying);
+      }
+      else if (g_macro_event_count >= UART_DEBUG_MACRO_CAPACITY)
+      {
+        g_macro_overflow = true;
+        printf("result=FAIL command=macro reason=capacity capacity=%u\n",
+               (unsigned)UART_DEBUG_MACRO_CAPACITY);
+      }
+      else if (g_macro_event_count != 0u &&
+               value0 < g_macro_events[g_macro_event_count - 1u].frame)
+      {
+        printf("result=FAIL command=macro reason=frame_order frame=%" PRIu32
+               " previous=%" PRIu32 "\n",
+               value0, g_macro_events[g_macro_event_count - 1u].frame);
+      }
+      else
+      {
+        const uint32_t index = g_macro_event_count++;
+        g_macro_events[index].frame = value0;
+        g_macro_events[index].mask = (uint16_t)value1;
+        g_macro_events[index].reserved = 0u;
+        g_macro_last_mask = (uint16_t)value1;
+        printf("result=PASS command=macro action=add index=%" PRIu32
+               " frame=%" PRIu32 " mask=0x%04" PRIx16 "\n",
+               index, value0, (uint16_t)value1);
+      }
+    }
+    else if (arg0 != NULL && strcmp(arg0, "play") == 0)
+    {
+      value0 = 0u;
+      if ((arg1 != NULL && !parse_u32(arg1, &value0)) || arg2 != NULL ||
+          value0 > UART_DEBUG_MACRO_DELAY_MAX)
+      {
+        printf("result=FAIL command=macro reason=usage "
+               "usage='macro play [delay_frames]' max_delay=%u\n",
+               (unsigned)UART_DEBUG_MACRO_DELAY_MAX);
+      }
+      else if (g_macro_event_count == 0u)
+      {
+        printf("result=FAIL command=macro reason=empty\n");
+      }
+      else
+      {
+        g_macro_recording = false;
+        g_macro_replaying = true;
+        g_macro_replay_start_frame = g_completed_frames + value0;
+        g_macro_replay_index = 0u;
+        g_macro_replay_mask = 0u;
+        clear_injected_joypad();
+        print_macro_status("play");
+      }
+    }
+    else
+    {
+      printf("result=FAIL command=macro reason=usage "
+             "usage='macro record|stop|status|clear|dump [start count]|"
+             "add FRAME MASK|play [delay]'\n");
+    }
+  }
   else
   {
     printf("result=FAIL command=%s reason=unknown_command\n", command);
@@ -932,6 +1137,7 @@ void esp32s31_uart_debug_init(void)
   g_frame_budget = 0u;
   g_completed_frames = 0u;
   clear_injected_joypad();
+  clear_macro_recorder();
   g_rom_write_capture = true;
   clear_rom_writes();
   printf("result=PASS command=uart_debug ready=1 transport=uart%d "
@@ -1101,6 +1307,82 @@ void esp32s31_uart_debug_frame_complete(void)
 uint16_t esp32s31_uart_debug_joypad_mask(void)
 {
   return g_injected_joypad_mask;
+}
+
+uint16_t esp32s31_uart_debug_apply_joypad(uint16_t physical_mask)
+{
+  if (!g_macro_replaying)
+    return physical_mask | g_injected_joypad_mask;
+
+  if (g_completed_frames < g_macro_replay_start_frame)
+    return 0u;
+
+  const uint32_t relative_frame =
+      g_completed_frames - g_macro_replay_start_frame;
+  while (g_macro_replay_index < g_macro_event_count &&
+         g_macro_events[g_macro_replay_index].frame <= relative_frame)
+  {
+    const uart_macro_event_t *event =
+        &g_macro_events[g_macro_replay_index];
+    g_macro_replay_mask = event->mask;
+    printf("result=PASS command=macro action=play_event version=1 "
+           "index=%" PRIu32 " frame=%" PRIu32 " mask=0x%04" PRIx16
+           " absolute_frame=%" PRIu32 "\n",
+           g_macro_replay_index, event->frame, event->mask,
+           g_completed_frames);
+    g_macro_replay_index++;
+  }
+
+  if (g_macro_replay_index == g_macro_event_count &&
+      relative_frame > g_macro_events[g_macro_event_count - 1u].frame)
+  {
+    g_macro_replaying = false;
+    g_macro_replay_mask = 0u;
+    printf("result=PASS command=macro action=complete version=1 "
+           "events=%" PRIu32 " elapsed_frames=%" PRIu32
+           " absolute_frame=%" PRIu32 "\n",
+           g_macro_event_count, relative_frame, g_completed_frames);
+    fflush(stdout);
+    return physical_mask;
+  }
+
+  fflush(stdout);
+  return g_macro_replay_mask;
+}
+
+void esp32s31_uart_debug_record_joypad(uint16_t mask)
+{
+  if (!g_macro_recording ||
+      (g_macro_have_mask && mask == g_macro_last_mask))
+  {
+    return;
+  }
+
+  const uint32_t relative_frame =
+      g_completed_frames - g_macro_record_start_frame;
+  if (g_macro_event_count >= UART_DEBUG_MACRO_CAPACITY)
+  {
+    g_macro_recording = false;
+    g_macro_overflow = true;
+    printf("result=FAIL command=macro reason=capacity capacity=%u "
+           "elapsed_frames=%" PRIu32 "\n",
+           (unsigned)UART_DEBUG_MACRO_CAPACITY, relative_frame);
+    fflush(stdout);
+    return;
+  }
+
+  g_macro_have_mask = true;
+  g_macro_last_mask = mask;
+  const uint32_t index = g_macro_event_count++;
+  g_macro_events[index].frame = relative_frame;
+  g_macro_events[index].mask = mask;
+  g_macro_events[index].reserved = 0u;
+  printf("result=PASS command=macro action=event version=1 "
+         "index=%" PRIu32 " frame=%" PRIu32 " mask=0x%04" PRIx16
+         " absolute_frame=%" PRIu32 " pc=0x%08" PRIx32 "\n",
+         index, relative_frame, mask, g_completed_frames,
+         U32_ARG(reg[REG_PC]));
+  fflush(stdout);
 }
 
 void riscv_note_runtime_block_execute(u32 start_pc, u32 end_pc, u32 thumb)

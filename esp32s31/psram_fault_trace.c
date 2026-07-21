@@ -15,11 +15,13 @@
 #include "hal/mspi_periph.h"
 #include "hal/psram_ctrlr_ll.h"
 #include "riscv/rvruntime-frames.h"
+#include "soc/ext_mem_defs.h"
 #include "soc/soc.h"
 #include "soc/spi_mem_s_reg.h"
 
 #include "common.h"
 #include "cpu.h"
+#include "esp32s31/korvo1_lcd.h"
 #include "gba_memory.h"
 
 #if !defined(CONFIG_IDF_TARGET_ESP32S31)
@@ -61,6 +63,14 @@ typedef struct esp32s31_psram_fault_page_match
   uint32_t page_offset;
   uint32_t aliases;
 } esp32s31_psram_fault_page_match_t;
+
+typedef struct esp32s31_psram_fault_mmu_probe
+{
+  uint32_t address;
+  uint32_t entry_id;
+  uint32_t entry_value;
+  uint32_t physical_address;
+} esp32s31_psram_fault_mmu_probe_t;
 
 enum
 {
@@ -131,6 +141,71 @@ static uint32_t IRAM_ATTR trace_raw_jit_class(uint32_t raw_address)
   return TRACE_ADDRESS_UNKNOWN;
 }
 
+static uint32_t IRAM_ATTR trace_psram_page_shift(uint32_t power_control)
+{
+  const uint32_t code =
+      (power_control >> SPI_MMU_PAGE_SIZE_S) & SPI_MMU_PAGE_SIZE_V;
+  return 16u - code;
+}
+
+static void IRAM_ATTR trace_psram_mmu_probe(
+    uint32_t address, uint32_t page_shift,
+    esp32s31_psram_fault_mmu_probe_t *probe)
+{
+  probe->address = address;
+  probe->entry_id = UINT32_MAX;
+  probe->entry_value = 0u;
+  probe->physical_address = UINT32_MAX;
+
+  if (address < SOC_DRAM_PSRAM_ADDRESS_LOW ||
+      address >= SOC_DRAM_PSRAM_ADDRESS_HIGH ||
+      page_shift < 13u || page_shift > 16u)
+    return;
+
+  const uint32_t page_bytes = UINT32_C(1) << page_shift;
+  const uint32_t entry_id =
+      (address & SOC_MMU_VADDR_MASK) >> page_shift;
+  REG_WRITE(SPI_MEM_S_MMU_ITEM_INDEX_REG, entry_id);
+  const uint32_t entry_value = REG_READ(SPI_MEM_S_MMU_ITEM_CONTENT_REG);
+
+  probe->entry_id = entry_id;
+  probe->entry_value = entry_value;
+  if ((entry_value & SOC_MMU_PSRAM_VALID) != 0u)
+  {
+    probe->physical_address =
+        ((entry_value & SOC_MMU_PSRAM_VALID_VAL_MASK) << page_shift) |
+        (address & (page_bytes - 1u));
+  }
+}
+
+static bool IRAM_ATTR trace_raw_in_lcd_source(
+    uint32_t raw_address,
+    const esp32s31_psram_fault_mmu_probe_t *start,
+    const esp32s31_psram_fault_mmu_probe_t *end)
+{
+  if (start->physical_address == UINT32_MAX ||
+      end->physical_address == UINT32_MAX)
+    return false;
+  if (start->entry_id == end->entry_id)
+    return raw_address >= start->physical_address &&
+        raw_address <= end->physical_address;
+
+  /* A bounce strip can straddle one 64 KiB mapping.  Its two physical pages
+   * need not be adjacent, so test the tail of the first and head of the
+   * second independently. */
+  const uint32_t page_shift = trace_psram_page_shift(
+      REG_READ(SPI_MEM_S_MMU_POWER_CTRL_REG));
+  const uint32_t page_bytes = UINT32_C(1) << page_shift;
+  const uint32_t first_limit =
+      (start->physical_address & ~(page_bytes - 1u)) + page_bytes;
+  const uint32_t second_base =
+      end->physical_address & ~(page_bytes - 1u);
+  return (raw_address >= start->physical_address &&
+          raw_address < first_limit) ||
+      (raw_address >= second_base &&
+       raw_address <= end->physical_address);
+}
+
 static void IRAM_ATTR trace_find_gamepak_page(
     uint32_t raw_address, esp32s31_psram_fault_page_match_t *match)
 {
@@ -166,12 +241,24 @@ void IRAM_ATTR esp32s31_psram_fault_isr_c(void *argument)
 {
   esp32s31_psram_fault_indirect_snapshot_t indirect = {0};
   esp32s31_psram_fault_page_match_t page_match;
+  esp32s31_lcd_fault_snapshot_t lcd = {0};
+  esp32s31_psram_fault_mmu_probe_t mmu_page0;
+  esp32s31_psram_fault_mmu_probe_t mmu_mepc;
+  esp32s31_psram_fault_mmu_probe_t mmu_meta;
+  esp32s31_psram_fault_mmu_probe_t mmu_lookup;
+  esp32s31_psram_fault_mmu_probe_t mmu_rom_ptr;
+  esp32s31_psram_fault_mmu_probe_t mmu_lcd_source;
+  esp32s31_psram_fault_mmu_probe_t mmu_lcd_source_end;
+  esp32s31_psram_fault_mmu_probe_t mmu_snapshot;
   uint32_t csr_mcause;
   uint32_t csr_mtval;
   uint32_t csr_mstatus;
   uint32_t csr_mepc;
+  uint32_t fault_cycle;
   const uint32_t intr_events =
       psram_ctrlr_ll_get_intr_raw(PSRAM_CTRLR_LL_MSPI_ID_SYSTEM);
+  const uint32_t mmu_power_control =
+      REG_READ(SPI_MEM_S_MMU_POWER_CTRL_REG);
   const uint32_t axi_raw =
       (REG_READ(SPI_MEM_S_AXI_ERR_ADDR_REG) >>
        SPI_MEM_S_AXI_ERR_ADDR_S) & SPI_MEM_S_AXI_ERR_ADDR_V;
@@ -183,6 +270,7 @@ void IRAM_ATTR esp32s31_psram_fault_isr_c(void *argument)
   __asm__ __volatile__("csrr %0, mcause" : "=r"(csr_mcause));
   __asm__ __volatile__("csrr %0, mtval" : "=r"(csr_mtval));
   __asm__ __volatile__("csrr %0, mstatus" : "=r"(csr_mstatus));
+  __asm__ __volatile__("rdcycle %0" : "=r"(fault_cycle));
 
   /* Reading AXI_ERR_ADDR must precede this clear: the hardware clears that
    * register together with AXI_RADDR_ERR, which is why the stock IDF ISR
@@ -190,6 +278,7 @@ void IRAM_ATTR esp32s31_psram_fault_isr_c(void *argument)
   psram_ctrlr_ll_clear_intr(PSRAM_CTRLR_LL_MSPI_ID_SYSTEM, intr_events);
 
   const uint32_t mepc = frame != NULL ? (uint32_t)frame->mepc : csr_mepc;
+  const uint32_t host_meta = frame != NULL ? (uint32_t)frame->a0 : 0u;
   const uint32_t lookup_trace_key =
       reg[ESP32S31_PSRAM_FAULT_TRACE_REG_LOOKUP_KEY];
   const uint32_t lookup_fast =
@@ -202,6 +291,8 @@ void IRAM_ATTR esp32s31_psram_fault_isr_c(void *argument)
   const uint32_t axi_cpu_address = axi_raw | UINT32_C(0x40000000);
   uint32_t axi_class = trace_raw_jit_class(axi_raw);
   const uint32_t mepc_class = trace_address_class(mepc);
+  const uint32_t page_shift =
+      trace_psram_page_shift(mmu_power_control);
   uint32_t entry_delta = UINT32_MAX;
 
   trace_find_gamepak_page(axi_raw, &page_match);
@@ -212,6 +303,23 @@ void IRAM_ATTR esp32s31_psram_fault_isr_c(void *argument)
 
   esp32s31_psram_fault_trace_get_indirect_snapshot(
       lookup_key, &indirect);
+  esp32s31_korvo1_lcd_get_fault_snapshot(&lcd);
+
+  trace_psram_mmu_probe(
+      SOC_DRAM_PSRAM_ADDRESS_LOW, page_shift, &mmu_page0);
+  trace_psram_mmu_probe(mepc, page_shift, &mmu_mepc);
+  trace_psram_mmu_probe(host_meta, page_shift, &mmu_meta);
+  trace_psram_mmu_probe(lookup_entry, page_shift, &mmu_lookup);
+  trace_psram_mmu_probe(
+      (uint32_t)(uintptr_t)rom_translation_ptr, page_shift, &mmu_rom_ptr);
+  trace_psram_mmu_probe(
+      lcd.bounce_source_start, page_shift, &mmu_lcd_source);
+  trace_psram_mmu_probe(
+      lcd.bounce_source_end != 0u ? lcd.bounce_source_end - 1u : 0u,
+      page_shift, &mmu_lcd_source_end);
+  trace_psram_mmu_probe(lcd.snapshot_start, page_shift, &mmu_snapshot);
+  const uint32_t lcd_raw_match = trace_raw_in_lcd_source(
+      axi_raw, &mmu_lcd_source, &mmu_lcd_source_end);
 
   ESP_DRAM_LOGE(
       s_fault_tag,
@@ -296,6 +404,54 @@ void IRAM_ATTR esp32s31_psram_fault_isr_c(void *argument)
       (unsigned)s_trace.flush_sequence, (unsigned)s_trace.flush_kind,
       (unsigned)s_trace.flush_old_pointer,
       (unsigned)s_trace.flush_new_pointer);
+  ESP_DRAM_LOGE(
+      s_fault_tag,
+      "psram_fault_mmu power=0x%08x page_shift=%u page0_id=%u "
+      "page0_entry=0x%08x mepc_id=%u mepc_entry=0x%08x "
+      "mepc_phys=0x%08x meta_id=%u meta_entry=0x%08x "
+      "meta_phys=0x%08x",
+      (unsigned)mmu_power_control, (unsigned)page_shift,
+      (unsigned)mmu_page0.entry_id, (unsigned)mmu_page0.entry_value,
+      (unsigned)mmu_mepc.entry_id, (unsigned)mmu_mepc.entry_value,
+      (unsigned)mmu_mepc.physical_address,
+      (unsigned)mmu_meta.entry_id, (unsigned)mmu_meta.entry_value,
+      (unsigned)mmu_meta.physical_address);
+  ESP_DRAM_LOGE(
+      s_fault_tag,
+      "psram_fault_mmu2 lookup_id=%u lookup_entry=0x%08x "
+      "lookup_phys=0x%08x romptr_id=%u romptr_entry=0x%08x "
+      "romptr_phys=0x%08x snapshot_id=%u snapshot_entry=0x%08x "
+      "snapshot_phys=0x%08x",
+      (unsigned)mmu_lookup.entry_id, (unsigned)mmu_lookup.entry_value,
+      (unsigned)mmu_lookup.physical_address,
+      (unsigned)mmu_rom_ptr.entry_id, (unsigned)mmu_rom_ptr.entry_value,
+      (unsigned)mmu_rom_ptr.physical_address,
+      (unsigned)mmu_snapshot.entry_id, (unsigned)mmu_snapshot.entry_value,
+      (unsigned)mmu_snapshot.physical_address);
+  ESP_DRAM_LOGE(
+      s_fault_tag,
+      "psram_fault_lcd active=%u seq=%u pos=%u len=%u "
+      "source=0x%08x..0x%08x source_id=%u..%u "
+      "source_entry=0x%08x..0x%08x source_phys=0x%08x..0x%08x "
+      "raw_match=%u snapshot=0x%08x..0x%08x render=0x%08x "
+      "copying=%u begin_cycle=0x%08x end_cycle=0x%08x "
+      "fault_cycle=0x%08x since_end=%u",
+      (unsigned)lcd.bounce_active, (unsigned)lcd.bounce_sequence,
+      (unsigned)lcd.bounce_position_pixels,
+      (unsigned)lcd.bounce_length_bytes,
+      (unsigned)lcd.bounce_source_start, (unsigned)lcd.bounce_source_end,
+      (unsigned)mmu_lcd_source.entry_id,
+      (unsigned)mmu_lcd_source_end.entry_id,
+      (unsigned)mmu_lcd_source.entry_value,
+      (unsigned)mmu_lcd_source_end.entry_value,
+      (unsigned)mmu_lcd_source.physical_address,
+      (unsigned)mmu_lcd_source_end.physical_address,
+      (unsigned)lcd_raw_match,
+      (unsigned)lcd.snapshot_start, (unsigned)lcd.snapshot_end,
+      (unsigned)lcd.render_start, (unsigned)lcd.snapshot_copying,
+      (unsigned)lcd.bounce_begin_cycle, (unsigned)lcd.bounce_end_cycle,
+      (unsigned)fault_cycle,
+      (unsigned)(fault_cycle - lcd.bounce_end_cycle));
   ESP_DRAM_LOGE(
       s_fault_tag,
       "psram_fault_gamepak found=%u logical_page=%u page_ptr=0x%08x "

@@ -287,7 +287,8 @@ static void input_poll_cb(void)
 {
   g_joypad_mask = esp32s31_korvo1_usb_gamepad_mask();
 #if GPSP_ESP32S31_DYNAREC
-  g_joypad_mask |= esp32s31_uart_debug_joypad_mask();
+  g_joypad_mask = esp32s31_uart_debug_apply_joypad(g_joypad_mask);
+  esp32s31_uart_debug_record_joypad(g_joypad_mask);
 #endif
 }
 
@@ -734,6 +735,16 @@ void app_main(void)
          "unicore=1 boot_mode=%s\n",
          CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
          CONFIG_FREERTOS_NUMBER_OF_CORES, GPSP_ESP32S31_BOOT_NAME);
+
+#if !GPSP_ESP32S31_MENU_BOOT
+  size_t layout_probe_pad_bytes = 0u;
+  void *const layout_probe_pad =
+      esp32s31_gamepak_layout_probe_pad(&layout_probe_pad_bytes);
+  if (layout_probe_pad_bytes != 0u)
+    printf("result=PASS command=layout_probe pad=0x%08" PRIxPTR
+           " bytes=%zu\n",
+           (uintptr_t)layout_probe_pad, layout_probe_pad_bytes);
+#endif
 
 #if GPSP_ESP32S31_DYNAREC && GPSP_ESP32S31_PSRAM_FAULT_TRACE
   const bool psram_fault_trace_ready =

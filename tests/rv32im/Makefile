@@ -46,6 +46,12 @@ P_GBA ?=
 P_GBA_FRAMES ?= 2600
 P_GBA_TIMEOUT_SECONDS ?= 180
 P_GBA_RUNNER_ARGS ?=
+P_GBA_JIT_MMAP_BASE ?=
+P_GBA_JIT_MMAP_REPLACE ?=
+P_GBA_TEXT_BASE ?=
+P_GBA_DATA_BASE ?=
+P_GBA_ROM_JIT_CACHE_BYTES ?=
+P_GBA_RAM_JIT_CACHE_BYTES ?=
 P_GBA_DIALOGUE_FRAMES ?= 2500
 P_GBA_DIALOGUE_TIMEOUT_SECONDS ?= 60
 P_GBA_DIALOGUE_HASH ?= 0x1c19e29d
@@ -372,6 +378,10 @@ FULL_CPPFLAGS := \
 	-DINLINE=inline \
 	-DFRONTEND_SUPPORTS_RGB565 \
 	-DNDEBUG=1 \
+	$(if $(P_GBA_JIT_MMAP_BASE),-DMMAP_JIT_CACHE_FIXED_BASE=$(P_GBA_JIT_MMAP_BASE)) \
+	$(if $(P_GBA_JIT_MMAP_REPLACE),-DMMAP_JIT_CACHE_FIXED_REPLACE=1) \
+	$(if $(P_GBA_ROM_JIT_CACHE_BYTES),-DROM_TRANSLATION_CACHE_SIZE=$(P_GBA_ROM_JIT_CACHE_BYTES)) \
+	$(if $(P_GBA_RAM_JIT_CACHE_BYTES),-DRAM_TRANSLATION_CACHE_SIZE=$(P_GBA_RAM_JIT_CACHE_BYTES)) \
 	-Ifull_sysroot \
 	-I. \
 	-I$(ROOT) \
@@ -496,6 +506,8 @@ $(FULL_BIOS_OBJECT): $(ROOT)/bios_data.S | full-runner-toolchain-check
 $(FULL_RUNNER): $(FULL_RUNNER_OBJECTS) | full-runner-toolchain-check
 	@mkdir -p $(dir $@)
 	$(FULL_RVCXX) $(FULL_ARCH_FLAGS) -static -nostdlib -Wl,--gc-sections \
+		$(if $(P_GBA_TEXT_BASE),-Xlinker -Ttext=$(P_GBA_TEXT_BASE)) \
+		$(if $(P_GBA_DATA_BASE),-Xlinker -Tdata=$(P_GBA_DATA_BASE)) \
 		$(FULL_CRT0) $(FULL_CRTBEGIN) $(FULL_RUNNER_OBJECTS) \
 		-Wl,--wrap=write_memory16 \
 		-Wl,--start-group -lstdc++ -lm -lc -lgloss -lgcc -Wl,--end-group \

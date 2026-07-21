@@ -22,6 +22,9 @@
 // - block memory needs psr swapping and user mode reg swapping
 
 #include "common.h"
+#if defined(ESP32S31_JIT)
+#include "esp32s31/jit_platform.h"
+#endif
 #if defined(GPSP_ESP32S31_PSRAM_FAULT_TRACE) && \
     GPSP_ESP32S31_PSRAM_FAULT_TRACE
 #include "esp32s31/psram_fault_trace.h"
@@ -38,10 +41,16 @@ u8 *last_ram_translation_ptr = NULL;
 
 #if defined(RISCV_ARCH) && !defined(MMAP_JIT_CACHE)
 #if defined(ESP32S31_JIT)
+_Static_assert((ROM_TRANSLATION_CACHE_SIZE %
+                ESP32S31_JIT_CACHE_ALIGNMENT) == 0,
+               "ESP32-S31 ROM JIT cache must end on a 4 KiB boundary");
+_Static_assert((RAM_TRANSLATION_CACHE_SIZE %
+                ESP32S31_JIT_CACHE_ALIGNMENT) == 0,
+               "ESP32-S31 RAM JIT cache must end on a 4 KiB boundary");
 GPSP_EXT_RAM_BSS u8 rom_translation_cache[ROM_TRANSLATION_CACHE_SIZE]
-  __attribute__((aligned(64)));
+  __attribute__((aligned(ESP32S31_JIT_CACHE_ALIGNMENT)));
 GPSP_EXT_RAM_BSS u8 ram_translation_cache[RAM_TRANSLATION_CACHE_SIZE]
-  __attribute__((aligned(64)));
+  __attribute__((aligned(ESP32S31_JIT_CACHE_ALIGNMENT)));
 #else
 u8 rom_translation_cache[ROM_TRANSLATION_CACHE_SIZE];
 u8 ram_translation_cache[RAM_TRANSLATION_CACHE_SIZE];

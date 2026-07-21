@@ -96,6 +96,14 @@ typedef struct {
   volatile uint32_t bounce_fill_last_us;
   volatile uint32_t bounce_fill_max_us;
   volatile uint32_t bounce_expected_pos_px;
+  volatile uint32_t bounce_active;
+  volatile uint32_t bounce_sequence;
+  volatile uint32_t bounce_position_pixels;
+  volatile uint32_t bounce_length_bytes;
+  volatile uint32_t bounce_source_start;
+  volatile uint32_t bounce_source_end;
+  volatile uint32_t bounce_begin_cycle;
+  volatile uint32_t bounce_end_cycle;
   esp32s31_lcd_stats_t stats;
   uint16_t fps_x10;
   esp32s31_rgb565_fps_osd_t fps_osd[2];
@@ -144,6 +152,17 @@ static bool IRAM_ATTR lcd_on_bounce_empty(
 {
   (void)panel;
   korvo1_lcd_state_t *state = (korvo1_lcd_state_t *)user_ctx;
+  uint32_t begin_cycle;
+  __asm__ __volatile__("rdcycle %0" : "=r"(begin_cycle));
+  state->bounce_sequence++;
+  state->bounce_position_pixels =
+      position_pixels >= 0 ? (uint32_t)position_pixels : UINT32_MAX;
+  state->bounce_length_bytes =
+      length_bytes >= 0 ? (uint32_t)length_bytes : UINT32_MAX;
+  state->bounce_source_start = 0u;
+  state->bounce_source_end = 0u;
+  state->bounce_begin_cycle = begin_cycle;
+  __atomic_store_n(&state->bounce_active, 1u, __ATOMIC_RELEASE);
   const int64_t fill_start = esp_timer_get_time();
 
   const uint32_t position = position_pixels >= 0 ?
@@ -173,6 +192,9 @@ static bool IRAM_ATTR lcd_on_bounce_empty(
       state->snapshot_copy_interrupts++;
     const uint16_t *source = frame_source +
         (size_t)source_y * ESP32S31_GBA_WIDTH;
+    state->bounce_source_start = (uint32_t)(uintptr_t)source;
+    state->bounce_source_end = (uint32_t)(uintptr_t)(
+        source + (size_t)LCD_BOUNCE_SOURCE_ROWS * ESP32S31_GBA_WIDTH);
     const esp32s31_rgb565_fps_osd_t *osd = NULL;
     if (__atomic_load_n(&state->fps_valid, __ATOMIC_ACQUIRE))
     {
@@ -210,6 +232,11 @@ static bool IRAM_ATTR lcd_on_bounce_empty(
   {
     state->bounce_fill_frame_us = frame_fill_us;
   }
+
+  uint32_t end_cycle;
+  __asm__ __volatile__("rdcycle %0" : "=r"(end_cycle));
+  state->bounce_end_cycle = end_cycle;
+  __atomic_store_n(&state->bounce_active, 0u, __ATOMIC_RELEASE);
 
   return false;
 }
@@ -674,5 +701,29 @@ void esp32s31_korvo1_lcd_get_stats(esp32s31_lcd_stats_t *out)
   out->bounce_discontinuities = s_lcd.bounce_discontinuities;
   out->bounce_fill_max_us = s_lcd.bounce_fill_max_us;
   out->snapshot_copy_interrupts = s_lcd.snapshot_copy_interrupts;
+#endif
+}
+
+void IRAM_ATTR esp32s31_korvo1_lcd_get_fault_snapshot(
+    esp32s31_lcd_fault_snapshot_t *out)
+{
+  if (out == NULL)
+    return;
+  memset(out, 0, sizeof(*out));
+#if ESP32S31_LCD_BOUNCE_MODE
+  out->bounce_active =
+      __atomic_load_n(&s_lcd.bounce_active, __ATOMIC_ACQUIRE);
+  out->bounce_sequence = s_lcd.bounce_sequence;
+  out->bounce_position_pixels = s_lcd.bounce_position_pixels;
+  out->bounce_length_bytes = s_lcd.bounce_length_bytes;
+  out->bounce_source_start = s_lcd.bounce_source_start;
+  out->bounce_source_end = s_lcd.bounce_source_end;
+  out->bounce_begin_cycle = s_lcd.bounce_begin_cycle;
+  out->bounce_end_cycle = s_lcd.bounce_end_cycle;
+  out->snapshot_start = (uint32_t)(uintptr_t)s_lcd.snapshot_buffer;
+  out->snapshot_end = out->snapshot_start + GBA_SNAPSHOT_BYTES;
+  out->render_start = (uint32_t)(uintptr_t)s_lcd.render_buffer;
+  out->snapshot_copying =
+      __atomic_load_n(&s_lcd.snapshot_copying, __ATOMIC_ACQUIRE);
 #endif
 }

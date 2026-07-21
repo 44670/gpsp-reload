@@ -100,6 +100,63 @@ bool validate_addr_section_mips(void *ptr, unsigned size, unsigned max_offset_mb
 
 	#include <sys/mman.h>
 
+#if defined(MMAP_JIT_CACHE_FIXED_BASE)
+/*
+ * qemu-user address-placement diagnostic.  The requested JIT data address
+ * does not have to be page aligned (the ESP32-S31 static cache is only
+ * cache-line aligned), so map the containing pages and return the requested
+ * interior address.  MAP_FIXED_NOREPLACE makes an occupied address fail
+ * instead of silently moving the mapping or replacing unrelated state.
+ */
+#ifndef MAP_FIXED_NOREPLACE
+#define MAP_FIXED_NOREPLACE 0x100000
+#endif
+#define MMAP_JIT_PAGE_BYTES 4096U
+
+	void *map_jit_block(unsigned size) {
+		uintptr_t requested = (uintptr_t)MMAP_JIT_CACHE_FIXED_BASE;
+		uintptr_t map_base = requested & ~(uintptr_t)(MMAP_JIT_PAGE_BYTES - 1U);
+		unsigned prefix = (unsigned)(requested - map_base);
+		unsigned map_size = size + prefix;
+		void *p;
+
+		if (!requested || map_size < size)
+			return 0;
+
+		p = mmap((void *)map_base, map_size,
+		         PROT_READ | PROT_WRITE | PROT_EXEC,
+		         MAP_ANON | MAP_PRIVATE | MAP_FIXED_NOREPLACE, -1, 0);
+#if defined(MMAP_JIT_CACHE_FIXED_REPLACE)
+		/* A high-address qemu-user ELF can reserve otherwise unused gaps
+		 * between PT_LOAD segments.  This opt-in diagnostic mode replaces
+		 * only the explicitly requested, already-validated JIT range. */
+		if (p == MAP_FAILED)
+			p = mmap((void *)map_base, map_size,
+			         PROT_READ | PROT_WRITE | PROT_EXEC,
+			         MAP_ANON | MAP_PRIVATE | MAP_FIXED, -1, 0);
+#endif
+		if (p != (void *)map_base) {
+			if (p != MAP_FAILED)
+				munmap(p, map_size);
+			return 0;
+		}
+
+		if (!_VALIDATE_BLOCK_FN((void *)requested, size)) {
+			munmap(p, map_size);
+			return 0;
+		}
+		return (void *)requested;
+	}
+
+	void unmap_jit_block(void *bufptr, unsigned size) {
+		uintptr_t requested = (uintptr_t)bufptr;
+		uintptr_t map_base = requested & ~(uintptr_t)(MMAP_JIT_PAGE_BYTES - 1U);
+		unsigned prefix = (unsigned)(requested - map_base);
+		munmap((void *)map_base, size + prefix);
+	}
+
+#else
+
 	// Posix implementation
 	void *map_jit_block(unsigned size) {
 		unsigned i;
@@ -126,7 +183,8 @@ bool validate_addr_section_mips(void *ptr, unsigned size, unsigned max_offset_mb
 		munmap(bufptr, size);
 	}
 
+#endif /* MMAP_JIT_CACHE_FIXED_BASE */
+
 #endif /* WIN32 */
 
 #endif /* MMAP_JIT_CACHE */
-

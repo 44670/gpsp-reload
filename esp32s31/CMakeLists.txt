@@ -28,6 +28,8 @@ set(GPSP_ESP32S31_MENU_AUTOROM_NAME "" CACHE STRING
     "Hardware-test-only root TF .gba filename to select without XInput")
 set(ESP32S31_GAMEPAK_STATIC_MB "12" CACHE STRING
     "Static PSRAM gamepak container size in MiB, including two work pages")
+set(ESP32S31_LAYOUT_PROBE_PAD_BYTES "0" CACHE STRING
+    "Diagnostic-only direct-boot PSRAM pad used to reproduce menu layout")
 set(ESP32S31_ROM_JIT_CACHE_KB "1536" CACHE STRING
     "ESP32-S31 ROM dynarec cache size in KiB")
 set(ESP32S31_RAM_JIT_CACHE_KB "384" CACHE STRING
@@ -107,6 +109,16 @@ math(EXPR ESP32S31_GAMEPAK_STATIC_BYTES
 if(ESP32S31_GAMEPAK_STATIC_BYTES LESS 131072)
     message(FATAL_ERROR
         "ESP32S31_GAMEPAK_STATIC_MB must leave at least one ROM page")
+endif()
+if(NOT ESP32S31_LAYOUT_PROBE_PAD_BYTES MATCHES "^[0-9]+$")
+    message(FATAL_ERROR
+        "ESP32S31_LAYOUT_PROBE_PAD_BYTES must be a non-negative integer")
+endif()
+math(EXPR ESP32S31_LAYOUT_PROBE_PAD_REMAINDER
+    "${ESP32S31_LAYOUT_PROBE_PAD_BYTES} % 32768")
+if(NOT ESP32S31_LAYOUT_PROBE_PAD_REMAINDER EQUAL 0)
+    message(FATAL_ERROR
+        "ESP32S31_LAYOUT_PROBE_PAD_BYTES must be a multiple of 32768")
 endif()
 
 foreach(cache_name ROM RAM)

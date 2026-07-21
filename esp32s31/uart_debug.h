@@ -11,5 +11,7 @@ void esp32s31_uart_debug_poll(void);
 bool esp32s31_uart_debug_should_run_frame(void);
 void esp32s31_uart_debug_frame_complete(void);
 uint16_t esp32s31_uart_debug_joypad_mask(void);
+uint16_t esp32s31_uart_debug_apply_joypad(uint16_t physical_mask);
+void esp32s31_uart_debug_record_joypad(uint16_t mask);
 
 #endif

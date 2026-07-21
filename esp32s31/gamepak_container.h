@@ -59,4 +59,7 @@ uint32_t esp32s31_gamepak_container_page_offset(
 
 uint32_t esp32s31_gamepak_crc32(const void *data, size_t bytes);
 
+/* Returns the optional direct-boot layout probe reservation. */
+void *esp32s31_gamepak_layout_probe_pad(size_t *bytes);
+
 #endif

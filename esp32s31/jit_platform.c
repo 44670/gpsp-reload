@@ -21,8 +21,8 @@
 #error "ESP32-S31 JIT platform support requires CONFIG_IDF_TARGET_ESP32S31"
 #endif
 
-#if !CONFIG_SPIRAM_XIP_FROM_PSRAM
-#error "ESP32-S31 PSRAM JIT requires CONFIG_SPIRAM_XIP_FROM_PSRAM=y"
+#if !CONFIG_SPIRAM
+#error "ESP32-S31 PSRAM JIT requires CONFIG_SPIRAM=y"
 #endif
 
 #ifndef CONFIG_CACHE_L1_ICACHE_LINE_SIZE
@@ -147,6 +147,10 @@ bool esp32s31_jit_cache_selftest(esp32s31_jit_selftest_result_t *result)
   result->rom_cache_external = esp_ptr_external_ram(rom_translation_cache);
   result->ram_cache_external = esp_ptr_external_ram(ram_translation_cache);
   if (!result->rom_cache_external || !result->ram_cache_external ||
+      (((uintptr_t)rom_translation_cache &
+        (ESP32S31_JIT_CACHE_ALIGNMENT - 1u)) != 0u) ||
+      (((uintptr_t)ram_translation_cache &
+        (ESP32S31_JIT_CACHE_ALIGNMENT - 1u)) != 0u) ||
       (((uintptr_t)code & 3u) != 0u))
     return false;
 

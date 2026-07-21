@@ -46,10 +46,16 @@ _Static_assert(SPI_FLASH_SEC_SIZE == 4096u,
 /*
  * Entire ROM working set is fixed at link time. The first two pages are scan
  * and byte-compare scratch; the remaining pages are immutable deduplicated ROM
- * storage. Flash I/O uses a separate 4 KiB internal staging buffer because
- * PSRAM is not directly readable while SPI1 cache is disabled.
+ * storage. Keep this large, non-executable array in the external noinit output
+ * section: that section follows ordinary external BSS, so the CPU state and
+ * generated-code caches stay in low PSRAM instead of being displaced to the
+ * last physical PSRAM pages. Every container page that can be observed is
+ * overwritten by the directory scan or ROM loader before use, so startup
+ * zeroing is neither required nor relied upon. Flash I/O uses a separate 4 KiB
+ * internal staging buffer because PSRAM is not directly readable while SPI1
+ * cache is disabled.
  */
-static EXT_RAM_BSS_ATTR uint8_t s_gamepak_container[
+static EXT_RAM_NOINIT_ATTR uint8_t s_gamepak_container[
     ESP32S31_GAMEPAK_STATIC_BYTES]
     __attribute__((aligned(ESP32S31_RUNTIME_PAGE_BYTES)));
 static EXT_RAM_BSS_ATTR uint32_t
@@ -407,6 +413,75 @@ static bool map_flash_pages(char *error, size_t error_bytes)
   return true;
 }
 
+#if defined(GPSP_ESP32S31_PSRAM_FAULT_TRACE) && \
+    GPSP_ESP32S31_PSRAM_FAULT_TRACE
+static uint32_t verify_hash_bytes(uint32_t hash, const uint8_t *data,
+                                  size_t bytes)
+{
+  for (size_t index = 0u; index < bytes; index++)
+  {
+    hash ^= data[index];
+    hash *= UINT32_C(16777619);
+  }
+  return hash;
+}
+
+/* The scan/load passes prove the duplicate decision against the TF file, but
+ * a PSRAM destination used to be trusted immediately after memcpy.  A fault
+ * build performs a third, exact byte comparison against every final logical
+ * mapping.  This distinguishes a dedup/map/copy defect from a later PSRAM or
+ * JIT execution failure without relying on another hash match. */
+static bool verify_loaded_pages(const char *path, uint32_t rom_bytes,
+                                uint32_t page_count,
+                                char *error, size_t error_bytes)
+{
+  FILE *file = fopen(path, "rb");
+  uint32_t source_hash = UINT32_C(2166136261);
+  uint32_t mapped_hash = UINT32_C(2166136261);
+
+  if (file == NULL)
+  {
+    set_error(error, error_bytes, "cannot reopen selected ROM for verify");
+    return false;
+  }
+
+  for (uint32_t page = 0u; page < page_count; page++)
+  {
+    if (!read_rom_page(file, page, rom_bytes, scan_page(),
+                       error, error_bytes))
+    {
+      fclose(file);
+      return false;
+    }
+    const uint8_t *const mapped = s_page_pointer[page];
+    if (mapped == NULL ||
+        memcmp(scan_page(), mapped, ESP32S31_RUNTIME_PAGE_BYTES) != 0)
+    {
+      set_error(error, error_bytes,
+                "final mapped ROM verify failed at page %u canonical %u",
+                (unsigned)page, (unsigned)s_canonical_page[page]);
+      fclose(file);
+      return false;
+    }
+    source_hash = verify_hash_bytes(
+        source_hash, scan_page(), ESP32S31_RUNTIME_PAGE_BYTES);
+    mapped_hash = verify_hash_bytes(
+        mapped_hash, mapped, ESP32S31_RUNTIME_PAGE_BYTES);
+  }
+  fclose(file);
+
+  ESP_LOGI(TAG,
+           "final mapped ROM byte verify passed: pages=%" PRIu32
+           " source_fnv=0x%08" PRIx32 " mapped_fnv=0x%08" PRIx32,
+           page_count, source_hash, mapped_hash);
+  printf("result=PASS command=runtime_gamepak_verify method=byte_compare "
+         "pages=%" PRIu32 " source_fnv=0x%08" PRIx32
+         " mapped_fnv=0x%08" PRIx32 "\n",
+         page_count, source_hash, mapped_hash);
+  return true;
+}
+#endif
+
 const uint8_t *esp32s31_runtime_gamepak_resolve_page(
     void *context, uint32_t logical_page)
 {
@@ -534,6 +609,15 @@ bool esp32s31_runtime_gamepak_load(
       return false;
     }
   }
+#if defined(GPSP_ESP32S31_PSRAM_FAULT_TRACE) && \
+    GPSP_ESP32S31_PSRAM_FAULT_TRACE
+  if (!verify_loaded_pages(
+          path, rom_bytes, page_count, error, error_bytes))
+  {
+    reset_source();
+    return false;
+  }
+#endif
 
   gamepak_set_direct_mmap_source(
       esp32s31_runtime_gamepak_resolve_page, NULL, rom_bytes);

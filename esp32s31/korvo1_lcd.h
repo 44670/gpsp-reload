@@ -25,6 +25,24 @@ typedef struct {
   uint32_t max_wait_us;
 } esp32s31_lcd_stats_t;
 
+/* Internal-RAM-only state used by the pre-clear PSRAM fault ISR.  Pointer
+ * fields are captured as integer values; taking this snapshot must never
+ * dereference the PSRAM scan source while the controller is faulting. */
+typedef struct {
+  uint32_t bounce_active;
+  uint32_t bounce_sequence;
+  uint32_t bounce_position_pixels;
+  uint32_t bounce_length_bytes;
+  uint32_t bounce_source_start;
+  uint32_t bounce_source_end;
+  uint32_t bounce_begin_cycle;
+  uint32_t bounce_end_cycle;
+  uint32_t snapshot_start;
+  uint32_t snapshot_end;
+  uint32_t render_start;
+  uint32_t snapshot_copying;
+} esp32s31_lcd_fault_snapshot_t;
+
 bool esp32s31_korvo1_lcd_init(void);
 bool esp32s31_korvo1_lcd_ready(void);
 bool esp32s31_korvo1_lcd_present_rgb565(const void *pixels,
@@ -37,6 +55,8 @@ const char *esp32s31_korvo1_lcd_render_memory_name(void);
 unsigned esp32s31_korvo1_lcd_bounce_source_rows(void);
 void esp32s31_korvo1_lcd_set_fps_x10(unsigned fps_x10);
 void esp32s31_korvo1_lcd_get_stats(esp32s31_lcd_stats_t *out);
+void esp32s31_korvo1_lcd_get_fault_snapshot(
+    esp32s31_lcd_fault_snapshot_t *out);
 const char *esp32s31_korvo1_lcd_scaler_name(void);
 
 #endif

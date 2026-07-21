@@ -8,6 +8,8 @@
 extern "C" {
 #endif
 
+#define ESP32S31_JIT_CACHE_ALIGNMENT 0x1000u
+
 typedef struct esp32s31_jit_selftest_result
 {
   uintptr_t rom_cache_address;

@@ -4,6 +4,29 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "esp_attr.h"
+
+#ifndef ESP32S31_LAYOUT_PROBE_PAD_BYTES
+#define ESP32S31_LAYOUT_PROBE_PAD_BYTES 0
+#endif
+
+#if ESP32S31_LAYOUT_PROBE_PAD_BYTES > 0
+static EXT_RAM_BSS_ATTR uint8_t s_layout_probe_pad[
+    ESP32S31_LAYOUT_PROBE_PAD_BYTES]
+    __attribute__((aligned(ESP32S31_GAMEPAK_PAGE_BYTES)));
+#endif
+
+void *esp32s31_gamepak_layout_probe_pad(size_t *bytes)
+{
+  if (bytes != NULL)
+    *bytes = ESP32S31_LAYOUT_PROBE_PAD_BYTES;
+#if ESP32S31_LAYOUT_PROBE_PAD_BYTES > 0
+  return s_layout_probe_pad;
+#else
+  return NULL;
+#endif
+}
+
 static uint32_t read_le32(const uint8_t *data)
 {
   return (uint32_t)data[0] |
