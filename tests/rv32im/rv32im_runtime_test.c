@@ -988,6 +988,7 @@ typedef unsigned int usize;
   (STORE_TOTAL_CYCLES + STORE_ALERT_CHAIN_CYCLES)
 #define RANGE_STORE_START_PC 0x08010000u
 #define RANGE_STORE_SITE_COUNT 1024u
+#define RANGE_STORE_PAD_NOPS 16u
 #define RANGE_STORE_END_PC \
   (RANGE_STORE_START_PC + RANGE_STORE_SITE_COUNT * 4u)
 #define RANGE_STORE_TOTAL_CYCLES \
@@ -5285,6 +5286,11 @@ static u32 build_range_store_block(u8 *code)
     }
   }
 
+  /* Keep the earliest alert exit more than 64 KiB from the shared tail even
+   * when normal block cycle accounting becomes smaller. */
+  for (site = 0; site < RANGE_STORE_PAD_NOPS; site++)
+    riscv_emit_nop();
+
   riscv_emit_block_finalize(meta, &translation_ptr,
                             RANGE_STORE_START_PC, RANGE_STORE_END_PC, false);
   code_bytes = (u32)(translation_ptr - code);
@@ -8105,8 +8111,8 @@ static void run_thumb_helper_exit_warm_cache_case(void)
   expect_thumb_helper_exit_run("thumb_helper_exit_cache_cold");
 
   /* Keep the indirect cache populated by the cold run.  A hit used to jump
-   * directly into the target while s10 still held the pre-helper LR, even
-   * though the helper had published a new LR in reg[]. */
+   * directly into the target with stale mapped state after the helper had
+   * published a new LR in reg[]. */
   prepare_thumb_helper_exit_run();
   execute_arm_translate_internal(THUMB_HELPER_EXIT_CYCLES +
                                  THUMB_HELPER_EXIT_TARGET_CYCLES,

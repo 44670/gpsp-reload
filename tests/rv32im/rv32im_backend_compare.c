@@ -1067,7 +1067,7 @@ __asm__(
   "  lw s7, 44(t4)\n"
   "  lw s8, 48(t4)\n"
   "  lw s9, 52(t4)\n"
-  "  lw s10, 56(t4)\n"
+  "  li s10, 0\n"
   "  lw s11, 64(t4)\n"
   "  srli s11, s11, 28\n"
   "  andi s11, s11, 15\n"

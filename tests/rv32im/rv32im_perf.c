@@ -531,7 +531,7 @@ typedef struct mapped_alu_encoding_case
 {
   const char *name;
   u32 opcode;
-  u32 expected[2];
+  u32 expected[4];
   u32 expected_words;
 } mapped_alu_encoding_case;
 
@@ -552,6 +552,27 @@ static u32 encode_rv32_i(u32 funct3, riscv_reg_number rd,
     (((u32)rs1 & 0x1fu) << 15) |
     ((funct3 & 0x7u) << 12) |
     (((u32)rd & 0x1fu) << 7) | 0x13u;
+}
+
+static u32 encode_rv32_load(u32 funct3, riscv_reg_number rd,
+                            riscv_reg_number rs1, s32 immediate)
+{
+  return (((u32)immediate & 0xfffu) << 20) |
+    (((u32)rs1 & 0x1fu) << 15) |
+    ((funct3 & 0x7u) << 12) |
+    (((u32)rd & 0x1fu) << 7) | 0x03u;
+}
+
+static u32 encode_rv32_store(u32 funct3, riscv_reg_number rs1,
+                             riscv_reg_number rs2, s32 immediate)
+{
+  u32 encoded = (u32)immediate & 0xfffu;
+
+  return ((encoded >> 5) << 25) |
+    (((u32)rs2 & 0x1fu) << 20) |
+    (((u32)rs1 & 0x1fu) << 15) |
+    ((funct3 & 0x7u) << 12) |
+    ((encoded & 0x1fu) << 7) | 0x23u;
 }
 
 static u32 encode_arm_reg_alu(u32 op, u32 rn, u32 rd, u32 rm)
@@ -591,9 +612,15 @@ static int verify_mapped_alu_encodings(void)
   ADD_ENCODING_CASE("rsb_alias_rm", 0x3, 0, 1, 1, 1);
   cases[2].expected[0] =
     encode_rv32_r(0x20, 0x0, riscv_reg_a4, riscv_reg_a4, riscv_reg_a3);
-  ADD_ENCODING_CASE("eor", 0x1, 5, 8, 14, 1);
+  ADD_ENCODING_CASE("eor", 0x1, 5, 8, 14, 4);
   cases[3].expected[0] =
-    encode_rv32_r(0x00, 0x4, riscv_reg_s4, riscv_reg_s1, riscv_reg_s10);
+    encode_rv32_i(0x0, riscv_reg_t0, riscv_reg_s1, 0);
+  cases[3].expected[1] =
+    encode_rv32_load(0x2, riscv_reg_t1, riscv_reg_s0, REG_LR * 4);
+  cases[3].expected[2] =
+    encode_rv32_r(0x00, 0x4, riscv_reg_t2, riscv_reg_t0, riscv_reg_t1);
+  cases[3].expected[3] =
+    encode_rv32_i(0x0, riscv_reg_s4, riscv_reg_t2, 0);
   ADD_ENCODING_CASE("and", 0x0, 3, 4, 2, 1);
   cases[4].expected[0] =
     encode_rv32_r(0x00, 0x7, riscv_reg_a7, riscv_reg_a6, riscv_reg_a5);
@@ -619,9 +646,15 @@ static int verify_mapped_alu_encodings(void)
   ADD_ENCODING_CASE("add_all_alias", 0x4, 4, 4, 4, 1);
   cases[10].expected[0] =
     encode_rv32_r(0x00, 0x0, riscv_reg_a7, riscv_reg_a7, riscv_reg_a7);
-  ADD_ENCODING_CASE("add_sp_lr_alias", 0x4, 13, 14, 14, 1);
+  ADD_ENCODING_CASE("add_sp_lr_alias", 0x4, 13, 14, 14, 4);
   cases[11].expected[0] =
-    encode_rv32_r(0x00, 0x0, riscv_reg_s10, riscv_reg_s9, riscv_reg_s10);
+    encode_rv32_i(0x0, riscv_reg_t0, riscv_reg_s9, 0);
+  cases[11].expected[1] =
+    encode_rv32_load(0x2, riscv_reg_t1, riscv_reg_s0, REG_LR * 4);
+  cases[11].expected[2] =
+    encode_rv32_r(0x00, 0x0, riscv_reg_t2, riscv_reg_t0, riscv_reg_t1);
+  cases[11].expected[3] =
+    encode_rv32_store(0x2, riscv_reg_s0, riscv_reg_t2, REG_LR * 4);
 
 #undef ADD_ENCODING_CASE
 

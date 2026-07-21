@@ -169,7 +169,6 @@ enum
   RISCV_STACK_JIT_LOOP_RETURN = 88,
   RISCV_STACK_JIT_RUN_BLOCK = 92,
   RISCV_STACK_CYCLES_PTR = 96,
-  RISCV_STACK_CYCLES_VALUE = 100,
   RISCV_INITIAL_ROM_WATERMARK = 16,
   RISCV_BLOCK_NATIVE_SUPPORTED = 1u,
   RISCV_BLOCK_PC_WRITTEN = 2u,
@@ -308,8 +307,9 @@ __asm__(
   "4:\n"
 #endif
   "  lw t0, 96(sp)\n"
-  "  lw t0, 0(t0)\n"
-  "  sw t0, 100(sp)\n"
+  /* s10 is the JIT cycle register.  Reload it only after the C dispatcher,
+   * which is the sole path allowed to replace the scheduler budget. */
+  "  lw s10, 0(t0)\n"
   "  lw a3, 0(s0)\n"
   "  lw a4, 4(s0)\n"
   "  lw a5, 8(s0)\n"
@@ -324,7 +324,6 @@ __asm__(
   "  lw s7, 44(s0)\n"
   "  lw s8, 48(s0)\n"
   "  lw s9, 52(s0)\n"
-  "  lw s10, 56(s0)\n"
   "  lw s11, 64(s0)\n"
   "  srli s11, s11, 28\n"
   "  andi s11, s11, 15\n"
@@ -359,9 +358,8 @@ __asm__(
   ".globl riscv_jit_run_block_tail\n"
   ".type riscv_jit_run_block_tail, @function\n"
   "riscv_jit_run_block_tail:\n"
-  "  lw t4, 100(sp)\n"
   "  lw t5, 96(sp)\n"
-  "  sw t4, 0(t5)\n"
+  "  sw s10, 0(t5)\n"
   "  lw ra, 88(sp)\n"
   "  lw t0, 92(sp)\n"
   "  jalr zero, t0, 0\n"
@@ -374,16 +372,13 @@ __asm__(
   ".globl riscv_jit_indirect_lookup_tail\n"
   ".type riscv_jit_indirect_lookup_tail, @function\n"
   "riscv_jit_indirect_lookup_tail:\n"
-  "  lw t4, 100(sp)\n"
-  "  lw t5, 96(sp)\n"
-  "  sw t4, 0(t5)\n"
 #if defined(RISCV_RUNTIME_INDIRECT_LOOKUP_PROFILE_SWITCH)
   "  lla t0, riscv_runtime_perf_disable_indirect_lookup_cache\n"
   "  lw t0, 0(t0)\n"
   "  bnez t0, .Lriscv_jit_tail_slow\n"
 #endif
   /* Cycle exhaustion must take the scheduler path before any cached jump. */
-  "  bge zero, t4, .Lriscv_jit_tail_slow\n"
+  "  bge zero, s10, .Lriscv_jit_tail_slow\n"
 #if defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
   "  lla t0, riscv_control_indirect_cache_attempts\n"
   "  lw t1, 0(t0)\n"
@@ -446,6 +441,8 @@ __asm__(
 #endif
   "  jalr zero, t6, 0\n"
   ".Lriscv_jit_tail_slow:\n"
+  "  lw t5, 96(sp)\n"
+  "  sw s10, 0(t5)\n"
   "  lw ra, 88(sp)\n"
   "  lw t0, 92(sp)\n"
   "  jalr zero, t0, 0\n"
@@ -617,12 +614,13 @@ static bool riscv_arm_conditional_block_active;
 static u32 riscv_arm_conditional_entry_dirty_mask;
 static u32 riscv_arm_conditional_entry_valid_mask;
 
-#define RISCV_MAPPED_REG_COUNT 16u
-#define RISCV_MAPPED_GPR_COUNT 15u
-#define RISCV_MAPPED_NZCV_SLOT 15u
+#define RISCV_MAPPED_REG_COUNT 15u
+#define RISCV_MAPPED_GPR_COUNT 14u
+#define RISCV_MAPPED_NZCV_SLOT 14u
 #define RISCV_MAPPED_REGS_MASK ((1u << RISCV_MAPPED_REG_COUNT) - 1u)
 #define RISCV_MAPPED_NZCV_MASK (1u << RISCV_MAPPED_NZCV_SLOT)
 #define RISCV_MAPPED_CALLER_SAVED_MASK ((1u << 5) - 1u)
+#define RISCV_CYCLES_REG riscv_reg_s10
 
 static const riscv_reg_number riscv_mapped_host_regs[RISCV_MAPPED_REG_COUNT] =
 {
@@ -640,14 +638,13 @@ static const riscv_reg_number riscv_mapped_host_regs[RISCV_MAPPED_REG_COUNT] =
   riscv_reg_s7,  /* r11 */
   riscv_reg_s8,  /* r12 */
   riscv_reg_s9,  /* r13 / SP */
-  riscv_reg_s10, /* r14 / LR */
   riscv_reg_s11  /* packed NZCV: N=8, Z=4, C=2, V=1 */
 };
 
 static const u8 riscv_mapped_state_regs[RISCV_MAPPED_REG_COUNT] =
 {
   0, 1, 2, 3, 4, 5, 6, 7,
-  8, 9, 10, 11, 12, REG_SP, REG_LR, REG_CPSR
+  8, 9, 10, 11, 12, REG_SP, REG_CPSR
 };
 
 static u32 riscv_block_meta_thumb(const riscv_jit_block_meta *meta)
@@ -739,8 +736,8 @@ static void riscv_emit_jit_run_block_tail_jump(
    * mapped guest registers must still be live.  An exiting C helper updates
    * the state array and deliberately skips its reload because the normal
    * dispatcher return reloads at the outer loop.  Sending that block through
-   * the cache-hit tail would bypass the reload and execute with stale s1-s11
-   * values (notably guest LR in s10). */
+   * the cache-hit tail would bypass the reload and execute with stale mapped
+   * guest values. */
   if (meta && (meta->flags & RISCV_BLOCK_PC_WRITTEN) &&
       (riscv_mapped_valid_mask & RISCV_MAPPED_REGS_MASK) ==
         RISCV_MAPPED_REGS_MASK)
@@ -1067,7 +1064,7 @@ static bool riscv_arm_reg_mapped(u32 reg_index, riscv_reg_number *host_reg,
 {
   u32 slot;
 
-  if (reg_index < REG_PC)
+  if (reg_index < RISCV_MAPPED_GPR_COUNT)
   {
     slot = reg_index;
   }
@@ -1181,7 +1178,8 @@ void riscv_emit_debug_arm_instruction_probe(u8 **ptr_ref, u32 pc)
                 offsetof(riscv_runtime_debug_arm_probe, host_r12));
   riscv_emit_sw(riscv_reg_s9, riscv_reg_t2,
                 offsetof(riscv_runtime_debug_arm_probe, host_sp));
-  riscv_emit_sw(riscv_reg_s10, riscv_reg_t2,
+  riscv_emit_lw(riscv_reg_t0, riscv_reg_s0, REG_LR * 4u);
+  riscv_emit_sw(riscv_reg_t0, riscv_reg_t2,
                 offsetof(riscv_runtime_debug_arm_probe, host_lr));
   riscv_emit_sw(riscv_reg_s11, riscv_reg_t2,
                 offsetof(riscv_runtime_debug_arm_probe, host_nzcv));
@@ -2921,36 +2919,24 @@ static void riscv_emit_arm_memory_const_offset(u8 **ptr_ref,
                                                u32 const_offset,
                                                riscv_reg_number *writeback_reg);
 
-static void riscv_emit_cycles_load(u8 **ptr_ref, riscv_reg_number rd)
+static void riscv_emit_cycles_set(u8 **ptr_ref, riscv_reg_number rs)
 {
-  u8 *translation_ptr = *ptr_ref;
+  u8 *translation_ptr;
 
-  riscv_emit_lw(rd, riscv_reg_sp, RISCV_STACK_CYCLES_VALUE);
+  if (rs == RISCV_CYCLES_REG)
+    return;
 
-  *ptr_ref = translation_ptr;
-}
-
-static void riscv_emit_cycles_store(u8 **ptr_ref, riscv_reg_number rs)
-{
-  u8 *translation_ptr = *ptr_ref;
-
-  riscv_emit_sw(rs, riscv_reg_sp, RISCV_STACK_CYCLES_VALUE);
-
+  translation_ptr = *ptr_ref;
+  riscv_emit_addi(RISCV_CYCLES_REG, rs, 0);
   *ptr_ref = translation_ptr;
 }
 
 static void riscv_emit_cycles_sub_reg(u8 **ptr_ref, riscv_reg_number rs)
 {
-  u8 *ptr = *ptr_ref;
-  u8 *translation_ptr;
+  u8 *translation_ptr = *ptr_ref;
 
-  riscv_emit_cycles_load(&ptr, riscv_reg_t4);
-  translation_ptr = ptr;
-  riscv_emit_sub(riscv_reg_t4, riscv_reg_t4, rs);
-  ptr = translation_ptr;
-  riscv_emit_cycles_store(&ptr, riscv_reg_t4);
-
-  *ptr_ref = ptr;
+  riscv_emit_sub(RISCV_CYCLES_REG, RISCV_CYCLES_REG, rs);
+  *ptr_ref = translation_ptr;
 }
 
 static void riscv_emit_adjust_cycles(u8 **ptr, u32 cycles)
@@ -2960,22 +2946,20 @@ static void riscv_emit_adjust_cycles(u8 **ptr, u32 cycles)
   if (!cycles)
     return;
 
-  riscv_emit_cycles_load(ptr, riscv_reg_t4);
   translation_ptr = *ptr;
   if (cycles <= 2047u)
   {
-    riscv_emit_addi(riscv_reg_t4, riscv_reg_t4, -(int)cycles);
+    riscv_emit_addi(RISCV_CYCLES_REG, RISCV_CYCLES_REG, -(int)cycles);
   }
   else
   {
     *ptr = translation_ptr;
     riscv_emit_li(ptr, riscv_reg_t5, cycles);
     translation_ptr = *ptr;
-    riscv_emit_sub(riscv_reg_t4, riscv_reg_t4, riscv_reg_t5);
+    riscv_emit_sub(RISCV_CYCLES_REG, RISCV_CYCLES_REG, riscv_reg_t5);
   }
 
   *ptr = translation_ptr;
-  riscv_emit_cycles_store(ptr, riscv_reg_t4);
 }
 
 static void riscv_note_c_call_clobbers_mapped_regs(void)
@@ -3083,6 +3067,21 @@ static void riscv_emit_c_call_stack(u8 **ptr, u32 stack_offset)
   riscv_mapped_dirty_mask &= ~RISCV_MAPPED_CALLER_SAVED_MASK;
   riscv_emit_mapped_regs_reload_mask(ptr, RISCV_MAPPED_CALLER_SAVED_MASK);
 }
+
+#if defined(RISCV_RUNTIME_HAS_FAST_RAM_READS)
+static void riscv_emit_c_call_address(u8 **ptr, uintptr_t target)
+{
+  riscv_emit_mapped_regs_flush_dirty(ptr);
+  riscv_emit_c_call_address_raw(ptr, target);
+  riscv_emit_test_poison_mapped_regs(ptr, RISCV_MAPPED_CALLER_SAVED_MASK);
+#if defined(RISCV_RUNTIME_PERF_COUNTERS)
+  riscv_perf_mapped_invalidate_sites++;
+#endif
+  riscv_mapped_valid_mask &= ~RISCV_MAPPED_CALLER_SAVED_MASK;
+  riscv_mapped_dirty_mask &= ~RISCV_MAPPED_CALLER_SAVED_MASK;
+  riscv_emit_mapped_regs_reload_mask(ptr, RISCV_MAPPED_CALLER_SAVED_MASK);
+}
+#endif
 
 #if defined(RISCV_RUNTIME_DISABLE_READ_HELPER_OPT)
 #define riscv_emit_read_call_stack riscv_emit_c_call_stack
@@ -3215,6 +3214,44 @@ static void riscv_emit_memory_read_call_stack_known(
 #else
   (void)direct_target;
   (void)known_nonram;
+#endif
+  riscv_emit_memory_read_call_stack(ptr, stack_offset);
+}
+
+#if defined(RISCV_RUNTIME_HAS_FAST_RAM_READS)
+static u32 function_cc riscv_read_u8_pc(u32 address, u32 pc);
+static u32 function_cc riscv_read_u16_pc(u32 address, u32 pc);
+static u32 function_cc riscv_read_u32_pc(u32 address, u32 pc);
+static u32 function_cc riscv_read_s8_pc(u32 address, u32 pc);
+static u32 function_cc riscv_read_s16_pc(u32 address, u32 pc);
+#define RISCV_THUMB_READ8_TARGET riscv_read_u8_pc
+#define RISCV_THUMB_READ16_TARGET riscv_read_u16_pc
+#define RISCV_THUMB_READ32_TARGET riscv_read_u32_pc
+#define RISCV_THUMB_READS8_TARGET riscv_read_s8_pc
+#define RISCV_THUMB_READS16_TARGET riscv_read_s16_pc
+#else
+#define RISCV_THUMB_READ8_TARGET read_memory8
+#define RISCV_THUMB_READ16_TARGET read_memory16
+#define RISCV_THUMB_READ32_TARGET read_memory32
+#define RISCV_THUMB_READS8_TARGET read_memory8s
+#define RISCV_THUMB_READS16_TARGET read_memory16s
+#endif
+
+/* The shared RAM classifier helps ARM workloads with dynamic addresses, but
+ * it lengthens Thumb's dense stack/register-relative loads.  Keep Thumb on
+ * the one complete C-helper contract instead of adding a second narrow-call
+ * model solely to retain that classifier. */
+static void riscv_emit_thumb_memory_read_call(
+  u8 **ptr, u32 stack_offset, uintptr_t direct_target)
+{
+#if defined(RISCV_RUNTIME_HAS_FAST_RAM_READS)
+  if (riscv_fast_ram_reads_enabled())
+  {
+    riscv_emit_c_call_address(ptr, direct_target);
+    return;
+  }
+#else
+  (void)direct_target;
 #endif
   riscv_emit_memory_read_call_stack(ptr, stack_offset);
 }
@@ -3403,10 +3440,9 @@ static u8 *riscv_emit_branch_patch_site_with_cycle_exit(
   riscv_emit_control_counter_increment(
     &ptr, &riscv_control_direct_chain_attempts);
 #endif
-  riscv_emit_cycles_load(&ptr, riscv_reg_t4);
   translation_ptr = ptr;
   cycle_exit_branch = translation_ptr;
-  riscv_emit_bge(riscv_reg_zero, riscv_reg_t4, 0);
+  riscv_emit_bge(riscv_reg_zero, RISCV_CYCLES_REG, 0);
   ptr = translation_ptr;
 
 #if defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
@@ -3458,10 +3494,9 @@ static u8 *riscv_emit_terminal_branch_patch_site_with_cycle_exit(
   riscv_emit_control_counter_increment(
     &ptr, &riscv_control_direct_chain_attempts);
 #endif
-  riscv_emit_cycles_load(&ptr, riscv_reg_t4);
   translation_ptr = ptr;
   cycle_exit_branch = translation_ptr;
-  riscv_emit_bge(riscv_reg_zero, riscv_reg_t4, 0);
+  riscv_emit_bge(riscv_reg_zero, RISCV_CYCLES_REG, 0);
   ptr = translation_ptr;
 
 #if defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
@@ -3991,10 +4026,9 @@ bool riscv_emit_cycle_update(u8 **translation_ptr_ref,
   riscv_emit_adjust_cycles(translation_ptr_ref, cycles);
   ptr = *translation_ptr_ref;
 
-  riscv_emit_cycles_load(&ptr, riscv_reg_t4);
   translation_ptr = ptr;
   continue_branch = translation_ptr;
-  riscv_emit_b(0x4, riscv_reg_zero, riscv_reg_t4, 0);
+  riscv_emit_b(0x4, riscv_reg_zero, RISCV_CYCLES_REG, 0);
   ptr = translation_ptr;
   riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_t0, pc);
   riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t0);
@@ -4124,8 +4158,7 @@ riscv_store_u32(u32 address, u32 value)
 #undef RISCV_STORE_SLOW_ATTR
 
 #if defined(RISCV_RUNTIME_DISABLE_READ_HELPER_OPT) || \
-    (defined(RISCV_RUNTIME_HAS_FAST_RAM_READS) && \
-     defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH))
+    defined(RISCV_RUNTIME_HAS_FAST_RAM_READS)
 static u32 function_cc __attribute__((used, noinline))
 riscv_read_u8_pc(u32 address, u32 pc)
 {
@@ -8476,7 +8509,7 @@ static bool riscv_emit_native_arm_direct_branch(u8 **translation_ptr_ref,
     /* Keep the scheduler checkpoint on the patched path. A direct chain can
        otherwise run forever without returning through riscv_jit_run_block. */
     if (target_pc == idle_loop_target_pc)
-      riscv_emit_cycles_store(&ptr, riscv_reg_zero);
+      riscv_emit_cycles_set(&ptr, riscv_reg_zero);
 
     if (branch_source)
       *branch_source = riscv_emit_branch_patch_site_with_cycle_exit(
@@ -8642,7 +8675,7 @@ static bool riscv_emit_native_arm_swi_common(u8 **translation_ptr_ref,
   if (patchable)
   {
     if (idle_loop_target_pc == 0x00000008u)
-      riscv_emit_cycles_store(&ptr, riscv_reg_zero);
+      riscv_emit_cycles_set(&ptr, riscv_reg_zero);
 
     if (branch_source)
       *branch_source = riscv_emit_branch_patch_site_with_cycle_exit(
@@ -10908,7 +10941,6 @@ bool riscv_emit_native_thumb_access_memory(u8 **translation_ptr_ref,
   bool reg_offset = false;
   bool pc_relative = false;
   bool sp_relative = false;
-  bool known_nonram = false;
   u8 *ptr = *translation_ptr_ref;
   u8 *translation_ptr;
 
@@ -11007,11 +11039,6 @@ bool riscv_emit_native_thumb_access_memory(u8 **translation_ptr_ref,
 
   if (pc_relative)
   {
-    if (riscv_fast_ram_reads_enabled())
-    {
-      u32 region = offset >> 24;
-      known_nonram = region != 0x02u && region != 0x03u;
-    }
     riscv_emit_li(&ptr, riscv_reg_a0, offset);
   }
   else
@@ -11039,29 +11066,29 @@ bool riscv_emit_native_thumb_access_memory(u8 **translation_ptr_ref,
     switch (mem_type)
     {
       case 0:
-        riscv_emit_memory_read_call_stack_known(
-          &ptr, RISCV_STACK_HELPER_READ32, (uintptr_t)read_memory32,
-          known_nonram);
+        riscv_emit_thumb_memory_read_call(
+          &ptr, RISCV_STACK_HELPER_READ32,
+          (uintptr_t)RISCV_THUMB_READ32_TARGET);
         break;
       case 1:
-        riscv_emit_memory_read_call_stack_known(
-          &ptr, RISCV_STACK_HELPER_READ16, (uintptr_t)read_memory16,
-          known_nonram);
+        riscv_emit_thumb_memory_read_call(
+          &ptr, RISCV_STACK_HELPER_READ16,
+          (uintptr_t)RISCV_THUMB_READ16_TARGET);
         break;
       case 2:
-        riscv_emit_memory_read_call_stack_known(
-          &ptr, RISCV_STACK_HELPER_READ8, (uintptr_t)read_memory8,
-          known_nonram);
+        riscv_emit_thumb_memory_read_call(
+          &ptr, RISCV_STACK_HELPER_READ8,
+          (uintptr_t)RISCV_THUMB_READ8_TARGET);
         break;
       case 3:
-        riscv_emit_memory_read_call_stack_known(
-          &ptr, RISCV_STACK_HELPER_READ8S, (uintptr_t)read_memory8s,
-          known_nonram);
+        riscv_emit_thumb_memory_read_call(
+          &ptr, RISCV_STACK_HELPER_READ8S,
+          (uintptr_t)RISCV_THUMB_READS8_TARGET);
         break;
       default:
-        riscv_emit_memory_read_call_stack_known(
-          &ptr, RISCV_STACK_HELPER_READ16S, (uintptr_t)read_memory16s,
-          known_nonram);
+        riscv_emit_thumb_memory_read_call(
+          &ptr, RISCV_STACK_HELPER_READ16S,
+          (uintptr_t)RISCV_THUMB_READS16_TARGET);
         break;
     }
 
@@ -11524,7 +11551,7 @@ bool riscv_emit_native_thumb_swi_patchable(u8 **translation_ptr_ref,
   riscv_emit_adjust_cycles(&ptr, cycles);
 
   if (idle_loop_target_pc == 0x00000008u)
-    riscv_emit_cycles_store(&ptr, riscv_reg_zero);
+    riscv_emit_cycles_set(&ptr, riscv_reg_zero);
 
   if (branch_source)
     *branch_source = riscv_emit_branch_patch_site_with_cycle_exit(

@@ -173,15 +173,19 @@ The MIPS backend keeps many guest registers resident in host registers, then
 saves/restores them around C helpers and special memory paths. It also
 collapses/extracts CPSR flags at helper boundaries that observe or mutate CPSR.
 
-The current RV32IM backend maps guest `r0..r4` to `a3..a7`, `r5..r14` to
-`s1..s10`, keeps packed NZCV in `s11`, and reserves `s0` as the CPU-state base.
+The current RV32IM backend maps guest `r0..r4` to `a3..a7` and `r5..r13` to
+`s1..s9`, keeps the cycle budget in `s10`, keeps packed NZCV in `s11`, and
+reserves `s0` as the CPU-state base. Guest `r14`/LR remains authoritative in
+the shared CPU state because RV32 has one fewer practical callee-saved register
+than this contract needs. Keeping cycles resident is more valuable: every
+block consumes and tests them, while LR traffic is comparatively sparse.
 Conservative standard-C and stateful helpers still materialize the mappings
 they may observe and invalidate/reload the mappings they may mutate. Ordinary
 reads now use a narrower proven contract:
 
 | Read boundary | State synchronization | RV32 psABI behavior |
 | --- | --- | --- |
-| EWRAM/IWRAM leaf | Spill dirty mapped `a3-a7`; keep `s1-s11` live; do not materialize PC unless the slow tail is taken | Shared stub uses `a0`, `t0-t2`; returns the value in `a0`; emitted code lazily reloads invalidated caller-saved mappings |
+| EWRAM/IWRAM leaf | Spill dirty mapped `a3-a7`; keep `s1-s9`, `s11`, and the `s10` cycle budget live; do not materialize PC unless the slow tail is taken | Shared stub uses `a0`, `t0-t2`; returns the value in `a0`; emitted code lazily reloads invalidated caller-saved mappings |
 | Dynamic non-RAM slow tail | Same conservative caller-saved spill; store the current guest PC before device/open-bus logic | Tail-call the complete `read_memory*` C helper; standard callee-saved registers remain valid |
 | Frontend-proven non-RAM | Store guest PC, spill dirty caller-saved mappings, keep callee-saved mappings live | PC-relative `auipc`/`jalr` call directly to the standard C helper, skipping only the known-failing RAM test |
 | Store, alerting, or stateful helper | Existing full observation/mutation boundary | Standard psABI call and explicit mapped-state reload/invalidation policy |
@@ -192,9 +196,10 @@ Therefore:
 - do not keep guest values live across C calls unless the stub saves them
 - preserve any guest-visible register, CPSR, SPSR, mode, bus-value, OAM, HALT,
   and sleep-cycle state that a helper can observe
-- generated helper calls may clobber `ra`; the entry loop keeps the block-return
-  address in its private stack frame, and every terminal exit restores that
-  continuation before tail-jumping to `riscv_jit_run_block()`
+- generated helper calls may clobber `ra`, but standard psABI helpers preserve
+  the resident `s10` cycle budget; the entry loop keeps the block-return address
+  in its private stack frame, and every terminal exit restores that continuation
+  before tail-jumping to `riscv_jit_run_block()`
 
 The fixed mapping is part of the tested backend ABI. Any later allocation or
 helper-boundary optimization must preserve the same explicit dirty/valid-state
