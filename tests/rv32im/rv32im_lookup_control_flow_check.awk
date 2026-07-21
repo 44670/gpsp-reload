@@ -59,6 +59,8 @@ BEGIN {
     expected_slow_indirect = slow_indirect_cold_runs[workload]
   expected_cache_attempts = cache_runs[workload] * iterations
   expected_cache_hits = phase == "warm" ? expected_cache_attempts : 0
+  expected_lookup_stubs = expected_slow_indirect
+  expected_slow_paths = iterations
 
   if (field("result") != "PASS")
     fail(key " was not PASS")
@@ -66,6 +68,10 @@ BEGIN {
       (field("lookups") + 0) != expected_dispatcher ||
       (field("helper_terminal") + 0) != expected_dispatcher)
     fail(key " dispatcher/lookup count changed")
+  if ((field("lookup_stub_entries") + 0) != expected_lookup_stubs ||
+      (field("slow_path_entries") + 0) != expected_slow_paths ||
+      expected_lookup_stubs + expected_slow_paths != expected_dispatcher)
+    fail(key " lookup/slow stub split changed")
   if ((field("direct_chain_attempts") + 0) != expected_direct ||
       (field("direct_chain_hits") + 0) != expected_direct)
     fail(key " direct-chain count changed")
@@ -94,6 +100,8 @@ BEGIN {
       (field("indirect_lookup_misses") + 0) != 1 ||
       (field("indirect_cache_attempts") + 0) != 1 ||
       (field("indirect_cache_hits") + 0) != 0 ||
+      (field("lookup_stub_entries") + 0) != 1 ||
+      (field("slow_path_entries") + 0) != 0 ||
       (field("lookups") + 0) != 2 ||
       (field("terminal_calls") + 0) != 1 ||
       (field("fallbacks") + 0) != 1 ||
@@ -103,6 +111,24 @@ BEGIN {
     fail("indirect miss did not take exactly one cache and slow miss")
 }
 
+/ command=rv32im-control-flow / && / case=fallthrough_lookup / {
+  fallthrough_seen++
+  if (field("result") != "PASS" ||
+      (field("dispatcher_entries") + 0) != 2 ||
+      (field("lookup_stub_entries") + 0) != 1 ||
+      (field("slow_path_entries") + 0) != 1 ||
+      (field("fallthrough_lookup_hits") + 0) != 1 ||
+      (field("scheduler_updates") + 0) != 1 ||
+      (field("cycle_exits") + 0) != 1 ||
+      (field("lookups") + 0) != 2 ||
+      (field("terminal_calls") + 0) != 2 ||
+      (field("update_calls") + 0) != 1 ||
+      field("update_cycles") != "0x00000000" ||
+      field("pc") != "0x08017008" ||
+      field("reason") != "lookup_bypassed_scheduler_slow_path")
+    fail("fallthrough lookup did not preserve resident cycles and split stubs")
+}
+
 / command=rv32im-lookup-control-flow / && / case=generation_invalidation / {
   invalidation_seen++
   if (field("result") != "PASS" ||
@@ -110,6 +136,8 @@ BEGIN {
       (field("cache_hits") + 0) != 0 ||
       (field("dispatcher_entries") + 0) != 16 ||
       (field("lookups") + 0) != 16 ||
+      (field("lookup_stub_entries") + 0) != 15 ||
+      (field("slow_path_entries") + 0) != 1 ||
       field("reason") != "generation_rejected_stale_entries")
     fail("generation invalidation reused a stale translated entry")
 }
@@ -119,16 +147,18 @@ BEGIN {
   guard = field("case")
   guard_seen[guard]++
   if (field("result") != "PASS" ||
-      (field("cache_attempts") + 0) != 1 ||
+      (field("cache_attempts") + 0) != 0 ||
       (field("cache_hits") + 0) != 0 ||
       (field("dispatcher_entries") + 0) != 1 ||
       (field("scheduler_updates") + 0) != 1 ||
+      (field("lookup_stub_entries") + 0) != 0 ||
+      (field("slow_path_entries") + 0) != 1 ||
       (field("lookups") + 0) != 1 ||
       (field("terminal_calls") + 0) != 1 ||
       (field("update_calls") + 0) != 1 ||
       field("pc") != "0x08016008" ||
-      field("reason") != "cached_edge_deferred_to_scheduler")
-    fail(guard " did not reject the cached edge at the scheduler boundary")
+      field("reason") != "scheduler_preempted_cached_edge")
+    fail(guard " did not preempt the cache at the scheduler boundary")
   if (guard == "idle_loop" && field("update_cycles") != "0x00000000")
     fail("idle-loop guard did not force cycle exhaustion")
 }
@@ -141,6 +171,8 @@ END {
   }
   if (miss_seen != 1)
     fail("missing exactly one indirect miss result")
+  if (fallthrough_seen != 1)
+    fail("missing exactly one fallthrough lookup result")
   if (invalidation_seen != 1)
     fail("missing exactly one generation invalidation result")
   if (guard_seen["halt_state"] != 1 || guard_seen["idle_loop"] != 1 ||
@@ -152,7 +184,8 @@ END {
     exit 1
   print "result=PASS command=rv32im-lookup-control-flow case=all " \
     "workloads=6 cold_cache_misses=15 warm_cache_hits=1920 " \
-    "dispatcher_bypass=1 scheduler_guards=halt,idle,alert " \
+    "dispatcher_bypass=1 split_control_stubs=1 " \
+    "scheduler_guards=halt,idle,alert " \
     "miss_fallback=1 repeatable=1 " \
     "reason=indirect_lookup_cache_taken_paths_verified"
 }

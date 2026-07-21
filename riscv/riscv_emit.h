@@ -76,6 +76,9 @@ typedef struct riscv_runtime_stats
    * instruction-count builds prevents the observer from perturbing cold
    * translation windows. */
 #if defined(RISCV_RUNTIME_CONTROL_FLOW_COUNTERS)
+  /* Compatibility aggregate: the number of terminal C-stub entries. The
+   * implementation no longer has a normal-path C dispatcher; split counters
+   * below identify lookup-only versus scheduler/fallback slow entries. */
   u32 control_dispatcher_entries;
   u32 control_direct_chain_attempts;
   u32 control_direct_chain_hits;
@@ -87,6 +90,8 @@ typedef struct riscv_runtime_stats
   u32 control_fallthrough_lookup_hits;
   u32 control_fallthrough_lookup_misses;
   u32 control_scheduler_updates;
+  u32 control_lookup_stub_entries;
+  u32 control_slow_path_entries;
 #endif
 } riscv_runtime_stats;
 
