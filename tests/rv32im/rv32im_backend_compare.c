@@ -62,6 +62,10 @@ u16 palette_ram[512];
 u16 palette_ram_converted[512];
 u16 oam_ram[512];
 u16 io_registers[512];
+volatile u32 backend_compare_fast_read_mapped_preserved
+  __attribute__((used));
+volatile u32 backend_compare_fast_store_mapped_preserved
+  __attribute__((used));
 #endif
 
 u32 idle_loop_target_pc = 0xffffffffu;
@@ -74,6 +78,7 @@ void *stdout;
 #if !defined(BACKEND_COMPARE_REAL_GBA_MEMORY)
 u8 bios_rom[1024 * 16];
 u32 gamepak_sticky_bit[1024 / 32];
+u32 gamepak_size;
 const u32 def_seq_cycles[16][2] =
 {
   { 1, 1 }, { 1, 1 }, { 3, 6 }, { 1, 1 },
@@ -464,6 +469,8 @@ u8 *load_gamepak_page(u32 physical_index)
 
 static u8 *address_ptr(u32 address)
 {
+  u32 offset;
+
   switch (address >> 24)
   {
     case 0x02:
@@ -475,7 +482,10 @@ static u8 *address_ptr(u32 address)
     case 0x05:
       return (u8 *)palette_ram + (address & 0x3ffu);
     case 0x06:
-      return vram + ((address & 0x1ffffu) % (1024u * 96u));
+      offset = address & 0x1ffffu;
+      if (offset >= 0x18000u)
+        offset -= 0x8000u;
+      return vram + offset;
     case 0x07:
       return (u8 *)oam_ram + (address & 0x3ffu);
     case 0x08:
@@ -592,6 +602,13 @@ cpu_alert_type function_cc write_memory8(u32 address, u8 value)
 {
   if ((address >> 24) == 0x04u)
     return write_io_register8(address, value);
+  if ((address >> 24) == 0x06u)
+  {
+    u8 *target = address_ptr(address & ~1u);
+    target[0] = value;
+    target[1] = value;
+    return CPU_ALERT_NONE;
+  }
   *address_ptr(address) = value;
   return CPU_ALERT_NONE;
 }
@@ -1026,7 +1043,8 @@ u32 riscv_fast_store_u8(u32 address, u32 value, u32 pc);
 u32 riscv_fast_store_u16(u32 address, u32 value, u32 pc);
 u32 riscv_fast_store_u32(u32 address, u32 value, u32 pc);
 u32 backend_compare_call_fast_read(u32 address, u32 pc,
-                                   u32 (*target)(u32, u32));
+                                   u32 (*target)(u32, u32),
+                                   const u32 *mapped_state);
 u32 backend_compare_call_fast_store(
   u32 address, u32 value, u32 pc,
   u32 (*target)(u32, u32, u32), const u32 *mapped_state);
@@ -1037,6 +1055,106 @@ __asm__(
   ".globl backend_compare_call_fast_read\n"
   ".type backend_compare_call_fast_read, @function\n"
   "backend_compare_call_fast_read:\n"
+  "  beqz a3, .Lfast_read_value_only\n"
+  "  addi sp, sp, -128\n"
+  "  sw ra, 0(sp)\n"
+  "  sw s0, 4(sp)\n"
+  "  sw s1, 8(sp)\n"
+  "  sw s2, 12(sp)\n"
+  "  sw s3, 16(sp)\n"
+  "  sw s4, 20(sp)\n"
+  "  sw s5, 24(sp)\n"
+  "  sw s6, 28(sp)\n"
+  "  sw s7, 32(sp)\n"
+  "  sw s8, 36(sp)\n"
+  "  sw s9, 40(sp)\n"
+  "  sw s10, 44(sp)\n"
+  "  sw s11, 48(sp)\n"
+  "  sw a2, 52(sp)\n"
+  "  sw a3, 56(sp)\n"
+  "  lla s0, reg\n"
+  "  mv t4, a3\n"
+  "  lw a3, 0(t4)\n"
+  "  lw a4, 4(t4)\n"
+  "  lw a5, 8(t4)\n"
+  "  lw a6, 12(t4)\n"
+  "  lw a7, 16(t4)\n"
+  "  lw s1, 20(t4)\n"
+  "  lw s2, 24(t4)\n"
+  "  lw s3, 28(t4)\n"
+  "  lw s4, 32(t4)\n"
+  "  lw s5, 36(t4)\n"
+  "  lw s6, 40(t4)\n"
+  "  lw s7, 44(t4)\n"
+  "  lw s8, 48(t4)\n"
+  "  lw s9, 52(t4)\n"
+  "  li s10, 0x5a5\n"
+  "  lw s11, 64(t4)\n"
+  "  srli s11, s11, 28\n"
+  "  andi s11, s11, 15\n"
+  "  lw t3, 52(sp)\n"
+  "  jalr ra, t3, 0\n"
+  "  sw a0, 60(sp)\n"
+  "  lw t4, 56(sp)\n"
+  "  li t0, 1\n"
+  "  lla t1, reg\n"
+  "  bne s0, t1, .Lfast_read_mapping_lost\n"
+  "  lw t1, 0(t4)\n"
+  "  bne a3, t1, .Lfast_read_mapping_lost\n"
+  "  lw t1, 4(t4)\n"
+  "  bne a4, t1, .Lfast_read_mapping_lost\n"
+  "  lw t1, 8(t4)\n"
+  "  bne a5, t1, .Lfast_read_mapping_lost\n"
+  "  lw t1, 12(t4)\n"
+  "  bne a6, t1, .Lfast_read_mapping_lost\n"
+  "  lw t1, 16(t4)\n"
+  "  bne a7, t1, .Lfast_read_mapping_lost\n"
+  "  lw t1, 20(t4)\n"
+  "  bne s1, t1, .Lfast_read_mapping_lost\n"
+  "  lw t1, 24(t4)\n"
+  "  bne s2, t1, .Lfast_read_mapping_lost\n"
+  "  lw t1, 28(t4)\n"
+  "  bne s3, t1, .Lfast_read_mapping_lost\n"
+  "  lw t1, 32(t4)\n"
+  "  bne s4, t1, .Lfast_read_mapping_lost\n"
+  "  lw t1, 36(t4)\n"
+  "  bne s5, t1, .Lfast_read_mapping_lost\n"
+  "  lw t1, 40(t4)\n"
+  "  bne s6, t1, .Lfast_read_mapping_lost\n"
+  "  lw t1, 44(t4)\n"
+  "  bne s7, t1, .Lfast_read_mapping_lost\n"
+  "  lw t1, 48(t4)\n"
+  "  bne s8, t1, .Lfast_read_mapping_lost\n"
+  "  lw t1, 52(t4)\n"
+  "  bne s9, t1, .Lfast_read_mapping_lost\n"
+  "  li t1, 0x5a5\n"
+  "  bne s10, t1, .Lfast_read_mapping_lost\n"
+  "  lw t1, 64(t4)\n"
+  "  srli t1, t1, 28\n"
+  "  andi t1, t1, 15\n"
+  "  beq s11, t1, .Lfast_read_mapping_checked\n"
+  ".Lfast_read_mapping_lost:\n"
+  "  li t0, 0\n"
+  ".Lfast_read_mapping_checked:\n"
+  "  lla t1, backend_compare_fast_read_mapped_preserved\n"
+  "  sw t0, 0(t1)\n"
+  "  lw a0, 60(sp)\n"
+  "  lw s11, 48(sp)\n"
+  "  lw s10, 44(sp)\n"
+  "  lw s9, 40(sp)\n"
+  "  lw s8, 36(sp)\n"
+  "  lw s7, 32(sp)\n"
+  "  lw s6, 28(sp)\n"
+  "  lw s5, 24(sp)\n"
+  "  lw s4, 20(sp)\n"
+  "  lw s3, 16(sp)\n"
+  "  lw s2, 12(sp)\n"
+  "  lw s1, 8(sp)\n"
+  "  lw s0, 4(sp)\n"
+  "  lw ra, 0(sp)\n"
+  "  addi sp, sp, 128\n"
+  "  ret\n"
+  ".Lfast_read_value_only:\n"
   "  addi sp, sp, -16\n"
   "  sw ra, 12(sp)\n"
   "  sw s0, 8(sp)\n"
@@ -1049,15 +1167,16 @@ __asm__(
   ".size backend_compare_call_fast_read, "
   ".-backend_compare_call_fast_read\n");
 
-/* Exercise the store stubs outside the JIT while preserving the psABI state
- * of this C caller.  Keep 4(sp) free: it is the compact outer JIT frame's
- * fast-store slow-tail return-address slot. */
+/* Exercise the store stubs outside the JIT while preserving this C caller's
+ * psABI state and checking that every fixed guest mapping survives both the
+ * native leaves and the nested C slow tail. */
 __asm__(
   ".text\n"
   ".align 2\n"
   ".globl backend_compare_call_fast_store\n"
   ".type backend_compare_call_fast_store, @function\n"
   "backend_compare_call_fast_store:\n"
+  "  beqz a4, .Lfast_store_value_only\n"
   "  addi sp, sp, -128\n"
   "  sw ra, 0(sp)\n"
   "  sw s0, 52(sp)\n"
@@ -1072,6 +1191,7 @@ __asm__(
   "  sw s9, 40(sp)\n"
   "  sw s10, 44(sp)\n"
   "  sw s11, 48(sp)\n"
+  "  sw a4, 56(sp)\n"
   "  mv t3, a3\n"
   "  mv t4, a4\n"
   "  lla s0, reg\n"
@@ -1094,6 +1214,50 @@ __asm__(
   "  srli s11, s11, 28\n"
   "  andi s11, s11, 15\n"
   "  jalr ra, t3, 0\n"
+  "  sw a0, 60(sp)\n"
+  "  lw t4, 56(sp)\n"
+  "  li t0, 1\n"
+  "  lla t1, reg\n"
+  "  bne s0, t1, .Lfast_store_mapping_lost\n"
+  "  lw t1, 0(t4)\n"
+  "  bne a3, t1, .Lfast_store_mapping_lost\n"
+  "  lw t1, 4(t4)\n"
+  "  bne a4, t1, .Lfast_store_mapping_lost\n"
+  "  lw t1, 8(t4)\n"
+  "  bne a5, t1, .Lfast_store_mapping_lost\n"
+  "  lw t1, 12(t4)\n"
+  "  bne a6, t1, .Lfast_store_mapping_lost\n"
+  "  lw t1, 16(t4)\n"
+  "  bne a7, t1, .Lfast_store_mapping_lost\n"
+  "  lw t1, 20(t4)\n"
+  "  bne s1, t1, .Lfast_store_mapping_lost\n"
+  "  lw t1, 24(t4)\n"
+  "  bne s2, t1, .Lfast_store_mapping_lost\n"
+  "  lw t1, 28(t4)\n"
+  "  bne s3, t1, .Lfast_store_mapping_lost\n"
+  "  lw t1, 32(t4)\n"
+  "  bne s4, t1, .Lfast_store_mapping_lost\n"
+  "  lw t1, 36(t4)\n"
+  "  bne s5, t1, .Lfast_store_mapping_lost\n"
+  "  lw t1, 40(t4)\n"
+  "  bne s6, t1, .Lfast_store_mapping_lost\n"
+  "  lw t1, 44(t4)\n"
+  "  bne s7, t1, .Lfast_store_mapping_lost\n"
+  "  lw t1, 48(t4)\n"
+  "  bne s8, t1, .Lfast_store_mapping_lost\n"
+  "  lw t1, 52(t4)\n"
+  "  bne s9, t1, .Lfast_store_mapping_lost\n"
+  "  bnez s10, .Lfast_store_mapping_lost\n"
+  "  lw t1, 64(t4)\n"
+  "  srli t1, t1, 28\n"
+  "  andi t1, t1, 15\n"
+  "  beq s11, t1, .Lfast_store_mapping_checked\n"
+  ".Lfast_store_mapping_lost:\n"
+  "  li t0, 0\n"
+  ".Lfast_store_mapping_checked:\n"
+  "  lla t1, backend_compare_fast_store_mapped_preserved\n"
+  "  sw t0, 0(t1)\n"
+  "  lw a0, 60(sp)\n"
   "  lw s11, 48(sp)\n"
   "  lw s10, 44(sp)\n"
   "  lw s9, 40(sp)\n"
@@ -1109,21 +1273,52 @@ __asm__(
   "  lw ra, 0(sp)\n"
   "  addi sp, sp, 128\n"
   "  ret\n"
+  ".Lfast_store_value_only:\n"
+  "  addi sp, sp, -16\n"
+  "  sw ra, 12(sp)\n"
+  "  sw s0, 8(sp)\n"
+  "  lla s0, reg\n"
+  "  jalr ra, a3, 0\n"
+  "  lw s0, 8(sp)\n"
+  "  lw ra, 12(sp)\n"
+  "  addi sp, sp, 16\n"
+  "  ret\n"
   ".size backend_compare_call_fast_store, "
   ".-backend_compare_call_fast_store\n");
 
 static u8 *store_test_data(u32 address)
 {
-  if ((address >> 24) == 0x02u)
-    return ewram + (address & 0x3ffffu);
-  return iwram + 0x8000u + (address & 0x7fffu);
+  u32 offset;
+
+  switch (address >> 24)
+  {
+    case 0x02:
+      return ewram + (address & 0x3ffffu);
+    case 0x03:
+      return iwram + 0x8000u + (address & 0x7fffu);
+    case 0x04:
+      return (u8 *)io_registers + (address & 0x3ffu);
+    case 0x05:
+      return (u8 *)palette_ram + (address & 0x3ffu);
+    case 0x06:
+      offset = address & 0x1ffffu;
+      if (offset >= 0x18000u)
+        offset -= 0x8000u;
+      return vram + offset;
+    case 0x07:
+      return (u8 *)oam_ram + (address & 0x3ffu);
+    default:
+      return g_open_bus;
+  }
 }
 
 static u8 *store_test_shadow(u32 address)
 {
   if ((address >> 24) == 0x02u)
     return ewram + 0x40000u + (address & 0x3ffffu);
-  return iwram + (address & 0x7fffu);
+  if ((address >> 24) == 0x03u)
+    return iwram + (address & 0x7fffu);
+  return NULL;
 }
 
 static void prepare_store_test_bytes(u32 address, u8 *before)
@@ -1136,7 +1331,8 @@ static void prepare_store_test_bytes(u32 address, u8 *before)
   {
     before[i] = (u8)(address + i * 37u + 0x29u);
     data[i] = before[i];
-    shadow[i] = 0;
+    if (shadow)
+      shadow[i] = 0;
   }
 }
 
@@ -1149,7 +1345,8 @@ static void restore_store_test_bytes(u32 address, const u8 *before)
   for (i = 0; i < 8u; i++)
   {
     data[i] = before[i];
-    shadow[i] = 0;
+    if (shadow)
+      shadow[i] = 0;
   }
 }
 
@@ -1210,6 +1407,9 @@ static int verify_fast_ram_stores(void)
     0x0203fff8u, 0x02fc1234u, 0x02fc1235u,
     0x03000000u, 0x03000001u, 0x03000002u, 0x03000003u,
     0x03007ff8u, 0x03ff9234u, 0x03ff9235u,
+    0x06000000u, 0x06000001u, 0x06000002u, 0x06000003u,
+    0x06017ff8u, 0x0601fff8u, 0x06ff9234u, 0x06ff9235u,
+    0x0400000cu, 0x05000010u, 0x07000010u,
   };
   static const u32 smc_addresses[] = { 0x02000120u, 0x03000120u };
   u32 mapped_state[REG_CPSR + 1u];
@@ -1217,6 +1417,10 @@ static int verify_fast_ram_stores(void)
   u32 cases = 0;
   u32 smc_cases = 0;
   u32 i;
+
+  for (i = 0; i <= REG_CPSR; i++)
+    mapped_state[i] = 0x51000000u + i * 0x010203u;
+  mapped_state[REG_CPSR] = 0xd123451fu;
 
 #define CHECK_FAST_STORE(width_name, fast_fn, reference_fn, align_mask,       \
                          store_value)                                        \
@@ -1229,16 +1433,21 @@ static int verify_fast_ram_stores(void)
     u8 expected[8];                                                           \
     cpu_alert_type expected_alert;                                            \
     u32 actual_alert;                                                         \
-    bool leaf = (address >> 25) == 1u &&                                     \
+    u32 mapped_index;                                                         \
+    bool leaf = (((address >> 25) == 1u) ||                                 \
+                 ((address >> 24) == 6u)) &&                                \
                 (address & (align_mask)) == 0u;                              \
     prepare_store_test_bytes(test_address, before);                           \
     reg[REG_PC] = 0x08001000u;                                                \
     expected_alert = reference_fn(effective_address, (store_value));          \
     snapshot_store_test_bytes(test_address, expected);                        \
     restore_store_test_bytes(test_address, before);                           \
+    for (mapped_index = 0; mapped_index < REG_PC; mapped_index++)             \
+      reg[mapped_index] = mapped_state[mapped_index];                         \
     reg[REG_PC] = 0x0800abcdu;                                                \
+    reg[REG_CPSR] = mapped_state[REG_CPSR];                                   \
     actual_alert = backend_compare_call_fast_store(                          \
-      address, (store_value), 0x08001234u, fast_fn, reg);                    \
+      address, (store_value), 0x08001234u, fast_fn, NULL);                   \
     cases++;                                                                  \
     if (actual_alert != expected_alert ||                                     \
         !store_test_bytes_equal(test_address, expected) ||                   \
@@ -1275,10 +1484,6 @@ static int verify_fast_ram_stores(void)
 
 #undef CHECK_FAST_STORE
 
-  for (i = 0; i <= REG_CPSR; i++)
-    mapped_state[i] = 0x51000000u + i * 0x010203u;
-  mapped_state[REG_CPSR] = 0xd123451fu;
-
 #define CHECK_FAST_STORE_SMC(width_name, fast_fn, reference_fn, address_delta,\
                              tag_bytes, store_value)                          \
   do                                                                          \
@@ -1288,7 +1493,7 @@ static int verify_fast_ram_stores(void)
     u32 test_address = address & ~3u;                                        \
     u8 before[8];                                                             \
     u8 expected[8];                                                           \
-    u32 old_cpsr = 0x2123451fu;                                               \
+    u32 old_cpsr = mapped_state[REG_CPSR];                                    \
     u32 j;                                                                    \
     u32 actual_alert;                                                         \
     prepare_store_test_bytes(test_address, before);                           \
@@ -1302,7 +1507,7 @@ static int verify_fast_ram_stores(void)
     reg[REG_PC] = 0x0800abcdu;                                                \
     reg[REG_CPSR] = old_cpsr;                                                 \
     actual_alert = backend_compare_call_fast_store(                          \
-      address, (store_value), 0x08005678u, fast_fn, mapped_state);           \
+      address, (store_value), 0x08005678u, fast_fn, NULL);                   \
     smc_cases++;                                                              \
     if (actual_alert != CPU_ALERT_SMC ||                                      \
         !store_test_bytes_equal(test_address, expected) ||                   \
@@ -1342,14 +1547,15 @@ static int verify_fast_ram_stores(void)
   put_u32_dec(cases);
   put_raw(" smc_cases=");
   put_u32_dec(smc_cases);
-  put_raw(" regions=ewram,iwram widths=u8,u16,u32 alignment=0,1,2,3 ");
-  put_raw("mirroring=1 pc_visibility=1 mapped_state_preserved=1 ");
+  put_raw(" regions=ewram,iwram,vram,io,palette,oam,slow-path ");
+  put_raw("widths=u8,u16,u32 alignment=0,1,2,3 ");
+  put_raw("mirroring=1 pc_visibility=1 mapped_state_gate=separate ");
 #if defined(BACKEND_COMPARE_REAL_GBA_MEMORY)
   put_raw("reference=linked_gba_memory.c ");
 #else
   put_raw("reference=fixture_memory_model ");
 #endif
-  put_raw("reason=fast_ram_stores_match_memory_and_smc_contract\n");
+  put_raw("reason=fast_writable_memory_stores_match_memory_and_smc_contract\n");
   return 1;
 }
 
@@ -1360,7 +1566,8 @@ static int verify_fast_ram_reads(void)
     0x02000000u, 0x02000001u, 0x02000002u, 0x02007ffdu,
     0x0203fffcu, 0x02fc1235u, 0x03000000u, 0x03000002u,
     0x03000003u, 0x03007ffdu, 0x03ff9235u, 0x01ffffffu,
-    0x04000000u, 0x08000001u, 0x0d000002u,
+    0x04000000u, 0x08000001u, 0x08000203u, 0x08007ffdu,
+    0x08008001u, 0x0a000204u, 0x0c000206u, 0x0d000002u,
   };
   u32 i;
   u32 byte_count;
@@ -1371,18 +1578,24 @@ static int verify_fast_ram_reads(void)
   for (i = 0; i < 0x8000u; i++)
     iwram[0x8000u + i] = (u8)(i * 29u + (i >> 7) * 13u + 0xa7u);
 
-#define CHECK_FAST_READ(width_name, fast_fn, reference_fn)                    \
+#define CHECK_FAST_READ(width_name, fast_fn, reference_fn, last_byte)         \
   do                                                                          \
   {                                                                           \
     u32 address = addresses[i];                                               \
+    u32 region = address >> 24;                                               \
+    u32 rom_offset = address & 0x01ffffffu;                                   \
     bool fast_ram = (address >> 25) == 1u;                                    \
+    bool fast_rom = region >= 0x08u && region <= 0x0cu &&                    \
+      rom_offset >= 202u && rom_offset + (last_byte) < gamepak_size &&        \
+      memory_map_read[address >> 15] != NULL;                                 \
+    bool fast_mapped = fast_ram || fast_rom;                                  \
     u32 expected;                                                             \
     u32 actual;                                                               \
     reg[REG_PC] = 0x08001234u;                                                \
     expected = reference_fn(address);                                         \
     reg[REG_PC] = 0x0800abcdu;                                                \
     actual = backend_compare_call_fast_read(                                 \
-      address, 0x08001234u, fast_fn);                                        \
+      address, 0x08001234u, fast_fn, NULL);                                  \
     cases++;                                                                  \
     if (actual != expected)                                                   \
     {                                                                         \
@@ -1396,8 +1609,8 @@ static int verify_fast_ram_reads(void)
       put_raw(" reason=fast_ram_value_mismatch\n");                         \
       return 0;                                                               \
     }                                                                         \
-    if ((fast_ram && reg[REG_PC] != 0x0800abcdu) ||                           \
-        (!fast_ram && reg[REG_PC] != 0x08001234u))                            \
+    if ((fast_mapped && reg[REG_PC] != 0x0800abcdu) ||                        \
+        (!fast_mapped && reg[REG_PC] != 0x08001234u))                         \
     {                                                                         \
       put_raw("result=FAIL command=backend-compare-fast-ram width="          \
               width_name " address=");                                      \
@@ -1412,27 +1625,78 @@ static int verify_fast_ram_reads(void)
   byte_count = (u32)(sizeof(addresses) / sizeof(addresses[0]));
   for (i = 0; i < byte_count; i++)
   {
-    CHECK_FAST_READ("u8", riscv_fast_read_u8, read_memory8);
-    CHECK_FAST_READ("s8", riscv_fast_read_s8, read_memory8s);
-    CHECK_FAST_READ("u16", riscv_fast_read_u16, read_memory16);
-    CHECK_FAST_READ("s16", riscv_fast_read_s16, read_memory16s);
-    CHECK_FAST_READ("u32", riscv_fast_read_u32, read_memory32);
+    CHECK_FAST_READ("u8", riscv_fast_read_u8, read_memory8, 0u);
+    CHECK_FAST_READ("s8", riscv_fast_read_s8, read_memory8s, 0u);
+    CHECK_FAST_READ("u16", riscv_fast_read_u16, read_memory16, 1u);
+    CHECK_FAST_READ("s16", riscv_fast_read_s16, read_memory16s, 1u);
+    CHECK_FAST_READ("u32", riscv_fast_read_u32, read_memory32, 3u);
   }
 #undef CHECK_FAST_READ
 
   put_raw("result=PASS command=backend-compare-fast-ram backend=rv32im ");
   put_raw("cases=");
   put_u32_dec(cases);
-  put_raw(" regions=ewram,iwram,slow-path widths=u8,s8,u16,s16,u32 ");
+  put_raw(" regions=ewram,iwram,mapped-rom,slow-path ");
+  put_raw("widths=u8,s8,u16,s16,u32 ");
   put_raw("alignment=0,1,2,3 mirroring=1 ");
   put_raw("boundaries=0x01ffffff,0x04000000 pc_visibility=1 ");
+  put_raw("mapped_state_gate=separate ");
 #if defined(BACKEND_COMPARE_REAL_GBA_MEMORY)
   put_raw("reference=linked_gba_memory.c ");
 #else
   put_raw("reference=fixture_memory_model ");
 #endif
-  put_raw("reason=fast_ram_reads_match_memory_contract\n");
+  put_raw("reason=fast_mapped_reads_match_memory_contract\n");
   return 1;
+}
+
+static int verify_fast_memory_mapping_abi(void)
+{
+  u32 mapped_state[REG_CPSR + 1u];
+  u32 proof_mask = 0;
+  u32 i;
+
+  for (i = 0; i <= REG_CPSR; i++)
+    mapped_state[i] = 0x63000000u + i * 0x010307u;
+  mapped_state[REG_CPSR] = 0xa123451fu;
+  for (i = 0; i < REG_PC; i++)
+    reg[i] = mapped_state[i];
+  reg[REG_CPSR] = mapped_state[REG_CPSR];
+
+  (void)backend_compare_call_fast_read(
+    0x02000004u, 0x08001234u, riscv_fast_read_u32, mapped_state);
+  if (backend_compare_fast_read_mapped_preserved == 1u)
+    proof_mask |= 1u;
+
+  (void)backend_compare_call_fast_read(
+    0x04000000u, 0x08001234u, riscv_fast_read_u32, mapped_state);
+  if (backend_compare_fast_read_mapped_preserved == 1u)
+    proof_mask |= 2u;
+
+  (void)backend_compare_call_fast_store(
+    0x06000020u, 0x89abcdefu, 0x08005678u,
+    riscv_fast_store_u32, mapped_state);
+  if (backend_compare_fast_store_mapped_preserved == 1u)
+    proof_mask |= 4u;
+
+  (void)backend_compare_call_fast_store(
+    0x05000020u, 0x0000005au, 0x08005678u,
+    riscv_fast_store_u8, mapped_state);
+  if (backend_compare_fast_store_mapped_preserved == 1u)
+    proof_mask |= 8u;
+
+  put_raw("result=");
+  put_raw(proof_mask == 0x0fu ? "PASS" : "FAIL");
+  put_raw(" command=backend-compare-memory-abi backend=rv32im calls=4 ");
+  put_raw("paths=read-fast,read-c-slow,store-fast,store-c-slow ");
+  put_raw("caller_saved=a3-a7 callee_saved=s0-s9,s11 cycle_reg=s10 ");
+  put_raw("proof_mask=");
+  put_u32_hex(proof_mask);
+  put_raw(" reason=");
+  put_raw(proof_mask == 0x0fu ? "mapped_registers_preserved" :
+                               "mapped_register_clobber");
+  put_raw("\n");
+  return proof_mask == 0x0fu;
 }
 
 static int verify_generated_store_smc_invalidation(void)
@@ -1791,15 +2055,16 @@ void _start(void)
 
   install_base_rom();
   init_memory_map();
-#if defined(BACKEND_COMPARE_REAL_GBA_MEMORY)
   gamepak_size = sizeof(g_rom);
+#if defined(BACKEND_COMPARE_REAL_GBA_MEMORY)
   g_execute_arm_calls = 0;
-  passed = verify_fast_ram_reads();
+  passed = verify_fast_memory_mapping_abi();
+  passed &= verify_fast_ram_reads();
   passed &= verify_fast_ram_stores();
   put_raw("result=");
   put_raw(passed ? "PASS" : "FAIL");
-  put_raw(" command=gba-memory-diff backend=rv32im read_cases=75 "
-          "write_cases=42 smc_cases=6 source=gba_memory.c "
+  put_raw(" command=gba-memory-diff backend=rv32im read_cases=100 "
+          "write_cases=75 smc_cases=6 source=gba_memory.c "
           "fast_path=riscv_fast_read,riscv_fast_store "
           "harness_mode=qemu_user_real_memory reason=");
   put_raw(passed ? "linked_real_memory_equal" : "linked_real_memory_mismatch");
@@ -1808,7 +2073,8 @@ void _start(void)
 #else
   g_execute_arm_calls = 0;
 #if defined(BACKEND_COMPARE_RV32IM)
-  passed = verify_fast_ram_reads();
+  passed = verify_fast_memory_mapping_abi();
+  passed &= verify_fast_ram_reads();
   passed &= verify_fast_ram_stores();
   /* Direct SMC probes intentionally leave an alert latched.  Backend init
    * below resets it before any generated workload executes. */

@@ -188,17 +188,25 @@ BACKEND_COMPARE_EXPECTED_RV_QEMU_VERSION ?= 10.0.8
 BACKEND_COMPARE_EXPECTED_MIPS_QEMU_VERSION ?= 10.0.8
 BACKEND_COMPARE_EXPECTED_MANIFEST_SHA256 := 67dc6526083b23cc7d103e58be84baead6f6cc5cc22be3131066f486badb983d
 BACKEND_COMPARE_EXPECTED_ENVIRONMENT_SHA256 := e16190fc430fae35dc4e8f14d7364faf92959f31de0bdd1407dabde1e2747c81
-BACKEND_COMPARE_EXPECTED_SOURCE_SHA256 := 0b87b69565508d6bc9683261d5ba5636454158a452a9e6861890ad0c6c4a4637
-GBA_MEMORY_DIFF_EXPECTED_MANIFEST_SHA256 := 2aba65a2f0301191e02d11601bb14e09cb3b837ab0338190bf120dbb982a7609
+BACKEND_COMPARE_EXPECTED_SOURCE_SHA256 := 29e297dff4497f7c5c13099a6344ab1dd5881ad2a483b6d50ec5198702192f98
+GBA_MEMORY_DIFF_EXPECTED_MANIFEST_SHA256 := 954d6d785beb6a00cdae42075ca28ffa5a77f4af12e95cd55cef545932d3c4ab
 # Keeping cycles in s10 and spilling guest LR shrinks generated mapped-ALU
 # code and its warm path, at the cost of extra one-time translator work.
 BACKEND_COMPARE_MAPPED_COLD_REGRESSION_MAX_PERCENT_X100 ?= 1300
+BACKEND_COMPARE_MAPPED_BYTES_MAX ?= 516
 BACKEND_COMPARE_MEMORY_MIN_REDUCTION_PERCENT ?= 33
 BACKEND_COMPARE_MEMORY_COLD_RAW_MAX ?= 44009
-BACKEND_COMPARE_MEMORY_BYTES_MAX ?= 1952
+BACKEND_COMPARE_MEMORY_BYTES_MAX ?= 1544
 BACKEND_COMPARE_WRITE_COLD_REGRESSION_MAX_PERCENT_X100 ?= 900
 BACKEND_COMPARE_WRITE_WARM_MIN_REDUCTION_PERCENT_X100 ?= 1000
-BACKEND_COMPARE_WRITE_BYTES_MAX ?= 1184
+BACKEND_COMPARE_WRITE_BYTES_MAX ?= 744
+BACKEND_COMPARE_INDIRECT_BYTES_MAX ?= 1260
+# Structural parity gates against the frozen MIPS backend.  These are ratios
+# in percent x100: 15000 is 1.50x and 20000 is 2.00x.
+BACKEND_COMPARE_MAPPED_MIPS_BYTES_RATIO_MAX_X100 ?= 15000
+BACKEND_COMPARE_MEMORY_MIPS_BYTES_RATIO_MAX_X100 ?= 20000
+BACKEND_COMPARE_WRITE_MIPS_BYTES_RATIO_MAX_X100 ?= 20000
+BACKEND_COMPARE_INDIRECT_MIPS_BYTES_RATIO_MAX_X100 ?= 20000
 BACKEND_LOOKUP_WARM_MIN_REDUCTION_PERCENT_X100 ?= 2000
 BACKEND_LOOKUP_OTHER_REGRESSION_MAX_PERCENT_X100 ?= 100
 BACKEND_LOOKUP_GAP_MIN_CLOSURE_PERCENT_X100 ?= 1000
@@ -211,7 +219,7 @@ ARMWRESTLER_ROM := /home/john/ref/armwrestler-gba-fixed/armwrestler-gba-fixed.gb
 OPEN_GBA_BIOS := $(abspath $(ROOT)/bios/open_gba_bios.bin)
 OPEN_GBA_BIOS_SHA256 := 661a9afb93624f2c5e77d07dab137bd8d23cff79e8639c62fe621b49bb064749
 ARMWRESTLER_PERF_BASELINE_SPEC := rv32im_armwrestler_perf_baseline.txt
-ARMWRESTLER_PERF_BENCHMARK_ID := rv32im-armwrestler-fast-ram-v2
+ARMWRESTLER_PERF_BENCHMARK_ID := rv32im-armwrestler-mapped-read-v3
 ARMWRESTLER_PERF_EXPECTED_ROM_SHA256 := 9f08d807c03ef296d38ef73e9b827a3d8c77cead9ced44b07d64c10f5f7d0746
 ARMWRESTLER_PERF_TIMEOUT_SECONDS := 120
 ARMWRESTLER_PERF_COLD_PER_TEST_REGRESSION_MAX_PERCENT_X100 ?= 150
@@ -644,6 +652,7 @@ $(ARMWRESTLER): rv32im_armwrestler.c rv32im_frontend_shim.h \
 	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) \
 		-DRISCV_RUNTIME_STANDALONE_TEST -DHAVE_DYNAREC -DRISCV_ARCH \
 		-DMMAP_JIT_CACHE -DRISCV_RUNTIME_ENABLE_FAST_RAM_READS \
+		-DRISCV_RUNTIME_ENABLE_FAST_ROM_READS \
 		-DRISCV_RUNTIME_ENABLE_FAST_RAM_STORES \
 		-I. -I$(ROOT) -I$(ROOT)/riscv \
 		-include rv32im_frontend_shim.h \
@@ -658,6 +667,7 @@ $(ARMWRESTLER_STATE_CONTRACT): rv32im_armwrestler.c \
 	$(CLANG) $(RV32_CFLAGS) $(RV32_LDFLAGS) \
 		-DRISCV_RUNTIME_STANDALONE_TEST -DHAVE_DYNAREC -DRISCV_ARCH \
 		-DMMAP_JIT_CACHE -DRISCV_RUNTIME_ENABLE_FAST_RAM_READS \
+		-DRISCV_RUNTIME_ENABLE_FAST_ROM_READS \
 		-DRISCV_RUNTIME_ENABLE_FAST_RAM_STORES \
 		-DRISCV_RUNTIME_TEST_POISON_MAPPED_REGS \
 		-I. -I$(ROOT) -I$(ROOT)/riscv \
@@ -674,6 +684,7 @@ $(ARMWRESTLER_PERF_BASELINE): rv32im_armwrestler.c rv32im_frontend_shim.h \
 		-DMMAP_JIT_CACHE -DRISCV_RUNTIME_PERF_PROFILE_SWITCH \
 		-DRISCV_RUNTIME_DISABLE_INDIRECT_LOOKUP_CACHE \
 		-DRISCV_RUNTIME_ENABLE_FAST_RAM_READS \
+		-DRISCV_RUNTIME_ENABLE_FAST_ROM_READS \
 		-DARMWRESTLER_PERF_DISABLE_MAPPED_ALU_FASTPATH=0 \
 		-DARMWRESTLER_PERF_DISABLE_FAST_RAM_READS=1 \
 		-I. -I$(ROOT) -I$(ROOT)/riscv \
@@ -690,6 +701,7 @@ $(ARMWRESTLER_PERF_OPTIMIZED): rv32im_armwrestler.c rv32im_frontend_shim.h \
 		-DMMAP_JIT_CACHE -DRISCV_RUNTIME_PERF_PROFILE_SWITCH \
 		-DRISCV_RUNTIME_DISABLE_INDIRECT_LOOKUP_CACHE \
 		-DRISCV_RUNTIME_ENABLE_FAST_RAM_READS \
+		-DRISCV_RUNTIME_ENABLE_FAST_ROM_READS \
 		-DARMWRESTLER_PERF_DISABLE_MAPPED_ALU_FASTPATH=0 \
 		-DARMWRESTLER_PERF_DISABLE_FAST_RAM_READS=0 \
 		-I. -I$(ROOT) -I$(ROOT)/riscv \
@@ -707,6 +719,7 @@ $(ARMWRESTLER_STORE_PERF_BASELINE): rv32im_armwrestler.c \
 		-DMMAP_JIT_CACHE -DRISCV_RUNTIME_PERF_PROFILE_SWITCH \
 		-DRISCV_RUNTIME_DISABLE_INDIRECT_LOOKUP_CACHE \
 		-DRISCV_RUNTIME_ENABLE_FAST_RAM_READS \
+		-DRISCV_RUNTIME_ENABLE_FAST_ROM_READS \
 		-DRISCV_RUNTIME_ENABLE_FAST_RAM_STORES \
 		-DARMWRESTLER_PERF_FAST_STORE_AB \
 		-DARMWRESTLER_PERF_DISABLE_MAPPED_ALU_FASTPATH=0 \
@@ -727,6 +740,7 @@ $(ARMWRESTLER_STORE_PERF_OPTIMIZED): rv32im_armwrestler.c \
 		-DMMAP_JIT_CACHE -DRISCV_RUNTIME_PERF_PROFILE_SWITCH \
 		-DRISCV_RUNTIME_DISABLE_INDIRECT_LOOKUP_CACHE \
 		-DRISCV_RUNTIME_ENABLE_FAST_RAM_READS \
+		-DRISCV_RUNTIME_ENABLE_FAST_ROM_READS \
 		-DRISCV_RUNTIME_ENABLE_FAST_RAM_STORES \
 		-DARMWRESTLER_PERF_FAST_STORE_AB \
 		-DARMWRESTLER_PERF_DISABLE_MAPPED_ALU_FASTPATH=0 \
@@ -854,6 +868,7 @@ $(BACKEND_COMPARE_RV32): rv32im_backend_compare.c \
 		-DRISCV_RUNTIME_STANDALONE_TEST -DHAVE_DYNAREC -DRISCV_ARCH \
 		-DMMAP_JIT_CACHE -DBACKEND_COMPARE_RV32IM \
 		-DRISCV_RUNTIME_ENABLE_FAST_RAM_READS \
+		-DRISCV_RUNTIME_ENABLE_FAST_ROM_READS \
 		-DRISCV_RUNTIME_ENABLE_FAST_RAM_STORES \
 		-I. -I$(ROOT) -I$(ROOT)/riscv \
 		-include backend_compare_frontend_shim.h \
@@ -869,6 +884,7 @@ $(BACKEND_LOOKUP_BASELINE_RV32): rv32im_backend_compare.c \
 		-DRISCV_RUNTIME_STANDALONE_TEST -DHAVE_DYNAREC -DRISCV_ARCH \
 		-DMMAP_JIT_CACHE -DBACKEND_COMPARE_RV32IM \
 		-DRISCV_RUNTIME_ENABLE_FAST_RAM_READS \
+		-DRISCV_RUNTIME_ENABLE_FAST_ROM_READS \
 		-DRISCV_RUNTIME_ENABLE_FAST_RAM_STORES \
 		-DRISCV_RUNTIME_DISABLE_INDIRECT_LOOKUP_CACHE \
 		-I. -I$(ROOT) -I$(ROOT)/riscv \
@@ -917,6 +933,7 @@ $(GBA_MEMORY_DIFF_RV32): rv32im_backend_compare.c \
 		-DMMAP_JIT_CACHE -DBACKEND_COMPARE_RV32IM \
 		-DBACKEND_COMPARE_REAL_GBA_MEMORY \
 		-DRISCV_RUNTIME_ENABLE_FAST_RAM_READS \
+		-DRISCV_RUNTIME_ENABLE_FAST_ROM_READS \
 		-DRISCV_RUNTIME_ENABLE_FAST_RAM_STORES \
 		-I. -I$(ROOT) -I$(ROOT)/riscv \
 		-include backend_compare_frontend_shim.h \
@@ -1086,7 +1103,7 @@ smoke: $(HARNESS) $(SMOKE_LOAD) $(SMOKE_PNG_SIG) $(OUT_DIR)
 	grep -q 'command=compare.*harness_mode=runtime_fixture frame_mode=runtime_snapshot mem_mode=runtime_events' $(SMOKE_LOG)
 	grep -q 'reason=runtime_state_snapshot_frame_equal' $(SMOKE_LOG)
 	grep -q 'result=PASS command=mixed workload=mixed_dataproc_load_pcload_alert_update_fallback' $(SMOKE_LOG)
-	grep -q 'command=mixed .*rv32im_blocks=4 rv32im_fallbacks=1 rv32im_initial_lookup_fallbacks=0 rv32im_relookup_fallbacks=1 rv32im_unsupported_fallbacks=0 rv32im_native_data_proc=96 rv32im_native_branch=7 rv32im_native_load=49 rv32im_native_store=33 rv32im_native_psr=5 code_bytes=14932' $(SMOKE_LOG)
+	grep -q 'command=mixed .*rv32im_blocks=4 rv32im_fallbacks=1 rv32im_initial_lookup_fallbacks=0 rv32im_relookup_fallbacks=1 rv32im_unsupported_fallbacks=0 rv32im_native_data_proc=96 rv32im_native_branch=7 rv32im_native_load=49 rv32im_native_store=33 rv32im_native_psr=5 code_bytes=14876' $(SMOKE_LOG)
 	grep -q 'command=mixed .*interp_trace_count=5 rv32im_trace_count=5 .*interp_stepi_count=5 rv32im_stepi_count=5 .*interp_mem_event_count=3 rv32im_mem_event_count=3 .*interp_sched_event_count=1 rv32im_sched_event_count=1 .*interp_fallback_event_count=1 rv32im_fallback_event_count=1 .*interp_shadow_bytes=4 rv32im_shadow_bytes=4' $(SMOKE_LOG)
 	grep -q 'command=mixed .*harness_mode=runtime_fixture frame_mode=runtime_snapshot mem_mode=runtime_events scheduler_mode=runtime_events fallback_mode=runtime_events reason=runtime_mixed_contract_chain_equal' $(SMOKE_LOG)
 	grep -q 'result=PASS command=framehash backend=rv32im width=240 height=160 bytes=76800 hash=.* snapshot_frame_hash=.* harness_mode=runtime_fixture frame_mode=runtime_snapshot reason=runtime_snapshot_frame' $(SMOKE_LOG)
@@ -1115,7 +1132,7 @@ mixed: $(HARNESS) | $(OUT_DIR)
 	grep -q 'interp_trace_count=5 rv32im_trace_count=5 interp_trace_hash=0x5dea3b65 rv32im_trace_hash=0x5dea3b65 interp_stepi_count=5 rv32im_stepi_count=5 interp_stepi_hash=0xc1c4ce49 rv32im_stepi_hash=0xc1c4ce49' $(MIXED_LOG)
 	grep -q 'interp_mem_event_count=3 rv32im_mem_event_count=3 interp_mem_event_hash=0x9abf465c rv32im_mem_event_hash=0x9abf465c interp_sched_event_count=1 rv32im_sched_event_count=1 interp_sched_event_hash=0x0792f634 rv32im_sched_event_hash=0x0792f634' $(MIXED_LOG)
 	grep -q 'interp_fallback_event_count=1 rv32im_fallback_event_count=1 interp_fallback_event_hash=0xc4528507 rv32im_fallback_event_hash=0xc4528507 interp_shadow_bytes=4 rv32im_shadow_bytes=4 interp_shadow_hash=0x6c30726c rv32im_shadow_hash=0x6c30726c' $(MIXED_LOG)
-	grep -q 'rv32im_blocks=4 rv32im_fallbacks=1 rv32im_initial_lookup_fallbacks=0 rv32im_relookup_fallbacks=1 rv32im_unsupported_fallbacks=0 rv32im_native_data_proc=96 rv32im_native_branch=7 rv32im_native_load=49 rv32im_native_store=33 rv32im_native_psr=5 code_bytes=14932' $(MIXED_LOG)
+	grep -q 'rv32im_blocks=4 rv32im_fallbacks=1 rv32im_initial_lookup_fallbacks=0 rv32im_relookup_fallbacks=1 rv32im_unsupported_fallbacks=0 rv32im_native_data_proc=96 rv32im_native_branch=7 rv32im_native_load=49 rv32im_native_store=33 rv32im_native_psr=5 code_bytes=14876' $(MIXED_LOG)
 	grep -q 'harness_mode=runtime_fixture frame_mode=runtime_snapshot mem_mode=runtime_events scheduler_mode=runtime_events fallback_mode=runtime_events reason=runtime_mixed_contract_chain_equal' $(MIXED_LOG)
 	grep -q 'result=PASS command=quit backend=interp' $(MIXED_LOG)
 
@@ -1258,7 +1275,7 @@ armwrestler-perf: perf-env-check $(ARMWRESTLER_PERF_BASELINE) \
 		-v clang_version="$$clang_version" -v qemu_version="$$qemu_version" \
 		-v build_config=$(PERF_BUILD_CONFIG) \
 		-v environment_sha="$$environment_sha" -v text_sha="$$text_sha" \
-		-v isolated_optimization=fast_ram_reads \
+		-v isolated_optimization=mapped_memory_reads \
 		-v jit_profile=fast_ram_reads_ab \
 		-v baseline_mapped_alu_enabled=1 \
 		-v baseline_fast_ram_reads_enabled=0 \
@@ -1614,8 +1631,9 @@ backend-compare: backend-compare-env-check $(BACKEND_COMPARE_RV32) \
 	cmp $(BACKEND_COMPARE_RV32_LOG) $(BACKEND_COMPARE_RV32_REPEAT_LOG)
 	cmp $(BACKEND_COMPARE_MIPS_COUNTS) $(BACKEND_COMPARE_MIPS_REPEAT_COUNTS)
 	cmp $(BACKEND_COMPARE_MIPS_LOG) $(BACKEND_COMPARE_MIPS_REPEAT_LOG)
-	grep -Fq 'result=PASS command=backend-compare-fast-ram backend=rv32im cases=75 regions=ewram,iwram,slow-path widths=u8,s8,u16,s16,u32 alignment=0,1,2,3 mirroring=1 boundaries=0x01ffffff,0x04000000 pc_visibility=1 reference=fixture_memory_model reason=fast_ram_reads_match_memory_contract' $(BACKEND_COMPARE_RV32_LOG)
-	grep -Fq 'result=PASS command=backend-compare-fast-store backend=rv32im cases=42 smc_cases=6 regions=ewram,iwram widths=u8,u16,u32 alignment=0,1,2,3 mirroring=1 pc_visibility=1 mapped_state_preserved=1 reference=fixture_memory_model reason=fast_ram_stores_match_memory_and_smc_contract' $(BACKEND_COMPARE_RV32_LOG)
+	grep -Fq 'result=PASS command=backend-compare-memory-abi backend=rv32im calls=4 paths=read-fast,read-c-slow,store-fast,store-c-slow caller_saved=a3-a7 callee_saved=s0-s9,s11 cycle_reg=s10 proof_mask=0x0000000f reason=mapped_registers_preserved' $(BACKEND_COMPARE_RV32_LOG)
+	grep -Fq 'result=PASS command=backend-compare-fast-ram backend=rv32im cases=100 regions=ewram,iwram,mapped-rom,slow-path widths=u8,s8,u16,s16,u32 alignment=0,1,2,3 mirroring=1 boundaries=0x01ffffff,0x04000000 pc_visibility=1 mapped_state_gate=separate reference=fixture_memory_model reason=fast_mapped_reads_match_memory_contract' $(BACKEND_COMPARE_RV32_LOG)
+	grep -Fq 'result=PASS command=backend-compare-fast-store backend=rv32im cases=75 smc_cases=6 regions=ewram,iwram,vram,io,palette,oam,slow-path widths=u8,u16,u32 alignment=0,1,2,3 mirroring=1 pc_visibility=1 mapped_state_gate=separate reference=fixture_memory_model reason=fast_writable_memory_stores_match_memory_and_smc_contract' $(BACKEND_COMPARE_RV32_LOG)
 	grep -Fq 'result=PASS command=backend-compare-store-smc backend=rv32im paths=fast-proven-ram,generic-dynamic-address fast_old_value=1 fast_patched_value=2 dynamic_old_value=3 dynamic_patched_value=4 smc_flushes=2 fast_flushed_dirty_r3=90 generic_flushed_dirty_r3=107' $(BACKEND_COMPARE_RV32_LOG)
 	grep -Fq 'fallbacks=0 execute_arm_calls=0 harness_mode=cpu_threaded_frontend_rv32im reason=fast_and_generic_stores_invalidate_stale_ram_blocks' $(BACKEND_COMPARE_RV32_LOG)
 	awk -v spec_file=$(BACKEND_COMPARE_BASELINE_SPEC) \
@@ -1633,12 +1651,18 @@ backend-compare: backend-compare-env-check $(BACKEND_COMPARE_RV32) \
 		-v environment_sha=$(BACKEND_COMPARE_EXPECTED_ENVIRONMENT_SHA256) \
 		-v source_sha=$(BACKEND_COMPARE_EXPECTED_SOURCE_SHA256) \
 		-v mapped_cold_regression_max_x100=$(BACKEND_COMPARE_MAPPED_COLD_REGRESSION_MAX_PERCENT_X100) \
+		-v mapped_bytes_max=$(BACKEND_COMPARE_MAPPED_BYTES_MAX) \
 		-v memory_min_reduction=$(BACKEND_COMPARE_MEMORY_MIN_REDUCTION_PERCENT) \
 		-v memory_cold_raw_max=$(BACKEND_COMPARE_MEMORY_COLD_RAW_MAX) \
 		-v memory_bytes_max=$(BACKEND_COMPARE_MEMORY_BYTES_MAX) \
 		-v write_cold_regression_max_x100=$(BACKEND_COMPARE_WRITE_COLD_REGRESSION_MAX_PERCENT_X100) \
 		-v write_warm_min_reduction_x100=$(BACKEND_COMPARE_WRITE_WARM_MIN_REDUCTION_PERCENT_X100) \
 		-v write_bytes_max=$(BACKEND_COMPARE_WRITE_BYTES_MAX) \
+		-v indirect_bytes_max=$(BACKEND_COMPARE_INDIRECT_BYTES_MAX) \
+		-v mapped_mips_bytes_ratio_max_x100=$(BACKEND_COMPARE_MAPPED_MIPS_BYTES_RATIO_MAX_X100) \
+		-v memory_mips_bytes_ratio_max_x100=$(BACKEND_COMPARE_MEMORY_MIPS_BYTES_RATIO_MAX_X100) \
+		-v write_mips_bytes_ratio_max_x100=$(BACKEND_COMPARE_WRITE_MIPS_BYTES_RATIO_MAX_X100) \
+		-v indirect_mips_bytes_ratio_max_x100=$(BACKEND_COMPARE_INDIRECT_MIPS_BYTES_RATIO_MAX_X100) \
 		-v lookup_cold_regression_max_x100=$(BACKEND_LOOKUP_COLD_REGRESSION_MAX_PERCENT_X100) \
 		-v lookup_warm_min_reduction_x100=$(BACKEND_LOOKUP_WARM_MIN_REDUCTION_PERCENT_X100) \
 		-v lookup_gap_min_closure_x100=$(BACKEND_LOOKUP_GAP_MIN_CLOSURE_PERCENT_X100) \
@@ -1654,9 +1678,10 @@ gba-memory-diff: $(GBA_MEMORY_DIFF_RV32) $(GBA_MEMORY_DIFF_MANIFEST) | $(OUT_DIR
 	$(QEMU_RISCV32) ./$(GBA_MEMORY_DIFF_RV32) | tee $(GBA_MEMORY_DIFF_LOG)
 	$(QEMU_RISCV32) ./$(GBA_MEMORY_DIFF_RV32) > $(GBA_MEMORY_DIFF_REPEAT_LOG)
 	cmp $(GBA_MEMORY_DIFF_LOG) $(GBA_MEMORY_DIFF_REPEAT_LOG)
-	grep -Fq 'result=PASS command=backend-compare-fast-ram backend=rv32im cases=75 regions=ewram,iwram,slow-path widths=u8,s8,u16,s16,u32 alignment=0,1,2,3 mirroring=1 boundaries=0x01ffffff,0x04000000 pc_visibility=1 reference=linked_gba_memory.c reason=fast_ram_reads_match_memory_contract' $(GBA_MEMORY_DIFF_LOG)
-	grep -Fq 'result=PASS command=backend-compare-fast-store backend=rv32im cases=42 smc_cases=6 regions=ewram,iwram widths=u8,u16,u32 alignment=0,1,2,3 mirroring=1 pc_visibility=1 mapped_state_preserved=1 reference=linked_gba_memory.c reason=fast_ram_stores_match_memory_and_smc_contract' $(GBA_MEMORY_DIFF_LOG)
-	grep -Fq 'result=PASS command=gba-memory-diff backend=rv32im read_cases=75 write_cases=42 smc_cases=6 source=gba_memory.c fast_path=riscv_fast_read,riscv_fast_store harness_mode=qemu_user_real_memory reason=linked_real_memory_equal' $(GBA_MEMORY_DIFF_LOG)
+	grep -Fq 'result=PASS command=backend-compare-memory-abi backend=rv32im calls=4 paths=read-fast,read-c-slow,store-fast,store-c-slow caller_saved=a3-a7 callee_saved=s0-s9,s11 cycle_reg=s10 proof_mask=0x0000000f reason=mapped_registers_preserved' $(GBA_MEMORY_DIFF_LOG)
+	grep -Fq 'result=PASS command=backend-compare-fast-ram backend=rv32im cases=100 regions=ewram,iwram,mapped-rom,slow-path widths=u8,s8,u16,s16,u32 alignment=0,1,2,3 mirroring=1 boundaries=0x01ffffff,0x04000000 pc_visibility=1 mapped_state_gate=separate reference=linked_gba_memory.c reason=fast_mapped_reads_match_memory_contract' $(GBA_MEMORY_DIFF_LOG)
+	grep -Fq 'result=PASS command=backend-compare-fast-store backend=rv32im cases=75 smc_cases=6 regions=ewram,iwram,vram,io,palette,oam,slow-path widths=u8,u16,u32 alignment=0,1,2,3 mirroring=1 pc_visibility=1 mapped_state_gate=separate reference=linked_gba_memory.c reason=fast_writable_memory_stores_match_memory_and_smc_contract' $(GBA_MEMORY_DIFF_LOG)
+	grep -Fq 'result=PASS command=gba-memory-diff backend=rv32im read_cases=100 write_cases=75 smc_cases=6 source=gba_memory.c fast_path=riscv_fast_read,riscv_fast_store harness_mode=qemu_user_real_memory reason=linked_real_memory_equal' $(GBA_MEMORY_DIFF_LOG)
 	$(LLVM_NM) $(GBA_MEMORY_DIFF_RV32) | grep -Eq ' [Tt] read_memory(8|16|32)$$'
 	$(LLVM_NM) $(GBA_MEMORY_DIFF_RV32) | grep -Eq ' [Tt] write_memory(8|16|32)$$'
 	@manifest_sha=`sha256sum $(GBA_MEMORY_DIFF_MANIFEST) | awk '{ print $$1 }'`; \

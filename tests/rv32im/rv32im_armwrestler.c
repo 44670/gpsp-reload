@@ -169,6 +169,7 @@ const u32 def_seq_cycles[16][2] =
   { 9, 17 }, { 9, 17 }, { 1, 1 }, { 1, 1 },
 };
 u8 *memory_map_read[8 * 1024];
+u32 gamepak_size;
 u8 ewram[1024 * 256 * 2] __attribute__((aligned(4)));
 u8 iwram[1024 * 32 * 2] __attribute__((aligned(4)));
 u16 io_registers[512];
@@ -182,7 +183,7 @@ static u8 g_bios[0x4000u];
 #if defined(RV32IM_BIOS_SWI_ONLY)
 static u8 g_open_bios[0x4000u];
 #endif
-static u8 g_vram[1024 * 96];
+u8 vram[1024 * 96];
 static u8 g_palette_ram[1024];
 static u8 g_oam_ram[1024];
 static u32 g_rom_size;
@@ -511,6 +512,8 @@ static void init_memory_map(void)
 {
   u32 address;
 
+  gamepak_size = g_rom_size;
+
   for (address = 0; address < 8u * 1024u; address++)
     memory_map_read[address] = 0;
 
@@ -545,7 +548,10 @@ static u8 *addr_ptr(u32 address, u32 size)
     case 0x05:
       return g_palette_ram + (address & 0x3ffu);
     case 0x06:
-      return g_vram + (address & 0x1ffffu) % sizeof(g_vram);
+      offset = address & 0x1ffffu;
+      if (offset >= 0x18000u)
+        offset -= 0x8000u;
+      return vram + offset;
     case 0x07:
       return g_oam_ram + (address & 0x3ffu);
     case 0x08:
@@ -606,6 +612,13 @@ u32 function_cc read_memory32(u32 address)
 
 cpu_alert_type function_cc write_memory8(u32 address, u8 value)
 {
+  if ((address >> 24) == 0x06u)
+  {
+    u8 *target = addr_ptr(address & ~1u, 2);
+    target[0] = value;
+    target[1] = value;
+    return CPU_ALERT_NONE;
+  }
   *addr_ptr(address, 1) = value;
   return CPU_ALERT_NONE;
 }
@@ -802,7 +815,7 @@ static void clear_runtime_memory(void)
   memset(ewram, 0, sizeof(ewram));
   memset(iwram, 0, sizeof(iwram));
   memset(io_registers, 0, sizeof(io_registers));
-  memset(g_vram, 0, sizeof(g_vram));
+  memset(vram, 0, sizeof(vram));
   memset(g_palette_ram, 0, sizeof(g_palette_ram));
   memset(g_oam_ram, 0, sizeof(g_oam_ram));
 }
@@ -1825,7 +1838,7 @@ static u32 bios_swi_memory_hash(void)
   hash = bios_swi_hash_bytes(hash, iwram + 0x8000u + 0x7f00u, 0x100u);
   hash = bios_swi_hash_bytes(hash, (const u8 *)io_registers,
                              sizeof(io_registers));
-  hash = bios_swi_hash_bytes(hash, g_vram, 0x200u);
+  hash = bios_swi_hash_bytes(hash, vram, 0x200u);
   hash = bios_swi_hash_bytes(hash, g_palette_ram, sizeof(g_palette_ram));
   hash = bios_swi_hash_bytes(hash, g_oam_ram, sizeof(g_oam_ram));
   return hash;

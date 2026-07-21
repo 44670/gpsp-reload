@@ -33,6 +33,12 @@
 #define RISCV_RUNTIME_HAS_FAST_RAM_READS 1
 #endif
 
+#if defined(RISCV_RUNTIME_HAS_FAST_RAM_READS) && \
+    (!defined(RISCV_RUNTIME_STANDALONE_TEST) || \
+     defined(RISCV_RUNTIME_ENABLE_FAST_ROM_READS))
+#define RISCV_RUNTIME_HAS_FAST_ROM_READS 1
+#endif
+
 #if defined(__riscv) && defined(__riscv_xlen) && (__riscv_xlen == 32) && \
     (!defined(RISCV_RUNTIME_STANDALONE_TEST) || \
      defined(RISCV_RUNTIME_ENABLE_FAST_RAM_STORES)) && \
@@ -62,9 +68,12 @@ static u32 function_cc riscv_thumb_execute(u32 opcode, u32 pc);
 static void function_cc riscv_thumb_execute_bl_pair(u32 first_opcode,
                                                     u32 second_opcode,
                                                     u32 pc);
+#if !defined(RISCV_RUNTIME_HAS_FAST_RAM_STORES) || \
+    defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
 static u32 function_cc riscv_store_u8_pc(u32 address, u32 value, u32 pc);
 static u32 function_cc riscv_store_u16_pc(u32 address, u32 value, u32 pc);
 static u32 function_cc riscv_store_u32_pc(u32 address, u32 value, u32 pc);
+#endif
 
 enum
 {
@@ -2980,21 +2989,6 @@ static void riscv_emit_abi_helper_call(u8 **ptr, u32 helper_index)
   riscv_emit_mapped_regs_reload_mask(ptr, RISCV_MAPPED_CALLER_SAVED_MASK);
 }
 
-#if defined(RISCV_RUNTIME_HAS_FAST_RAM_READS)
-static void riscv_emit_c_call_address(u8 **ptr, uintptr_t target)
-{
-  riscv_emit_mapped_regs_flush_dirty(ptr);
-  riscv_emit_c_call_address_raw(ptr, target);
-  riscv_emit_test_poison_mapped_regs(ptr, RISCV_MAPPED_CALLER_SAVED_MASK);
-#if defined(RISCV_RUNTIME_PERF_COUNTERS)
-  riscv_perf_mapped_invalidate_sites++;
-#endif
-  riscv_mapped_valid_mask &= ~RISCV_MAPPED_CALLER_SAVED_MASK;
-  riscv_mapped_dirty_mask &= ~RISCV_MAPPED_CALLER_SAVED_MASK;
-  riscv_emit_mapped_regs_reload_mask(ptr, RISCV_MAPPED_CALLER_SAVED_MASK);
-}
-#endif
-
 #if defined(RISCV_RUNTIME_DISABLE_READ_HELPER_OPT)
 #define riscv_emit_read_helper_call riscv_emit_abi_helper_call
 #elif !defined(RISCV_RUNTIME_HAS_FAST_RAM_READS)
@@ -3021,36 +3015,15 @@ static void riscv_emit_read_helper_call(u8 **ptr, u32 helper_index)
 #endif
 
 #if defined(RISCV_RUNTIME_HAS_FAST_RAM_READS)
-static void riscv_emit_read_call_address(u8 **ptr, uintptr_t target)
-{
-  u8 *translation_ptr = *ptr;
-
-  riscv_emit_sw(riscv_reg_a1, riscv_reg_s0, REG_PC * 4u);
-  *ptr = translation_ptr;
-  riscv_emit_mapped_regs_flush_mask(
-    ptr, riscv_mapped_dirty_mask & RISCV_MAPPED_CALLER_SAVED_MASK);
-  riscv_emit_c_call_address_raw(ptr, target);
-  riscv_emit_test_poison_mapped_regs(ptr, RISCV_MAPPED_CALLER_SAVED_MASK);
-#if defined(RISCV_RUNTIME_PERF_COUNTERS)
-  riscv_perf_mapped_invalidate_sites++;
-#endif
-  riscv_mapped_valid_mask &= ~RISCV_MAPPED_CALLER_SAVED_MASK;
-  riscv_mapped_dirty_mask &= ~RISCV_MAPPED_CALLER_SAVED_MASK;
-}
-#endif
-
 static bool riscv_fast_ram_reads_enabled(void)
 {
-#if defined(RISCV_RUNTIME_HAS_FAST_RAM_READS)
 #if defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
   return !riscv_runtime_perf_disable_fast_ram_reads;
 #else
   return true;
 #endif
-#else
-  return false;
-#endif
 }
+#endif
 
 static bool riscv_fast_ram_stores_enabled(void)
 {
@@ -3073,116 +3046,29 @@ static void riscv_emit_memory_read_helper(u8 **ptr, u32 helper_index)
     riscv_emit_abi_helper_call(ptr, helper_index);
     return;
   }
-  /* The shared stub avoids the C ABI on EWRAM/IWRAM.  A slow-path tail call
-   * may clobber a3-a7, so retain the pure-read spill/lazy-reload contract at
-   * the call site.  The stub writes the PC only when it actually enters C. */
-  riscv_emit_mapped_regs_flush_mask(
-    ptr, riscv_mapped_dirty_mask & RISCV_MAPPED_CALLER_SAVED_MASK);
+  /* The shared mapped-memory veneer preserves a3-a7 on the complete C slow
+   * path; its EWRAM/IWRAM and mapped-ROM leaves touch only scratch registers.
+   * Keep every guest mapping live across the one fixed-size call site. */
   riscv_emit_abi_helper_call_raw(ptr, helper_index);
-  riscv_emit_test_poison_mapped_regs(ptr, RISCV_MAPPED_CALLER_SAVED_MASK);
-#if defined(RISCV_RUNTIME_PERF_COUNTERS)
-  riscv_perf_mapped_invalidate_sites++;
-#endif
-  riscv_mapped_valid_mask &= ~RISCV_MAPPED_CALLER_SAVED_MASK;
-  riscv_mapped_dirty_mask &= ~RISCV_MAPPED_CALLER_SAVED_MASK;
 #else
   riscv_emit_read_helper_call(ptr, helper_index);
 #endif
-}
-
-static void riscv_emit_memory_read_helper_known(
-  u8 **ptr, u32 helper_index, uintptr_t direct_target, bool known_nonram)
-{
-#if defined(RISCV_RUNTIME_HAS_FAST_RAM_READS)
-  if (riscv_fast_ram_reads_enabled() && known_nonram)
-  {
-    /* The frontend proved this site cannot reach EWRAM/IWRAM, so avoid a
-     * guaranteed-failed region dispatch while retaining the complete C path. */
-    riscv_emit_read_call_address(ptr, direct_target);
-    return;
-  }
-#else
-  (void)direct_target;
-  (void)known_nonram;
-#endif
-  riscv_emit_memory_read_helper(ptr, helper_index);
-}
-
-#if defined(RISCV_RUNTIME_HAS_FAST_RAM_READS)
-static u32 function_cc riscv_read_u8_pc(u32 address, u32 pc);
-static u32 function_cc riscv_read_u16_pc(u32 address, u32 pc);
-static u32 function_cc riscv_read_u32_pc(u32 address, u32 pc);
-static u32 function_cc riscv_read_s8_pc(u32 address, u32 pc);
-static u32 function_cc riscv_read_s16_pc(u32 address, u32 pc);
-#define RISCV_THUMB_READ8_TARGET riscv_read_u8_pc
-#define RISCV_THUMB_READ16_TARGET riscv_read_u16_pc
-#define RISCV_THUMB_READ32_TARGET riscv_read_u32_pc
-#define RISCV_THUMB_READS8_TARGET riscv_read_s8_pc
-#define RISCV_THUMB_READS16_TARGET riscv_read_s16_pc
-#else
-#define RISCV_THUMB_READ8_TARGET read_memory8
-#define RISCV_THUMB_READ16_TARGET read_memory16
-#define RISCV_THUMB_READ32_TARGET read_memory32
-#define RISCV_THUMB_READS8_TARGET read_memory8s
-#define RISCV_THUMB_READS16_TARGET read_memory16s
-#endif
-
-/* The shared RAM classifier helps ARM workloads with dynamic addresses, but
- * it lengthens Thumb's dense stack/register-relative loads.  Keep Thumb on
- * the one complete C-helper contract instead of adding a second narrow-call
- * model solely to retain that classifier. */
-static void riscv_emit_thumb_memory_read_helper(
-  u8 **ptr, u32 helper_index, uintptr_t direct_target)
-{
-#if defined(RISCV_RUNTIME_HAS_FAST_RAM_READS)
-  if (riscv_fast_ram_reads_enabled())
-  {
-    riscv_emit_c_call_address(ptr, direct_target);
-    return;
-  }
-#else
-  (void)direct_target;
-#endif
-  riscv_emit_memory_read_helper(ptr, helper_index);
 }
 
 static void riscv_emit_memory_store_helper(u8 **ptr, u32 helper_index)
 {
   if (riscv_fast_ram_stores_enabled())
   {
-    /* Keep state authoritative for the rare C/SMC tails, but preserve every
-     * mapped host register across the common RAM leaf.  Unlike the generic C
-     * call path, a successful RAM store needs no caller-saved reloads. */
+    /* A store can raise SMC/IRQ/HALT and leave the block immediately. Publish
+     * only the mappings dirtied since the preceding boundary, then keep every
+     * host mapping live across the shared RAM/VRAM leaf or preserving C tail.
+     * This also gives internal branch joins the same clean-state invariant as
+     * the generic helper ABI without caller-saved invalidation/reloads. */
     riscv_emit_mapped_regs_flush_dirty(ptr);
     riscv_emit_abi_helper_call_raw(ptr, helper_index);
     return;
   }
   riscv_emit_abi_helper_call(ptr, helper_index);
-}
-
-static void riscv_emit_memory_store_helper_known(
-  u8 **ptr, u32 helper_index, uintptr_t direct_target, bool known_ram)
-{
-#if defined(RISCV_RUNTIME_HAS_FAST_RAM_STORES)
-  if (riscv_fast_ram_stores_enabled() && !known_ram)
-  {
-    riscv_emit_mapped_regs_flush_dirty(ptr);
-    riscv_emit_c_call_address_raw(ptr, direct_target);
-    riscv_emit_test_poison_mapped_regs(ptr,
-                                       RISCV_MAPPED_CALLER_SAVED_MASK);
-#if defined(RISCV_RUNTIME_PERF_COUNTERS)
-    riscv_perf_mapped_invalidate_sites++;
-#endif
-    riscv_mapped_valid_mask &= ~RISCV_MAPPED_CALLER_SAVED_MASK;
-    riscv_mapped_dirty_mask &= ~RISCV_MAPPED_CALLER_SAVED_MASK;
-    riscv_emit_mapped_regs_reload_mask(ptr, RISCV_MAPPED_CALLER_SAVED_MASK);
-    return;
-  }
-#else
-  (void)direct_target;
-  (void)known_ram;
-#endif
-  riscv_emit_memory_store_helper(ptr, helper_index);
 }
 
 static void riscv_emit_stateful_helper_call(u8 **ptr, u32 helper_index,
@@ -4092,14 +3978,81 @@ u32 riscv_fast_read_u16(u32 address, u32 pc);
 u32 riscv_fast_read_s16(u32 address, u32 pc);
 u32 riscv_fast_read_u32(u32 address, u32 pc);
 
-/* Shared ordinary-RAM read stubs.  Fast EWRAM/IWRAM paths touch only standard
- * caller-saved scratch registers.  Non-RAM paths materialize the guest PC and
- * tail-call the complete C memory subsystem; the emitted call site already
- * spills and invalidates mapped caller-saved guest registers. */
+/* Shared mapped-memory read stubs.  Fast EWRAM/IWRAM and mapped-ROM paths
+ * touch only scratch registers.  The complete C slow path preserves the five
+ * caller-saved registers holding guest r0-r4, so every generated read has one
+ * fixed-size, mapping-preserving ABI. */
 __asm__(
   ".text\n"
   ".align 2\n"
-  ".macro riscv_fast_ram_ptr slow\n"
+  ".macro riscv_fast_read_slow target\n"
+  "  addi sp, sp, -32\n"
+  "  sw a3, 0(sp)\n"
+  "  sw a4, 4(sp)\n"
+  "  sw a5, 8(sp)\n"
+  "  sw a6, 12(sp)\n"
+  "  sw a7, 16(sp)\n"
+  "  sw ra, 28(sp)\n"
+  "  sw a1, 60(s0)\n"
+  "  call \\target\n"
+  "  lw a3, 0(sp)\n"
+  "  lw a4, 4(sp)\n"
+  "  lw a5, 8(sp)\n"
+  "  lw a6, 12(sp)\n"
+  "  lw a7, 16(sp)\n"
+  "  lw ra, 28(sp)\n"
+  "  addi sp, sp, 32\n"
+  "  ret\n"
+  ".endm\n"
+
+#if defined(RISCV_RUNTIME_HAS_FAST_ROM_READS)
+  /* ROM reads use the same shared stub and the existing 32 KiB page map.
+   * A null/unmapped page, an out-of-range access, or the cartridge GPIO
+   * overlay still takes the complete C slow path. */
+  ".macro riscv_fast_read_ptr slow, last\n"
+  "  srli t1, a0, 25\n"
+  "  addi t1, t1, -1\n"
+  "  beqz t1, .Lfast_ram_\\@\n"
+  "  srli t1, a0, 24\n"
+  "  addi t1, t1, -8\n"
+  "  sltiu t1, t1, 5\n"
+  "  beqz t1, \\slow\n"
+  "  slli t1, a0, 7\n"
+  "  srli t1, t1, 7\n"
+  /* Reads overlapping the optional GPIO window remain authoritative in C. */
+  "  sltiu t0, t1, 202\n"
+  "  bnez t0, \\slow\n"
+  "  addi t0, t1, \\last\n"
+  "  lla t1, gamepak_size\n"
+  "  lw t1, 0(t1)\n"
+  "  bgeu t0, t1, \\slow\n"
+  "  srli t1, a0, 15\n"
+  "  slli t1, t1, 2\n"
+  "  lla t0, memory_map_read\n"
+  "  add t0, t0, t1\n"
+  "  lw t0, 0(t0)\n"
+  "  beqz t0, \\slow\n"
+  "  slli t1, a0, 17\n"
+  "  srli t1, t1, 17\n"
+  "  add t0, t0, t1\n"
+  "  j .Lfast_read_done_\\@\n"
+  ".Lfast_ram_\\@:\n"
+  "  slli t0, a0, 7\n"
+  "  bltz t0, .Lfast_iwram_\\@\n"
+  "  slli t0, a0, 14\n"
+  "  srli t0, t0, 14\n"
+  "  lla t1, ewram\n"
+  "  j .Lfast_ram_done_\\@\n"
+  ".Lfast_iwram_\\@:\n"
+  "  slli t0, a0, 17\n"
+  "  srli t0, t0, 17\n"
+  "  lla t1, iwram+32768\n"
+  ".Lfast_ram_done_\\@:\n"
+  "  add t0, t1, t0\n"
+  ".Lfast_read_done_\\@:\n"
+  ".endm\n"
+#else
+  ".macro riscv_fast_read_ptr slow, last\n"
   /* Bit 27 is clear in both work-RAM regions.  Most dynamic non-RAM reads in
    * the real frontend target ROM, so reject that half of the GBA map in two
    * instructions before falling through to the exact region test. */
@@ -4121,11 +4074,12 @@ __asm__(
   ".Lfast_ram_done_\\@:\n"
   "  add t0, t1, t0\n"
   ".endm\n"
+#endif
 
   ".globl riscv_fast_read_u8\n"
   ".type riscv_fast_read_u8, @function\n"
   "riscv_fast_read_u8:\n"
-  "  riscv_fast_ram_ptr riscv_fast_read_u8_slow\n"
+  "  riscv_fast_read_ptr riscv_fast_read_u8_slow, 0\n"
   "  lbu a0, 0(t0)\n"
   "  ret\n"
   ".size riscv_fast_read_u8, .-riscv_fast_read_u8\n"
@@ -4133,7 +4087,7 @@ __asm__(
   ".globl riscv_fast_read_s8\n"
   ".type riscv_fast_read_s8, @function\n"
   "riscv_fast_read_s8:\n"
-  "  riscv_fast_ram_ptr riscv_fast_read_s8_slow\n"
+  "  riscv_fast_read_ptr riscv_fast_read_s8_slow, 0\n"
   "  lb a0, 0(t0)\n"
   "  ret\n"
   ".size riscv_fast_read_s8, .-riscv_fast_read_s8\n"
@@ -4142,7 +4096,7 @@ __asm__(
   ".type riscv_fast_read_u16, @function\n"
   "riscv_fast_read_u16:\n"
   "  andi t2, a0, 1\n"
-  "  riscv_fast_ram_ptr riscv_fast_read_u16_slow\n"
+  "  riscv_fast_read_ptr riscv_fast_read_u16_slow, 1\n"
   "  sub t0, t0, t2\n"
   "  lhu a0, 0(t0)\n"
   "  beqz t2, 1f\n"
@@ -4157,7 +4111,7 @@ __asm__(
   ".type riscv_fast_read_s16, @function\n"
   "riscv_fast_read_s16:\n"
   "  andi t2, a0, 1\n"
-  "  riscv_fast_ram_ptr riscv_fast_read_s16_slow\n"
+  "  riscv_fast_read_ptr riscv_fast_read_s16_slow, 1\n"
   "  beqz t2, 1f\n"
   "  lb a0, 0(t0)\n"
   "  ret\n"
@@ -4170,7 +4124,7 @@ __asm__(
   ".type riscv_fast_read_u32, @function\n"
   "riscv_fast_read_u32:\n"
   "  andi t2, a0, 3\n"
-  "  riscv_fast_ram_ptr riscv_fast_read_u32_slow\n"
+  "  riscv_fast_read_ptr riscv_fast_read_u32_slow, 3\n"
   "  sub t0, t0, t2\n"
   "  lw a0, 0(t0)\n"
   "  beqz t2, 1f\n"
@@ -4185,20 +4139,15 @@ __asm__(
   ".size riscv_fast_read_u32, .-riscv_fast_read_u32\n"
 
   "riscv_fast_read_u8_slow:\n"
-  "  sw a1, 60(s0)\n"
-  "  tail read_memory8\n"
+  "  riscv_fast_read_slow read_memory8\n"
   "riscv_fast_read_s8_slow:\n"
-  "  sw a1, 60(s0)\n"
-  "  tail read_memory8s\n"
+  "  riscv_fast_read_slow read_memory8s\n"
   "riscv_fast_read_u16_slow:\n"
-  "  sw a1, 60(s0)\n"
-  "  tail read_memory16\n"
+  "  riscv_fast_read_slow read_memory16\n"
   "riscv_fast_read_s16_slow:\n"
-  "  sw a1, 60(s0)\n"
-  "  tail read_memory16s\n"
+  "  riscv_fast_read_slow read_memory16s\n"
   "riscv_fast_read_u32_slow:\n"
-  "  sw a1, 60(s0)\n"
-  "  tail read_memory32\n");
+  "  riscv_fast_read_slow read_memory32\n");
 #endif
 
 #if defined(RISCV_RUNTIME_HAS_FAST_RAM_STORES)
@@ -4206,10 +4155,11 @@ u32 riscv_fast_store_u8(u32 address, u32 value, u32 pc);
 u32 riscv_fast_store_u16(u32 address, u32 value, u32 pc);
 u32 riscv_fast_store_u32(u32 address, u32 value, u32 pc);
 
-/* Shared ordinary-RAM store stubs.  The leaf path preserves every mapped
- * guest host register.  Call sites flush dirty mappings before entry, so slow
- * C tails and SMC exits only need to publish the guest PC.  Slow tails reload
- * caller-saved guest mappings before returning. */
+/* Shared memory-store stubs.  The EWRAM/IWRAM and VRAM leaves touch only
+ * call-clobbered scratch registers.  A complete C slow path saves the five
+ * caller-saved guest mappings around the call; s1-s9/s11 already have psABI
+ * preservation.  The call site publishes its dirty mappings once because any
+ * store may raise an alert and bypass the block's ordinary final-state flush. */
 __asm__(
   ".text\n"
   ".align 2\n"
@@ -4236,32 +4186,62 @@ __asm__(
   ".Lfast_store_ptr_done_\\@:\n"
   ".endm\n"
 
+  ".macro riscv_fast_vram_ptr\n"
+  "  slli t2, a0, 15\n"
+  "  srli t2, t2, 15\n"
+  "  srli t1, t2, 15\n"
+  "  xori t1, t1, 3\n"
+  "  bnez t1, .Lfast_store_vram_mirror_done_\\@\n"
+  "  lui t1, 8\n"
+  "  sub t2, t2, t1\n"
+  ".Lfast_store_vram_mirror_done_\\@:\n"
+  "  lla t0, vram\n"
+  "  add t0, t0, t2\n"
+  ".endm\n"
+
   ".macro riscv_fast_store_slow target\n"
-  /* The compact outer JIT frame reserves 0(sp) and 4(sp) for leaf-stub
-   * temporaries.  Do not address the removed stack helper table here. */
-  "  sw ra, 4(sp)\n"
+  "  addi sp, sp, -32\n"
+  "  sw a3, 0(sp)\n"
+  "  sw a4, 4(sp)\n"
+  "  sw a5, 8(sp)\n"
+  "  sw a6, 12(sp)\n"
+  "  sw a7, 16(sp)\n"
+  "  sw ra, 28(sp)\n"
   "  sw a2, 60(s0)\n"
   "  call \\target\n"
   "  lla t0, riscv_cpu_alert\n"
   "  lbu t1, 0(t0)\n"
-  "  or t1, t1, a0\n"
-  "  sb t1, 0(t0)\n"
-  "  lw a3, 0(s0)\n"
-  "  lw a4, 4(s0)\n"
-  "  lw a5, 8(s0)\n"
-  "  lw a6, 12(s0)\n"
-  "  lw a7, 16(s0)\n"
-  "  lw ra, 4(sp)\n"
+  "  or a0, a0, t1\n"
+  "  sb a0, 0(t0)\n"
+  "  lw a3, 0(sp)\n"
+  "  lw a4, 4(sp)\n"
+  "  lw a5, 8(sp)\n"
+  "  lw a6, 12(sp)\n"
+  "  lw a7, 16(sp)\n"
+  "  lw ra, 28(sp)\n"
+  "  addi sp, sp, 32\n"
   "  ret\n"
   ".endm\n"
 
   ".globl riscv_fast_store_u8\n"
   ".type riscv_fast_store_u8, @function\n"
   "riscv_fast_store_u8:\n"
+  "  srli t0, a0, 24\n"
+  "  addi t0, t0, -6\n"
+  "  beqz t0, .Lriscv_fast_store_u8_vram\n"
   "  riscv_fast_store_ptr riscv_fast_store_u8_slow\n"
   "  lbu t2, 0(t1)\n"
   "  sb a1, 0(t0)\n"
   "  bnez t2, .Lriscv_fast_store_smc\n"
+  "  li a0, 0\n"
+  "  ret\n"
+  ".Lriscv_fast_store_u8_vram:\n"
+  "  riscv_fast_vram_ptr\n"
+  "  andi t0, t0, -2\n"
+  "  andi t1, a1, 255\n"
+  "  slli a1, t1, 8\n"
+  "  or a1, a1, t1\n"
+  "  sh a1, 0(t0)\n"
   "  li a0, 0\n"
   "  ret\n"
   ".size riscv_fast_store_u8, .-riscv_fast_store_u8\n"
@@ -4271,10 +4251,18 @@ __asm__(
   "riscv_fast_store_u16:\n"
   "  andi t0, a0, 1\n"
   "  bnez t0, riscv_fast_store_u16_unaligned\n"
+  "  srli t0, a0, 24\n"
+  "  addi t0, t0, -6\n"
+  "  beqz t0, .Lriscv_fast_store_u16_vram\n"
   "  riscv_fast_store_ptr riscv_fast_store_u16_slow\n"
   "  lhu t2, 0(t1)\n"
   "  sh a1, 0(t0)\n"
   "  bnez t2, .Lriscv_fast_store_smc\n"
+  "  li a0, 0\n"
+  "  ret\n"
+  ".Lriscv_fast_store_u16_vram:\n"
+  "  riscv_fast_vram_ptr\n"
+  "  sh a1, 0(t0)\n"
   "  li a0, 0\n"
   "  ret\n"
   ".size riscv_fast_store_u16, .-riscv_fast_store_u16\n"
@@ -4284,10 +4272,18 @@ __asm__(
   "riscv_fast_store_u32:\n"
   "  andi t0, a0, 3\n"
   "  bnez t0, riscv_fast_store_u32_unaligned\n"
+  "  srli t0, a0, 24\n"
+  "  addi t0, t0, -6\n"
+  "  beqz t0, .Lriscv_fast_store_u32_vram\n"
   "  riscv_fast_store_ptr riscv_fast_store_u32_slow\n"
   "  lw t2, 0(t1)\n"
   "  sw a1, 0(t0)\n"
   "  bnez t2, .Lriscv_fast_store_smc\n"
+  "  li a0, 0\n"
+  "  ret\n"
+  ".Lriscv_fast_store_u32_vram:\n"
+  "  riscv_fast_vram_ptr\n"
+  "  sw a1, 0(t0)\n"
   "  li a0, 0\n"
   "  ret\n"
   ".size riscv_fast_store_u32, .-riscv_fast_store_u32\n"
@@ -4302,8 +4298,11 @@ __asm__(
   "  ret\n"
 
   "riscv_fast_store_u8_slow:\n"
+  "  andi a1, a1, 255\n"
   "  riscv_fast_store_slow write_memory8\n"
   "riscv_fast_store_u16_slow:\n"
+  "  slli a1, a1, 16\n"
+  "  srli a1, a1, 16\n"
   "  riscv_fast_store_slow write_memory16\n"
   "riscv_fast_store_u32_slow:\n"
   "  riscv_fast_store_slow write_memory32\n"
@@ -4313,6 +4312,8 @@ __asm__(
   "  riscv_fast_store_slow riscv_store_u32\n");
 #endif
 
+#if !defined(RISCV_RUNTIME_HAS_FAST_RAM_STORES) || \
+    defined(RISCV_RUNTIME_PERF_PROFILE_SWITCH)
 static u32 function_cc riscv_store_u8_pc(u32 address, u32 value, u32 pc)
 {
   reg[REG_PC] = pc;
@@ -4330,6 +4331,7 @@ static u32 function_cc riscv_store_u32_pc(u32 address, u32 value, u32 pc)
   reg[REG_PC] = pc;
   return riscv_store_u32(address, value);
 }
+#endif
 
 static void function_cc riscv_execute_swi_arm(u32 pc);
 static void function_cc riscv_execute_swi_thumb(u32 pc);
@@ -8569,14 +8571,15 @@ bool riscv_emit_native_arm_bx(u8 **translation_ptr_ref,
   riscv_emit_andi(riscv_reg_t1, riscv_reg_t0, -2);
   ptr = translation_ptr;
   riscv_emit_arm_reg_store(&ptr, REG_PC, riscv_reg_t1);
-  riscv_emit_arm_reg_load(&ptr, riscv_reg_t2, REG_CPSR);
-
+  /* BX changes only the low CPSR T bit.  REG_PC publication above has already
+   * flushed any dirty packed NZCV value; rebuilding and repacking all flags
+   * through the generic CPSR load/store path is redundant per-site work. */
   translation_ptr = ptr;
+  riscv_emit_lw(riscv_reg_t2, riscv_reg_s0, REG_CPSR * 4u);
   riscv_emit_andi(riscv_reg_t2, riscv_reg_t2, -33);
   riscv_emit_or(riscv_reg_t2, riscv_reg_t2, riscv_reg_t3);
+  riscv_emit_sw(riscv_reg_t2, riscv_reg_s0, REG_CPSR * 4u);
   ptr = translation_ptr;
-
-  riscv_emit_arm_reg_store(&ptr, REG_CPSR, riscv_reg_t2);
   riscv_emit_adjust_cycles(&ptr, cycles);
 
   meta->flags |= RISCV_BLOCK_PC_WRITTEN;
@@ -9098,46 +9101,6 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
     (const_register_offset_valid && const_register_offset == 0);
   bool writeback_overwritten_by_load = load && rd == rn;
   bool dead_post_index_writeback = writeback_overwritten_by_load && !pre_index;
-  bool known_nonram = false;
-  bool known_ram = false;
-
-  if ((load && riscv_fast_ram_reads_enabled()) ||
-      (!load && riscv_fast_ram_stores_enabled()))
-  {
-    u32 const_base_address = 0;
-    u32 const_effective_address = 0;
-    bool const_base_address_valid = riscv_arm_const_reg_value(
-      rn, pc + 8u, const_mask, const_values, &const_base_address);
-    bool const_effective_address_valid = false;
-
-    if (const_base_address_valid)
-    {
-      if (!pre_index)
-      {
-        const_effective_address = const_base_address;
-        const_effective_address_valid = true;
-      }
-      else if (immediate_offset)
-      {
-        const_effective_address = up ? const_base_address + offset :
-                                       const_base_address - offset;
-        const_effective_address_valid = true;
-      }
-      else if (const_register_offset_valid)
-      {
-        const_effective_address = up ?
-          const_base_address + const_register_offset :
-          const_base_address - const_register_offset;
-        const_effective_address_valid = true;
-      }
-    }
-    if (const_effective_address_valid)
-    {
-      u32 region = const_effective_address >> 24;
-      known_nonram = region != 0x02u && region != 0x03u;
-      known_ram = !known_nonram;
-    }
-  }
 
   if (cycles_emitted)
     *cycles_emitted = false;
@@ -9242,19 +9205,7 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
     }
 
     riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_a1, pc);
-    if (mem_type != 1)
-    {
-      uintptr_t direct_target = mem_type == 2 ?
-        (uintptr_t)read_memory8s : (uintptr_t)read_memory16s;
-      riscv_emit_memory_read_helper_known(
-        &ptr, read_helper_index, direct_target, known_nonram);
-    }
-    else
-    {
-      riscv_emit_memory_read_helper_known(
-        &ptr, RISCV_HELPER_READ16, (uintptr_t)read_memory16,
-        known_nonram);
-    }
+    riscv_emit_memory_read_helper(&ptr, read_helper_index);
     riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_a0);
     if (rd == REG_PC)
       meta->flags |= RISCV_BLOCK_PC_WRITTEN;
@@ -9279,9 +9230,7 @@ static bool riscv_emit_native_arm_extra_memory(u8 **translation_ptr_ref,
       riscv_emit_addi(riscv_reg_a1, riscv_reg_a2, 8);
       ptr = translation_ptr;
     }
-    riscv_emit_memory_store_helper_known(
-      &ptr, RISCV_HELPER_STORE16,
-      (uintptr_t)riscv_store_u16_pc, known_ram);
+    riscv_emit_memory_store_helper(&ptr, RISCV_HELPER_STORE16);
     riscv_emit_adjust_cycles(&ptr, cycles + 1u);
     if (cycles_emitted)
       *cycles_emitted = true;
@@ -9479,49 +9428,9 @@ bool riscv_emit_native_arm_access_memory_ex_const(
     (const_register_offset_valid && const_register_offset == 0);
   bool writeback_overwritten_by_load = load && rd == rn;
   bool dead_post_index_writeback = writeback_overwritten_by_load && !pre_index;
-  bool known_nonram = false;
-  bool known_ram = false;
 
   if (riscv_debug_disable_arm_native & RISCV_DEBUG_DISABLE_ARM_MEMORY)
     return false;
-
-  if ((load && riscv_fast_ram_reads_enabled()) ||
-      (!load && riscv_fast_ram_stores_enabled()))
-  {
-    u32 const_base_address = 0;
-    u32 const_effective_address = 0;
-    bool const_base_address_valid = riscv_arm_const_reg_value(
-      rn, pc + 8u, const_mask, const_values, &const_base_address);
-    bool const_effective_address_valid = false;
-
-    if (const_base_address_valid)
-    {
-      if (!pre_index)
-      {
-        const_effective_address = const_base_address;
-        const_effective_address_valid = true;
-      }
-      else if (!register_offset)
-      {
-        const_effective_address = up ? const_base_address + offset :
-                                       const_base_address - offset;
-        const_effective_address_valid = true;
-      }
-      else if (const_register_offset_valid)
-      {
-        const_effective_address = up ?
-          const_base_address + const_register_offset :
-          const_base_address - const_register_offset;
-        const_effective_address_valid = true;
-      }
-    }
-    if (const_effective_address_valid)
-    {
-      u32 region = const_effective_address >> 24;
-      known_nonram = region != 0x02u && region != 0x03u;
-      known_ram = !known_nonram;
-    }
-  }
 
   if (cycles_emitted)
     *cycles_emitted = false;
@@ -9624,13 +9533,9 @@ bool riscv_emit_native_arm_access_memory_ex_const(
   {
     riscv_emit_guest_pc_load(&ptr, meta, riscv_reg_a1, pc);
     if (byte)
-      riscv_emit_memory_read_helper_known(
-        &ptr, RISCV_HELPER_READ8, (uintptr_t)read_memory8,
-        known_nonram);
+      riscv_emit_memory_read_helper(&ptr, RISCV_HELPER_READ8);
     else
-      riscv_emit_memory_read_helper_known(
-        &ptr, RISCV_HELPER_READ32, (uintptr_t)read_memory32,
-        known_nonram);
+      riscv_emit_memory_read_helper(&ptr, RISCV_HELPER_READ32);
     riscv_emit_arm_reg_store(&ptr, rd, riscv_reg_a0);
     if (rd == REG_PC)
       meta->flags |= RISCV_BLOCK_PC_WRITTEN;
@@ -9656,13 +9561,9 @@ bool riscv_emit_native_arm_access_memory_ex_const(
       ptr = translation_ptr;
     }
     if (byte)
-      riscv_emit_memory_store_helper_known(
-        &ptr, RISCV_HELPER_STORE8,
-        (uintptr_t)riscv_store_u8_pc, known_ram);
+      riscv_emit_memory_store_helper(&ptr, RISCV_HELPER_STORE8);
     else
-      riscv_emit_memory_store_helper_known(
-        &ptr, RISCV_HELPER_STORE32,
-        (uintptr_t)riscv_store_u32_pc, known_ram);
+      riscv_emit_memory_store_helper(&ptr, RISCV_HELPER_STORE32);
     riscv_emit_adjust_cycles(&ptr, cycles + 1u);
     if (cycles_emitted)
       *cycles_emitted = true;
@@ -11010,29 +10911,19 @@ bool riscv_emit_native_thumb_access_memory(u8 **translation_ptr_ref,
     switch (mem_type)
     {
       case 0:
-        riscv_emit_thumb_memory_read_helper(
-          &ptr, RISCV_HELPER_READ32,
-          (uintptr_t)RISCV_THUMB_READ32_TARGET);
+        riscv_emit_memory_read_helper(&ptr, RISCV_HELPER_READ32);
         break;
       case 1:
-        riscv_emit_thumb_memory_read_helper(
-          &ptr, RISCV_HELPER_READ16,
-          (uintptr_t)RISCV_THUMB_READ16_TARGET);
+        riscv_emit_memory_read_helper(&ptr, RISCV_HELPER_READ16);
         break;
       case 2:
-        riscv_emit_thumb_memory_read_helper(
-          &ptr, RISCV_HELPER_READ8,
-          (uintptr_t)RISCV_THUMB_READ8_TARGET);
+        riscv_emit_memory_read_helper(&ptr, RISCV_HELPER_READ8);
         break;
       case 3:
-        riscv_emit_thumb_memory_read_helper(
-          &ptr, RISCV_HELPER_READ8S,
-          (uintptr_t)RISCV_THUMB_READS8_TARGET);
+        riscv_emit_memory_read_helper(&ptr, RISCV_HELPER_READ8S);
         break;
       default:
-        riscv_emit_thumb_memory_read_helper(
-          &ptr, RISCV_HELPER_READ16S,
-          (uintptr_t)RISCV_THUMB_READS16_TARGET);
+        riscv_emit_memory_read_helper(&ptr, RISCV_HELPER_READ16S);
         break;
     }
 
@@ -11047,19 +10938,13 @@ bool riscv_emit_native_thumb_access_memory(u8 **translation_ptr_ref,
     switch (mem_type)
     {
       case 0:
-        riscv_emit_memory_store_helper_known(
-          &ptr, RISCV_HELPER_STORE32,
-          (uintptr_t)riscv_store_u32_pc, false);
+        riscv_emit_memory_store_helper(&ptr, RISCV_HELPER_STORE32);
         break;
       case 1:
-        riscv_emit_memory_store_helper_known(
-          &ptr, RISCV_HELPER_STORE16,
-          (uintptr_t)riscv_store_u16_pc, false);
+        riscv_emit_memory_store_helper(&ptr, RISCV_HELPER_STORE16);
         break;
       case 2:
-        riscv_emit_memory_store_helper_known(
-          &ptr, RISCV_HELPER_STORE8,
-          (uintptr_t)riscv_store_u8_pc, false);
+        riscv_emit_memory_store_helper(&ptr, RISCV_HELPER_STORE8);
         break;
       default:
         return false;

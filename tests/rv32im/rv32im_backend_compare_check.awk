@@ -225,7 +225,21 @@ END {
           generated["mips:" key] != spec_mips_bytes[key])
         fail(key " MIPS reference no longer reproduces the frozen baseline")
 
+      if (name == "mapped_alu")
+        mips_bytes_ratio_max_x100 = mapped_mips_bytes_ratio_max_x100
+      else if (name == "memory_read")
+        mips_bytes_ratio_max_x100 = memory_mips_bytes_ratio_max_x100
+      else if (name == "memory_write")
+        mips_bytes_ratio_max_x100 = write_mips_bytes_ratio_max_x100
+      else
+        mips_bytes_ratio_max_x100 = indirect_mips_bytes_ratio_max_x100
+      if ((generated["rv32im:" key] + 0) * 10000 > \
+          (generated["mips:" key] + 0) * mips_bytes_ratio_max_x100)
+        fail(key " RV32IM/MIPS generated-byte ratio exceeded")
+
       if (name == "mapped_alu") {
+        if ((generated["rv32im:" key] + 0) > mapped_bytes_max)
+          fail(key " RV32IM mapped-ALU generated-code budget exceeded")
         if ((generated["rv32im:" key] + 0) > (spec_rv_bytes[key] + 0))
           fail(key " RV32IM mapped-ALU generated code regressed")
         if (mode == "cold" && \
@@ -260,6 +274,8 @@ END {
               (spec_rv_raw[key] + 0) * write_warm_min_reduction_x100)
           fail(key " RV32IM write warm improvement was below the required reduction")
       } else {
+        if ((generated["rv32im:" key] + 0) > indirect_bytes_max)
+          fail(key " RV32IM indirect generated-code budget exceeded")
         if ((generated["rv32im:" key] + 0) > (spec_rv_bytes[key] + 0))
           fail(key " RV32IM indirect generated code regressed")
         if (mode == "cold" && \
@@ -351,6 +367,14 @@ END {
       lookup_warm_min_reduction_x100 \
     " lookup_gap_min_closure_percent_x100=" \
       lookup_gap_min_closure_x100 \
+    " mapped_mips_bytes_ratio_max_x100=" \
+      mapped_mips_bytes_ratio_max_x100 \
+    " memory_mips_bytes_ratio_max_x100=" \
+      memory_mips_bytes_ratio_max_x100 \
+    " write_mips_bytes_ratio_max_x100=" \
+      write_mips_bytes_ratio_max_x100 \
+    " indirect_mips_bytes_ratio_max_x100=" \
+      indirect_mips_bytes_ratio_max_x100 \
     " write_smc_contract_locked=1" \
     " reason=frozen_mips_comparable_baseline_verified"
 }
