@@ -14,10 +14,18 @@ typedef struct esp32s31_jit_selftest_result
 {
   uintptr_t rom_cache_address;
   uintptr_t ram_cache_address;
-  uint32_t return_value;
-  uint32_t patched_return_value;
+  uintptr_t app_text_address;
+  uintptr_t app_rodata_address;
+  uint32_t rom_return_value;
+  uint32_t rom_patched_return_value;
+  uint32_t ram_return_value;
+  uint32_t ram_patched_return_value;
   bool rom_cache_external;
   bool ram_cache_external;
+  bool rom_cache_executable;
+  bool ram_cache_executable;
+  bool app_text_external;
+  bool app_rodata_external;
 } esp32s31_jit_selftest_result_t;
 
 bool esp32s31_jit_cache_sync(void *start, void *end);

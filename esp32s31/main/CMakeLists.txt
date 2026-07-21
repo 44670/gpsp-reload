@@ -22,6 +22,12 @@ set(GPSP_CORE_SOURCES
 )
 
 if(GPSP_ESP32S31_DYNAREC)
+    if(CONFIG_SPIRAM_XIP_FROM_PSRAM OR
+       CONFIG_SPIRAM_FETCH_INSTRUCTIONS OR
+       CONFIG_SPIRAM_RODATA)
+        message(FATAL_ERROR
+            "ESP32-S31 JIT uses the native RWX PSRAM window; disable IDF's global flash-to-PSRAM relocation so gpSP .text/.rodata stay in SPI flash or SRAM")
+    endif()
     list(APPEND GPSP_CORE_SOURCES
         "${GPSP_ROOT}/cpu_threaded.c"
         "${GPSP_ROOT}/riscv/riscv_runtime.c"

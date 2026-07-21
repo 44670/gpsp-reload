@@ -731,9 +731,10 @@ void app_main(void)
            GPSP_ESP32S31_BACKEND_NAME,
            CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
            CONFIG_FREERTOS_NUMBER_OF_CORES);
-  printf("result=PASS command=runtime_config cpu_mhz=%d cores=%d "
-         "unicore=1 boot_mode=%s\n",
+  printf("result=PASS command=runtime_config cpu_mhz=%d psram_mhz=%d "
+         "cores=%d unicore=1 boot_mode=%s\n",
          CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+         CONFIG_SPIRAM_SPEED,
          CONFIG_FREERTOS_NUMBER_OF_CORES, GPSP_ESP32S31_BOOT_NAME);
 
 #if !GPSP_ESP32S31_MENU_BOOT
@@ -785,14 +786,28 @@ void app_main(void)
       esp32s31_jit_cache_selftest(&jit_selftest);
   printf("result=%s command=jit_cache_selftest backend=dynarec"
          " rom_cache=0x%08" PRIxPTR " ram_cache=0x%08" PRIxPTR
-         " rom_external=%u ram_external=%u return_value=%" PRIu32
-         " patched_return_value=%" PRIu32
+         " rom_external=%u ram_external=%u"
+         " rom_executable=%u ram_executable=%u"
+         " app_text=0x%08" PRIxPTR " app_rodata=0x%08" PRIxPTR
+         " app_text_external=%u app_rodata_external=%u"
+         " rom_return_value=%" PRIu32
+         " rom_patched_return_value=%" PRIu32
+         " ram_return_value=%" PRIu32
+         " ram_patched_return_value=%" PRIu32
          " rom_cache_bytes=%u ram_cache_bytes=%u\n",
          jit_selftest_ok ? "PASS" : "FAIL",
          jit_selftest.rom_cache_address, jit_selftest.ram_cache_address,
          (unsigned)jit_selftest.rom_cache_external,
          (unsigned)jit_selftest.ram_cache_external,
-         jit_selftest.return_value, jit_selftest.patched_return_value,
+         (unsigned)jit_selftest.rom_cache_executable,
+         (unsigned)jit_selftest.ram_cache_executable,
+         jit_selftest.app_text_address, jit_selftest.app_rodata_address,
+         (unsigned)jit_selftest.app_text_external,
+         (unsigned)jit_selftest.app_rodata_external,
+         jit_selftest.rom_return_value,
+         jit_selftest.rom_patched_return_value,
+         jit_selftest.ram_return_value,
+         jit_selftest.ram_patched_return_value,
          (unsigned)ROM_TRANSLATION_CACHE_SIZE,
          (unsigned)RAM_TRANSLATION_CACHE_SIZE);
   fflush(stdout);

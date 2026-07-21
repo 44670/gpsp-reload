@@ -25,15 +25,58 @@
 #error "ESP32-S31 PSRAM JIT requires CONFIG_SPIRAM=y"
 #endif
 
+#if !defined(CONFIG_SPIRAM_SPEED) || CONFIG_SPIRAM_SPEED != 250
+#error "ESP32-S31 PSRAM JIT release requires 250 MHz PSRAM"
+#endif
+
+#if (defined(CONFIG_SPIRAM_XIP_FROM_PSRAM) && \
+     CONFIG_SPIRAM_XIP_FROM_PSRAM) || \
+    (defined(CONFIG_SPIRAM_FETCH_INSTRUCTIONS) && \
+     CONFIG_SPIRAM_FETCH_INSTRUCTIONS) || \
+    (defined(CONFIG_SPIRAM_RODATA) && CONFIG_SPIRAM_RODATA)
+#error "gpSP JIT must not relocate application .text/.rodata into PSRAM"
+#endif
+
 #ifndef CONFIG_CACHE_L1_ICACHE_LINE_SIZE
 #error "ESP32-S31 JIT cache sync requires the L1 I-cache line size"
 #endif
 
 static const char *TAG = "gpsp-jit";
+static const uint8_t s_app_rodata_probe[] = "gpsp-app-rodata-in-flash";
 
 _Static_assert((CONFIG_CACHE_L1_ICACHE_LINE_SIZE &
                 (CONFIG_CACHE_L1_ICACHE_LINE_SIZE - 1)) == 0,
                "I-cache line size must be a power of two");
+
+static bool execute_cache_probe(uint32_t *code, uint32_t *return_value,
+                                uint32_t *patched_return_value)
+{
+  typedef uint32_t (*selftest_fn_t)(void);
+  const uint32_t saved0 = code[0];
+  const uint32_t saved1 = code[1];
+
+  /* addi a0, zero, 42; jalr zero, 0(ra) */
+  code[0] = UINT32_C(0x02a00513);
+  code[1] = UINT32_C(0x00008067);
+  if (!esp32s31_jit_cache_sync(code, code + 2))
+    return false;
+
+  *return_value = ((selftest_fn_t)(uintptr_t)code)();
+
+  /* Reuse the same I-cache line to prove that a later block replacement is
+   * visible to instruction fetch, not merely that initial PSRAM XIP works. */
+  code[0] = UINT32_C(0x02b00513); /* addi a0, zero, 43 */
+  if (!esp32s31_jit_cache_sync(code, code + 2))
+    return false;
+  *patched_return_value = ((selftest_fn_t)(uintptr_t)code)();
+
+  code[0] = saved0;
+  code[1] = saved1;
+  if (!esp32s31_jit_cache_sync(code, code + 2))
+    return false;
+
+  return *return_value == 42u && *patched_return_value == 43u;
+}
 
 bool esp32s31_jit_cache_sync(void *start_ptr, void *end_ptr)
 {
@@ -134,49 +177,36 @@ bool esp32s31_jit_cache_sync(void *start_ptr, void *end_ptr)
 
 bool esp32s31_jit_cache_selftest(esp32s31_jit_selftest_result_t *result)
 {
-  typedef uint32_t (*selftest_fn_t)(void);
-  uint32_t saved[2];
-  uint32_t *code = (uint32_t *)rom_translation_cache;
-
   if (result == NULL)
     return false;
 
   memset(result, 0, sizeof(*result));
   result->rom_cache_address = (uintptr_t)rom_translation_cache;
   result->ram_cache_address = (uintptr_t)ram_translation_cache;
+  result->app_text_address = (uintptr_t)esp32s31_jit_cache_sync;
+  result->app_rodata_address = (uintptr_t)s_app_rodata_probe;
   result->rom_cache_external = esp_ptr_external_ram(rom_translation_cache);
   result->ram_cache_external = esp_ptr_external_ram(ram_translation_cache);
+  result->rom_cache_executable = esp_ptr_executable(rom_translation_cache);
+  result->ram_cache_executable = esp_ptr_executable(ram_translation_cache);
+  result->app_text_external = esp_ptr_external_ram(
+      (const void *)result->app_text_address);
+  result->app_rodata_external = esp_ptr_external_ram(s_app_rodata_probe);
   if (!result->rom_cache_external || !result->ram_cache_external ||
+      !result->rom_cache_executable || !result->ram_cache_executable ||
+      result->app_text_external || result->app_rodata_external ||
       (((uintptr_t)rom_translation_cache &
         (ESP32S31_JIT_CACHE_ALIGNMENT - 1u)) != 0u) ||
       (((uintptr_t)ram_translation_cache &
         (ESP32S31_JIT_CACHE_ALIGNMENT - 1u)) != 0u) ||
-      (((uintptr_t)code & 3u) != 0u))
+      (((uintptr_t)rom_translation_cache & 3u) != 0u) ||
+      (((uintptr_t)ram_translation_cache & 3u) != 0u))
     return false;
 
-  saved[0] = code[0];
-  saved[1] = code[1];
-
-  /* addi a0, zero, 42; jalr zero, 0(ra) */
-  code[0] = UINT32_C(0x02a00513);
-  code[1] = UINT32_C(0x00008067);
-  if (!esp32s31_jit_cache_sync(code, code + 2))
-    return false;
-
-  result->return_value = ((selftest_fn_t)(uintptr_t)code)();
-
-  /* A first execution only proves that PSRAM is executable.  Reuse the same
-   * I-cache line to prove that runtime block replacement is actually visible
-   * to instruction fetch as required by translation-cache flush/reuse. */
-  code[0] = UINT32_C(0x02b00513); /* addi a0, zero, 43 */
-  if (!esp32s31_jit_cache_sync(code, code + 2))
-    return false;
-  result->patched_return_value = ((selftest_fn_t)(uintptr_t)code)();
-
-  code[0] = saved[0];
-  code[1] = saved[1];
-  if (!esp32s31_jit_cache_sync(code, code + 2))
-    return false;
-
-  return result->return_value == 42u && result->patched_return_value == 43u;
+  return execute_cache_probe((uint32_t *)rom_translation_cache,
+                             &result->rom_return_value,
+                             &result->rom_patched_return_value) &&
+         execute_cache_probe((uint32_t *)ram_translation_cache,
+                             &result->ram_return_value,
+                             &result->ram_patched_return_value);
 }
