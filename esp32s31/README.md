@@ -164,23 +164,29 @@ normally uses a 2 MiB ROM JIT cache instead.
 ESP32-S31 maps its ordinary external-RAM aperture as RWX. The ROM and RAM JIT
 caches are therefore static, 4 KiB-aligned PSRAM arrays and generated RV32IM
 code executes directly from those addresses after data writeback, instruction
-cache invalidation, and `fence.i`. Release builds permanently enable
-`CONFIG_SPIRAM_XIP_FROM_PSRAM`, which copies and remaps flash-backed application
-`.text` and `.rodata` into 250 MHz PSRAM at startup; explicitly internal code
+cache invalidation, and `fence.i`. The ESP32-S31 dynarec release configuration
+requires `CONFIG_SPIRAM_XIP_FROM_PSRAM`; clean builds enable it through
+`sdkconfig.defaults`. IDF copies and remaps flash-backed application `.text`
+and `.rodata` into 250 MHz PSRAM at startup, while explicitly internal code
 remains in SRAM. The mutable JIT caches independently execute through the
-native RWX PSRAM aperture.
+native RWX PSRAM aperture. Release startup also runs IDF's PSRAM memory test
+and aborts before entering gpSP if that test fails.
 
 A zero-PSRAM build is not feasible without a larger architectural change. GBA
 EWRAM + IWRAM + VRAM already total 384 KiB; adding only the 77,280-byte render
 target leaves roughly 42 KiB for the entire app, IDF, stacks, and LCD DMA.
 
-Build a clean menu-mode release firmware:
+Build a clean menu-mode release firmware with the exact options below. ESP-IDF
+does not use `CMAKE_BUILD_TYPE=Release` as the release selector for this app.
+Run `fullclean` when changing release layout or Kconfig defaults; all compiler
+temporary files stay under `build/` because the system `/tmp` may be full.
 
 ```sh
 source /home/john/esp-idf/export.sh
 cd /home/john/work/gpsp/esp32s31
 idf.py -B build fullclean
-idf.py -B build \
+mkdir -p build/compiler-tmp
+TMPDIR=/home/john/work/gpsp/esp32s31/build/compiler-tmp idf.py -B build \
   -DGPSP_ESP32S31_DYNAREC=1 \
   -DGPSP_ESP32S31_PROFILE=0 \
   -DGPSP_ESP32S31_PC_PROFILE=0 \
@@ -211,16 +217,41 @@ idf.py -B build \
   build
 ```
 
-For a routine firmware-only update, fully write and verify the app partition;
-this does not touch the `gamepak` partition at `0x190000`:
+For an incremental menu release rebuild, pass the same ten options; do not rely
+on a sticky CMake cache to retain release values. To build and then update only
+the app partition, use:
 
 ```sh
-/home/john/.espressif/python_env/idf6.2_py3.12_env/bin/python -m esptool \
-  --chip esp32s31 -p /dev/ttyUSB0 -b 460800 \
-  --before default-reset --after hard-reset --no-stub \
-  write-flash --flash-mode dio --flash-freq 80m --flash-size 16MB \
-  0x10000 build/gpsp_esp32s31.bin
+TMPDIR=/home/john/work/gpsp/esp32s31/build/compiler-tmp idf.py -B build \
+  -DGPSP_ESP32S31_DYNAREC=1 \
+  -DGPSP_ESP32S31_PROFILE=0 \
+  -DGPSP_ESP32S31_PC_PROFILE=0 \
+  -DGPSP_ESP32S31_LTO=0 \
+  -DGPSP_ESP32S31_BOOT_MODE=menu \
+  -DGPSP_ESP32S31_FLASH_SPILL=1 \
+  -DGPSP_ESP32S31_MENU_AUTOROM_NAME= \
+  -DESP32S31_GAMEPAK_STATIC_MB=12 \
+  -DESP32S31_ROM_JIT_CACHE_KB=1536 \
+  -DESP32S31_RAM_JIT_CACHE_KB=384 \
+  build
+
+TMPDIR=/home/john/work/gpsp/esp32s31/build/compiler-tmp idf.py -B build \
+  -p /dev/ttyUSB0 \
+  -DGPSP_ESP32S31_DYNAREC=1 \
+  -DGPSP_ESP32S31_PROFILE=0 \
+  -DGPSP_ESP32S31_PC_PROFILE=0 \
+  -DGPSP_ESP32S31_LTO=0 \
+  -DGPSP_ESP32S31_BOOT_MODE=menu \
+  -DGPSP_ESP32S31_FLASH_SPILL=1 \
+  -DGPSP_ESP32S31_MENU_AUTOROM_NAME= \
+  -DESP32S31_GAMEPAK_STATIC_MB=12 \
+  -DESP32S31_ROM_JIT_CACHE_KB=1536 \
+  -DESP32S31_RAM_JIT_CACHE_KB=384 \
+  app-flash
 ```
+
+`app-flash` fully verifies the app partition and does not touch the `gamepak`
+partition at `0x190000`. Do not interrupt it after erase has started.
 
 Flash a raw GBA cartridge image independently of the firmware:
 
