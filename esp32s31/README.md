@@ -160,7 +160,9 @@ framebuffer. The menu build does not initialize or poll touch.
 Menu input comes only from the USB XInput path. The D-pad moves by one item,
 Left/Right moves by a page, physical Xbox A opens a directory or selects a
 `.gba`, and physical Xbox B returns to the parent directory. Gameplay keeps
-the existing Retropad/Nintendo geometry mapping independently.
+the existing Retropad/Nintendo geometry mapping independently. The menu header
+shows the compiled backend and XIP mode as `RV32 JIT + PSRAM XIP`; profiling
+builds append ` + PROFILE`.
 
 After selection, the loader scans the exact ROM length in 32 KiB pages and
 computes a 32-bit FNV-1a hash for each page. A hash match is only a candidate:

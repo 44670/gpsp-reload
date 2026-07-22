@@ -14,6 +14,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "sdkconfig.h"
 
 #include <libretro.h>
 
@@ -41,6 +42,27 @@
 #ifndef GPSP_ESP32S31_MENU_AUTOROM_NAME
 #define GPSP_ESP32S31_MENU_AUTOROM_NAME ""
 #endif
+
+#if GPSP_ESP32S31_DYNAREC
+#define MENU_BACKEND_STATUS "RV32 JIT"
+#else
+#define MENU_BACKEND_STATUS "INTERPRETER"
+#endif
+
+#if CONFIG_SPIRAM_XIP_FROM_PSRAM
+#define MENU_XIP_STATUS " + PSRAM XIP"
+#else
+#define MENU_XIP_STATUS " + FLASH XIP"
+#endif
+
+#if GPSP_ESP32S31_PROFILE
+#define MENU_PROFILE_STATUS " + PROFILE"
+#else
+#define MENU_PROFILE_STATUS ""
+#endif
+
+#define MENU_BUILD_STATUS \
+  MENU_BACKEND_STATUS MENU_XIP_STATUS MENU_PROFILE_STATUS
 
 #define COLOR_BACKGROUND UINT16_C(0x0841)
 #define COLOR_PANEL UINT16_C(0x1082)
@@ -178,11 +200,14 @@ static void render_browser(const char *path, size_t selected)
     return;
 
   esp32s31_menu_fill(pixels, COLOR_BACKGROUND);
-  esp32s31_menu_fill_rect(pixels, 0, 0, 240, 24, COLOR_HEADER);
+  esp32s31_menu_fill_rect(pixels, 0, 0, 240, 27, COLOR_HEADER);
   esp32s31_menu_draw_text(
-      pixels, 4, 2, 232, "GBA ROM MENU", COLOR_TEXT, COLOR_HEADER);
+      pixels, 4, 1, 232, "GBA ROM MENU", COLOR_TEXT, COLOR_HEADER);
   esp32s31_menu_draw_text(
-      pixels, 4, 14, 232, display_path(path), COLOR_DIM, COLOR_HEADER);
+      pixels, 4, 10, 232, MENU_BUILD_STATUS,
+      COLOR_PROGRESS, COLOR_HEADER);
+  esp32s31_menu_draw_text(
+      pixels, 4, 19, 232, display_path(path), COLOR_DIM, COLOR_HEADER);
 
   size_t first = 0u;
   if (selected >= MENU_VISIBLE_ROWS)
@@ -194,7 +219,7 @@ static void render_browser(const char *path, size_t selected)
   for (size_t row = 0u; row < MENU_VISIBLE_ROWS; row++)
   {
     const size_t index = first + row;
-    const int y = 28 + (int)row * MENU_ROW_HEIGHT;
+    const int y = 29 + (int)row * MENU_ROW_HEIGHT;
     if (index >= s_entry_count)
       break;
 
