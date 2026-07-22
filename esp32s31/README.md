@@ -164,12 +164,11 @@ normally uses a 2 MiB ROM JIT cache instead.
 ESP32-S31 maps its ordinary external-RAM aperture as RWX. The ROM and RAM JIT
 caches are therefore static, 4 KiB-aligned PSRAM arrays and generated RV32IM
 code executes directly from those addresses after data writeback, instruction
-cache invalidation, and `fence.i`. Do not enable IDF's
-`CONFIG_SPIRAM_XIP_FROM_PSRAM`, `CONFIG_SPIRAM_FETCH_INSTRUCTIONS`, or
-`CONFIG_SPIRAM_RODATA`: those options relocate the application flash segments
-and are not required to execute generated code. The release layout deliberately
-keeps application `.text` and `.rodata` in SPI-flash XIP (with selected hot code
-in SRAM) while only the mutable JIT caches execute from 250 MHz PSRAM.
+cache invalidation, and `fence.i`. Release builds permanently enable
+`CONFIG_SPIRAM_XIP_FROM_PSRAM`, which copies and remaps flash-backed application
+`.text` and `.rodata` into 250 MHz PSRAM at startup; explicitly internal code
+remains in SRAM. The mutable JIT caches independently execute through the
+native RWX PSRAM aperture.
 
 A zero-PSRAM build is not feasible without a larger architectural change. GBA
 EWRAM + IWRAM + VRAM already total 384 KiB; adding only the 77,280-byte render

@@ -15,13 +15,10 @@ CONFIG_COMPILER_CXX_RTTI=n
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_320=y
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_SPEED_250M=y
-# ESP32-S31's ordinary external-RAM window is already RWX, so generated JIT
-# code executes directly from its static PSRAM cache without IDF's global
-# flash-to-PSRAM relocation. The global option would also move all firmware
-# .text and .rodata out of SPI flash, which is explicitly not our layout.
-# CONFIG_SPIRAM_XIP_FROM_PSRAM is not set
-# CONFIG_SPIRAM_FETCH_INSTRUCTIONS is not set
-# CONFIG_SPIRAM_RODATA is not set
+# Keep flash-backed application instructions and read-only data resident in
+# 250 MHz PSRAM at runtime. This also selects SPIRAM_FETCH_INSTRUCTIONS and
+# SPIRAM_RODATA; mutable JIT caches use the native RWX PSRAM aperture directly.
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y
 CONFIG_SPIRAM_MEMTEST=n
 CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
 CONFIG_SPIRAM_ALLOW_NOINIT_SEG_EXTERNAL_MEMORY=y

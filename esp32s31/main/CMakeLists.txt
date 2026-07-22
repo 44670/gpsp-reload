@@ -22,11 +22,11 @@ set(GPSP_CORE_SOURCES
 )
 
 if(GPSP_ESP32S31_DYNAREC)
-    if(CONFIG_SPIRAM_XIP_FROM_PSRAM OR
-       CONFIG_SPIRAM_FETCH_INSTRUCTIONS OR
-       CONFIG_SPIRAM_RODATA)
+    if(NOT CONFIG_SPIRAM_XIP_FROM_PSRAM OR
+       NOT CONFIG_SPIRAM_FETCH_INSTRUCTIONS OR
+       NOT CONFIG_SPIRAM_RODATA)
         message(FATAL_ERROR
-            "ESP32-S31 JIT uses the native RWX PSRAM window; disable IDF's global flash-to-PSRAM relocation so gpSP .text/.rodata stay in SPI flash or SRAM")
+            "ESP32-S31 dynarec release requires application .text/.rodata XIP from PSRAM")
     endif()
     list(APPEND GPSP_CORE_SOURCES
         "${GPSP_ROOT}/cpu_threaded.c"

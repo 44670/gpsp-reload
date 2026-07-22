@@ -29,12 +29,12 @@
 #error "ESP32-S31 PSRAM JIT release requires 250 MHz PSRAM"
 #endif
 
-#if (defined(CONFIG_SPIRAM_XIP_FROM_PSRAM) && \
-     CONFIG_SPIRAM_XIP_FROM_PSRAM) || \
-    (defined(CONFIG_SPIRAM_FETCH_INSTRUCTIONS) && \
-     CONFIG_SPIRAM_FETCH_INSTRUCTIONS) || \
-    (defined(CONFIG_SPIRAM_RODATA) && CONFIG_SPIRAM_RODATA)
-#error "gpSP JIT must not relocate application .text/.rodata into PSRAM"
+#if !defined(CONFIG_SPIRAM_XIP_FROM_PSRAM) || \
+    !CONFIG_SPIRAM_XIP_FROM_PSRAM || \
+    !defined(CONFIG_SPIRAM_FETCH_INSTRUCTIONS) || \
+    !CONFIG_SPIRAM_FETCH_INSTRUCTIONS || \
+    !defined(CONFIG_SPIRAM_RODATA) || !CONFIG_SPIRAM_RODATA
+#error "ESP32-S31 dynarec release requires application .text/.rodata XIP from PSRAM"
 #endif
 
 #ifndef CONFIG_CACHE_L1_ICACHE_LINE_SIZE
@@ -42,7 +42,7 @@
 #endif
 
 static const char *TAG = "gpsp-jit";
-static const uint8_t s_app_rodata_probe[] = "gpsp-app-rodata-in-flash";
+static const uint8_t s_app_rodata_probe[] = "gpsp-app-rodata-probe";
 
 _Static_assert((CONFIG_CACHE_L1_ICACHE_LINE_SIZE &
                 (CONFIG_CACHE_L1_ICACHE_LINE_SIZE - 1)) == 0,
@@ -194,7 +194,7 @@ bool esp32s31_jit_cache_selftest(esp32s31_jit_selftest_result_t *result)
   result->app_rodata_external = esp_ptr_external_ram(s_app_rodata_probe);
   if (!result->rom_cache_external || !result->ram_cache_external ||
       !result->rom_cache_executable || !result->ram_cache_executable ||
-      result->app_text_external || result->app_rodata_external ||
+      !result->app_text_external || !result->app_rodata_external ||
       (((uintptr_t)rom_translation_cache &
         (ESP32S31_JIT_CACHE_ALIGNMENT - 1u)) != 0u) ||
       (((uintptr_t)ram_translation_cache &
