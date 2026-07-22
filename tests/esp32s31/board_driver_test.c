@@ -351,7 +351,7 @@ static void test_fps_overlay(void)
   {
     const uint16_t *row = output + y * OUTPUT_PITCH_PIXELS;
     for (unsigned x = ESP32S31_LCD_BAR_WIDTH + 2u;
-         x < ESP32S31_LCD_BAR_WIDTH + 98u; x++)
+         x < ESP32S31_LCD_BAR_WIDTH + 110u; x++)
     {
       assert(row[x] == 0u || row[x] == 0xffffu);
       white_pixels += row[x] == 0xffffu;
@@ -367,7 +367,7 @@ static void test_fps_overlay(void)
          0x1234u);
   assert(output[2u * OUTPUT_PITCH_PIXELS + ESP32S31_LCD_BAR_WIDTH + 1u] ==
          0x1234u);
-  assert(output[2u * OUTPUT_PITCH_PIXELS + ESP32S31_LCD_BAR_WIDTH + 98u] ==
+  assert(output[2u * OUTPUT_PITCH_PIXELS + ESP32S31_LCD_BAR_WIDTH + 110u] ==
          0x1234u);
 
   for (unsigned i = 0; i < GUARD_BYTES; i++)
@@ -401,8 +401,18 @@ static void test_fused_fps_overlay(void)
   }
 
   esp32s31_rgb565_fps_osd_t osd;
+  esp32s31_rgb565_fps_osd_t below_100;
+  esp32s31_rgb565_fps_osd_t display_max;
+  esp32s31_rgb565_fps_osd_t clamped;
   assert(!esp32s31_rgb565_prepare_fps_osd(NULL, 597u));
-  assert(esp32s31_rgb565_prepare_fps_osd(&osd, 597u));
+  assert(esp32s31_rgb565_prepare_fps_osd(&below_100, 999u));
+  assert(esp32s31_rgb565_prepare_fps_osd(&osd, 1234u));
+  assert(memcmp(&below_100, &osd, sizeof(osd)) != 0);
+  assert(esp32s31_rgb565_prepare_fps_osd(
+      &display_max, ESP32S31_FPS_DISPLAY_MAX_X10));
+  assert(esp32s31_rgb565_prepare_fps_osd(
+      &clamped, ESP32S31_FPS_DISPLAY_MAX_X10 + 1u));
+  assert(memcmp(&display_max, &clamped, sizeof(display_max)) == 0);
   assert(esp32s31_rgb565_clear_output(
       output, OUTPUT_PITCH_PIXELS * sizeof(uint16_t)));
 

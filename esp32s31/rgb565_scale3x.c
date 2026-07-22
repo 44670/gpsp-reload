@@ -13,7 +13,7 @@
 #define FPS_GLYPH_HEIGHT 7u
 #define FPS_GLYPH_ADVANCE 6u
 #define FPS_GLYPH_SCALE 2u
-#define FPS_TEXT_LENGTH 8u
+#define FPS_TEXT_LENGTH 9u
 #define FPS_TEXT_X (ESP32S31_LCD_BAR_WIDTH + 4u)
 #define FPS_TEXT_Y 4u
 #define FPS_BACKGROUND_X (ESP32S31_LCD_BAR_WIDTH + 2u)
@@ -94,13 +94,14 @@ static void draw_fps_glyph(uint16_t *output, size_t output_pitch_pixels,
 
 static void format_fps_text(char text[FPS_TEXT_LENGTH], unsigned fps_x10)
 {
-  if (fps_x10 > 999u)
-    fps_x10 = 999u;
+  if (fps_x10 > ESP32S31_FPS_DISPLAY_MAX_X10)
+    fps_x10 = ESP32S31_FPS_DISPLAY_MAX_X10;
 
   const unsigned whole = fps_x10 / 10u;
   const char formatted[FPS_TEXT_LENGTH] = {
       'F', 'P', 'S', ' ',
-      whole >= 10u ? (char)('0' + whole / 10u) : ' ',
+      whole >= 100u ? (char)('0' + whole / 100u) : ' ',
+      whole >= 10u ? (char)('0' + (whole / 10u) % 10u) : ' ',
       (char)('0' + whole % 10u), '.', (char)('0' + fps_x10 % 10u),
   };
   memcpy(text, formatted, sizeof(formatted));

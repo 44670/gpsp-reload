@@ -125,8 +125,9 @@ TMPDIR=/home/john/work/gpsp/esp32s31/build/compiler-tmp idf.py -B build \
 This ESP-IDF app runs gpSP with the native RV32IM dynarec enabled by default
 and sends its raw 240x160
 RGB565 framebuffer to the Korvo-1 800x480 RGB panel. The direct driver scales
-the image exactly 3x, keeps 40-pixel black side bars, and fuses measured FPS at
-the top-left of the scaled GBA image. The default path renders into a 240x161
+the image exactly 3x, keeps 40-pixel black side bars, and fuses measured FPS
+from 0.0 through 999.9 at the top-left of the scaled GBA image. The default
+path renders into a 240x161
 internal-SRAM target, copies its visible 240x160 area into one 76,800-byte
 PSRAM snapshot, and has the LCD bounce callback scale ten source rows at a time
 into two 48,000-byte internal-SRAM DMA strips. The emulator-owned GBA

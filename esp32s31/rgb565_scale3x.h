@@ -11,7 +11,8 @@
 #define ESP32S31_LCD_HEIGHT 480u
 #define ESP32S31_SCALE_FACTOR 3u
 #define ESP32S31_LCD_BAR_WIDTH 40u
-#define ESP32S31_GBA_FPS_OSD_WIDTH 48u
+#define ESP32S31_FPS_DISPLAY_MAX_X10 9999u
+#define ESP32S31_GBA_FPS_OSD_WIDTH 54u
 #define ESP32S31_GBA_FPS_OSD_HEIGHT 9u
 #define ESP32S31_GBA_FPS_OSD_WORDS \
   ((ESP32S31_GBA_FPS_OSD_WIDTH + 31u) / 32u)
@@ -37,7 +38,7 @@ bool esp32s31_rgb565_scale3x_rows(void *output, size_t output_pitch,
                                  size_t input_pitch);
 
 /*
- * Scale a source strip while replacing the native 48x9 top-left OSD region.
+ * Scale a source strip while replacing the native 54x9 top-left OSD region.
  * source_y is the strip's first row in the complete 240x160 GBA image. The
  * source framebuffer is read-only and is never modified by the overlay.
  */

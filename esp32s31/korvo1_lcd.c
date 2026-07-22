@@ -669,8 +669,8 @@ const char *esp32s31_korvo1_lcd_scaler_name(void)
 
 void esp32s31_korvo1_lcd_set_fps_x10(unsigned fps_x10)
 {
-  if (fps_x10 > 999u)
-    fps_x10 = 999u;
+  if (fps_x10 > ESP32S31_FPS_DISPLAY_MAX_X10)
+    fps_x10 = ESP32S31_FPS_DISPLAY_MAX_X10;
 
   const uint8_t current =
       __atomic_load_n(&s_lcd.fps_osd_index, __ATOMIC_RELAXED) & 1u;
