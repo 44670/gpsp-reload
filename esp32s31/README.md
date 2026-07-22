@@ -1,5 +1,127 @@
 # gpSP on ESP32-S31-Korvo-1
 
+## Release build and firmware flash
+
+The supported release configuration is selected by the exact CMake options
+below, not by `CMAKE_BUILD_TYPE=Release`. It enables the native RV32IM
+dynarec, disables profiling and gpSP-only LTO, boots into the TF-card menu,
+uses a 12 MiB static ROM container, and allocates 1536 KiB/384 KiB ROM/RAM JIT
+caches. `sdkconfig.defaults` supplies the remaining release settings: 320 MHz
+CPU, 250 MHz PSRAM, PSRAM XIP for application `.text` and `.rodata`, and the
+startup PSRAM memory test.
+
+`ESP32S31_ROM_JIT_CACHE_KB=1536` is converted by the top-level CMake file to
+`ROM_TRANSLATION_CACHE_SIZE=1572864`. This sizes gpSP's static, 4 KiB-aligned
+PSRAM translation cache. It is unrelated to the `rom_cache_bytes=0` field in
+the `gpsp_boot` line, which describes a separate ROM-data cache.
+
+### Clean menu release build
+
+Use only `esp32s31/build/`. Run `fullclean` when changing Kconfig defaults,
+boot mode, memory layout, or any cached release option. Compiler temporary
+files are also kept under `build/` because the system `/tmp` may be full.
+
+```sh
+source /home/john/esp-idf/export.sh
+cd /home/john/work/gpsp/esp32s31
+idf.py -B build fullclean
+mkdir -p build/compiler-tmp
+TMPDIR=/home/john/work/gpsp/esp32s31/build/compiler-tmp idf.py -B build \
+  -DGPSP_ESP32S31_DYNAREC=1 \
+  -DGPSP_ESP32S31_PROFILE=0 \
+  -DGPSP_ESP32S31_PC_PROFILE=0 \
+  -DGPSP_ESP32S31_LTO=0 \
+  -DGPSP_ESP32S31_BOOT_MODE=menu \
+  -DGPSP_ESP32S31_FLASH_SPILL=1 \
+  -DGPSP_ESP32S31_MENU_AUTOROM_NAME= \
+  -DESP32S31_GAMEPAK_STATIC_MB=12 \
+  -DESP32S31_ROM_JIT_CACHE_KB=1536 \
+  -DESP32S31_RAM_JIT_CACHE_KB=384 \
+  build
+```
+
+The resulting application image is `build/gpsp_esp32s31.bin`.
+
+### Incremental menu release build
+
+Always repeat all ten release options so a sticky `build/CMakeCache.txt`
+cannot silently retain a profiling or hardware-test configuration:
+
+```sh
+source /home/john/esp-idf/export.sh
+cd /home/john/work/gpsp/esp32s31
+mkdir -p build/compiler-tmp
+TMPDIR=/home/john/work/gpsp/esp32s31/build/compiler-tmp idf.py -B build \
+  -DGPSP_ESP32S31_DYNAREC=1 \
+  -DGPSP_ESP32S31_PROFILE=0 \
+  -DGPSP_ESP32S31_PC_PROFILE=0 \
+  -DGPSP_ESP32S31_LTO=0 \
+  -DGPSP_ESP32S31_BOOT_MODE=menu \
+  -DGPSP_ESP32S31_FLASH_SPILL=1 \
+  -DGPSP_ESP32S31_MENU_AUTOROM_NAME= \
+  -DESP32S31_GAMEPAK_STATIC_MB=12 \
+  -DESP32S31_ROM_JIT_CACHE_KB=1536 \
+  -DESP32S31_RAM_JIT_CACHE_KB=384 \
+  build
+```
+
+### Flash the release application
+
+Use `app-flash` for a firmware-only update. It writes and verifies only the
+application partition and preserves the `gamepak` partition at `0x190000`.
+Do not interrupt it after erase has started.
+
+```sh
+source /home/john/esp-idf/export.sh
+cd /home/john/work/gpsp/esp32s31
+mkdir -p build/compiler-tmp
+TMPDIR=/home/john/work/gpsp/esp32s31/build/compiler-tmp idf.py -B build \
+  -p /dev/ttyUSB0 \
+  -DGPSP_ESP32S31_DYNAREC=1 \
+  -DGPSP_ESP32S31_PROFILE=0 \
+  -DGPSP_ESP32S31_PC_PROFILE=0 \
+  -DGPSP_ESP32S31_LTO=0 \
+  -DGPSP_ESP32S31_BOOT_MODE=menu \
+  -DGPSP_ESP32S31_FLASH_SPILL=1 \
+  -DGPSP_ESP32S31_MENU_AUTOROM_NAME= \
+  -DESP32S31_GAMEPAK_STATIC_MB=12 \
+  -DESP32S31_ROM_JIT_CACHE_KB=1536 \
+  -DESP32S31_RAM_JIT_CACHE_KB=384 \
+  app-flash
+```
+
+Flash a raw GBA cartridge image independently of the firmware:
+
+```sh
+./flash_gba.sh -p /dev/ttyUSB0 path/to/game.gba
+```
+
+### Direct-from-flash debug build
+
+Direct mode omits the menu and 12 MiB static ROM container, maps the existing
+`gamepak` partition, and uses a 2048 KiB ROM JIT cache. Run `fullclean` before
+switching boot modes, then use the same release options except for the two
+values shown here:
+
+```sh
+source /home/john/esp-idf/export.sh
+cd /home/john/work/gpsp/esp32s31
+idf.py -B build fullclean
+mkdir -p build/compiler-tmp
+TMPDIR=/home/john/work/gpsp/esp32s31/build/compiler-tmp idf.py -B build \
+  -DGPSP_ESP32S31_DYNAREC=1 \
+  -DGPSP_ESP32S31_PROFILE=0 \
+  -DGPSP_ESP32S31_PC_PROFILE=0 \
+  -DGPSP_ESP32S31_LTO=0 \
+  -DGPSP_ESP32S31_BOOT_MODE=flash \
+  -DGPSP_ESP32S31_FLASH_SPILL=1 \
+  -DGPSP_ESP32S31_MENU_AUTOROM_NAME= \
+  -DESP32S31_GAMEPAK_STATIC_MB=12 \
+  -DESP32S31_ROM_JIT_CACHE_KB=2048 \
+  -DESP32S31_RAM_JIT_CACHE_KB=384 \
+  build
+```
+
 This ESP-IDF app runs gpSP with the native RV32IM dynarec enabled by default
 and sends its raw 240x160
 RGB565 framebuffer to the Korvo-1 800x480 RGB panel. The direct driver scales
@@ -175,89 +297,6 @@ and aborts before entering gpSP if that test fails.
 A zero-PSRAM build is not feasible without a larger architectural change. GBA
 EWRAM + IWRAM + VRAM already total 384 KiB; adding only the 77,280-byte render
 target leaves roughly 42 KiB for the entire app, IDF, stacks, and LCD DMA.
-
-Build a clean menu-mode release firmware with the exact options below. ESP-IDF
-does not use `CMAKE_BUILD_TYPE=Release` as the release selector for this app.
-Run `fullclean` when changing release layout or Kconfig defaults; all compiler
-temporary files stay under `build/` because the system `/tmp` may be full.
-
-```sh
-source /home/john/esp-idf/export.sh
-cd /home/john/work/gpsp/esp32s31
-idf.py -B build fullclean
-mkdir -p build/compiler-tmp
-TMPDIR=/home/john/work/gpsp/esp32s31/build/compiler-tmp idf.py -B build \
-  -DGPSP_ESP32S31_DYNAREC=1 \
-  -DGPSP_ESP32S31_PROFILE=0 \
-  -DGPSP_ESP32S31_PC_PROFILE=0 \
-  -DGPSP_ESP32S31_LTO=0 \
-  -DGPSP_ESP32S31_BOOT_MODE=menu \
-  -DGPSP_ESP32S31_FLASH_SPILL=1 \
-  -DGPSP_ESP32S31_MENU_AUTOROM_NAME= \
-  -DESP32S31_GAMEPAK_STATIC_MB=12 \
-  -DESP32S31_ROM_JIT_CACHE_KB=1536 \
-  -DESP32S31_RAM_JIT_CACHE_KB=384 \
-  build
-```
-
-Build the direct-from-SPI-flash debug mode in the same build directory:
-
-```sh
-idf.py -B build \
-  -DGPSP_ESP32S31_DYNAREC=1 \
-  -DGPSP_ESP32S31_PROFILE=0 \
-  -DGPSP_ESP32S31_PC_PROFILE=0 \
-  -DGPSP_ESP32S31_LTO=0 \
-  -DGPSP_ESP32S31_BOOT_MODE=flash \
-  -DGPSP_ESP32S31_FLASH_SPILL=1 \
-  -DGPSP_ESP32S31_MENU_AUTOROM_NAME= \
-  -DESP32S31_GAMEPAK_STATIC_MB=12 \
-  -DESP32S31_ROM_JIT_CACHE_KB=2048 \
-  -DESP32S31_RAM_JIT_CACHE_KB=384 \
-  build
-```
-
-For an incremental menu release rebuild, pass the same ten options; do not rely
-on a sticky CMake cache to retain release values. To build and then update only
-the app partition, use:
-
-```sh
-TMPDIR=/home/john/work/gpsp/esp32s31/build/compiler-tmp idf.py -B build \
-  -DGPSP_ESP32S31_DYNAREC=1 \
-  -DGPSP_ESP32S31_PROFILE=0 \
-  -DGPSP_ESP32S31_PC_PROFILE=0 \
-  -DGPSP_ESP32S31_LTO=0 \
-  -DGPSP_ESP32S31_BOOT_MODE=menu \
-  -DGPSP_ESP32S31_FLASH_SPILL=1 \
-  -DGPSP_ESP32S31_MENU_AUTOROM_NAME= \
-  -DESP32S31_GAMEPAK_STATIC_MB=12 \
-  -DESP32S31_ROM_JIT_CACHE_KB=1536 \
-  -DESP32S31_RAM_JIT_CACHE_KB=384 \
-  build
-
-TMPDIR=/home/john/work/gpsp/esp32s31/build/compiler-tmp idf.py -B build \
-  -p /dev/ttyUSB0 \
-  -DGPSP_ESP32S31_DYNAREC=1 \
-  -DGPSP_ESP32S31_PROFILE=0 \
-  -DGPSP_ESP32S31_PC_PROFILE=0 \
-  -DGPSP_ESP32S31_LTO=0 \
-  -DGPSP_ESP32S31_BOOT_MODE=menu \
-  -DGPSP_ESP32S31_FLASH_SPILL=1 \
-  -DGPSP_ESP32S31_MENU_AUTOROM_NAME= \
-  -DESP32S31_GAMEPAK_STATIC_MB=12 \
-  -DESP32S31_ROM_JIT_CACHE_KB=1536 \
-  -DESP32S31_RAM_JIT_CACHE_KB=384 \
-  app-flash
-```
-
-`app-flash` fully verifies the app partition and does not touch the `gamepak`
-partition at `0x190000`. Do not interrupt it after erase has started.
-
-Flash a raw GBA cartridge image independently of the firmware:
-
-```sh
-./flash_gba.sh -p /dev/ttyUSB0 path/to/game.gba
-```
 
 The current frontend discards audio. Both boot modes use USB XInput only;
 touch is neither linked into the firmware, initialized, nor polled.
